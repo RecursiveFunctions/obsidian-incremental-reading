@@ -23,3 +23,32 @@ export function hasCloze(text: string): boolean {
   CLOZE_RE.lastIndex = 0;
   return CLOZE_RE.test(text);
 }
+
+export interface ClozeBuild {
+  /** The lines, with the selected span wrapped as a cloze deletion. */
+  body: string;
+  /** The exact selected text that became the hidden answer. */
+  answer: string;
+}
+
+/**
+ * Pure core of cloze creation, kept free of the Obsidian API so it can be
+ * unit tested directly. `spannedLines` are the full editor lines the
+ * selection touches (index 0 is the line of `fromCh`, the last is the line
+ * of `toCh`). The selection is located by offset inside the joined block so
+ * the splice is exact even when the same words appear elsewhere on the line.
+ */
+export function buildClozeBody(
+  spannedLines: string[],
+  fromCh: number,
+  toCh: number,
+): ClozeBuild {
+  const block = spannedLines.join("\n");
+  const last = spannedLines[spannedLines.length - 1] ?? "";
+  const start = fromCh;
+  const end =
+    spannedLines.length === 1 ? toCh : block.length - last.length + toCh;
+  const answer = block.slice(start, end);
+  const body = block.slice(0, start) + wrapCloze(answer) + block.slice(end);
+  return { body, answer };
+}

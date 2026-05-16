@@ -9,7 +9,7 @@
 import { App, Editor, TFile, normalizePath } from "obsidian";
 import { IR_KEYS, IrType, PRIORITY_MAX, PRIORITY_MIN } from "./types";
 import { newCard, writeCardToFrontmatter } from "./fsrs";
-import { wrapCloze } from "./cloze";
+import { buildClozeBody } from "./cloze";
 
 /** Folder + default-priority settings the child-note creators need. */
 export interface IrNoteSettings {
@@ -199,27 +199,11 @@ export async function createCloze(
 
   const from = editor.getCursor("from");
   const to = editor.getCursor("to");
-
-  // Reconstruct the full lines the selection touches, then find where the
-  // selection sits inside that block so the splice is exact even if the
-  // same words appear elsewhere on the line.
-  let block = "";
-  let start = 0;
+  const spanned: string[] = [];
   for (let line = from.line; line <= to.line; line += 1) {
-    if (line === from.line) start = block.length + from.ch;
-    block += editor.getLine(line);
-    if (line < to.line) block += "\n";
+    spanned.push(editor.getLine(line));
   }
-  const offsetToEnd =
-    from.line === to.line
-      ? to.ch - from.ch
-      : block.length - editor.getLine(to.line).length + to.ch - start;
-  const end = start + offsetToEnd;
 
-  const clozeBody =
-    block.slice(0, start) +
-    wrapCloze(block.slice(start, end)) +
-    block.slice(end);
-
-  return createChildNote(app, source, "item", clozeBody, answer, settings);
+  const { body } = buildClozeBody(spanned, from.ch, to.ch);
+  return createChildNote(app, source, "item", body, answer, settings);
 }

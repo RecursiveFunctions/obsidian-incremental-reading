@@ -16,6 +16,7 @@ import {
 } from "obsidian";
 import { IR_KEYS } from "./types";
 import { isDismissed } from "./ir-note";
+import { interleavedQueue } from "./queue";
 import { CLOZE_RE, hasCloze } from "./cloze";
 import { Grade, readCardFromFrontmatter, schedule, writeCardToFrontmatter } from "./fsrs";
 
@@ -27,61 +28,36 @@ const GRADES: { grade: Grade; label: string; key: string }[] = [
 ];
 
 /**
- * Build the interleaved daily session: due review items (clozes) carrying
- * the session, with reading elements (topics and extracts) folded in by
- * priority every `reviewsPerReading` items. Dismissed elements are skipped.
- *
- * `reviewsPerReading` is the configurable ratio: 3 means three review items
- * then one reading element, repeating. 0 disables reading interleave.
+ * The interleaved daily session as files, due now. Adapts the live vault
+ * into plain `QueueEntry` records and delegates ordering to the pure,
+ * unit-tested `interleavedQueue`.
  */
 export function dueQueue(
   app: App,
   reviewsPerReading: number,
   now: Date = new Date(),
 ): TFile[] {
-  type Entry = { file: TFile; priority: number; due: number };
-  const review: Entry[] = [];
-  const reading: Entry[] = [];
-
-  for (const file of app.vault.getMarkdownFiles()) {
+  const byId = new Map<string, TFile>();
+  const entries = app.vault.getMarkdownFiles().map((file) => {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-    const type = fm?.[IR_KEYS.type];
-    if (!fm || !type || isDismissed(app, file)) continue;
-
-    const rawDue = fm[IR_KEYS.due];
-    const dueMs =
-      typeof rawDue === "string" || rawDue instanceof Date
-        ? new Date(rawDue).getTime()
-        : 0;
-    if (!Number.isFinite(dueMs) || dueMs > now.getTime()) continue;
-
-    const p = fm[IR_KEYS.priority];
-    const entry: Entry = {
-      file,
+    const rawDue = fm?.[IR_KEYS.due];
+    const p = fm?.[IR_KEYS.priority];
+    byId.set(file.path, file);
+    return {
+      id: file.path,
+      type: typeof fm?.[IR_KEYS.type] === "string" ? fm[IR_KEYS.type] : "",
       priority: typeof p === "number" ? p : 100,
-      due: dueMs,
+      dueMs:
+        typeof rawDue === "string" || rawDue instanceof Date
+          ? new Date(rawDue).getTime()
+          : NaN,
+      dismissed: isDismissed(app, file),
     };
-    (type === "item" ? review : reading).push(entry);
-  }
+  });
 
-  const byImportance = (a: Entry, b: Entry) =>
-    a.priority - b.priority || a.due - b.due;
-  review.sort(byImportance);
-  reading.sort(byImportance);
-
-  if (reviewsPerReading <= 0) return review.map((e) => e.file);
-
-  const queue: TFile[] = [];
-  let r = 0;
-  for (let i = 0; i < review.length; i += 1) {
-    queue.push(review[i].file);
-    if ((i + 1) % reviewsPerReading === 0 && r < reading.length) {
-      queue.push(reading[r].file);
-      r += 1;
-    }
-  }
-  for (; r < reading.length; r += 1) queue.push(reading[r].file);
-  return queue;
+  return interleavedQueue(entries, reviewsPerReading, now.getTime())
+    .map((id) => byId.get(id))
+    .filter((f): f is TFile => f !== undefined);
 }
 
 /** Drop the YAML frontmatter block so only the note body is rendered. */

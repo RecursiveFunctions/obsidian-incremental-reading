@@ -94,6 +94,8 @@ ln -s /absolute/path/to/obsidian-incremental-reading .obsidian/plugins/increment
 
 `npm run build` runs a one-shot production build with type-checking.
 
+`npm test` runs the headless suite. It covers the logic that does not need Obsidian: cloze offset math, FSRS frontmatter round-trip, and queue ordering. The modal, hotkeys, and ribbons are not covered there and need a real vault.
+
 ## Contributing
 
 The project is early. Contributions of any size help: design discussion, bug reports, code, docs, testing in your own vault. Good first issues will come once the MVP scope is broken down further.
