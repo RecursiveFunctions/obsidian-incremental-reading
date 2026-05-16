@@ -13,11 +13,14 @@ export interface IrSettings {
   defaultPriority: number;
   /** Folder new extracts go in. Empty means beside their source note. */
   extractFolder: string;
+  /** Review items between each reading element in a session. 0 disables. */
+  reviewsPerReading: number;
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
   defaultPriority: 33,
   extractFolder: "",
+  reviewsPerReading: 3,
 };
 
 export class IrSettingTab extends PluginSettingTab {
@@ -61,6 +64,23 @@ export class IrSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.extractFolder)
           .onChange(async (value) => {
             this.plugin.settings.extractFolder = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Reviews per reading")
+      .setDesc(
+        "How many review items to show between each reading element in a " +
+          "session. Set to 0 to review items only.",
+      )
+      .addSlider((slider) =>
+        slider
+          .setLimits(0, 10, 1)
+          .setValue(this.plugin.settings.reviewsPerReading)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.reviewsPerReading = value;
             await this.plugin.saveSettings();
           }),
       );

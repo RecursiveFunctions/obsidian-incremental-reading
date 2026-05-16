@@ -5,7 +5,9 @@ import {
   createCloze,
   createExtract,
   getIrType,
+  isDismissed,
   markAsTopic,
+  setDismissed,
 } from "./src/ir-note";
 import { ReviewModal, dueQueue } from "./src/review";
 
@@ -28,6 +30,19 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "start-review",
       name: "Start IR review",
       callback: () => this.startReview(),
+    });
+
+    this.addCommand({
+      id: "toggle-dismiss",
+      name: "Dismiss / restore current IR element",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || file.extension !== "md" || !getIrType(this.app, file)) {
+          return false;
+        }
+        if (!checking) void this.toggleDismiss(file);
+        return true;
+      },
     });
 
     this.addCommand({
@@ -111,11 +126,20 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private startReview() {
-    if (dueQueue(this.app).length === 0) {
+    const ratio = this.settings.reviewsPerReading;
+    if (dueQueue(this.app, ratio).length === 0) {
       new Notice("Incremental Reading: nothing due for review.");
       return;
     }
-    new ReviewModal(this.app, this).open();
+    new ReviewModal(this.app, this, ratio).open();
+  }
+
+  private async toggleDismiss(file: TFile) {
+    const dismiss = !isDismissed(this.app, file);
+    await setDismissed(this.app, file, dismiss);
+    new Notice(
+      `${dismiss ? "Dismissed" : "Restored"} "${file.basename}".`,
+    );
   }
 
   private async openResult(result: IrNoteResult, verb: string) {

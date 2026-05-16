@@ -21,6 +21,9 @@ export const IR_KEYS = {
   /** Vault-relative path of the parent element this note was extracted from. */
   parent: "ir-parent",
 
+  /** When true, the element is held out of the queue (reversible). */
+  dismissed: "ir-dismissed",
+
   // FSRS card state (see src/fsrs.ts for (de)serialization).
   due: "ir-due",
   stability: "ir-stability",

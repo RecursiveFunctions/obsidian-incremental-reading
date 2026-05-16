@@ -15,6 +15,7 @@ import {
   TFile,
 } from "obsidian";
 import { IR_KEYS } from "./types";
+import { isDismissed } from "./ir-note";
 import { CLOZE_RE, hasCloze } from "./cloze";
 import { Grade, readCardFromFrontmatter, schedule, writeCardToFrontmatter } from "./fsrs";
 
@@ -26,16 +27,26 @@ const GRADES: { grade: Grade; label: string; key: string }[] = [
 ];
 
 /**
- * Every IR note whose card is due at or before `now`, ordered the way they
- * should be reviewed: most important first (lowest priority number), then
- * longest overdue.
+ * Build the interleaved daily session: due review items (clozes) carrying
+ * the session, with reading elements (topics and extracts) folded in by
+ * priority every `reviewsPerReading` items. Dismissed elements are skipped.
+ *
+ * `reviewsPerReading` is the configurable ratio: 3 means three review items
+ * then one reading element, repeating. 0 disables reading interleave.
  */
-export function dueQueue(app: App, now: Date = new Date()): TFile[] {
-  const due: { file: TFile; priority: number; due: number }[] = [];
+export function dueQueue(
+  app: App,
+  reviewsPerReading: number,
+  now: Date = new Date(),
+): TFile[] {
+  type Entry = { file: TFile; priority: number; due: number };
+  const review: Entry[] = [];
+  const reading: Entry[] = [];
 
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-    if (!fm || !fm[IR_KEYS.type]) continue;
+    const type = fm?.[IR_KEYS.type];
+    if (!fm || !type || isDismissed(app, file)) continue;
 
     const rawDue = fm[IR_KEYS.due];
     const dueMs =
@@ -45,15 +56,32 @@ export function dueQueue(app: App, now: Date = new Date()): TFile[] {
     if (!Number.isFinite(dueMs) || dueMs > now.getTime()) continue;
 
     const p = fm[IR_KEYS.priority];
-    due.push({
+    const entry: Entry = {
       file,
       priority: typeof p === "number" ? p : 100,
       due: dueMs,
-    });
+    };
+    (type === "item" ? review : reading).push(entry);
   }
 
-  due.sort((a, b) => a.priority - b.priority || a.due - b.due);
-  return due.map((d) => d.file);
+  const byImportance = (a: Entry, b: Entry) =>
+    a.priority - b.priority || a.due - b.due;
+  review.sort(byImportance);
+  reading.sort(byImportance);
+
+  if (reviewsPerReading <= 0) return review.map((e) => e.file);
+
+  const queue: TFile[] = [];
+  let r = 0;
+  for (let i = 0; i < review.length; i += 1) {
+    queue.push(review[i].file);
+    if ((i + 1) % reviewsPerReading === 0 && r < reading.length) {
+      queue.push(reading[r].file);
+      r += 1;
+    }
+  }
+  for (; r < reading.length; r += 1) queue.push(reading[r].file);
+  return queue;
 }
 
 /** Drop the YAML frontmatter block so only the note body is rendered. */
@@ -69,13 +97,14 @@ export class ReviewModal extends Modal {
   constructor(
     app: App,
     private component: Component,
+    private reviewsPerReading: number,
   ) {
     super(app);
   }
 
   onOpen() {
     this.modalEl.addClass("ir-review-modal");
-    this.queue = dueQueue(this.app);
+    this.queue = dueQueue(this.app, this.reviewsPerReading);
 
     this.scope.register([], " ", (evt) => {
       if (!this.revealed) {

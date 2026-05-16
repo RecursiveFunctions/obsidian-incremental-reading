@@ -64,6 +64,33 @@ export function getPriority(
   return clampPriority(typeof v === "number" ? v : defaultPriority);
 }
 
+/** True if the file is currently dismissed (held out of the queue). */
+export function isDismissed(app: App, file: TFile): boolean {
+  return (
+    app.metadataCache.getFileCache(file)?.frontmatter?.[
+      IR_KEYS.dismissed
+    ] === true
+  );
+}
+
+/**
+ * Dismiss or restore an IR element. Dismissing keeps the note and all its
+ * FSRS state untouched; it only sets a flag the queue honors, so it is fully
+ * reversible. Returns false if the file is not an IR element.
+ */
+export async function setDismissed(
+  app: App,
+  file: TFile,
+  dismissed: boolean,
+): Promise<boolean> {
+  if (!getIrType(app, file)) return false;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    if (dismissed) fm[IR_KEYS.dismissed] = true;
+    else delete fm[IR_KEYS.dismissed];
+  });
+  return true;
+}
+
 /**
  * Turn a chunk of text into a stem for a generated note's filename:
  * first words only, no Markdown noise, no characters illegal in a vault path.

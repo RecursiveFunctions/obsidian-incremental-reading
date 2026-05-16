@@ -2,7 +2,7 @@
 
 SuperMemo-style incremental reading and spaced repetition for Obsidian, built on FSRS.
 
-**Status:** Pre-alpha. Scaffold plus one working feature (topic mark). Not yet usable for real work.
+**Status:** Alpha. The v0.1 MVP is feature-complete: topic mark, extract, cloze, review, interleaved queue, dismiss. Not yet tested in a real vault. Treat it as untested until the first tagged release.
 
 ## What this is
 
@@ -42,8 +42,8 @@ Smallest plugin that delivers real IR value. Open an issue before building any i
 - [x] **Extract from selection.** Select text in a topic, run *Extract*. Creates a new child note containing just that text, with `ir-parent: <source>`, inherited priority, queued as a sub-topic.
 - [x] **Cloze from selection.** Select a span inside a topic/extract, run *Cloze*. Creates a child *item* note with the cloze deletion ready to review.
 - [x] **Review UI.** Modal or side panel showing the next due item with grade buttons (Again / Hard / Good / Easy mapping to FSRS grades 1-4). Updates FSRS state, schedules next review.
-- [ ] **Interleaved queue.** Daily session: alternates due items (review queue) with topics surfaced by priority (reading queue). Configurable ratio.
-- [ ] **Dismiss action.** Remove an element from the queue without deleting the note. Reversible.
+- [x] **Interleaved queue.** Daily session: alternates due items (review queue) with topics surfaced by priority (reading queue). Configurable ratio.
+- [x] **Dismiss action.** Remove an element from the queue without deleting the note. Reversible.
 
 ### v0.2
 
