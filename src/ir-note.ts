@@ -3,13 +3,29 @@
  *
  * Every frontmatter mutation goes through Obsidian's
  * `fileManager.processFrontMatter`, which is atomic, preserves unrelated keys,
- * and round-trips YAML formatting correctly — never hand-edit the file text.
+ * and round-trips YAML formatting correctly. Never hand-edit the file text.
+ *
+ * The Obsidian imports here are type-only so this module carries no runtime
+ * dependency on the Obsidian API and can be exercised by an in-memory fake.
  */
 
-import { App, Editor, TFile, normalizePath } from "obsidian";
+import type { App, Editor, TFile } from "obsidian";
 import { IR_KEYS, IrType, PRIORITY_MAX, PRIORITY_MIN } from "./types";
 import { newCard, writeCardToFrontmatter } from "./fsrs";
 import { buildClozeBody } from "./cloze";
+
+/**
+ * Slash-only stand-in for Obsidian's `normalizePath`: collapse repeats,
+ * strip leading/trailing separators, trim. Enough for the folder and file
+ * paths this module builds.
+ */
+function normalizePath(p: string): string {
+  return p
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/")
+    .replace(/^\/+|\/+$/g, "")
+    .trim();
+}
 
 /** Folder + default-priority settings the child-note creators need. */
 export interface IrNoteSettings {
