@@ -1,82 +1,81 @@
 # Incremental Reading for Obsidian
 
-> SuperMemo-style incremental reading and spaced repetition for Obsidian, built on FSRS.
+SuperMemo-style incremental reading and spaced repetition for Obsidian, built on FSRS.
 
-**Status:** Pre-alpha. Repository scaffold only. No usable functionality yet. Built in the open from day one.
-
----
+**Status:** Pre-alpha. Scaffold plus one working feature (topic mark). Not yet usable for real work.
 
 ## What this is
 
-Incremental reading (IR) is the technique of reading many sources in parallel, extracting the most important passages into smaller and smaller pieces, and reviewing those pieces on a spaced-repetition schedule. It was developed by Piotr Wozniak as part of [SuperMemo](https://supermemo.guru) and is, in the opinion of many practitioners, the most powerful learning workflow ever designed for dense text.
+Incremental reading (IR) is a learning method. You read many sources in parallel. You pull the important passages out into smaller pieces. You review those pieces on a spaced-repetition schedule. Piotr Wozniak created it as part of [SuperMemo](https://supermemo.guru).
 
-The problem: SuperMemo only runs on Windows, hasn't been meaningfully redesigned in years, and locks your knowledge inside a proprietary file format. Meanwhile, Obsidian has become the de-facto home for personal knowledge management — but its existing spaced-repetition plugins implement the basic 1990s SM-2 algorithm and don't model IR's element tree, extracts, or priority queue at all.
+Two problems make IR hard to use today. SuperMemo runs only on Windows and stores your knowledge in a proprietary format. Obsidian is where many people keep their notes, but its spaced-repetition plugins use the 1990s SM-2 algorithm and do not model IR's element tree, extracts, or priority queue.
 
-This plugin aims to close that gap: a faithful implementation of incremental reading inside Obsidian, with modern spaced-repetition scheduling, on top of plain Markdown notes that you own.
+This plugin brings IR into Obsidian. It uses a modern scheduler and keeps everything in plain Markdown notes you own.
 
 ## How it works
 
-The plugin is two layers:
+The plugin has two layers.
 
-1. **The IR workflow layer** — element tree, extracts, cloze deletions, priority slider, interleaved review-and-reading queue, dismissals, reading bookmarks. Built from scratch in TypeScript on top of Obsidian's plugin API. Models are documented openly by SuperMemo at [supermemo.guru](https://supermemo.guru); no reverse engineering required.
-2. **The scheduling core** — [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler) via the [`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs) package. FSRS is an open-source spaced-repetition algorithm in the same DSR (Difficulty / Stability / Retrievability) family as SuperMemo's SM-17/18, adopted by Anki as of v23.12. It's competitive with proprietary algorithms and the parameters are openly trained on real review data.
+The workflow layer covers the element tree, extracts, cloze deletions, the priority slider, the interleaved review-and-reading queue, dismissals, and reading bookmarks. It is written in TypeScript on Obsidian's plugin API. SuperMemo documents these models publicly at [supermemo.guru](https://supermemo.guru), so no reverse engineering is involved.
 
-Your reading material and extracts live as ordinary Markdown notes in your vault. The plugin stores per-note metadata (priority, FSRS state, parent element, reading position) in note frontmatter so it round-trips through Git, Obsidian Sync, and any other Markdown tooling.
+The scheduling layer is [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler), used through the [`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs) package. FSRS is an open-source algorithm in the same Difficulty/Stability/Retrievability family as SuperMemo's SM-17 and SM-18. Anki adopted it in v23.12. Its parameters are trained on real review data.
+
+Your reading material and extracts stay as ordinary Markdown notes. Per-note IR state (priority, FSRS fields, parent element, reading position) lives in frontmatter, so it round-trips through Git, Obsidian Sync, and other Markdown tools.
 
 ## Roadmap
 
-### MVP (v0.1) — minimal but actually useful
+### MVP (v0.1)
 
-The goal is the smallest plugin that delivers core IR value. If you'd like to help build any of these, open an issue first to coordinate.
+Smallest plugin that delivers real IR value. Open an issue before building any item so we can coordinate.
 
-- [ ] **Topic mark.** A command/ribbon action that marks the current note as an IR *topic* (reading source). Adds frontmatter: `ir-type: topic`, `ir-priority: <0-100>`, FSRS state fields.
+- [x] **Topic mark.** A command/ribbon action that marks the current note as an IR *topic* (reading source). Adds frontmatter: `ir-type: topic`, `ir-priority: <0-100>`, FSRS state fields.
 - [ ] **Priority slider UI.** Set/adjust priority on any IR note.
 - [ ] **Extract from selection.** Select text in a topic, run *Extract*. Creates a new child note containing just that text, with `ir-parent: <source>`, inherited priority, queued as a sub-topic.
 - [ ] **Cloze from selection.** Select a span inside a topic/extract, run *Cloze*. Creates a child *item* note with the cloze deletion ready to review.
-- [ ] **Review UI.** Modal or side panel showing the next due item with grade buttons (Again / Hard / Good / Easy mapping to FSRS grades 1–4). Updates FSRS state, schedules next review.
+- [ ] **Review UI.** Modal or side panel showing the next due item with grade buttons (Again / Hard / Good / Easy mapping to FSRS grades 1-4). Updates FSRS state, schedules next review.
 - [ ] **Interleaved queue.** Daily session: alternates due items (review queue) with topics surfaced by priority (reading queue). Configurable ratio.
 - [ ] **Dismiss action.** Remove an element from the queue without deleting the note. Reversible.
 
-### v0.2 — the things that make IR feel like IR
+### v0.2
 
-- [ ] **Reading bookmarks.** When you stop mid-topic, the next review of that topic resumes from where you stopped (highlighted line + scroll to position).
-- [ ] **Element tree view.** A side panel showing the parent → extracts → clozes hierarchy for any element.
+- [ ] **Reading bookmarks.** When you stop mid-topic, the next review of that topic resumes from where you stopped (highlighted line plus scroll to position).
+- [ ] **Element tree view.** A side panel showing the parent, extracts, and clozes hierarchy for any element.
 - [ ] **Bulk import.** Paste a long article or web URL; it becomes a topic in one step.
 - [ ] **Statistics.** Daily reviews completed, retention rate, queue size, FSRS parameter optimization.
 
-### Stretch — the genuinely hard ones
+### Stretch
 
-- [ ] **PDF support.** Selection → extract from a PDF, with page references preserved.
+- [ ] **PDF support.** Selection to extract from a PDF, with page references preserved.
 - [ ] **Image occlusion** for visual cards.
 - [ ] **Browser extension** for one-click import of web pages into the IR queue.
-- [ ] **Mobile support** (currently desktop-only — `isDesktopOnly: true` in manifest).
+- [ ] **Mobile support.** Currently desktop-only (`isDesktopOnly: true` in manifest).
 
-### Explicitly *not* on the roadmap
+### Not planned
 
-- Reimplementing the proprietary SM-15/17/18 algorithm. FSRS is good enough; the legal and time costs of reverse engineering aren't justified by the marginal scheduling improvement.
-- Importing from `.kno` (SuperMemo collection) files. If demand is high we'll revisit, but it's a substantial side project on its own.
+- Reimplementing the proprietary SM-15/17/18 algorithm. FSRS is good enough. Reverse engineering it costs too much time and legal risk for a small scheduling gain.
+- Importing `.kno` SuperMemo collection files. This is a large side project on its own. Revisit if demand is high.
 
 ## Installation
 
-Not yet installable. Once there's something to use:
+Not installable yet. When there is something to use:
 
-- **Via [BRAT](https://github.com/TfTHacker/obsidian42-brat)** (Beta Reviewer's Auto-update Tool) once we ship a `v0.0.1` release.
-- **From the Obsidian Community Plugins directory** once the plugin meets Obsidian's submission requirements.
+- Via [BRAT](https://github.com/TfTHacker/obsidian42-brat) after the first `v0.0.1` release.
+- From the Obsidian Community Plugins directory after the plugin meets submission requirements.
 
 ## Development
 
 Requirements:
 - Node.js 20 or newer
-- An Obsidian vault you don't mind testing against (a throwaway test vault is recommended)
+- A throwaway Obsidian vault to test against
 
 ```bash
 git clone https://github.com/RecursiveFunctions/obsidian-incremental-reading
 cd obsidian-incremental-reading
 npm install
-npm run dev          # builds and watches; produces main.js next to manifest.json
+npm run dev          # builds and watches; writes main.js next to manifest.json
 ```
 
-To load the in-development plugin into Obsidian, symlink or copy the project directory into `<your-vault>/.obsidian/plugins/incremental-reading/`, then enable it under Settings → Community Plugins.
+Load the in-development plugin by symlinking the project into `<your-vault>/.obsidian/plugins/incremental-reading/`, then enable it under Settings, Community Plugins.
 
 ```bash
 # from inside your test vault:
@@ -84,19 +83,19 @@ mkdir -p .obsidian/plugins
 ln -s /absolute/path/to/obsidian-incremental-reading .obsidian/plugins/incremental-reading
 ```
 
-`npm run build` does a one-shot production build with type-checking.
+`npm run build` runs a one-shot production build with type-checking.
 
 ## Contributing
 
-The project is genuinely early, and contributions of any size are welcome — design discussion, bug reports, code, docs, plugin testing in your own vault. Some good first issues to come once the MVP scope is broken down further.
+The project is early. Contributions of any size help: design discussion, bug reports, code, docs, testing in your own vault. Good first issues will come once the MVP scope is broken down further.
 
-Before opening a PR for a new feature, please open an issue to discuss the design. The plugin has strong opinions about staying faithful to SuperMemo's IR model rather than inventing parallel mechanics, so it's worth aligning on approach early.
+Open an issue before sending a PR for a new feature. The plugin stays close to SuperMemo's IR model instead of inventing parallel mechanics, so aligning on approach early saves rework.
 
 ## Acknowledgments
 
-- [Piotr Wozniak](https://supermemo.guru) for inventing incremental reading and decades of patient writing about how it works.
-- The [FSRS team](https://github.com/open-spaced-repetition) — particularly Jarrett Ye — for an open-source scheduler in SuperMemo's intellectual lineage.
-- The [Obsidian community plugin developers](https://github.com/obsidianmd/obsidian-sample-plugin) whose code I've read to learn the API.
+- [Piotr Wozniak](https://supermemo.guru) for inventing incremental reading and writing about it for decades.
+- The [FSRS team](https://github.com/open-spaced-repetition), in particular Jarrett Ye, for an open-source scheduler in SuperMemo's lineage.
+- The [Obsidian sample plugin](https://github.com/obsidianmd/obsidian-sample-plugin) and community developers whose code taught me the API.
 
 ## License
 
