@@ -10,4 +10,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial repository scaffold: Obsidian plugin skeleton, TypeScript + esbuild build pipeline, `ts-fsrs` dependency for scheduling, MIT license, CI build workflow, issue templates.
 
-[Unreleased]: https://github.com/recursivefunctions/obsidian-incremental-reading/commits/main
+[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/commits/main

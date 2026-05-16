@@ -70,7 +70,7 @@ Requirements:
 - An Obsidian vault you don't mind testing against (a throwaway test vault is recommended)
 
 ```bash
-git clone https://github.com/recursivefunctions/obsidian-incremental-reading
+git clone https://github.com/RecursiveFunctions/obsidian-incremental-reading
 cd obsidian-incremental-reading
 npm install
 npm run dev          # builds and watches; produces main.js next to manifest.json

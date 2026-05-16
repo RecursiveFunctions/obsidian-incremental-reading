@@ -16,16 +16,16 @@
     "fsrs",
     "supermemo"
   ],
-  "author": "recursivefunctions",
+  "author": "Ray (RecursiveFunctions)",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/recursivefunctions/obsidian-incremental-reading.git"
+    "url": "git+https://github.com/RecursiveFunctions/obsidian-incremental-reading.git"
   },
   "bugs": {
-    "url": "https://github.com/recursivefunctions/obsidian-incremental-reading/issues"
+    "url": "https://github.com/RecursiveFunctions/obsidian-incremental-reading/issues"
   },
-  "homepage": "https://github.com/recursivefunctions/obsidian-incremental-reading#readme",
+  "homepage": "https://github.com/RecursiveFunctions/obsidian-incremental-reading#readme",
   "devDependencies": {
     "@types/node": "^20.11.30",
     "builtin-modules": "^3.3.0",
