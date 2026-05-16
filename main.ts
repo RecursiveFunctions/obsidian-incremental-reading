@@ -7,6 +7,7 @@ import {
   getIrType,
   markAsTopic,
 } from "./src/ir-note";
+import { ReviewModal, dueQueue } from "./src/review";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -17,6 +18,16 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.addRibbonIcon("book-open", "Mark note as IR topic", () => {
       void this.markActiveFileAsTopic();
+    });
+
+    this.addRibbonIcon("brain-circuit", "Start IR review", () => {
+      this.startReview();
+    });
+
+    this.addCommand({
+      id: "start-review",
+      name: "Start IR review",
+      callback: () => this.startReview(),
     });
 
     this.addCommand({
@@ -97,6 +108,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.settings,
     );
     await this.openResult(result, "Cloze item created:");
+  }
+
+  private startReview() {
+    if (dueQueue(this.app).length === 0) {
+      new Notice("Incremental Reading: nothing due for review.");
+      return;
+    }
+    new ReviewModal(this.app, this).open();
   }
 
   private async openResult(result: IrNoteResult, verb: string) {

@@ -6,12 +6,42 @@
  * serialization in exactly one place.
  */
 
-import { Card, State, createEmptyCard } from "ts-fsrs";
+import {
+  Card,
+  Grade as FsrsGrade,
+  Rating,
+  State,
+  createEmptyCard,
+  fsrs,
+} from "ts-fsrs";
 import { IR_KEYS } from "./types";
 
 /** A fresh FSRS card, due now, in the `New` state. */
 export function newCard(now: Date = new Date()): Card {
   return createEmptyCard(now);
+}
+
+/** The four review grades, in Again/Hard/Good/Easy order (FSRS 1-4). */
+export type Grade = "again" | "hard" | "good" | "easy";
+
+const RATING: Record<Grade, FsrsGrade> = {
+  again: Rating.Again,
+  hard: Rating.Hard,
+  good: Rating.Good,
+  easy: Rating.Easy,
+};
+
+// One engine with default (unoptimized) parameters. Parameter optimization
+// from real review history is a later roadmap item.
+const engine = fsrs();
+
+/** Apply a grade to a card and return its rescheduled next state. */
+export function schedule(
+  card: Card,
+  grade: Grade,
+  now: Date = new Date(),
+): Card {
+  return engine.next(card, now, RATING[grade]).card;
 }
 
 /**

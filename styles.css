@@ -1,1 +1,24 @@
 /* Styles for the Incremental Reading plugin. Populated as UI lands. */
+
+.ir-review-modal {
+  width: min(720px, 90vw);
+}
+
+.ir-review-progress {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  margin-bottom: 1em;
+}
+
+.ir-review-body {
+  min-height: 8em;
+  margin-bottom: 1.5em;
+  line-height: var(--line-height-normal);
+}
+
+.ir-review-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  justify-content: flex-end;
+}
