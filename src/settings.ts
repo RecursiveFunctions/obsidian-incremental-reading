@@ -11,10 +11,13 @@ import { PRIORITY_MAX, PRIORITY_MIN } from "./types";
 export interface IrSettings {
   /** Priority assigned to a note when it's first marked as a topic. */
   defaultPriority: number;
+  /** Folder new extracts go in. Empty means beside their source note. */
+  extractFolder: string;
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
   defaultPriority: 33,
+  extractFolder: "",
 };
 
 export class IrSettingTab extends PluginSettingTab {
@@ -42,6 +45,22 @@ export class IrSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.defaultPriority = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Extract folder")
+      .setDesc(
+        "Vault-relative folder for new extracts. Leave empty to create " +
+          "each extract beside its source note.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("(beside source)")
+          .setValue(this.plugin.settings.extractFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.extractFolder = value.trim();
             await this.plugin.saveSettings();
           }),
       );

@@ -6,7 +6,7 @@
  * and round-trips YAML formatting correctly — never hand-edit the file text.
  */
 
-import { App, TFile } from "obsidian";
+import { App, TFile, normalizePath } from "obsidian";
 import { IR_KEYS, IrType, PRIORITY_MAX, PRIORITY_MIN } from "./types";
 import { newCard, writeCardToFrontmatter } from "./fsrs";
 
@@ -43,4 +43,94 @@ export async function markAsTopic(
   });
 
   return true;
+}
+
+/** Read a note's IR priority, falling back to `defaultPriority` if unset. */
+export function getPriority(
+  app: App,
+  file: TFile,
+  defaultPriority: number,
+): number {
+  const v = app.metadataCache.getFileCache(file)?.frontmatter?.[
+    IR_KEYS.priority
+  ];
+  return clampPriority(typeof v === "number" ? v : defaultPriority);
+}
+
+/**
+ * Turn a chunk of selected text into a stem for the extract's filename:
+ * first words only, no Markdown noise, no characters illegal in a vault path.
+ */
+function fileStemFromSelection(selection: string): string {
+  const cleaned = selection
+    .replace(/\s+/g, " ")
+    .replace(/[#*_`>\[\]()~]/g, "")
+    .replace(/[\\/:*?"<>|]/g, "")
+    .trim();
+  const stem = cleaned.split(" ").slice(0, 8).join(" ").slice(0, 60).trim();
+  return stem.replace(/^\.+|\.+$/g, "") || "Extract";
+}
+
+/** First unused `<folder>/<stem>.md` path, appending " 2", " 3", ... if taken. */
+function uniqueNotePath(app: App, folder: string, stem: string): string {
+  const dir = folder ? `${folder}/` : "";
+  let candidate = normalizePath(`${dir}${stem}.md`);
+  let n = 2;
+  while (app.vault.getAbstractFileByPath(candidate)) {
+    candidate = normalizePath(`${dir}${stem} ${n}.md`);
+    n += 1;
+  }
+  return candidate;
+}
+
+/**
+ * The result of an extract attempt. `file` is the created child note;
+ * `error` explains a refusal so the caller can surface a precise Notice.
+ */
+export type ExtractResult =
+  | { file: TFile; error?: undefined }
+  | { file?: undefined; error: string };
+
+/**
+ * Create a child *extract* note from text selected inside an IR topic or
+ * extract. The new note holds only the selected text, points back at its
+ * source via `ir-parent`, inherits the source's priority, and gets a fresh
+ * FSRS card so it enters the queue as a sub-topic.
+ */
+export async function createExtract(
+  app: App,
+  source: TFile,
+  selection: string,
+  settings: { defaultPriority: number; extractFolder: string },
+): Promise<ExtractResult> {
+  const text = selection.trim();
+  if (!text) return { error: "Nothing selected." };
+
+  const sourceType = getIrType(app, source);
+  if (sourceType !== "topic" && sourceType !== "extract") {
+    return {
+      error: `"${source.basename}" is not an IR topic. Mark it as a topic first.`,
+    };
+  }
+
+  const configured = settings.extractFolder.trim();
+  const folder = configured
+    ? normalizePath(configured)
+    : (source.parent?.path ?? "");
+  if (folder && !app.vault.getAbstractFileByPath(folder)) {
+    await app.vault.createFolder(folder);
+  }
+
+  const path = uniqueNotePath(app, folder, fileStemFromSelection(text));
+  const file = await app.vault.create(path, text + "\n");
+
+  const inherited = getPriority(app, source, settings.defaultPriority);
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    fm[IR_KEYS.type] = "extract" satisfies IrType;
+    fm[IR_KEYS.parent] = source.path;
+    fm[IR_KEYS.priority] = inherited;
+    writeCardToFrontmatter(fm, newCard());
+  });
+
+  return { file };
 }

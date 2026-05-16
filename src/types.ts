@@ -18,6 +18,9 @@ export const IR_KEYS = {
   type: "ir-type",
   priority: "ir-priority",
 
+  /** Vault-relative path of the parent element this note was extracted from. */
+  parent: "ir-parent",
+
   // FSRS card state (see src/fsrs.ts for (de)serialization).
   due: "ir-due",
   stability: "ir-stability",
