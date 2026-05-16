@@ -1,7 +1,7 @@
 /**
- * Plugin settings + settings tab. Kept minimal for the MVP — only what the
- * Topic-mark feature actually needs — but structured so later features add
- * fields here rather than inventing their own storage.
+ * Plugin settings + settings tab. Kept minimal for the MVP: only what the
+ * topic-mark feature needs, but structured so later features add fields
+ * here rather than inventing their own storage.
  */
 
 import { App, PluginSettingTab, Setting } from "obsidian";
@@ -38,7 +38,7 @@ export class IrSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Default topic priority")
       .setDesc(
-        `Priority (${PRIORITY_MIN}–${PRIORITY_MAX}, lower = more important) ` +
+        `Priority (${PRIORITY_MIN}-${PRIORITY_MAX}, lower = more important) ` +
           "given to a note when you first mark it as a topic.",
       )
       .addSlider((slider) =>

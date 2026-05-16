@@ -1,7 +1,7 @@
 /**
  * The scheduling core: a thin, well-typed boundary around `ts-fsrs`.
  *
- * The rest of the plugin never imports `ts-fsrs` directly — it goes through
+ * The rest of the plugin never imports `ts-fsrs` directly. It goes through
  * here. That keeps the FSRS dependency swappable and keeps card<->frontmatter
  * serialization in exactly one place.
  */

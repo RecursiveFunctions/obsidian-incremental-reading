@@ -33,7 +33,7 @@ export interface IrNoteSettings {
   extractFolder: string;
 }
 
-/** Clamp an arbitrary number into the valid 0–100 priority range. */
+/** Clamp an arbitrary number into the valid 0-100 priority range. */
 export function clampPriority(value: number): number {
   if (!Number.isFinite(value)) return PRIORITY_MAX;
   return Math.min(PRIORITY_MAX, Math.max(PRIORITY_MIN, Math.round(value)));
@@ -47,7 +47,7 @@ export function getIrType(app: App, file: TFile): IrType | null {
 
 /**
  * Mark a note as an IR *topic* (a reading source): set `ir-type`/`ir-priority`
- * and seed a fresh FSRS card. Idempotent on identity — if the note is already
+ * and seed a fresh FSRS card. Idempotent on identity. If the note is already
  * a topic this is a no-op and returns false so the caller can inform the user.
  */
 export async function markAsTopic(

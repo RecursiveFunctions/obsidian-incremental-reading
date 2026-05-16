@@ -3,7 +3,7 @@
  *
  * All IR state lives in note frontmatter as flat `ir-` prefixed keys so it
  * round-trips cleanly through Git, Obsidian Sync, and any Markdown tooling.
- * The key names here are the single source of truth — every reader/writer in
+ * The key names here are the single source of truth. Every reader/writer in
  * the plugin must go through `IR_KEYS`, never string literals.
  */
 
@@ -36,6 +36,6 @@ export const IR_KEYS = {
   lastReview: "ir-last-review",
 } as const;
 
-/** Priority is a 0–100 SuperMemo-style percentile; lower = more important. */
+/** Priority is a 0-100 SuperMemo-style percentile; lower = more important. */
 export const PRIORITY_MIN = 0;
 export const PRIORITY_MAX = 100;
