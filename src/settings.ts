@@ -50,10 +50,10 @@ export class IrSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Extract folder")
+      .setName("Generated notes folder")
       .setDesc(
-        "Vault-relative folder for new extracts. Leave empty to create " +
-          "each extract beside its source note.",
+        "Vault-relative folder for new extracts and cloze items. Leave " +
+          "empty to create each note beside its source.",
       )
       .addText((text) =>
         text

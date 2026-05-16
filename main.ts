@@ -1,6 +1,12 @@
 import { Editor, MarkdownView, Menu, Notice, Plugin, TFile } from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
-import { createExtract, getIrType, markAsTopic } from "./src/ir-note";
+import {
+  IrNoteResult,
+  createCloze,
+  createExtract,
+  getIrType,
+  markAsTopic,
+} from "./src/ir-note";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -26,12 +32,26 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
+    // SuperMemo parity: Alt+X extract, Alt+Z cloze. Defaults only; users
+    // can rebind or clear them in Settings -> Hotkeys.
     this.addCommand({
       id: "extract-selection",
       name: "Extract selection to IR child note",
+      hotkeys: [{ modifiers: ["Alt"], key: "x" }],
       editorCheckCallback: (checking, editor, view) => {
         if (!view.file || !editor.getSelection().trim()) return false;
         if (!checking) void this.extractSelection(editor, view.file);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "cloze-selection",
+      name: "Cloze selection into an IR item",
+      hotkeys: [{ modifiers: ["Alt"], key: "z" }],
+      editorCheckCallback: (checking, editor, view) => {
+        if (!view.file || !editor.getSelection().trim()) return false;
+        if (!checking) void this.clozeSelection(editor, view.file);
         return true;
       },
     });
@@ -48,6 +68,12 @@ export default class IncrementalReadingPlugin extends Plugin {
               .setIcon("scissors")
               .onClick(() => void this.extractSelection(editor, file)),
           );
+          menu.addItem((item) =>
+            item
+              .setTitle("Cloze to IR item")
+              .setIcon("brackets")
+              .onClick(() => void this.clozeSelection(editor, file)),
+          );
         },
       ),
     );
@@ -60,11 +86,25 @@ export default class IncrementalReadingPlugin extends Plugin {
       editor.getSelection(),
       this.settings,
     );
+    await this.openResult(result, "Extracted to");
+  }
+
+  private async clozeSelection(editor: Editor, source: TFile) {
+    const result = await createCloze(
+      this.app,
+      source,
+      editor,
+      this.settings,
+    );
+    await this.openResult(result, "Cloze item created:");
+  }
+
+  private async openResult(result: IrNoteResult, verb: string) {
     if (!result.file) {
       new Notice(`Incremental Reading: ${result.error}`);
       return;
     }
-    new Notice(`Extracted to "${result.file.basename}".`);
+    new Notice(`${verb} "${result.file.basename}".`);
     await this.app.workspace.getLeaf(true).openFile(result.file);
   }
 

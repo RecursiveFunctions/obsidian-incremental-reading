@@ -6,9 +6,16 @@
  * and round-trips YAML formatting correctly — never hand-edit the file text.
  */
 
-import { App, TFile, normalizePath } from "obsidian";
+import { App, Editor, TFile, normalizePath } from "obsidian";
 import { IR_KEYS, IrType, PRIORITY_MAX, PRIORITY_MIN } from "./types";
 import { newCard, writeCardToFrontmatter } from "./fsrs";
+import { wrapCloze } from "./cloze";
+
+/** Folder + default-priority settings the child-note creators need. */
+export interface IrNoteSettings {
+  defaultPriority: number;
+  extractFolder: string;
+}
 
 /** Clamp an arbitrary number into the valid 0–100 priority range. */
 export function clampPriority(value: number): number {
@@ -58,17 +65,17 @@ export function getPriority(
 }
 
 /**
- * Turn a chunk of selected text into a stem for the extract's filename:
+ * Turn a chunk of text into a stem for a generated note's filename:
  * first words only, no Markdown noise, no characters illegal in a vault path.
  */
-function fileStemFromSelection(selection: string): string {
-  const cleaned = selection
+function fileStem(text: string): string {
+  const cleaned = text
     .replace(/\s+/g, " ")
     .replace(/[#*_`>\[\]()~]/g, "")
     .replace(/[\\/:*?"<>|]/g, "")
     .trim();
   const stem = cleaned.split(" ").slice(0, 8).join(" ").slice(0, 60).trim();
-  return stem.replace(/^\.+|\.+$/g, "") || "Extract";
+  return stem.replace(/^\.+|\.+$/g, "") || "IR note";
 }
 
 /** First unused `<folder>/<stem>.md` path, appending " 2", " 3", ... if taken. */
@@ -84,28 +91,26 @@ function uniqueNotePath(app: App, folder: string, stem: string): string {
 }
 
 /**
- * The result of an extract attempt. `file` is the created child note;
+ * The result of a child-note creation. `file` is the created note;
  * `error` explains a refusal so the caller can surface a precise Notice.
  */
-export type ExtractResult =
+export type IrNoteResult =
   | { file: TFile; error?: undefined }
   | { file?: undefined; error: string };
 
 /**
- * Create a child *extract* note from text selected inside an IR topic or
- * extract. The new note holds only the selected text, points back at its
- * source via `ir-parent`, inherits the source's priority, and gets a fresh
- * FSRS card so it enters the queue as a sub-topic.
+ * Shared core for extract/cloze: validate the source is a readable IR
+ * element, place the new note (extract folder or beside the source), seed
+ * its frontmatter (type, parent, inherited priority, fresh FSRS card).
  */
-export async function createExtract(
+async function createChildNote(
   app: App,
   source: TFile,
-  selection: string,
-  settings: { defaultPriority: number; extractFolder: string },
-): Promise<ExtractResult> {
-  const text = selection.trim();
-  if (!text) return { error: "Nothing selected." };
-
+  type: Extract<IrType, "extract" | "item">,
+  body: string,
+  nameFrom: string,
+  settings: IrNoteSettings,
+): Promise<IrNoteResult> {
   const sourceType = getIrType(app, source);
   if (sourceType !== "topic" && sourceType !== "extract") {
     return {
@@ -121,16 +126,73 @@ export async function createExtract(
     await app.vault.createFolder(folder);
   }
 
-  const path = uniqueNotePath(app, folder, fileStemFromSelection(text));
-  const file = await app.vault.create(path, text + "\n");
+  const path = uniqueNotePath(app, folder, fileStem(nameFrom));
+  const file = await app.vault.create(path, body.trim() + "\n");
 
   const inherited = getPriority(app, source, settings.defaultPriority);
   await app.fileManager.processFrontMatter(file, (fm) => {
-    fm[IR_KEYS.type] = "extract" satisfies IrType;
+    fm[IR_KEYS.type] = type satisfies IrType;
     fm[IR_KEYS.parent] = source.path;
     fm[IR_KEYS.priority] = inherited;
     writeCardToFrontmatter(fm, newCard());
   });
 
   return { file };
+}
+
+/**
+ * Create a child *extract* note from text selected inside an IR topic or
+ * extract. The new note holds only the selected text and enters the queue
+ * as a sub-topic.
+ */
+export async function createExtract(
+  app: App,
+  source: TFile,
+  selection: string,
+  settings: IrNoteSettings,
+): Promise<IrNoteResult> {
+  const text = selection.trim();
+  if (!text) return { error: "Nothing selected." };
+  return createChildNote(app, source, "extract", text, text, settings);
+}
+
+/**
+ * Create a child *item* note holding a cloze deletion. The selected span
+ * becomes the hidden answer; the full lines it spans are kept as context so
+ * the question still makes sense on its own during review.
+ */
+export async function createCloze(
+  app: App,
+  source: TFile,
+  editor: Editor,
+  settings: IrNoteSettings,
+): Promise<IrNoteResult> {
+  const answer = editor.getSelection().trim();
+  if (!answer) return { error: "Nothing selected." };
+
+  const from = editor.getCursor("from");
+  const to = editor.getCursor("to");
+
+  // Reconstruct the full lines the selection touches, then find where the
+  // selection sits inside that block so the splice is exact even if the
+  // same words appear elsewhere on the line.
+  let block = "";
+  let start = 0;
+  for (let line = from.line; line <= to.line; line += 1) {
+    if (line === from.line) start = block.length + from.ch;
+    block += editor.getLine(line);
+    if (line < to.line) block += "\n";
+  }
+  const offsetToEnd =
+    from.line === to.line
+      ? to.ch - from.ch
+      : block.length - editor.getLine(to.line).length + to.ch - start;
+  const end = start + offsetToEnd;
+
+  const clozeBody =
+    block.slice(0, start) +
+    wrapCloze(block.slice(start, end)) +
+    block.slice(end);
+
+  return createChildNote(app, source, "item", clozeBody, answer, settings);
 }
