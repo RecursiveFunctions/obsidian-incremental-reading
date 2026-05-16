@@ -1,0 +1,67 @@
+name: Bug report
+description: Something broke or behaved unexpectedly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more detail you can give, the faster it can be fixed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug. What did you do, what did you expect, what happened instead?
+      placeholder: |
+        Steps to reproduce:
+        1. ...
+        2. ...
+        3. ...
+
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: From the plugin settings page, or the `version` field in `manifest.json`.
+      placeholder: 0.0.1
+    validations:
+      required: true
+
+  - type: input
+    id: obsidian-version
+    attributes:
+      label: Obsidian version
+      description: Settings → About → Current version.
+      placeholder: 1.5.x
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output (optional)
+      description: Open the developer console (Ctrl/Cmd+Shift+I) and paste any errors prefixed with `[Incremental Reading]` or related stack traces.
+      render: shell
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, vault setup, other plugins installed, etc.

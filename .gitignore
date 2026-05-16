@@ -1,0 +1,29 @@
+# Build outputs
+main.js
+*.js.map
+
+# Dependencies
+node_modules/
+package-lock.json.bak
+
+# Obsidian plugin data (when testing inside a vault)
+.obsidian/
+data.json
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env
+.env
+.env.*

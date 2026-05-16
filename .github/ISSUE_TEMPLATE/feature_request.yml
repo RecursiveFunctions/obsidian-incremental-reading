@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a feature or workflow improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Concrete use cases ("I'm trying to do X and the plugin makes it hard because Y") help much more than abstract feature lists.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the user-facing problem first, before proposing a solution. What workflow are you trying to accomplish?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How you'd like the plugin to behave.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing workarounds, other plugins that solve part of this, etc.
+
+  - type: textarea
+    id: supermemo-precedent
+    attributes:
+      label: SuperMemo precedent (if any)
+      description: If this is something SuperMemo does, describe how it works there. Link to supermemo.guru pages if helpful.
