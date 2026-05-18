@@ -1,26 +1,48 @@
 # Incremental Reading for Obsidian
 
-SuperMemo-style incremental reading and spaced repetition for Obsidian, built on FSRS.
+The full SuperMemo element tree in Obsidian: read sources, extract passages into a real source-to-extract-to-item hierarchy, and review it on a queue that interleaves reading and recall. No network. No account. Nothing gated.
 
-**Status:** Alpha. The v0.1 MVP is feature-complete: topic mark, extract, cloze, review, interleaved queue, dismiss. Not yet tested in a real vault. Treat it as untested until the first tagged release.
+**Status:** Pre-release alpha. Not yet tested in a real vault; treat everything as unstable until the first tagged release. The plugin is being rebuilt against the architecture in [`docs/DESIGN.md`](docs/DESIGN.md). This niche is briefly open and the work is moving fast.
 
 ## What this is
 
-Incremental reading (IR) is a learning method. You read many sources in parallel. You pull the important passages out into smaller pieces. You review those pieces on a spaced-repetition schedule. Piotr Wozniak created it as part of [SuperMemo](https://supermemo.guru).
+Incremental reading (IR) is a learning method from Piotr Wozniak's [SuperMemo](https://supermemo.guru). You read many sources in parallel, pull the important passages into progressively smaller pieces, and review those pieces on a spaced schedule.
 
-Two problems make IR hard to use today. SuperMemo runs only on Windows and stores your knowledge in a proprietary format. Obsidian is where many people keep their notes, but its spaced-repetition plugins use the 1990s SM-2 algorithm and do not model IR's element tree, extracts, or priority queue.
+Two things keep IR out of reach. SuperMemo is Windows-only and stores your knowledge in a proprietary format. Obsidian is where many people already keep their notes, but its spaced-repetition plugins are flashcard tools: they do not model IR's element tree, its extracts, or its priority queue. This plugin is the missing piece, the IR workflow itself, native to Obsidian.
 
-This plugin brings IR into Obsidian. It uses a modern scheduler and keeps everything in plain Markdown notes you own.
+## What makes this different
+
+The scheduler is not the pitch. FSRS, plain files, an open license, and cloze deletions are table stakes now; other tools have them. Three things are not available anywhere else in Obsidian:
+
+1. **A faithful SuperMemo element tree.** Source to extract to extract to item, with a dedicated hierarchy view and a graph that stays clean instead of drowning in review scaffolding. No other Obsidian plugin models this; the only tool that does is Logseq-only and stalled.
+2. **Principled postpone.** When the queue overloads it redistributes by priority and never tells the scheduler a card was reviewed when it was not. Overload handling that does not corrupt your scheduling data.
+3. **A multi-scheduler divergence picker.** Default FSRS, FSRS optimized on your own review history, and classic SM-2 run in parallel; when they disagree enough about an interval you can see why and choose. Opt-in, off by default, out of the way otherwise.
+
+And a fourth, which is the reason to trust the other three:
+
+4. **A privacy property, not a privacy policy.** See below.
+
+## Security and trust
+
+An incremental-reading plugin reads your entire knowledge base. That is exactly where "trust me" is not good enough. Obsidian's plugin model has no sandbox: every plugin runs with full filesystem and network access on the honor system, and 2026's real-world plugin-abuse campaigns showed how that ends.
+
+This plugin takes the opposite stance and makes it checkable rather than promised:
+
+- Zero network calls. No telemetry, no license server, no account, enforced by the absence of any networking code in a `main.js` you can grep yourself.
+- A one-command reproducible build, so the shipped bundle provably equals the public source.
+- A minimal, fully pinned, lockfile-committed dependency tree.
+
+Your data never leaves your vault because the code physically cannot send it. That is the difference between a privacy policy and a privacy property.
 
 ## How it works
 
 The plugin has two layers.
 
-The workflow layer covers the element tree, extracts, cloze deletions, the priority slider, the interleaved review-and-reading queue, dismissals, and reading bookmarks. It is written in TypeScript on Obsidian's plugin API. SuperMemo documents these models publicly at [supermemo.guru](https://supermemo.guru), so no reverse engineering is involved.
+The workflow layer is the element tree, extracts, cloze deletions, the priority queue, the interleaved review-and-reading session, postpone, and dismissals. SuperMemo documents these models publicly at [supermemo.guru](https://supermemo.guru), so no reverse engineering is involved.
 
-The scheduling layer is [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler), used through the [`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs) package. FSRS is an open-source algorithm in the same Difficulty/Stability/Retrievability family as SuperMemo's SM-17 and SM-18. Anki adopted it in v23.12. Its parameters are trained on real review data.
+The scheduling layer is [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler), used through the [`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs) package. FSRS is an open-source scheduler in the same Difficulty/Stability/Retrievability family as SuperMemo's SM-17 and SM-18, with parameters trained on real review data.
 
-Your reading material and extracts stay as ordinary Markdown notes. Per-note IR state (priority, FSRS fields, parent element, reading position) lives in frontmatter, so it round-trips through Git, Obsidian Sync, and other Markdown tools.
+State lives in a local store inside your vault, designed to survive multi-device Obsidian Sync without losing reviews. The data model and the reasoning behind it are in [`docs/DESIGN.md`](docs/DESIGN.md). None of it leaves your machine.
 
 ## Keyboard
 
@@ -110,4 +132,4 @@ Open an issue before sending a PR for a new feature. The plugin stays close to S
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE). Concretely: fully open source, every feature free, no paid tier, no telemetry, no server, and a build you can reproduce and verify yourself. There is no future version of this where the core is gated.
