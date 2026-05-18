@@ -24,6 +24,11 @@ export const IR_KEYS = {
   /** When true, the element is held out of the queue (reversible). */
   dismissed: "ir-dismissed",
 
+  // Topic schedule (reading elements; see src/topic.ts). Items use FSRS
+  // instead. `due` is shared by both models.
+  interval: "ir-interval",
+  aFactor: "ir-a-factor",
+
   // FSRS card state (see src/fsrs.ts for (de)serialization).
   due: "ir-due",
   stability: "ir-stability",

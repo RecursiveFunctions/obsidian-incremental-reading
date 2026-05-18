@@ -15,12 +15,21 @@ export interface IrSettings {
   extractFolder: string;
   /** Review items between each reading element in a session. 0 disables. */
   reviewsPerReading: number;
+  /** Days until a topic's first scheduled reread (SM first interval). */
+  topicFirstInterval: number;
+  /** Default interval multiplier (A-Factor) seeded onto new topics. */
+  topicAFactor: number;
+  /** Hard cap on a topic's interval in days. */
+  topicMaxInterval: number;
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
   defaultPriority: 33,
   extractFolder: "",
   reviewsPerReading: 3,
+  topicFirstInterval: 1,
+  topicAFactor: 2,
+  topicMaxInterval: 1825,
 };
 
 export class IrSettingTab extends PluginSettingTab {
@@ -82,6 +91,58 @@ export class IrSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.reviewsPerReading = value;
             await this.plugin.saveSettings();
+          }),
+      );
+
+    containerEl.createEl("h3", { text: "Topic scheduling" });
+
+    new Setting(containerEl)
+      .setName("First interval (days)")
+      .setDesc(
+        "Days until a topic is due again after you first press Next. " +
+          "Later intervals grow from this by the A-Factor.",
+      )
+      .addSlider((slider) =>
+        slider
+          .setLimits(1, 30, 1)
+          .setValue(this.plugin.settings.topicFirstInterval)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.topicFirstInterval = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Default A-Factor")
+      .setDesc(
+        "Interval multiplier seeded on new topics. Each Next multiplies " +
+          "the interval by this. SuperMemo-style; higher spreads reading " +
+          "further apart. Editable per note via the ir-a-factor key.",
+      )
+      .addSlider((slider) =>
+        slider
+          .setLimits(1.2, 4, 0.1)
+          .setValue(this.plugin.settings.topicAFactor)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.topicAFactor = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Max interval (days)")
+      .setDesc("Hard cap so a topic interval can't run away.")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.settings.topicMaxInterval))
+          .onChange(async (value) => {
+            const n = Number(value);
+            if (Number.isFinite(n) && n >= 1) {
+              this.plugin.settings.topicMaxInterval = Math.round(n);
+              await this.plugin.saveSettings();
+            }
           }),
       );
   }

@@ -12,23 +12,38 @@ import {
 import { IR_KEYS } from "../src/types";
 import { FakeApp, fakeEditor } from "./fake-obsidian";
 
-const SETTINGS = { defaultPriority: 33, extractFolder: "" };
+const SETTINGS = {
+  defaultPriority: 33,
+  extractFolder: "",
+  topicFirstInterval: 1,
+  topicAFactor: 2,
+  topicMaxInterval: 1825,
+};
 
-test("markAsTopic seeds type, priority, and a fresh FSRS card; idempotent", async () => {
+test("markAsTopic seeds type, priority, and a fresh topic schedule; idempotent", async () => {
   const app = new FakeApp();
   const file = app.seed("Note.md");
 
-  assert.equal(await markAsTopic(app.asApp(), file as any, 33), true);
+  assert.equal(await markAsTopic(app.asApp(), file as any, SETTINGS), true);
   const fm = app.frontmatterOf("Note.md")!;
   assert.equal(fm[IR_KEYS.type], "topic");
   assert.equal(fm[IR_KEYS.priority], 33);
   assert.equal(typeof fm[IR_KEYS.due], "string");
-  assert.equal(fm[IR_KEYS.state], 0);
-  assert.equal(fm[IR_KEYS.reps], 0);
+  // Topic schedule, not an FSRS card: no interval yet, default A-Factor,
+  // and no FSRS-only state key.
+  assert.equal(fm[IR_KEYS.interval], 0);
+  assert.equal(fm[IR_KEYS.aFactor], 2);
+  assert.equal(IR_KEYS.state in fm, false);
 
   // Second call is a no-op and leaves an existing priority untouched.
   fm[IR_KEYS.priority] = 7;
-  assert.equal(await markAsTopic(app.asApp(), file as any, 99), false);
+  assert.equal(
+    await markAsTopic(app.asApp(), file as any, {
+      ...SETTINGS,
+      defaultPriority: 99,
+    }),
+    false,
+  );
   assert.equal(app.frontmatterOf("Note.md")![IR_KEYS.priority], 7);
 });
 
@@ -68,6 +83,9 @@ test("createExtract makes a child beside the source, inheriting priority", async
   assert.equal(fm[IR_KEYS.parent], "src/Topic.md");
   assert.equal(fm[IR_KEYS.priority], 20);
   assert.equal(typeof fm[IR_KEYS.due], "string");
+  // An extract is a reading element: topic schedule, not an FSRS card.
+  assert.equal(fm[IR_KEYS.interval], 0);
+  assert.equal(IR_KEYS.state in fm, false);
 });
 
 test("createExtract refuses a non-IR source and creates nothing", async () => {
@@ -85,7 +103,7 @@ test("createExtract dedupes the filename and honors the extract folder", async (
   app.seed("Box/Hello world.md", { [IR_KEYS.type]: "extract" });
 
   const r = await createExtract(app.asApp(), src as any, "Hello world", {
-    defaultPriority: 33,
+    ...SETTINGS,
     extractFolder: "Box",
   });
   assert.equal(r.file!.path, "Box/Hello world 2.md");
@@ -112,8 +130,12 @@ test("createCloze hides the selected span inside its line context", async () => 
   assert.ok(r.file, r.error);
   assert.equal(r.file!.path, "src/quick.md");
   assert.equal(app.bodyOf("src/quick.md"), "The {{c1::quick}} brown fox\n");
-  assert.equal(app.frontmatterOf("src/quick.md")![IR_KEYS.type], "item");
-  assert.equal(app.frontmatterOf("src/quick.md")![IR_KEYS.parent], "src/Topic.md");
+  const cfm = app.frontmatterOf("src/quick.md")!;
+  assert.equal(cfm[IR_KEYS.type], "item");
+  assert.equal(cfm[IR_KEYS.parent], "src/Topic.md");
+  // A cloze item is graded, so it gets an FSRS card, not a topic schedule.
+  assert.equal(cfm[IR_KEYS.state], 0);
+  assert.equal(IR_KEYS.interval in cfm, false);
 });
 
 test("createCloze keeps multi-line context", async () => {

@@ -12,6 +12,11 @@
 import type { App, Editor, TFile } from "obsidian";
 import { IR_KEYS, IrType, PRIORITY_MAX, PRIORITY_MIN } from "./types";
 import { newCard, writeCardToFrontmatter } from "./fsrs";
+import {
+  TopicScheduleSettings,
+  newTopicState,
+  writeTopicToFrontmatter,
+} from "./topic";
 import { buildClozeBody } from "./cloze";
 
 /**
@@ -27,8 +32,11 @@ function normalizePath(p: string): string {
     .trim();
 }
 
-/** Folder + default-priority settings the child-note creators need. */
-export interface IrNoteSettings {
+/**
+ * Settings the topic-mark and child-note creators need: priority + folder,
+ * plus the topic schedule tunables so reading elements seed correctly.
+ */
+export interface IrNoteSettings extends TopicScheduleSettings {
   defaultPriority: number;
   extractFolder: string;
 }
@@ -47,22 +55,23 @@ export function getIrType(app: App, file: TFile): IrType | null {
 
 /**
  * Mark a note as an IR *topic* (a reading source): set `ir-type`/`ir-priority`
- * and seed a fresh FSRS card. Idempotent on identity. If the note is already
- * a topic this is a no-op and returns false so the caller can inform the user.
+ * and seed a fresh topic schedule (SuperMemo reading model, not FSRS - topics
+ * are never graded). Idempotent on identity: if the note is already a topic
+ * this is a no-op and returns false so the caller can inform the user.
  */
 export async function markAsTopic(
   app: App,
   file: TFile,
-  defaultPriority: number,
+  settings: IrNoteSettings,
 ): Promise<boolean> {
   if (getIrType(app, file) === "topic") return false;
 
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm[IR_KEYS.type] = "topic" satisfies IrType;
     if (typeof fm[IR_KEYS.priority] !== "number") {
-      fm[IR_KEYS.priority] = clampPriority(defaultPriority);
+      fm[IR_KEYS.priority] = clampPriority(settings.defaultPriority);
     }
-    writeCardToFrontmatter(fm, newCard());
+    writeTopicToFrontmatter(fm, newTopicState(settings));
   });
 
   return true;
@@ -78,6 +87,23 @@ export function getPriority(
     IR_KEYS.priority
   ];
   return clampPriority(typeof v === "number" ? v : defaultPriority);
+}
+
+/**
+ * Set an IR element's priority (0-100 SuperMemo percentile, lower = more
+ * important), clamping into range. Returns false if the file is not an IR
+ * element. Touches only `ir-priority`, so it never disturbs the schedule.
+ */
+export async function setPriority(
+  app: App,
+  file: TFile,
+  priority: number,
+): Promise<boolean> {
+  if (!getIrType(app, file)) return false;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    fm[IR_KEYS.priority] = clampPriority(priority);
+  });
+  return true;
 }
 
 /** True if the file is currently dismissed (held out of the queue). */
@@ -177,7 +203,11 @@ async function createChildNote(
     fm[IR_KEYS.type] = type satisfies IrType;
     fm[IR_KEYS.parent] = source.path;
     fm[IR_KEYS.priority] = inherited;
-    writeCardToFrontmatter(fm, newCard());
+    // An extract is itself a reading element (a sub-topic), so it uses the
+    // topic schedule. Only a cloze item is graded, so only it gets an FSRS
+    // card.
+    if (type === "item") writeCardToFrontmatter(fm, newCard());
+    else writeTopicToFrontmatter(fm, newTopicState(settings));
   });
 
   return { file };

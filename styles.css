@@ -18,7 +18,30 @@
 
 .ir-review-controls {
   display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+}
+
+.ir-review-buttons {
+  display: flex;
   flex-wrap: wrap;
   gap: 0.5em;
   justify-content: flex-end;
+}
+
+.ir-priority-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.ir-priority-input {
+  width: 5em;
+}
+
+.ir-priority-hint {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
 }

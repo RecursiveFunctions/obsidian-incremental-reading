@@ -8,9 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Headless test suite (`npm test`, `node:test` + `tsx`), 26 tests wired into CI, runs without Obsidian. Covers cloze offset math, FSRS frontmatter round-trip, queue interleave/ordering, and now the full extract/cloze/dismiss/topic-mark file flows via an in-memory fake App and Editor (`test/fake-obsidian.ts`).
+- **SuperMemo topic scheduling** (`src/topic.ts`): reading elements (topics and extracts) are no longer graded. The review modal shows **Next** / **Later today** / **Dismiss** instead of Again/Hard/Good/Easy. Next stretches the interval by a per-element A-Factor (first interval then `interval *= A-Factor`, capped at a max); Later today postpones without advancing. State is plain hand-editable frontmatter (`ir-interval`, `ir-a-factor`, shared `ir-due`). Items (cloze) still use FSRS unchanged. Settings gain First interval / Default A-Factor / Max interval.
+- **Editable priority**: inline 0-100 priority control on every element in the review modal, plus a *"Set IR priority of current element"* command, since reordering the queue is a core part of the SuperMemo flow.
+- Headless test suite (`npm test`, `node:test` + `tsx`), now 35 tests wired into CI, runs without Obsidian. Covers cloze offset math, FSRS frontmatter round-trip, queue interleave/ordering, the full extract/cloze/dismiss/topic-mark file flows via an in-memory fake App and Editor (`test/fake-obsidian.ts`), and the topic scheduler (first/grow/cap/override/migration).
 
 ### Changed
+- Topics and extracts now seed a topic schedule instead of an FSRS card. Pre-existing topics with stale FSRS keys migrate cleanly: they read as interval 0, so the first Next seeds the interval; leftover keys are harmless and round-trip.
 - Extracted the cloze offset math into `buildClozeBody` (`src/cloze.ts`) and the queue ordering into `interleavedQueue` (`src/queue.ts`), both free of the Obsidian API so they can be unit tested directly. Behavior unchanged.
 - `src/ir-note.ts` no longer imports the Obsidian API at runtime: the imports are type-only and a local `normalizePath` replaces the one from `obsidian`. This is what lets the in-memory fake exercise it. Behavior unchanged.
 

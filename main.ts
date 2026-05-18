@@ -5,11 +5,14 @@ import {
   createCloze,
   createExtract,
   getIrType,
+  getPriority,
   isDismissed,
   markAsTopic,
   setDismissed,
+  setPriority,
 } from "./src/ir-note";
 import { ReviewModal, dueQueue } from "./src/review";
+import { PriorityModal } from "./src/priority-modal";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -30,6 +33,30 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "start-review",
       name: "Start IR review",
       callback: () => this.startReview(),
+    });
+
+    this.addCommand({
+      id: "set-ir-priority",
+      name: "Set IR priority of current element",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || file.extension !== "md" || !getIrType(this.app, file)) {
+          return false;
+        }
+        if (!checking) {
+          const cur = getPriority(
+            this.app,
+            file,
+            this.settings.defaultPriority,
+          );
+          new PriorityModal(this.app, cur, (p) => {
+            void setPriority(this.app, file, p).then(() =>
+              new Notice(`Priority of "${file.basename}" set to ${p}.`),
+            );
+          }).open();
+        }
+        return true;
+      },
     });
 
     this.addCommand({
@@ -126,12 +153,11 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private startReview() {
-    const ratio = this.settings.reviewsPerReading;
-    if (dueQueue(this.app, ratio).length === 0) {
+    if (dueQueue(this.app, this.settings.reviewsPerReading).length === 0) {
       new Notice("Incremental Reading: nothing due for review.");
       return;
     }
-    new ReviewModal(this.app, this, ratio).open();
+    new ReviewModal(this.app, this, this.settings).open();
   }
 
   private async toggleDismiss(file: TFile) {
@@ -164,11 +190,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
-    const marked = await markAsTopic(
-      this.app,
-      target,
-      this.settings.defaultPriority,
-    );
+    const marked = await markAsTopic(this.app, target, this.settings);
     if (marked) {
       new Notice(`Marked "${target.basename}" as an IR topic.`);
     }
