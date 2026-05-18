@@ -9,8 +9,9 @@ plugin store; extracts become block-anchored with promotion. Chosen because
 extraction is aggressive (the clean-by-construction graph earns its cost), no
 real data is at risk yet, and the rearchitecture is cheapest now while the
 code is unshipped. Two sub-questions it raises are still open, see "Open
-design questions" below. Q1 (anchor strategy) is now resolved; Q2 (store
-granularity and sync shape) must still be settled before the store is written.
+design questions" below. Q1 (anchor strategy) and Q2 (store granularity and
+sync shape) are both resolved. The storage substrate (feature branch #1) is
+now unblocked.
 
 ## 1. Storage model
 
@@ -166,9 +167,44 @@ Source deletion behavior:
 
 ### Q2. Store granularity and sync shape
 
-Whether the store is one monolithic JSON object, many small per-element files
-in a plugin-owned folder, or an append-only log. Governs multi-device Obsidian
-Sync conflict behavior and data-loss risk. STATUS: not yet started.
+STATUS: RESOLVED 2026-05-18. Hybrid (option D): per-element state files plus
+per-device append-only log shards.
+
+- Materialized current state lives in small per-element JSON files. Conflict
+  surface is one element, not the collection. Git-diffable and inspectable,
+  partially restoring the plaintext trust Option 1 traded away.
+- The loss-sensitive path (review grades, scheduling events) goes into
+  per-device append-only log shards. A device only ever appends to its own
+  shard, so Obsidian Sync last-write-wins has nothing to destroy. Reviews are
+  structurally impossible to lose under concurrent multi-device use.
+- On sync, all shards fold into the shared per-element state. The fold is the
+  Section 5 reconciliation pass, now with a defined job. It must be idempotent.
+
+Sub-decisions:
+
+1. Location: a dedicated vault dotfolder (`<vault>/.ir/`), never the plugin
+   config dir (users often do not sync config, which would silently desync the
+   store). Excluded from graph and search via the Option 1 hygiene mechanism.
+2. Concurrent same-item conflict: both grade events are always retained in the
+   logs. Materialized scheduler state defaults to the **conservative schedule**
+   (earlier next-due wins, so a review is never accidentally skipped), with a
+   setting to switch to clock-order (last grade wins).
+3. Compaction defaults (all adjustable except the review-history guarantee):
+   - Primary trigger: compact the local shard when it exceeds **250 events**
+     (caps the active shard around 60 KB; cheap per-grade resync on mobile,
+     since Obsidian Sync is whole-file not delta).
+   - Safety net: also compact on load if the oldest uncompacted event is older
+     than **7 days**.
+   - Runs at plugin load and after a sync-fold, never mid-review, local shard
+     only. A device never compacts another device's shard.
+   - **Review-history guarantee:** compaction folds grade events into state and
+     appends them to a per-device `review-history` file consumed only by the
+     FSRS optimizer and export, never replayed for state. Only operational
+     events (anchor repairs, priority tweaks) are dropped after folding.
+     Default-on; the override warns loudly because disabling it kneecaps the
+     multi-scheduler features.
+4. Element ids: stable and path-independent (already required by Q1's anchor
+   model and the `queue.ts` id rework).
 
 ## Open items
 
