@@ -3,6 +3,15 @@
 Architecture decisions for the incremental reading plugin, with rationale.
 These are locked for v1 unless a decision explicitly says otherwise.
 
+**Decision 2026-05-18:** Full structured-store model chosen (Option 1) over
+the hybrid. All element state, including extracts, leaves frontmatter for the
+plugin store; extracts become block-anchored with promotion. Chosen because
+extraction is aggressive (the clean-by-construction graph earns its cost), no
+real data is at risk yet, and the rearchitecture is cheapest now while the
+code is unshipped. Two sub-questions it raises are still open, see "Open
+design questions" below. Q1 (anchor strategy) is now resolved; Q2 (store
+granularity and sync shape) must still be settled before the store is written.
+
 ## 1. Storage model
 
 Items and cloze state live as **structured plugin data**, never as markdown
@@ -96,6 +105,70 @@ tells the scheduler the card was reviewed. The scheduler state stays pristine.
 Not a SuperMemo clone. The honest pitch: the SuperMemo incremental reading
 workflow, on the open descendant of SM-17's algorithm, with data in plain
 files and a better concept graph than SuperMemo itself.
+
+## Open design questions (decide before implementation)
+
+These are expensive to reverse once the store exists and users have real
+data. They must be answered before feature branch #1 (the storage substrate)
+is written, not defaulted by the first implementation.
+
+### Q1. Extract anchor strategy
+
+STATUS: RESOLVED 2026-05-18. Full layered selector chain (option C), shipped
+complete in v1, no deferral.
+
+An extract anchors into its user-owned, externally-mutable source note via a
+layered chain resolved cheapest-first:
+
+1. Position hint (char offset) for the fast exact path.
+2. Text-quote selector (exact extracted text plus prefix/suffix context) for
+   relocation when the position drifts.
+3. Automatic conservative position repair when the quote still matches but the
+   position moved.
+4. Optional, opt-in block id for users who want Obsidian-native cross-linking.
+   Never the primary anchor.
+
+Two principles are locked alongside it:
+
+- **Never silently re-point.** A failed or ambiguous relocation degrades to a
+  visible "needs re-anchor" state on the extract, never a confident wrong
+  location. Wrong-but-confident is the only unrecoverable failure here.
+- **Always store the extracted text verbatim** in the store. It is the
+  fingerprint, the offline review payload, and the safety net if the source is
+  deleted. Not optional duplication.
+
+Sub-decisions inside C:
+
+- Normalization: normalize whitespace and strip Markdown syntax for the match
+  key; store the raw text verbatim for display.
+- Duplicate-quote disambiguation: context window first, then
+  nearest-to-last-known-position.
+- Orphan UX: needs-re-anchor extracts stay visible in the queue, never
+  silently dropped; user can re-anchor or detach into a standalone note.
+
+Source deletion behavior:
+
+- Never cascade-delete extracts when their source is deleted. Content is never
+  lost: the verbatim text lives in the store, so the extract stays fully
+  reviewable and its items keep scheduling.
+- Reparent children to the grandparent where a tree exists (always).
+- Genuinely rootless detached extracts **auto-promote to standalone notes by
+  default**, with a setting to switch to store-only-detached instead.
+- Detect deletion two ways: Obsidian vault events and a lazy/reconciliation
+  pass (catches deletes done outside Obsidian via Sync, git, file explorer).
+- Write a source tombstone (path, title, deletion timestamp), not a null.
+  Preserves provenance and enables re-link.
+- Comes-back case (Sync/git/trash restore): offer conservative re-link when a
+  matching note reappears. Never re-link silently.
+- Bulk UX: one source delete fires a single batched notification
+  (promote-all / leave-detached / undo). Undo must also reverse the
+  auto-created notes, not just the detach.
+
+### Q2. Store granularity and sync shape
+
+Whether the store is one monolithic JSON object, many small per-element files
+in a plugin-owned folder, or an append-only log. Governs multi-device Obsidian
+Sync conflict behavior and data-loss risk. STATUS: not yet started.
 
 ## Open items
 
