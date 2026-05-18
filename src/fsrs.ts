@@ -15,6 +15,7 @@ import {
   fsrs,
 } from "ts-fsrs";
 import { IR_KEYS } from "./types";
+import type { StoredCard } from "./ir/model";
 
 /** A fresh FSRS card, due now, in the `New` state. */
 export function newCard(now: Date = new Date()): Card {
@@ -109,5 +110,42 @@ export function readCardFromFrontmatter(
     if (!Number.isNaN(d.getTime())) card.last_review = d;
   }
 
+  return card;
+}
+
+export function cardToStored(card: Card): StoredCard {
+  const result: StoredCard = {
+    due: card.due.getTime(),
+    stability: card.stability,
+    difficulty: card.difficulty,
+    elapsedDays: card.elapsed_days,
+    scheduledDays: card.scheduled_days,
+    reps: card.reps,
+    lapses: card.lapses,
+    state: card.state,
+  };
+  if (card.last_review !== undefined) {
+    result.lastReview = card.last_review.getTime();
+  }
+  return result;
+}
+
+export function storedToCard(s: StoredCard | null | undefined): Card {
+  // Derive from a fresh ts-fsrs card and overwrite fields. This guarantees
+  // the result's exact shape matches whatever ts-fsrs produces (a fresh card
+  // carries last_review as an own key set to undefined), so a round-trip is
+  // lossless under deepStrictEqual and stays correct if ts-fsrs adds fields.
+  const card = newCard();
+  if (s === null || s === undefined) return card;
+  card.due = new Date(s.due);
+  card.stability = s.stability;
+  card.difficulty = s.difficulty;
+  card.elapsed_days = s.elapsedDays;
+  card.scheduled_days = s.scheduledDays;
+  card.reps = s.reps;
+  card.lapses = s.lapses;
+  card.state = s.state as State;
+  card.last_review =
+    s.lastReview !== undefined ? new Date(s.lastReview) : undefined;
   return card;
 }
