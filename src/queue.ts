@@ -5,7 +5,7 @@
  */
 
 export interface QueueEntry {
-  /** Stable identifier (the note path in production). */
+  /** Stable element id from the store (no longer a note path; see Option 1). */
   id: string;
   /** IR type: "topic" | "extract" | "item", or empty for non-IR. */
   type: string;
