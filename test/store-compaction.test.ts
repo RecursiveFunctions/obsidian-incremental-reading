@@ -291,7 +291,7 @@ test("review-history guarantee: review events survive, history holds only review
 
   assert.equal(r.compacted, true);
 
-  const survivors = new Set(
+  const survivors = new Set<string>(
     [...lines(fs.dump().get(shardPath)), ...lines(fs.dump().get(rhistPath))].map(
       (e) => e.id,
     ),
