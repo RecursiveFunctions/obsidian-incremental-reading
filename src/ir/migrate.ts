@@ -31,7 +31,13 @@ function encodePathForMigrId(path: string): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function elementIdForPath(path: string): ElementId {
+/**
+ * The element id a note path maps to. Exported so the live plugin targets
+ * the *same* id the migration produced (and a re-migration would produce):
+ * mutations made through the running UI land on the migrated element, and
+ * recording a freshly created note is idempotent under re-run.
+ */
+export function elementIdForPath(path: string): ElementId {
   return `el_mig_${encodePathForMigrId(path)}` as ElementId;
 }
 
