@@ -10,7 +10,7 @@
  */
 
 import { fold, compact, type LogState } from "./log";
-import { newDeviceId, type DeviceId } from "./ids";
+import { newDeviceId, type DeviceId, type ElementId } from "./ids";
 import type { IrEvent } from "./model";
 
 // Fixed paths (constants in the module)
@@ -19,6 +19,8 @@ export const DEVICE = ".ir/device.json";
 export const LOGDIR = ".ir/log";
 export const SNAPSHOT = ".ir/snapshot.jsonl";
 export const RHISTDIR = ".ir/review-history";
+export const STATEDIR = ".ir/state";
+export const TOMBSTONES = ".ir/tombstones.json";
 
 export interface VaultFs {
   exists(path: string): Promise<boolean>;
@@ -26,6 +28,50 @@ export interface VaultFs {
   write(path: string, data: string): Promise<void>;
   append(path: string, data: string): Promise<void>;
   list(dir: string): Promise<string[]>;
+  /** Whole-file delete; required when calling {@link IrStore.reconcile}. */
+  remove?(path: string): Promise<void>;
+}
+
+/** Recursively sort object keys so JSON.stringify is stable across key insertion order. */
+function sortKeysDeep(value: unknown): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(sortKeysDeep);
+  }
+  const o = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(o).sort()) {
+    sorted[k] = sortKeysDeep(o[k]);
+  }
+  return sorted;
+}
+
+/** Strip undefined via JSON, sort keys recursively, then stringify (deterministic bytes). */
+function deterministicJsonStringify(value: unknown): string {
+  const normalized = JSON.parse(JSON.stringify(value)) as unknown;
+  return JSON.stringify(sortKeysDeep(normalized));
+}
+
+function elementStatePath(id: string): string {
+  return `${STATEDIR}/${id}.json`;
+}
+
+/** If `fullPath` is `${STATEDIR}/<id>.json`, return `<id>`; otherwise null. */
+function parseElementStateId(fullPath: string): ElementId | null {
+  const prefix = STATEDIR.endsWith("/") ? STATEDIR : `${STATEDIR}/`;
+  if (!fullPath.startsWith(prefix)) {
+    return null;
+  }
+  const base = fullPath.slice(prefix.length);
+  if (base.includes("/")) {
+    return null;
+  }
+  if (!base.endsWith(".json")) {
+    return null;
+  }
+  return base.slice(0, -".json".length) as ElementId;
 }
 
 export interface StoreOptions {
@@ -177,5 +223,60 @@ export class IrStore {
       archived: result.archived.length,
       dropped: result.dropped.length,
     };
+  }
+
+  async reconcile(): Promise<LogState> {
+    const rm = this.fs.remove;
+    if (!rm) {
+      throw new Error("IrStore.reconcile requires VaultFs.remove");
+    }
+
+    const state = await this.load();
+
+    for (const [, element] of state.elements) {
+      const path = elementStatePath(element.id);
+      const data = deterministicJsonStringify(element);
+      if (await this.fs.exists(path)) {
+        const cur = await this.fs.read(path);
+        if (cur === data) {
+          continue;
+        }
+      }
+      await this.fs.write(path, data);
+    }
+
+    if (state.tombstones.size > 0) {
+      const tombObj: Record<string, unknown> = {};
+      for (const path of [...state.tombstones.keys()].sort()) {
+        const t = state.tombstones.get(path);
+        if (t !== undefined) {
+          tombObj[path] = t;
+        }
+      }
+      const tombBytes = deterministicJsonStringify(tombObj);
+      if (await this.fs.exists(TOMBSTONES)) {
+        const cur = await this.fs.read(TOMBSTONES);
+        if (cur !== tombBytes) {
+          await this.fs.write(TOMBSTONES, tombBytes);
+        }
+      } else {
+        await this.fs.write(TOMBSTONES, tombBytes);
+      }
+    } else if (await this.fs.exists(TOMBSTONES)) {
+      await rm(TOMBSTONES);
+    }
+
+    const listed = await this.fs.list(STATEDIR);
+    for (const fullPath of listed) {
+      const id = parseElementStateId(fullPath);
+      if (id === null) {
+        continue;
+      }
+      if (!state.elements.has(id) && (await this.fs.exists(fullPath))) {
+        await rm(fullPath);
+      }
+    }
+
+    return state;
   }
 }
