@@ -28,6 +28,7 @@ import {
   type ObsidianDataAdapter,
 } from "./src/ir/obsidian-vault-fs";
 import { migrateNotes, type FrontmatterNote } from "./src/ir/migrate";
+import { toAnkiTsv } from "./src/ir/anki-export";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -103,6 +104,12 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
         return true;
       },
+    });
+
+    this.addCommand({
+      id: "export-anki-tsv",
+      name: "Export IR items to Anki TSV",
+      callback: () => void this.exportAnkiTsv(),
     });
 
     this.addCommand({
@@ -283,6 +290,31 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     await leaf.setViewState({ type: IR_TREE_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * Write a TSV of every active item to `<vault>/anki-ir.tsv`. The pure core
+   * filters dismissed items, sorts by id, and writes the row guid as the
+   * element id, so Anki imports merge in place across runs (deck definition
+   * line in the header tells Anki where to put new items).
+   */
+  private async exportAnkiTsv(): Promise<void> {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const state = await this.store.load();
+    const elements = Array.from(state.elements.values());
+    const tsv = toAnkiTsv(elements, { deck: this.settings.ankiDeckName });
+    const outPath = "anki-ir.tsv";
+    await this.app.vault.adapter.write(outPath, tsv);
+    const itemCount = elements.filter(
+      (e) => e.type === "item" && !e.dismissed,
+    ).length;
+    new Notice(
+      `Incremental Reading: wrote ${itemCount} item` +
+        `${itemCount === 1 ? "" : "s"} to ${outPath}.`,
+    );
   }
 
   private async toggleDismiss(file: TFile) {

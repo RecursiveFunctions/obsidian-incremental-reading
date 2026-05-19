@@ -21,6 +21,12 @@ export interface IrSettings {
   topicAFactor: number;
   /** Hard cap on a topic's interval in days. */
   topicMaxInterval: number;
+  /** Anki deck name written into the TSV header on export. */
+  ankiDeckName: string;
+  /** Daily ceiling on due elements before mercy starts postponing. */
+  mercyCeiling: number;
+  /** Priority strictly below which mercy never postpones. */
+  mercyPriorityCutoff: number;
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
@@ -30,6 +36,9 @@ export const DEFAULT_SETTINGS: IrSettings = {
   topicFirstInterval: 1,
   topicAFactor: 2,
   topicMaxInterval: 1825,
+  ankiDeckName: "IR",
+  mercyCeiling: 40,
+  mercyPriorityCutoff: 10,
 };
 
 export class IrSettingTab extends PluginSettingTab {
@@ -141,6 +150,63 @@ export class IrSettingTab extends PluginSettingTab {
             const n = Number(value);
             if (Number.isFinite(n) && n >= 1) {
               this.plugin.settings.topicMaxInterval = Math.round(n);
+              await this.plugin.saveSettings();
+            }
+          }),
+      );
+
+    containerEl.createEl("h3", { text: "Mercy / postpone" });
+
+    new Setting(containerEl)
+      .setName("Daily ceiling")
+      .setDesc(
+        "Maximum due elements per day. Running mercy postpones the lowest-" +
+          "priority overflow until tomorrow, preserving scheduler state.",
+      )
+      .addSlider((slider) =>
+        slider
+          .setLimits(5, 200, 5)
+          .setValue(this.plugin.settings.mercyCeiling)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.mercyCeiling = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Priority cutoff")
+      .setDesc(
+        `Elements with priority strictly below this (${PRIORITY_MIN} = most ` +
+          "important) are never postponed by mercy, no matter the overflow.",
+      )
+      .addSlider((slider) =>
+        slider
+          .setLimits(PRIORITY_MIN, PRIORITY_MAX, 1)
+          .setValue(this.plugin.settings.mercyPriorityCutoff)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.mercyPriorityCutoff = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    containerEl.createEl("h3", { text: "Anki export" });
+
+    new Setting(containerEl)
+      .setName("Deck name")
+      .setDesc(
+        "Deck written into the TSV header. Anki imports into this deck " +
+          "(creating it if needed). Existing items re-import in place via " +
+          "their stable IR id, so safe to run repeatedly.",
+      )
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.ankiDeckName)
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            if (trimmed) {
+              this.plugin.settings.ankiDeckName = trimmed;
               await this.plugin.saveSettings();
             }
           }),
