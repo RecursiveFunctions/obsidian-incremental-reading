@@ -30,6 +30,12 @@ import {
 import { migrateNotes, type FrontmatterNote } from "./src/ir/migrate";
 import { toAnkiTsv } from "./src/ir/anki-export";
 import { StatsModal } from "./src/stats-modal";
+import { planSourceDeletion } from "./src/ir/deletion";
+import { nextLamport } from "./src/ir/log";
+import { newEventId } from "./src/ir/ids";
+import type { IrElement } from "./src/ir/model";
+import { IR_KEYS } from "./src/types";
+import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -201,6 +207,18 @@ export default class IncrementalReadingPlugin extends Plugin {
     // mobile (no keyboard, ribbon is hidden behind a swipe). Tapping the
     // three-dot button on a note surfaces this menu, so mark-as-topic,
     // priority, and dismiss live here as well.
+    // Vault delete handler: when a source note disappears, the pure
+    // planSourceDeletion decides which extracts auto-promote to standalone
+    // notes (so their reviewable text never disappears) and emits a
+    // source-tombstone event so the UI can offer re-link if the source ever
+    // comes back via Sync/git/trash.
+    this.registerEvent(
+      this.app.vault.on("delete", (deleted) => {
+        if (!(deleted instanceof TFile) || deleted.extension !== "md") return;
+        void this.handleSourceDeletion(deleted);
+      }),
+    );
+
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu: Menu, file) => {
         if (!(file instanceof TFile) || file.extension !== "md") return;
@@ -328,6 +346,115 @@ export default class IncrementalReadingPlugin extends Plugin {
       `Incremental Reading: wrote ${itemCount} item` +
         `${itemCount === 1 ? "" : "s"} to ${outPath}.`,
     );
+  }
+
+  /**
+   * Build a fresh standalone-note path for an orphaned extract. Derived
+   * from the first line of the verbatim extracted text plus an id tag so
+   * two extracts with the same opening text don't collide. Lands inside
+   * `extractFolder` if configured.
+   */
+  private promoteOrphanPath(el: IrElement): string {
+    const folder = this.settings.extractFolder.trim().replace(/^\/+|\/+$/g, "");
+    const firstLine = (el.text ?? "").split("\n")[0] ?? "";
+    const safe = firstLine
+      .replace(/[\\/:*?"<>|#^[\]]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 60);
+    const tag = el.id.slice(0, 8);
+    const stem = safe ? `${safe} (${tag})` : `orphan-${tag}`;
+    return folder ? `${folder}/${stem}.md` : `${stem}.md`;
+  }
+
+  /**
+   * Create the on-disk standalone note for a freshly-promoted orphan extract.
+   * The new note carries the extract's verbatim text as body (the store
+   * already had that text; this just makes it user-visible) plus the IR
+   * frontmatter a normal extract gets, so it slots into the queue
+   * indistinguishably from a user-created one.
+   */
+  private async materializePromotedNote(
+    notePath: string,
+    el: IrElement,
+  ): Promise<void> {
+    if (await this.app.vault.adapter.exists(notePath)) return;
+    const folder = notePath.includes("/")
+      ? notePath.slice(0, notePath.lastIndexOf("/"))
+      : "";
+    if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
+      await this.app.vault.createFolder(folder);
+    }
+    const body = (el.text ?? "").trim() + "\n";
+    const file = await this.app.vault.create(notePath, body);
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      fm[IR_KEYS.type] = "extract";
+      fm[IR_KEYS.priority] = el.priority;
+      writeTopicToFrontmatter(fm, newTopicState(this.settings));
+    });
+  }
+
+  /**
+   * Vault-delete handler. Routes the deletion through the pure
+   * planSourceDeletion: source-tombstone, reparent children to grandparent,
+   * delete source-element shadows, detach anchors, auto-promote
+   * genuinely-rootless extracts to standalone notes. Filesystem work
+   * (creating promoted notes) happens before the events are appended so the
+   * store and disk land consistent; a write failure leaves the store
+   * untouched.
+   */
+  private async handleSourceDeletion(deleted: TFile): Promise<void> {
+    if (!this.store) return;
+    try {
+      const events = await this.store.loadEvents();
+      const state = await this.store.load();
+      const elements = Array.from(state.elements.values());
+      const affected = elements.some(
+        (e) =>
+          e.notePath === deleted.path ||
+          e.anchor?.sourcePath === deleted.path,
+      );
+      if (!affected) return;
+
+      const newEvents = planSourceDeletion(
+        elements,
+        deleted.path,
+        deleted.basename,
+        Date.now(),
+        nextLamport(events),
+        await this.store.getDeviceId(),
+        () => newEventId(),
+        (el) => this.promoteOrphanPath(el),
+        { autoPromoteRootless: true },
+      );
+
+      const byId = new Map(elements.map((e) => [e.id, e]));
+      for (const ev of newEvents) {
+        if (ev.kind === "promoted") {
+          const path = (ev.payload as { notePath?: string }).notePath;
+          const el = byId.get(ev.target);
+          if (path && el) await this.materializePromotedNote(path, el);
+        }
+      }
+
+      for (const ev of newEvents) await this.store.appendEvent(ev);
+      await this.store.reconcile();
+
+      const promoted = newEvents.filter((e) => e.kind === "promoted").length;
+      const reparented = newEvents.filter((e) => e.kind === "reparented")
+        .length;
+      const parts: string[] = [];
+      if (promoted)
+        parts.push(`${promoted} extract${promoted === 1 ? "" : "s"} promoted`);
+      if (reparented)
+        parts.push(`${reparented} reparented`);
+      const detail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+      new Notice(
+        `Incremental Reading: source "${deleted.basename}" removed${detail}.`,
+      );
+    } catch (e) {
+      console.error("Incremental Reading: deletion handling failed", e);
+    }
   }
 
   private async toggleDismiss(file: TFile) {
