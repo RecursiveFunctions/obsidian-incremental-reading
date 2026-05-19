@@ -81,7 +81,7 @@ The v0.1 MVP is complete. State has since moved off frontmatter into the structu
 - [ ] **PDF support.** Selection to extract from a PDF, with page references preserved.
 - [ ] **Image occlusion** for visual cards.
 - [ ] **Browser extension** for one-click import of web pages into the IR queue.
-- [ ] **Mobile support.** Currently desktop-only (`isDesktopOnly: true` in manifest).
+- [ ] **Mobile support.** Manifest marks the plugin mobile-eligible (`isDesktopOnly: false`) and the bundle uses no Node-only APIs, but iOS/Android Obsidian is not yet tested. Bug reports welcome.
 
 ### Not planned
 
@@ -90,10 +90,15 @@ The v0.1 MVP is complete. State has since moved off frontmatter into the structu
 
 ## Installation
 
-Not installable yet. When there is something to use:
+**Beta (BRAT):** pre-release `v0.0.1` is available for cross-device testing via [BRAT](https://github.com/TfTHacker/obsidian42-brat).
 
-- Via [BRAT](https://github.com/TfTHacker/obsidian42-brat) after the first `v0.0.1` release.
-- From the Obsidian Community Plugins directory after the plugin meets submission requirements.
+1. Install BRAT from Community Plugins and enable it.
+2. *Settings -> BRAT -> Add Beta plugin*, paste `RecursiveFunctions/obsidian-incremental-reading`.
+3. Enable *Incremental Reading* under Community Plugins.
+
+Treat the beta as alpha-quality: it is not yet tested in a real long-lived vault, mobile support is unverified, and frontmatter/store format may still change between releases. Back up before adding to a vault you care about.
+
+**Stable:** From the Obsidian Community Plugins directory after the plugin meets submission requirements.
 
 ## Development
 

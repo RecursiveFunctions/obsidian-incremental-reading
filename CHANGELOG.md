@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Manifest marks the plugin mobile-eligible (`isDesktopOnly: false`). The bundle has no Node-only imports, but iOS/Android Obsidian is not yet tested end-to-end.
+
+## [0.0.1] — 2026-05-19
+
+First BRAT-installable pre-release. Bundles the v0.1 MVP (topic mark, extract, cloze, review, interleaved queue, dismiss, priority slider) and the v0.2 storage substrate (per-element state files + per-device append-only log shards under `<vault>/.ir/`, migration from frontmatter on first load, dual-write fallback). Seven v0.2 pure cores (extract/promote, mercy, tree, deletion, SM-2+divergence, anki-export, stats) are landed but not yet wired to commands or UI; subsequent releases will surface them.
+
 ### Added
 - **SuperMemo topic scheduling** (`src/topic.ts`): reading elements (topics and extracts) are no longer graded. The review modal shows **Next** / **Later today** / **Dismiss** instead of Again/Hard/Good/Easy. Next stretches the interval by a per-element A-Factor (first interval then `interval *= A-Factor`, capped at a max); Later today postpones without advancing. State is plain hand-editable frontmatter (`ir-interval`, `ir-a-factor`, shared `ir-due`). Items (cloze) still use FSRS unchanged. Settings gain First interval / Default A-Factor / Max interval.
 - **Editable priority**: inline 0-100 priority control on every element in the review modal, plus a *"Set IR priority of current element"* command, since reordering the queue is a core part of the SuperMemo flow.
@@ -29,4 +36,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Frontmatter/FSRS serialization layer (`src/fsrs.ts`, `src/ir-note.ts`, `src/types.ts`), the shared foundation later IR features build on.
 - Initial repository scaffold: Obsidian plugin skeleton, TypeScript + esbuild build pipeline, `ts-fsrs` dependency for scheduling, MIT license, CI build workflow, issue templates.
 
-[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/commits/main
+[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.1...HEAD
+[0.0.1]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases/tag/0.0.1
