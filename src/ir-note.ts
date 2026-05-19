@@ -17,7 +17,7 @@ import {
   newTopicState,
   writeTopicToFrontmatter,
 } from "./topic";
-import { buildClozeBody } from "./cloze";
+import { buildClozeBody, buildClozeFromText } from "./cloze";
 
 /**
  * Slash-only stand-in for Obsidian's `normalizePath`: collapse repeats,
@@ -252,4 +252,24 @@ export async function createCloze(
 
   const { body } = buildClozeBody(spanned, from.ch, to.ch);
   return createChildNote(app, source, "item", body, answer, settings);
+}
+
+/**
+ * Editor-free variant of `createCloze`: same cloze child-note creation, but
+ * driven by a raw text and absolute selection offsets. Used by the Review
+ * modal, where there is no Obsidian `Editor` to read selection through.
+ */
+export async function createClozeFromText(
+  app: App,
+  source: TFile,
+  raw: string,
+  selStart: number,
+  selEnd: number,
+  settings: IrNoteSettings,
+): Promise<IrNoteResult> {
+  if (selEnd <= selStart) return { error: "Nothing selected." };
+  const { body, answer } = buildClozeFromText(raw, selStart, selEnd);
+  const trimmed = answer.trim();
+  if (!trimmed) return { error: "Nothing selected." };
+  return createChildNote(app, source, "item", body, trimmed, settings);
 }

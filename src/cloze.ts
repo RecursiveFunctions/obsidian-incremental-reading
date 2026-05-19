@@ -52,3 +52,43 @@ export function buildClozeBody(
   const body = block.slice(0, start) + wrapCloze(answer) + block.slice(end);
   return { body, answer };
 }
+
+/**
+ * Same as `buildClozeBody` but starting from a flat raw string plus absolute
+ * character offsets into it (e.g., a textarea's `selectionStart`/`selectionEnd`
+ * or an `indexOf` hit). Locates the spanned lines and per-line columns, then
+ * delegates to `buildClozeBody` so the splicing logic stays in one place.
+ */
+export function buildClozeFromText(
+  raw: string,
+  selStart: number,
+  selEnd: number,
+): ClozeBuild {
+  const lines = raw.split("\n");
+  let acc = 0;
+  let startLine = -1;
+  let fromCh = 0;
+  let endLine = -1;
+  let toCh = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const lineEnd = acc + lines[i].length;
+    if (startLine === -1 && selStart <= lineEnd) {
+      startLine = i;
+      fromCh = selStart - acc;
+    }
+    if (endLine === -1 && selEnd <= lineEnd) {
+      endLine = i;
+      toCh = selEnd - acc;
+    }
+    acc = lineEnd + 1; // +1 for the newline separator
+  }
+  if (startLine === -1) {
+    startLine = lines.length - 1;
+    fromCh = lines[startLine]?.length ?? 0;
+  }
+  if (endLine === -1) {
+    endLine = lines.length - 1;
+    toCh = lines[endLine]?.length ?? 0;
+  }
+  return buildClozeBody(lines.slice(startLine, endLine + 1), fromCh, toCh);
+}

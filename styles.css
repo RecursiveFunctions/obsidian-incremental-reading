@@ -16,6 +16,36 @@
   line-height: var(--line-height-normal);
 }
 
+.ir-review-textarea {
+  width: 100%;
+  min-height: 16em;
+  margin-bottom: 1.5em;
+  padding: 0.6em 0.8em;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-medium);
+  line-height: var(--line-height-normal);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  resize: vertical;
+}
+
+.ir-review-textarea:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+/* SuperMemo-style highlight for the revealed cloze answer. Uses theme
+ * accent vars so it adapts to light and dark themes without hardcoding. */
+.ir-cloze-answer {
+  background: var(--text-highlight-bg, rgba(255, 208, 0, 0.35));
+  color: var(--text-normal);
+  padding: 0.05em 0.15em;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
 .ir-review-controls {
   display: flex;
   flex-direction: column;

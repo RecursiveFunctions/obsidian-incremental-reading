@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   CLOZE_RE,
   buildClozeBody,
+  buildClozeFromText,
   hasCloze,
   wrapCloze,
 } from "../src/cloze";
@@ -56,4 +57,30 @@ test("whole single line", () => {
   const r = buildClozeBody([line], 0, line.length);
   assert.equal(r.answer, line);
   assert.equal(r.body, `{{c1::${line}}}`);
+});
+
+test("buildClozeFromText: flat offsets locate the spanned lines", () => {
+  const raw = "The quick brown fox\njumps over the lazy dog";
+  // "quick" lives at offsets 4..9 in the joined string.
+  const r = buildClozeFromText(raw, 4, 9);
+  assert.equal(r.answer, "quick");
+  assert.equal(r.body, "The {{c1::quick}} brown fox");
+});
+
+test("buildClozeFromText: selection crossing the newline keeps both lines", () => {
+  const raw = "first line here\nsecond line there";
+  // Offsets that bracket "line here\nsecond" inside the joined block.
+  const start = raw.indexOf("line here");
+  const end = raw.indexOf("second") + "second".length;
+  const r = buildClozeFromText(raw, start, end);
+  assert.equal(r.answer, "line here\nsecond");
+  assert.equal(r.body, "first {{c1::line here\nsecond}} line there");
+});
+
+test("buildClozeFromText: end-of-line selection lands at column length", () => {
+  const raw = "alpha\nbeta";
+  // Select "alpha" (offsets 0..5).
+  const r = buildClozeFromText(raw, 0, 5);
+  assert.equal(r.answer, "alpha");
+  assert.equal(r.body, "{{c1::alpha}}");
 });
