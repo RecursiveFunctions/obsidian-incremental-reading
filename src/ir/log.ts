@@ -84,6 +84,24 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
         break;
       }
 
+      case "mercy-postponed": {
+        // Queue-redistribution only (DESIGN.md section 6): bump due so the
+        // element falls out of today's queue without telling the scheduler
+        // it was reviewed. A later grade or topic-advance at higher lamport
+        // overwrites this, so a postponed item that gets reviewed anyway
+        // doesn't keep its mercy due.
+        if (element) {
+          const newDue = event.payload.newDue as number;
+          if (element.card) {
+            element.card = { ...element.card, due: newDue };
+          }
+          if (element.schedule) {
+            element.schedule = { ...element.schedule, due: newDue };
+          }
+        }
+        break;
+      }
+
       case "reparented": {
         if (element) {
           element.parentId = event.payload.parentId as ElementId | null;

@@ -33,9 +33,11 @@ import { StatsModal } from "./src/stats-modal";
 import { planSourceDeletion } from "./src/ir/deletion";
 import { nextLamport } from "./src/ir/log";
 import { newEventId } from "./src/ir/ids";
-import type { IrElement } from "./src/ir/model";
+import type { IrElement, IrEvent } from "./src/ir/model";
+import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
+import { redistribute, type MercyEntry } from "./src/ir/mercy";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -129,6 +131,12 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
         new StatsModal(this.app, this.store).open();
       },
+    });
+
+    this.addCommand({
+      id: "mercy-postpone",
+      name: "Postpone overdue elements (mercy)",
+      callback: () => void this.runMercy(),
     });
 
     this.addCommand({
@@ -345,6 +353,75 @@ export default class IncrementalReadingPlugin extends Plugin {
     new Notice(
       `Incremental Reading: wrote ${itemCount} item` +
         `${itemCount === 1 ? "" : "s"} to ${outPath}.`,
+    );
+  }
+
+  /**
+   * Apply mercy: if more than `mercyCeiling` elements are due today, push
+   * the lowest-priority overflow forward by one day. Pure `redistribute`
+   * decides which ids overflow and which are protected by the cutoff; the
+   * wiring just bumps their due timestamps via `mercy-postponed` events.
+   *
+   * Scheduler state is untouched (DESIGN.md section 6 invariant). A later
+   * grade or topic-advance lands at a higher lamport and overwrites the
+   * postponement, so a postponed item that does get reviewed today keeps
+   * its real next-due.
+   */
+  private async runMercy(): Promise<void> {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const now = Date.now();
+    const state = await this.store.load();
+    const elements = Array.from(state.elements.values());
+
+    const entries: MercyEntry[] = [];
+    for (const el of elements) {
+      if (el.dismissed) continue;
+      const due = el.card?.due ?? el.schedule?.due ?? null;
+      if (due === null) continue;
+      entries.push({ id: el.id, priority: el.priority, dueMs: due });
+    }
+
+    const result = redistribute(entries, now, {
+      ceiling: this.settings.mercyCeiling,
+      priorityCutoff: this.settings.mercyPriorityCutoff,
+    });
+
+    if (result.postponedCount === 0) {
+      const due = result.dueToday.length;
+      new Notice(
+        `Incremental Reading: ${due} due, within ceiling ` +
+          `(${this.settings.mercyCeiling}). Nothing to postpone.`,
+      );
+      return;
+    }
+
+    const events = await this.store.loadEvents();
+    let lamport = nextLamport(events);
+    const device = await this.store.getDeviceId();
+    const newDue = now + 24 * 60 * 60 * 1000;
+
+    for (const id of result.postponed) {
+      const ev: IrEvent = {
+        id: newEventId(),
+        ts: now,
+        lamport,
+        device,
+        kind: "mercy-postponed",
+        target: id as ElementId,
+        payload: { newDue },
+      };
+      await this.store.appendEvent(ev);
+      lamport += 1;
+    }
+    await this.store.reconcile();
+
+    new Notice(
+      `Incremental Reading: postponed ${result.postponedCount} element` +
+        `${result.postponedCount === 1 ? "" : "s"} to tomorrow ` +
+        `(${result.dueToday.length} kept due today).`,
     );
   }
 

@@ -142,6 +142,7 @@ export type IrEventKind =
   | "dismiss-set"
   | "graded"
   | "topic-advanced"
+  | "mercy-postponed"
   | "anchor-repaired"
   | "anchor-detached"
   | "promoted"

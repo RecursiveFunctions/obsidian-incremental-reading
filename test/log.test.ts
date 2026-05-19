@@ -116,6 +116,42 @@ test("priority is clamped on fold", () => {
   assert.equal(s.elements.get(id)?.priority, 100);
 });
 
+test("mercy-postponed bumps card.due and schedule.due without resetting scheduler state", () => {
+  const item = newElementId();
+  const top = newElementId();
+  const sched: ReadSchedule = { due: 5000, interval: 3, aFactor: 1.5 };
+  const newDue = 9_999_999;
+  const s = fold([
+    ev({ lamport: 1, kind: "element-created", target: item, payload: { element: newElement({ id: item, type: "item", priority: 50, now: 0 }) } }),
+    ev({ lamport: 2, kind: "graded", target: item, payload: { card: card(1000) } }),
+    ev({ lamport: 3, kind: "mercy-postponed", target: item, payload: { newDue } }),
+    ev({ lamport: 1, kind: "element-created", target: top, payload: { element: { ...topic(top), schedule: sched } } }),
+    ev({ lamport: 2, kind: "mercy-postponed", target: top, payload: { newDue } }),
+  ]);
+  // Item: due moves to newDue but the rest of the card (stability,
+  // difficulty, reps) is untouched — the scheduler still believes the last
+  // grade.
+  const itemEl = s.elements.get(item);
+  assert.equal(itemEl?.card?.due, newDue);
+  assert.equal(itemEl?.card?.stability, card(1000).stability);
+  assert.equal(itemEl?.card?.reps, card(1000).reps);
+  // Topic: schedule.due bumps too, interval/aFactor preserved.
+  const topEl = s.elements.get(top);
+  assert.equal(topEl?.schedule?.due, newDue);
+  assert.equal(topEl?.schedule?.interval, sched.interval);
+  assert.equal(topEl?.schedule?.aFactor, sched.aFactor);
+});
+
+test("a later grade overwrites a prior mercy-postpone (lamport order wins)", () => {
+  const id = newElementId();
+  const s = fold([
+    ev({ lamport: 1, kind: "element-created", target: id, payload: { element: newElement({ id, type: "item", priority: 50, now: 0 }) } }),
+    ev({ lamport: 2, kind: "mercy-postponed", target: id, payload: { newDue: 9_999_999 } }),
+    ev({ lamport: 3, kind: "graded", target: id, payload: { card: card(8000) } }),
+  ]);
+  assert.equal(s.elements.get(id)?.card?.due, 8000);
+});
+
 test("graded sets the item card; topic-advanced sets the read schedule", () => {
   const item = newElementId();
   const top = newElementId();
