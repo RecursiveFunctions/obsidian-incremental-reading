@@ -176,6 +176,50 @@ export default class IncrementalReadingPlugin extends Plugin {
         },
       ),
     );
+
+    // file-menu carries the note-level actions that have no hotkey path on
+    // mobile (no keyboard, ribbon is hidden behind a swipe). Tapping the
+    // three-dot button on a note surfaces this menu, so mark-as-topic,
+    // priority, and dismiss live here as well.
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu: Menu, file) => {
+        if (!(file instanceof TFile) || file.extension !== "md") return;
+        const irType = getIrType(this.app, file);
+        if (!irType) {
+          menu.addItem((item) =>
+            item
+              .setTitle("Mark as IR topic")
+              .setIcon("book-open")
+              .onClick(() => void this.markActiveFileAsTopic(file)),
+          );
+          return;
+        }
+        menu.addItem((item) =>
+          item
+            .setTitle("Set IR priority")
+            .setIcon("sliders-horizontal")
+            .onClick(() => {
+              const cur = getPriority(
+                this.app,
+                file,
+                this.settings.defaultPriority,
+              );
+              new PriorityModal(this.app, cur, (p) => {
+                void setPriority(this.app, file, p).then(() =>
+                  new Notice(`Priority of "${file.basename}" set to ${p}.`),
+                );
+              }).open();
+            }),
+        );
+        const dismissed = isDismissed(this.app, file);
+        menu.addItem((item) =>
+          item
+            .setTitle(dismissed ? "Restore IR element" : "Dismiss IR element")
+            .setIcon(dismissed ? "rotate-ccw" : "ban")
+            .onClick(() => void this.toggleDismiss(file)),
+        );
+      }),
+    );
   }
 
   onunload() {
