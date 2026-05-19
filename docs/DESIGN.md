@@ -206,6 +206,49 @@ Sub-decisions:
 4. Element ids: stable and path-independent (already required by Q1's anchor
    model and the `queue.ts` id rework).
 
+## Integration (storage substrate to live plugin)
+
+The substrate (log, fold, compaction, reconcile, store) is complete and
+pure. Bringing it into the running plugin splits into three parts on a
+clean boundary so the gradable pieces can be delegated and only the
+irreversible glue stays on the maintainer.
+
+**Boundary contract.** The store reaches the vault through one port,
+`VaultFs`. Nothing above the store imports Obsidian; nothing in the store
+knows about Obsidian. Migration is a pure function from old frontmatter to
+events. The controller is the only place that touches both worlds.
+
+1. `ObsidianVaultFs` (delegated). Implements `VaultFs` over
+   `app.vault.adapter` (the raw data adapter, not the indexed file tree, so
+   the `.ir/` dotfolder stays out of the graph). Pure against a fake
+   adapter: it creates missing parent folders before a write or append,
+   maps the adapter's `{files, folders}` listing to the `VaultFs.list`
+   path array, and tolerates a missing path on remove. New file
+   `src/ir/obsidian-vault-fs.ts`. Single-file fence, deterministic oracle.
+
+2. `migrateNotes` (delegated). Pure: `(FrontmatterNote[], now) ->
+   IrEvent[]`. Each note with a valid `ir-type` becomes one
+   `element-created` event whose element is decoded with the existing
+   pure readers (`readCardFromFrontmatter`/`cardToStored`,
+   `readTopicFromFrontmatter`), so migrated state is by construction
+   equivalent to what the frontmatter readers saw. Element ids are
+   deterministic from the note path, so a re-run is idempotent and an
+   `ir-parent` path resolves to the parent's migrated id. Pre-store
+   extracts and items are already standalone notes, so they migrate as
+   promoted elements (`notePath` set, no anchor). New file
+   `src/ir/migrate.ts`. Single-file fence, deterministic oracle.
+
+3. Migration controller (maintainer-owned). Not delegated: it owns the
+   one-way, data-at-risk decisions a mechanical oracle cannot gate. On
+   load it constructs the store over `ObsidianVaultFs`, decides whether a
+   migration is owed (no `.ir/meta.json`), enumerates IR notes via
+   `metadataCache`, runs `migrateNotes`, appends, reconciles, and writes a
+   migration marker. It is guarded (runs once), reversible (frontmatter is
+   left intact as the fallback until the user confirms), and idempotent
+   (re-run is a no-op via the marker plus deterministic ids). Wiring the
+   live queue and review flow to read the store instead of frontmatter
+   follows after the controller lands.
+
 ## Open items
 
 - Confirm which exact SM18 mechanism the divergence picker is modeled on
