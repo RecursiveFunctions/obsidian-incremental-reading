@@ -45,3 +45,73 @@
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
 }
+
+.ir-tree-view {
+  padding: 0.5em 0.75em;
+}
+
+.ir-tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5em;
+}
+
+.ir-tree-header h4 {
+  margin: 0;
+}
+
+.ir-tree-refresh {
+  font-size: var(--font-ui-small);
+  padding: 2px 8px;
+}
+
+.ir-tree-body ul,
+.ir-tree-body ul.ir-tree-root {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.ir-tree-children {
+  padding-left: 1.25em !important;
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+.ir-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 2px 0;
+  font-size: var(--font-ui-small);
+}
+
+.ir-tree-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.ir-tree-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ir-tree-link {
+  cursor: pointer;
+  color: var(--text-accent);
+}
+
+.ir-tree-link:hover {
+  text-decoration: underline;
+}
+
+.ir-tree-priority,
+.ir-tree-type {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}

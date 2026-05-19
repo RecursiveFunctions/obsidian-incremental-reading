@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2] — 2026-05-19
+
+### Added
+- **Element tree view** (v0.2 roadmap): right-pane *IR element tree* view, ribbon action, and command *Open IR element tree*. Surfaces the parent/extract/cloze hierarchy from the v0.2 store via the existing `buildTree` pure core, with an icon and priority badge per node and click-to-open for elements that are backed by a vault note. Read-only in 0.0.2; future versions will add inline actions (priority, dismiss, postpone).
+
 ### Changed
 - Manifest marks the plugin mobile-eligible (`isDesktopOnly: false`). The bundle has no Node-only imports, but iOS/Android Obsidian is not yet tested end-to-end.
 
@@ -36,5 +41,6 @@ First BRAT-installable pre-release. Bundles the v0.1 MVP (topic mark, extract, c
 - Frontmatter/FSRS serialization layer (`src/fsrs.ts`, `src/ir-note.ts`, `src/types.ts`), the shared foundation later IR features build on.
 - Initial repository scaffold: Obsidian plugin skeleton, TypeScript + esbuild build pipeline, `ts-fsrs` dependency for scheduling, MIT license, CI build workflow, issue templates.
 
-[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.1...HEAD
+[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.2...HEAD
+[0.0.2]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases/tag/0.0.2
 [0.0.1]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases/tag/0.0.1

@@ -1,5 +1,14 @@
-import { Editor, MarkdownView, Menu, Notice, Plugin, TFile } from "obsidian";
+import {
+  Editor,
+  MarkdownView,
+  Menu,
+  Notice,
+  Plugin,
+  TFile,
+  WorkspaceLeaf,
+} from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
+import { IR_TREE_VIEW_TYPE, IrTreeView } from "./src/tree-view";
 import {
   IrNoteResult,
   createCloze,
@@ -48,6 +57,28 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "start-review",
       name: "Start IR review",
       callback: () => void this.startReview(),
+    });
+
+    this.registerView(
+      IR_TREE_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) => {
+        if (!this.store) {
+          throw new Error(
+            "Incremental Reading: store not ready for tree view.",
+          );
+        }
+        return new IrTreeView(leaf, this.store);
+      },
+    );
+
+    this.addRibbonIcon("list-tree", "Open IR element tree", () => {
+      void this.openTreeView();
+    });
+
+    this.addCommand({
+      id: "open-tree-view",
+      name: "Open IR element tree",
+      callback: () => void this.openTreeView(),
     });
 
     this.addCommand({
@@ -147,6 +178,10 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
   }
 
+  onunload() {
+    this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
+  }
+
   private async extractSelection(editor: Editor, source: TFile) {
     const result = await createExtract(
       this.app,
@@ -185,6 +220,25 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.store,
       queue,
     ).open();
+  }
+
+  private async openTreeView(): Promise<void> {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const existing = this.app.workspace.getLeavesOfType(IR_TREE_VIEW_TYPE);
+    if (existing.length > 0) {
+      this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf) {
+      new Notice("Incremental Reading: no place to open the tree view.");
+      return;
+    }
+    await leaf.setViewState({ type: IR_TREE_VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
   }
 
   private async toggleDismiss(file: TFile) {
