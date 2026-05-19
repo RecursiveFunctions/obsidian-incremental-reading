@@ -29,6 +29,7 @@ import {
 } from "./src/ir/obsidian-vault-fs";
 import { migrateNotes, type FrontmatterNote } from "./src/ir/migrate";
 import { toAnkiTsv } from "./src/ir/anki-export";
+import { StatsModal } from "./src/stats-modal";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -110,6 +111,18 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "export-anki-tsv",
       name: "Export IR items to Anki TSV",
       callback: () => void this.exportAnkiTsv(),
+    });
+
+    this.addCommand({
+      id: "show-stats",
+      name: "Show IR stats",
+      callback: () => {
+        if (!this.store) {
+          new Notice("Incremental Reading: store is not ready.");
+          return;
+        }
+        new StatsModal(this.app, this.store).open();
+      },
     });
 
     this.addCommand({

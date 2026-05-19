@@ -145,7 +145,12 @@ export class IrStore {
     return out;
   }
 
-  async load(): Promise<LogState> {
+  /**
+   * Read all events from the snapshot + every device shard. Same scan
+   * `load()` performs; exposed so callers that need the raw stream (stats,
+   * deletion args, history exports) don't have to reach into private state.
+   */
+  async loadEvents(): Promise<IrEvent[]> {
     const events: IrEvent[] = [];
 
     if (await this.fs.exists(SNAPSHOT)) {
@@ -169,6 +174,11 @@ export class IrStore {
       }
     }
 
+    return events;
+  }
+
+  async load(): Promise<LogState> {
+    const events = await this.loadEvents();
     return fold(events, { conflict: this.opts.conflict });
   }
 

@@ -145,3 +145,23 @@
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
+
+.ir-stats-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ir-stats-table td {
+  padding: 0.4em 0.6em;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ir-stats-label {
+  color: var(--text-muted);
+}
+
+.ir-stats-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
