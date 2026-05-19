@@ -251,8 +251,12 @@ events. The controller is the only place that touches both worlds.
 
 ## Open items
 
-- Confirm which exact SM18 mechanism the divergence picker is modeled on
-  (treated as the algorithm chooser per section 5; revisit if it was something
-  else).
+- RESOLVED: the SuperMemo chooser is an accuracy-weighted parallel ensemble
+  (SM-17 through SM-20 lineage; SM-20, 2026, runs ~5 algorithms in parallel,
+  each weighted by how well it predicts that user's recall). Section 5
+  deliberately ships a lighter divergence-*display* design instead of
+  accuracy-weighted blending, for IR throughput. Weighted blending / auto-pick
+  by per-scheduler hit rate is logged as a post-v1 option (the "always-armed"
+  variant section 5 anticipates), not v1.
 - Image occlusion, incremental video and audio: out of scope for v1, revisit.
 - Sleep/circadian and Plan/day-structure subsystems: deliberately not pursued.
