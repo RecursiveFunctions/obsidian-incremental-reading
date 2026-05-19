@@ -60,18 +60,20 @@ Rebind or clear them under Settings, Hotkeys.
 Smallest plugin that delivers real IR value. Open an issue before building any item so we can coordinate.
 
 - [x] **Topic mark.** A command/ribbon action that marks the current note as an IR *topic* (reading source). Adds frontmatter: `ir-type: topic`, `ir-priority: <0-100>`, FSRS state fields.
-- [ ] **Priority slider UI.** Set/adjust priority on any IR note.
+- [x] **Priority slider UI.** Inline 0-100 priority control on every element in the review modal, plus a *Set IR priority of current element* command. Reordering the queue is part of the SuperMemo flow, so priority is editable wherever an element is shown.
 - [x] **Extract from selection.** Select text in a topic, run *Extract*. Creates a new child note containing just that text, with `ir-parent: <source>`, inherited priority, queued as a sub-topic.
 - [x] **Cloze from selection.** Select a span inside a topic/extract, run *Cloze*. Creates a child *item* note with the cloze deletion ready to review.
 - [x] **Review UI.** Modal or side panel showing the next due item with grade buttons (Again / Hard / Good / Easy mapping to FSRS grades 1-4). Updates FSRS state, schedules next review.
 - [x] **Interleaved queue.** Daily session: alternates due items (review queue) with topics surfaced by priority (reading queue). Configurable ratio.
 - [x] **Dismiss action.** Remove an element from the queue without deleting the note. Reversible.
 
+The v0.1 MVP is complete. State has since moved off frontmatter into the structured store described in [`docs/DESIGN.md`](docs/DESIGN.md); v0.2 builds on that substrate.
+
 ### v0.2
 
 - [ ] **Reading bookmarks.** When you stop mid-topic, the next review of that topic resumes from where you stopped (highlighted line plus scroll to position).
 - [ ] **Element tree view.** A side panel showing the parent, extracts, and clozes hierarchy for any element.
-- [ ] **Bulk import.** Paste a long article or web URL; it becomes a topic in one step.
+- [ ] **Bulk import.** Paste a long article; it becomes a topic in one step. Paste-only by design: the plugin never fetches a URL, because the zero-network privacy property above is not negotiable for a one-off convenience.
 - [ ] **Statistics.** Daily reviews completed, retention rate, queue size, FSRS parameter optimization.
 
 ### Stretch
