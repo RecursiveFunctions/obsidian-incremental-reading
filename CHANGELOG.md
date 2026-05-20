@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9] — 2026-05-20
+
+### Fixed
+
+- **Mobile IR review:** Do not autofocus the reading textarea on phones; the soft keyboard no longer opens until you tap the note body, so controls and text stay visible when a topic or extract loads.
+
 ## [0.0.8] — 2026-05-20
 
 ### Added

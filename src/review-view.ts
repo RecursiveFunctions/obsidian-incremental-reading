@@ -578,8 +578,13 @@ export class IrReviewView extends ItemView {
       this.currentRaw = ta.value;
     });
     requestAnimationFrame(() => {
-      ta.focus();
-      ta.setSelectionRange(ta.value.length, ta.value.length);
+      // On mobile, programmatic focus opens the IME and shrinks the viewport,
+      // hiding the note until the user dismisses the keyboard. Only autofocus
+      // on desktop where there is no soft keyboard.
+      if (!Platform.isMobile) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
     });
   }
 
