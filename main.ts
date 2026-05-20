@@ -94,6 +94,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "start-review",
       name: "Start IR review",
       icon: "play-circle",
+      hotkeys: [{ modifiers: ["Alt"], key: "r" }],
       callback: () => void this.startReview(),
     });
 
@@ -117,6 +118,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "open-tree-view",
       name: "Open IR element tree",
       icon: "list-tree",
+      hotkeys: [{ modifiers: ["Alt"], key: "i" }],
       callback: () => void this.openTreeView(),
     });
 
@@ -124,6 +126,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "set-ir-priority",
       name: "Set IR priority of current element",
       icon: "sliders-horizontal",
+      hotkeys: [{ modifiers: ["Alt"], key: "p" }],
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md" || !getIrType(this.app, file)) {
@@ -149,6 +152,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "export-anki-tsv",
       name: "Export IR items to Anki TSV",
       icon: "download",
+      hotkeys: [{ modifiers: ["Alt"], key: "e" }],
       callback: () => void this.exportAnkiTsv(),
     });
 
@@ -156,6 +160,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "show-stats",
       name: "Show IR stats",
       icon: "bar-chart-3",
+      hotkeys: [{ modifiers: ["Alt"], key: "s" }],
       callback: () => {
         if (!this.store) {
           new Notice("Incremental Reading: store is not ready.");
@@ -169,6 +174,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "mercy-postpone",
       name: "Postpone overdue elements (mercy)",
       icon: "clock",
+      hotkeys: [{ modifiers: ["Alt"], key: "m" }],
       callback: () => void this.runMercy(),
     });
 
@@ -176,6 +182,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "toggle-dismiss",
       name: "Dismiss / restore current IR element",
       icon: "ban",
+      hotkeys: [{ modifiers: ["Alt"], key: "d" }],
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md" || !getIrType(this.app, file)) {
@@ -190,6 +197,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       id: "mark-as-ir-topic",
       name: "Mark current note as IR topic",
       icon: "book-open",
+      hotkeys: [{ modifiers: ["Alt"], key: "t" }],
       // checkCallback so the command only appears when there's a markdown
       // note to act on, per Obsidian command-design guidance.
       checkCallback: (checking: boolean) => {
