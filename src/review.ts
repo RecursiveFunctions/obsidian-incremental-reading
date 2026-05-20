@@ -178,6 +178,12 @@ export class ReviewModal extends Modal {
     private settings: IrSettings,
     private store: IrStore,
     private queue: ReviewSlot[],
+    /**
+     * Fired after any state change (grade, advance, postpone, dismiss,
+     * child created) and on close. Lets the host plugin refresh the queue
+     * load indicator without this module knowing about it.
+     */
+    private onChange?: () => void,
   ) {
     super(app);
   }
@@ -260,9 +266,12 @@ export class ReviewModal extends Modal {
     // Materialize per-element state files once the session is done; an append
     // is enough for correctness (the queue folds the log), this just keeps
     // .ir/state/ in sync for the rest of the plugin.
-    void this.store.reconcile().catch((e) => {
-      console.error("Incremental Reading: reconcile after review failed", e);
-    });
+    void this.store
+      .reconcile()
+      .catch((e) => {
+        console.error("Incremental Reading: reconcile after review failed", e);
+      })
+      .finally(() => this.onChange?.());
   }
 
   private get current(): ReviewSlot | undefined {

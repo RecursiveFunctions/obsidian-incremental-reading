@@ -165,3 +165,32 @@
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+
+/* Status bar queue-load indicator (UI commitment #4). Sits in Obsidian's
+ * native status bar element, so colors come from theme variables and the
+ * font size already matches the rest of the bar. The .has-due class is set
+ * by status-bar.ts whenever the `due` count is > 0 so the leading number
+ * gets the accent color; the rest of the row stays muted. */
+.ir-status-bar {
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-status-bar-due {
+  color: var(--text-muted);
+}
+
+.ir-status-bar.has-due .ir-status-bar-due {
+  color: var(--text-accent);
+  font-weight: 600;
+}
+
+.ir-status-bar-sep {
+  color: var(--text-faint);
+  margin: 0 0.15em;
+}
+
+.ir-status-bar-later,
+.ir-status-bar-inflow {
+  color: var(--text-muted);
+}

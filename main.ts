@@ -24,6 +24,11 @@ import { ReviewModal, dueQueue } from "./src/review";
 import { PriorityModal } from "./src/priority-modal";
 import { IrStore, META } from "./src/ir/store";
 import {
+  computeLoad,
+  disposeStatusBar,
+  renderStatusBar,
+} from "./src/status-bar";
+import {
   ObsidianVaultFs,
   type ObsidianDataAdapter,
 } from "./src/ir/obsidian-vault-fs";
@@ -51,10 +56,31 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private store?: IrStore;
 
+  /** Status bar queue-load indicator (UI commitment #4). */
+  private statusBarEl?: HTMLElement;
+
   async onload() {
     await this.loadSettings();
     await this.runMigrationIfOwed();
     this.addSettingTab(new IrSettingTab(this.app, this));
+
+    // Glanceable queue-load indicator. Built before any other UI so it shows
+    // up immediately, and refreshed once the store is ready below.
+    this.statusBarEl = this.addStatusBarItem();
+    renderStatusBar(
+      this.statusBarEl,
+      { due: 0, later: 0, inflow7d: 0 },
+      () => void this.startReview(),
+    );
+    void this.refreshStatusBar();
+
+    // Background tick: refreshes the "+N/7d" rolling window so it does not
+    // drift when nothing in the plugin is triggering a redraw. Cheap (reads
+    // a folded in-memory state). Cleaned up automatically on unload via
+    // registerInterval.
+    this.registerInterval(
+      window.setInterval(() => void this.refreshStatusBar(), 60_000),
+    );
 
     this.addRibbonIcon("book-open", "Mark note as IR topic", () => {
       void this.markActiveFileAsTopic();
@@ -281,6 +307,32 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   onunload() {
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
+    if (this.statusBarEl) {
+      disposeStatusBar(this.statusBarEl);
+      this.statusBarEl = undefined;
+    }
+  }
+
+  /**
+   * Re-render the status bar from the current store state. Safe to call
+   * before the store is ready (it leaves a zero-state placeholder); safe to
+   * call repeatedly (the render is idempotent).
+   */
+  private async refreshStatusBar(): Promise<void> {
+    if (!this.statusBarEl) return;
+    if (!this.store) return;
+    try {
+      const state = await this.store.load();
+      const events = await this.store.loadEvents();
+      const load = computeLoad(state.elements.values(), events, Date.now());
+      renderStatusBar(
+        this.statusBarEl,
+        load,
+        () => void this.startReview(),
+      );
+    } catch (e) {
+      console.error("Incremental Reading: status bar refresh failed", e);
+    }
   }
 
   private async extractSelection(editor: Editor, source: TFile) {
@@ -367,6 +419,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.settings,
       this.store,
       queue,
+      () => void this.refreshStatusBar(),
     ).open();
   }
 
@@ -481,6 +534,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         `${result.postponedCount === 1 ? "" : "s"} to tomorrow ` +
         `(${result.dueToday.length} kept due today).`,
     );
+    void this.refreshStatusBar();
   }
 
   /**
@@ -598,6 +652,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     new Notice(
       `${dismiss ? "Dismissed" : "Restored"} "${file.basename}".`,
     );
+    void this.refreshStatusBar();
   }
 
   private async openResult(result: IrNoteResult, verb: string) {
@@ -655,6 +710,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         await this.store.appendEvent(ev);
       }
       await this.store.reconcile();
+      void this.refreshStatusBar();
     } catch (e) {
       console.error("Incremental Reading: recording element failed", e);
       new Notice(
