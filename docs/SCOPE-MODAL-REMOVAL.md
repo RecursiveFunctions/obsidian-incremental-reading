@@ -206,6 +206,6 @@ Bump version. Build. Tag. `gh release create 0.0.5 main.js manifest.json
 styles.css --title "0.0.5 — Modal removal, single review surface" ...`.
 BRAT will pick it up. (Same dance as 0.0.3 and 0.0.4.)
 
-`package.json`'s `version` script references a `version-bump.mjs` that
-does not exist; bump the three files manually as before, or fix the
-script in a separate commit.
+Run `npm version patch` before tagging a release (or bump `manifest.json`,
+`package.json`, and `versions.json` in lockstep); `version-bump.mjs` keeps
+BRAT-facing metadata aligned with `package.json`.

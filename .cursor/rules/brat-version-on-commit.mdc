@@ -1,0 +1,18 @@
+---
+description: Bump manifest/versions for BRAT whenever committing plugin changes
+alwaysApply: true
+---
+
+# BRAT version on every commit
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) decides whether to update from GitHub using **`manifest.json` `version`**. If you commit code without bumping that string, beta users stay on the old build.
+
+Whenever you **create a git commit** in this repo that changes shipped plugin files (`src/`, `main.ts`, `styles.css`, `manifest.json`, etc.), **bump the patch version first** and keep these three in lockstep:
+
+1. **`manifest.json`** — `"version"` (what BRAT compares)
+2. **`package.json`** — `"version"` (npm / tooling)
+3. **`versions.json`** — add a key for the new version with value = current `"minAppVersion"` from `manifest.json`
+
+Preferred: run **`npm version patch`** (updates `package.json`, runs `version-bump.mjs` via the `version` script to sync `manifest.json` + `versions.json`, then stages them). If you must bump by hand, mirror exactly what that script does.
+
+Do **not** skip the version bump on “small” commits—BRAT users only get updates when the version string changes.

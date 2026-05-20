@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8] — 2026-05-20
+
+### Added
+
+- **`version-bump.mjs`:** `npm version patch` syncs `manifest.json` and `versions.json` with `package.json` for BRAT installs.
+- **Cursor rule** `.cursor/rules/brat-version-on-commit.mdc`: agents bump the plugin version whenever they commit shipped plugin changes.
+
+### Fixed
+
+- **Mobile IR review dock:** Extra bottom padding on the review control bar so buttons sit above Obsidian's floating mobile navigation instead of underneath it.
+
+### Changed
+
+- **IR review reading pane:** Topics and extracts open in the body editor by default (no required **Edit** click). **Preview** switches to rendered markdown; **Edit** returns to the editor. Cloze review cards are unchanged (still start rendered until you choose **Edit**).
+- **Docs:** README BRAT blurb points at `manifest.json` for the current version string; modal-removal doc references the version script again.
+
 ## [0.0.6] — 2026-05-20
 
 ### Fixed
@@ -61,7 +77,8 @@ First BRAT-installable pre-release. Bundles the v0.1 MVP (topic mark, extract, c
 - Frontmatter/FSRS serialization layer (`src/fsrs.ts`, `src/ir-note.ts`, `src/types.ts`), the shared foundation later IR features build on.
 - Initial repository scaffold: Obsidian plugin skeleton, TypeScript + esbuild build pipeline, `ts-fsrs` dependency for scheduling, MIT license, CI build workflow, issue templates.
 
-[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.6...HEAD
+[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.8...HEAD
+[0.0.8]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.7...0.0.8
 [0.0.6]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.5...0.0.6
 [0.0.5]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.4...0.0.5
 [0.0.2]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases/tag/0.0.2

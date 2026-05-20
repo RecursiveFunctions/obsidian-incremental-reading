@@ -95,6 +95,16 @@
   background: var(--background-primary);
 }
 
+/* Obsidian mobile draws a floating bottom nav above page content. Safe-area
+ * only covers the OS gesture bar, so without extra inset the dock sits under
+ * the app chrome and taps miss IR controls. */
+.ir-review--mobile .ir-review-dock {
+  padding-bottom: max(
+    0.75em,
+    calc(env(safe-area-inset-bottom, 0px) + 5.25rem)
+  );
+}
+
 .ir-review-dock .ir-review-controls {
   margin-bottom: 0;
 }

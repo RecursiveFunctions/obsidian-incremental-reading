@@ -336,7 +336,11 @@ export class IrReviewView extends ItemView {
     }
     this.currentRaw = this.rawOnDisk;
     this.loadedSlotId = slot.id;
-    this.editing = false;
+    // Reading topics/extracts: start in the editor so extract, cloze, and
+    // edits work without an extra "Edit" click (rendered markdown selection
+    // is fragile for formatted text).
+    this.editing =
+      this.isReading(slot) && !!slot.file && !this.bodyMissing;
   }
 
   /**
@@ -581,7 +585,13 @@ export class IrReviewView extends ItemView {
 
   private renderEditToggle(parent: HTMLElement) {
     if (!this.canEdit()) return;
-    const label = this.editing ? "Done editing" : "Edit";
+    const slot = this.current;
+    const reading = !!(slot && this.isReading(slot));
+    const label = this.editing
+      ? reading
+        ? "Preview"
+        : "Done editing"
+      : "Edit";
     parent
       .createEl("button", { text: label })
       .addEventListener("click", () => {
