@@ -38,6 +38,7 @@ import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 import { redistribute, type MercyEntry } from "./src/ir/mercy";
+import { nextClozeNumber, wrapCloze } from "./src/cloze";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -283,6 +284,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async extractSelection(editor: Editor, source: TFile) {
+    if (!(await this.ensureIrSource(source))) return;
     const result = await createExtract(
       this.app,
       source,
@@ -293,6 +295,11 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async clozeSelection(editor: Editor, source: TFile) {
+    if (!(await this.ensureIrSource(source))) return;
+    if (getIrType(this.app, source) === "item") {
+      this.addClozeInPlace(editor, source);
+      return;
+    }
     const result = await createCloze(
       this.app,
       source,
@@ -300,6 +307,47 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.settings,
     );
     await this.openResult(result, "Cloze item created:");
+  }
+
+  /**
+   * Splice another `{{cN::...}}` into the *current* item note instead of
+   * creating a child. Items are leaves in the IR tree, so each additional
+   * cloze must reuse the same note; Anki's multi-cloze format ({{c1::}},
+   * {{c2::}}, ...) means N is the next unused group number and Anki will
+   * generate one card per N on import. Inside the plugin's own review the
+   * extra cloze just expands the hidden span on the same card, which is
+   * usually what the user wants when they're elaborating an existing item.
+   */
+  private addClozeInPlace(editor: Editor, source: TFile): void {
+    const answer = editor.getSelection().trim();
+    if (!answer) {
+      new Notice("Incremental Reading: nothing selected.");
+      return;
+    }
+    const n = nextClozeNumber(editor.getValue());
+    editor.replaceSelection(wrapCloze(answer, n));
+    new Notice(`Added cloze c${n} to "${source.basename}".`);
+  }
+
+  /**
+   * Resolve "is this note ready to be a cloze/extract parent?" Returns true
+   * if the source is already a topic/extract/item; if it's a plain note and
+   * the auto-mark setting is on, marks it as a topic (recording in the
+   * store) and returns true. Returns false (with a Notice) only when the
+   * user has opted out and the source still isn't an IR element.
+   */
+  private async ensureIrSource(source: TFile): Promise<boolean> {
+    if (getIrType(this.app, source)) return true;
+    if (!this.settings.autoMarkSourceAsTopic) {
+      new Notice(
+        `"${source.basename}" is not an IR topic. ` +
+          "Mark it as a topic first, or enable auto-mark in settings.",
+      );
+      return false;
+    }
+    const marked = await markAsTopic(this.app, source, this.settings);
+    if (marked) await this.recordElement(source);
+    return true;
   }
 
   private async startReview() {
