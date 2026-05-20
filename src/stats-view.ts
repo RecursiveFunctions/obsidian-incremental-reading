@@ -1,31 +1,54 @@
-/**
- * Stats modal: read-only window onto `computeStats`. Pulls every event
- * and the folded state from the store, projects `graded` events down to
- * the `GradeEvent` shape the pure core wants, and renders the five
- * numbers as a small table. Window defaults to the last 30 days so
- * "retention" is the recent figure, not lifetime.
- */
+import { ItemView, WorkspaceLeaf } from "obsidian";
 
-import { App, Modal } from "obsidian";
-import type { IrStore } from "./ir/store";
+import { IrStore } from "./ir/store";
 import { computeStats, type GradeEvent } from "./ir/stats";
+
+export const IR_STATS_VIEW_TYPE = "ir-stats-view";
 
 const WINDOW_DAYS = 30;
 const DAY_MS = 86400000;
 
-export class StatsModal extends Modal {
-  constructor(
-    app: App,
-    private store: IrStore,
-  ) {
-    super(app);
+export class IrStatsView extends ItemView {
+  private store: IrStore;
+
+  constructor(leaf: WorkspaceLeaf, store: IrStore) {
+    super(leaf);
+    this.store = store;
+  }
+
+  getViewType(): string {
+    return IR_STATS_VIEW_TYPE;
+  }
+
+  getDisplayText(): string {
+    return "IR stats";
+  }
+
+  getIcon(): string {
+    return "bar-chart-3";
   }
 
   async onOpen(): Promise<void> {
-    const { contentEl, titleEl } = this;
-    titleEl.setText("IR stats");
-    contentEl.empty();
-    contentEl.createEl("p", { text: "Loading..." });
+    await this.render();
+  }
+
+  async onClose(): Promise<void> {}
+
+  private async render(): Promise<void> {
+    const container = this.contentEl;
+    container.empty();
+    container.addClass("ir-stats-view");
+
+    const header = container.createDiv({ cls: "ir-tree-header" });
+    header.createEl("h4", { text: "IR stats" });
+    const refresh = header.createEl("button", {
+      text: "Refresh",
+      cls: "ir-tree-refresh",
+    });
+    refresh.onclick = () => void this.render();
+
+    const body = container.createDiv({ cls: "ir-stats-body" });
+    body.createEl("p", { text: "Loading..." });
 
     const events = await this.store.loadEvents();
     const state = await this.store.load();
@@ -44,7 +67,7 @@ export class StatsModal extends Modal {
       now - WINDOW_DAYS * DAY_MS,
     );
 
-    contentEl.empty();
+    body.empty();
     const rows: Array<[string, string]> = [
       ["Total elements", String(stats.total)],
       ["Queue size", String(stats.queueSize)],
@@ -57,7 +80,7 @@ export class StatsModal extends Modal {
           : `${(stats.retention * 100).toFixed(1)}%`,
       ],
     ];
-    const table = contentEl.createEl("table", { cls: "ir-stats-table" });
+    const table = body.createEl("table", { cls: "ir-stats-table" });
     for (const [label, value] of rows) {
       const tr = table.createEl("tr");
       tr.createEl("td", { text: label, cls: "ir-stats-label" });

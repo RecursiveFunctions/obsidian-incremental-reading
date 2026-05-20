@@ -10,6 +10,7 @@ import {
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
 import { IR_TREE_VIEW_TYPE, IrTreeView } from "./src/tree-view";
 import { IR_SESSION_VIEW_TYPE, IrSessionView } from "./src/session-view";
+import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
 import {
   IrNoteResult,
   createCloze,
@@ -35,7 +36,6 @@ import {
 } from "./src/ir/obsidian-vault-fs";
 import { migrateNotes, type FrontmatterNote } from "./src/ir/migrate";
 import { toAnkiTsv } from "./src/ir/anki-export";
-import { StatsModal } from "./src/stats-modal";
 import { planSourceDeletion } from "./src/ir/deletion";
 import { nextLamport } from "./src/ir/log";
 import { newEventId } from "./src/ir/ids";
@@ -129,6 +129,18 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     );
 
+    this.registerView(
+      IR_STATS_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) => {
+        if (!this.store) {
+          throw new Error(
+            "Incremental Reading: store not ready for stats view.",
+          );
+        }
+        return new IrStatsView(leaf, this.store);
+      },
+    );
+
     this.addRibbonIcon("list-tree", "Open IR element tree", () => {
       void this.openTreeView();
     });
@@ -188,13 +200,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       name: "Show IR stats",
       icon: "bar-chart-3",
       hotkeys: [{ modifiers: ["Alt"], key: "s" }],
-      callback: () => {
-        if (!this.store) {
-          new Notice("Incremental Reading: store is not ready.");
-          return;
-        }
-        new StatsModal(this.app, this.store).open();
-      },
+      callback: () => void this.openStatsView(),
     });
 
     this.addCommand({
@@ -343,6 +349,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   onunload() {
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
     if (this.statusBarEl) {
       disposeStatusBar(this.statusBarEl);
       this.statusBarEl = undefined;
@@ -503,6 +510,28 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     await leaf.setViewState({ type: IR_SESSION_VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  private async openStatsView(): Promise<void> {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const existing = this.app.workspace.getLeavesOfType(IR_STATS_VIEW_TYPE);
+    if (existing.length > 0) {
+      const leaf = existing[0];
+      this.app.workspace.revealLeaf(leaf);
+      const view = leaf.view;
+      if (view instanceof IrStatsView) void view.onOpen();
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf) {
+      new Notice("Incremental Reading: no place to open the stats view.");
+      return;
+    }
+    await leaf.setViewState({ type: IR_STATS_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
 
