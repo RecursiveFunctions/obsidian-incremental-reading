@@ -1,18 +1,29 @@
 ---
-description: Bump manifest/versions for BRAT whenever committing plugin changes
+description: Version bump + git tag + push for BRAT whenever shipping plugin changes
 alwaysApply: true
 ---
 
-# BRAT version on every commit
+# BRAT releases: version bump, tag, and push
 
-[BRAT](https://github.com/TfTHacker/obsidian42-brat) decides whether to update from GitHub using **`manifest.json` `version`**. If you commit code without bumping that string, beta users stay on the old build.
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) needs a **new semver on GitHub** *and* (for this project / typical beta flows) a **git tag** that matches that release so installers resolve the right ref. Pushing `main` alone is not enough if BRAT or the release pipeline keys off tags.
 
-Whenever you **create a git commit** in this repo that changes shipped plugin files (`src/`, `main.ts`, `styles.css`, `manifest.json`, etc.), **bump the patch version first** and keep these three in lockstep:
+## On every ship (commit that changes shipped plugin code)
 
-1. **`manifest.json`** — `"version"` (what BRAT compares)
-2. **`package.json`** — `"version"` (npm / tooling)
-3. **`versions.json`** — add a key for the new version with value = current `"minAppVersion"` from `manifest.json`
+1. **Bump** — keep these in lockstep (same patch/minor/major):
+   - **`manifest.json`** → `"version"`
+   - **`package.json`** → `"version"`
+   - **`versions.json`** → new key for that version → `manifest.json` `"minAppVersion"`
 
-Preferred: run **`npm version patch`** (updates `package.json`, runs `version-bump.mjs` via the `version` script to sync `manifest.json` + `versions.json`, then stages them). If you must bump by hand, mirror exactly what that script does.
+   Preferred: **`npm version patch`** (or `minor` / `major` as appropriate), which runs `version-bump.mjs` from the `version` script. Bump by hand only if you mirror that script exactly.
 
-Do **not** skip the version bump on “small” commits—BRAT users only get updates when the version string changes.
+2. **Commit** the code + metadata together (one coherent release commit is fine).
+
+3. **Tag** — after the commit is on `main`, create a tag whose **name equals** `manifest.json` `"version"` exactly (e.g. `0.0.8`, no `v` prefix unless the repo already standardizes on `v`—here use plain semver to match `manifest.json`).
+
+4. **Push** — `git push origin main` **and** `git push origin <tag>` (or `git push origin main --tags` when pushing multiple tags). BRAT users do not see the update until the tag exists on the remote.
+
+Do **not** skip the version bump on “small” commits when those commits change what users install. Do **not** consider the release done until **push + tag push** succeed.
+
+## If the user says they will tag manually
+
+Still bump and commit; remind them the tag name must match `manifest.json` and must be pushed. Do not assume `main` alone updates BRAT.
