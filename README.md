@@ -1,26 +1,28 @@
 # Incremental Reading for Obsidian
 
-The full SuperMemo element tree in Obsidian: read sources, extract passages into a real source-to-extract-to-item hierarchy, and review it on a queue that interleaves reading and recall. No network. No account. Nothing gated.
+The full SuperMemo element tree in Obsidian: read sources, extract passages into a real source-to-extract-to-item hierarchy, and review it on a queue that interleaves reading and recall.
 
-**Status:** Pre-release alpha. Not yet tested in a real vault; treat everything as unstable until the first tagged release. The plugin is being rebuilt against the architecture in [`docs/DESIGN.md`](docs/DESIGN.md). This niche is briefly open and the work is moving fast.
+**Status:** Pre-release alpha. I'm testing it on my own vault. If you want to give it a try, treat everything as unstable until the first tagged release. The plugin is being rebuilt against the architecture in [`docs/DESIGN.md`](docs/DESIGN.md). This niche is briefly open and the work is moving fast.
 
 ## What this is
 
 Incremental reading (IR) is a learning method from Piotr Wozniak's [SuperMemo](https://supermemo.guru). You read many sources in parallel, pull the important passages into progressively smaller pieces, and review those pieces on a spaced schedule.
 
-Two things keep IR out of reach. SuperMemo is Windows-only and stores your knowledge in a proprietary format. Obsidian is where many people already keep their notes, but its spaced-repetition plugins are flashcard tools: they do not model IR's element tree, its extracts, or its priority queue. This plugin is the missing piece, the IR workflow itself, native to Obsidian.
+Two things keep IR out of reach. SuperMemo is Windows-only and stores your knowledge in a proprietary format. Obsidian is where many people already keep their notes, but its spaced-repetition plugins are flashcard tools: they do not model IR's element tree, its extracts, or its priority queue. This plugin aims to bridge that gap by bringing the IR workflow itself to Obsidian.
 
-## What makes this different
-
-The scheduler is not the pitch. FSRS, plain files, an open license, and cloze deletions are table stakes now; other tools have them. Three things are not available anywhere else in Obsidian:
+## What makes this different from other plugins
 
 1. **A faithful SuperMemo element tree.** Source to extract to extract to item, with a dedicated hierarchy view and a graph that stays clean instead of drowning in review scaffolding. No other Obsidian plugin models this; the only tool that does is Logseq-only and stalled.
 2. **Principled postpone.** When the queue overloads it redistributes by priority and never tells the scheduler a card was reviewed when it was not. Overload handling that does not corrupt your scheduling data.
 3. **A multi-scheduler divergence picker.** Default FSRS, FSRS optimized on your own review history, and classic SM-2 run in parallel; when they disagree enough about an interval you can see why and choose. Opt-in, off by default, out of the way otherwise.
 
-And a fourth, which is the reason to trust the other three:
 
-4. **A privacy property, not a privacy policy.** See below.
+4. **Developed with mobile in mind**
+One thing I lamented about supermemo was the inability to use it on the go without some hacky workarounds. I intend to make this plugin feel good to use on both mobile and the desktop version. 
+
+
+6. **A privacy property, not a privacy policy.** See below.
+
 
 ## Security and trust
 
@@ -28,17 +30,17 @@ An incremental-reading plugin reads your entire knowledge base. That is exactly 
 
 This plugin takes the opposite stance and makes it checkable rather than promised:
 
-- Zero network calls. No telemetry, no license server, no account, enforced by the absence of any networking code in a `main.js` you can grep yourself.
+- No telemetry.
 - A one-command reproducible build, so the shipped bundle provably equals the public source.
 - A minimal, fully pinned, lockfile-committed dependency tree.
 
-Your data never leaves your vault because the code physically cannot send it. That is the difference between a privacy policy and a privacy property.
+Your data never leaves your vault because the code physically cannot send it. 
 
 ## How it works
 
 The plugin has two layers.
 
-The workflow layer is the element tree, extracts, cloze deletions, the priority queue, the interleaved review-and-reading session, postpone, and dismissals. SuperMemo documents these models publicly at [supermemo.guru](https://supermemo.guru), so no reverse engineering is involved.
+The workflow layer is the element tree, extracts, cloze deletions, the priority queue, the interleaved review-and-reading session, postpone, and dismissals. SuperMemo documents these models publicly at [supermemo.guru](https://supermemo.guru).
 
 The scheduling layer is [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler), used through the [`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs) package. FSRS is an open-source scheduler in the same Difficulty/Stability/Retrievability family as SuperMemo's SM-17 and SM-18, with parameters trained on real review data.
 
