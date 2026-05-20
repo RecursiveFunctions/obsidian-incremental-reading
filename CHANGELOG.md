@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Review "session not prepared":** `startReview` cleared the pending queue in a `finally` after `await setViewState`, but the workspace can construct the `ItemView` after that await settles, so the factory sometimes saw `null` and threw. Session payload now lives on the plugin instance and is consumed only inside the `registerView` factory; opening failures clear it in `catch`. If a review leaf is restored from an older workspace with no payload, the view opens with an empty queue and explains how to start again instead of throwing.
+
 ## [0.0.5] — 2026-05-20
 
 ### Added

@@ -52,16 +52,22 @@ import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 import { redistribute, type MercyEntry } from "./src/ir/mercy";
 import { nextClozeNumber, wrapCloze } from "./src/cloze";
 
-/**
- * Ephemeral review session for {@link IrReviewView}: set in
- * {@link IncrementalReadingPlugin.startReview} immediately before opening
- * the leaf; read once by the `registerView` factory, then cleared.
- */
-let pendingIrReviewQueue: ReviewSlot[] | null = null;
-let pendingIrReviewElements: Map<ElementId, IrElement> | null = null;
-
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
+
+  /**
+   * Ephemeral review session: set in {@link startReview} before
+   * `setViewState`, consumed exactly once when the `registerView` factory
+   * constructs {@link IrReviewView}. Never clear in a `finally` after
+   * `await setViewState` — the factory can run later than the promise
+   * resolution, which left globals null and threw "review session not
+   * prepared". A missing session (e.g. workspace restored an IR review leaf
+   * from an older build) yields an empty queue; the view shows a recovery UI.
+   */
+  private irReviewSession: {
+    queue: ReviewSlot[];
+    elementsById: Map<ElementId, IrElement>;
+  } | null = null;
 
   /**
    * The store, constructed once the layout exists (after a migration, or
@@ -163,13 +169,11 @@ export default class IncrementalReadingPlugin extends Plugin {
             "Incremental Reading: store not ready for review view.",
           );
         }
-        const queue = pendingIrReviewQueue;
-        const elementsById = pendingIrReviewElements;
-        if (!queue || !elementsById) {
-          throw new Error(
-            "Incremental Reading: review session not prepared.",
-          );
-        }
+        const session = this.irReviewSession;
+        this.irReviewSession = null;
+        const queue = session?.queue ?? [];
+        const elementsById =
+          session?.elementsById ?? new Map<ElementId, IrElement>();
         return new IrReviewView(
           leaf,
           this,
@@ -424,6 +428,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   onunload() {
+    this.irReviewSession = null;
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
@@ -535,19 +540,22 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
-    pendingIrReviewQueue = queue;
-    pendingIrReviewElements = state.elements;
+    this.irReviewSession = { queue, elementsById: state.elements };
     try {
       const leaf = this.app.workspace.getRightLeaf(false);
       if (!leaf) {
         new Notice("Incremental Reading: no place to open the review view.");
+        this.irReviewSession = null;
         return;
       }
       await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
-    } finally {
-      pendingIrReviewQueue = null;
-      pendingIrReviewElements = null;
+    } catch (e) {
+      this.irReviewSession = null;
+      console.error("Incremental Reading: opening review view failed", e);
+      new Notice(
+        "Incremental Reading: could not open the review view. See the developer console.",
+      );
     }
   }
 

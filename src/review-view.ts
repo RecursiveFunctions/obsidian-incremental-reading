@@ -394,9 +394,13 @@ export class IrReviewView extends ItemView {
     if (!slot) {
       contentEl.removeClass("ir-review-has-context");
       const scroll = contentEl.createDiv({ cls: "ir-review-scroll" });
-      scroll.createEl("h3", { text: "Nothing due" });
+      scroll.createEl("h3", { text: "No active review session" });
       scroll.createEl("p", {
-        text: "No IR notes are due for review right now.",
+        text:
+          "This pane has no queue loaded. That usually means it was restored " +
+          "from a saved workspace (for example after a plugin update) while " +
+          "the review session data had already been cleared. Close this tab, " +
+          "then start review from the IR queue in the status bar or with Alt+R.",
       });
       scroll
         .createEl("button", { text: "Close", cls: "mod-cta" })
