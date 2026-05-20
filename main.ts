@@ -66,6 +66,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.addCommand({
       id: "start-review",
       name: "Start IR review",
+      icon: "play-circle",
       callback: () => void this.startReview(),
     });
 
@@ -88,12 +89,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.addCommand({
       id: "open-tree-view",
       name: "Open IR element tree",
+      icon: "list-tree",
       callback: () => void this.openTreeView(),
     });
 
     this.addCommand({
       id: "set-ir-priority",
       name: "Set IR priority of current element",
+      icon: "sliders-horizontal",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md" || !getIrType(this.app, file)) {
@@ -118,12 +121,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.addCommand({
       id: "export-anki-tsv",
       name: "Export IR items to Anki TSV",
+      icon: "download",
       callback: () => void this.exportAnkiTsv(),
     });
 
     this.addCommand({
       id: "show-stats",
       name: "Show IR stats",
+      icon: "bar-chart-3",
       callback: () => {
         if (!this.store) {
           new Notice("Incremental Reading: store is not ready.");
@@ -136,12 +141,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.addCommand({
       id: "mercy-postpone",
       name: "Postpone overdue elements (mercy)",
+      icon: "clock",
       callback: () => void this.runMercy(),
     });
 
     this.addCommand({
       id: "toggle-dismiss",
       name: "Dismiss / restore current IR element",
+      icon: "ban",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md" || !getIrType(this.app, file)) {
@@ -155,6 +162,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.addCommand({
       id: "mark-as-ir-topic",
       name: "Mark current note as IR topic",
+      icon: "book-open",
       // checkCallback so the command only appears when there's a markdown
       // note to act on, per Obsidian command-design guidance.
       checkCallback: (checking: boolean) => {
@@ -170,6 +178,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.addCommand({
       id: "extract-selection",
       name: "Extract selection to IR child note",
+      icon: "scissors",
       hotkeys: [{ modifiers: ["Alt"], key: "x" }],
       editorCheckCallback: (checking, editor, view) => {
         if (!view.file || !editor.getSelection().trim()) return false;
@@ -181,6 +190,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.addCommand({
       id: "cloze-selection",
       name: "Cloze selection into an IR item",
+      icon: "brackets",
       hotkeys: [{ modifiers: ["Alt"], key: "z" }],
       editorCheckCallback: (checking, editor, view) => {
         if (!view.file || !editor.getSelection().trim()) return false;
