@@ -23,7 +23,7 @@ import {
   setPriority,
 } from "./src/ir-note";
 import { ReviewModal, dueQueue } from "./src/review";
-import { PriorityModal } from "./src/priority-modal";
+import { openPriorityPrompt } from "./src/priority-prompt";
 import { IrStore, META } from "./src/ir/store";
 import {
   computeLoad,
@@ -177,11 +177,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             file,
             this.settings.defaultPriority,
           );
-          new PriorityModal(this.app, cur, (p) => {
-            void setPriority(this.app, file, p).then(() =>
-              new Notice(`Priority of "${file.basename}" set to ${p}.`),
-            );
-          }).open();
+          this.promptPriority(file, cur);
         }
         return true;
       },
@@ -328,11 +324,7 @@ export default class IncrementalReadingPlugin extends Plugin {
                 file,
                 this.settings.defaultPriority,
               );
-              new PriorityModal(this.app, cur, (p) => {
-                void setPriority(this.app, file, p).then(() =>
-                  new Notice(`Priority of "${file.basename}" set to ${p}.`),
-                );
-              }).open();
+              this.promptPriority(file, cur);
             }),
         );
         const dismissed = isDismissed(this.app, file);
@@ -511,6 +503,21 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     await leaf.setViewState({ type: IR_SESSION_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
+  }
+
+  private promptPriority(file: TFile, current: number): void {
+    if (!this.statusBarEl) {
+      new Notice("Incremental Reading: status bar is not available.");
+      return;
+    }
+    openPriorityPrompt(this.statusBarEl, current, (p) => {
+      void setPriority(this.app, file, p).then(() => {
+        new Notice(`Priority of "${file.basename}" set to ${p}.`);
+        void this.refreshStatusBar();
+      });
+    }, () => {
+      void this.refreshStatusBar();
+    });
   }
 
   private async openStatsView(): Promise<void> {
