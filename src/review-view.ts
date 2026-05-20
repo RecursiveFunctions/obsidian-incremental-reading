@@ -335,6 +335,39 @@ export class IrReviewView extends ItemView {
   }
 
   /**
+   * Parent note body or stored parent text for the side column (UI
+   * commitment #2 — source context in the same review surface).
+   */
+  private async loadSourceContext(
+    slot: ReviewSlot,
+  ): Promise<{ title: string; raw: string; path: string } | null> {
+    const pid = slot.element.parentId;
+    if (!pid) return null;
+    const parent = this.elementsById.get(pid);
+    if (!parent) return null;
+    if (parent.notePath) {
+      const af = this.app.vault.getAbstractFileByPath(parent.notePath);
+      if (af instanceof TFile) {
+        const raw = stripFrontmatter(await this.app.vault.cachedRead(af));
+        return {
+          title: labelFor(parent),
+          raw,
+          path: parent.notePath,
+        };
+      }
+    }
+    const t = parent.text.trim();
+    if (t.length > 0) {
+      return {
+        title: labelFor(parent),
+        raw: t,
+        path: slot.file?.path ?? parent.notePath ?? "",
+      };
+    }
+    return null;
+  }
+
+  /**
    * Persist any pending edit to disk before advancing or creating a child.
    * Idempotent: re-flushing is a no-op when the buffer matches disk.
    */
@@ -359,6 +392,7 @@ export class IrReviewView extends ItemView {
 
     const slot = this.current;
     if (!slot) {
+      contentEl.removeClass("ir-review-has-context");
       const scroll = contentEl.createDiv({ cls: "ir-review-scroll" });
       scroll.createEl("h3", { text: "Nothing due" });
       scroll.createEl("p", {
@@ -372,7 +406,32 @@ export class IrReviewView extends ItemView {
 
     await this.ensureLoaded(slot);
 
-    const scroll = contentEl.createDiv({ cls: "ir-review-scroll" });
+    const sourceCtx = await this.loadSourceContext(slot);
+    if (sourceCtx) contentEl.addClass("ir-review-has-context");
+    else contentEl.removeClass("ir-review-has-context");
+
+    const columns = contentEl.createDiv({ cls: "ir-review-columns" });
+    if (sourceCtx) {
+      const ctxCol = columns.createDiv({ cls: "ir-review-context-col" });
+      ctxCol.createEl("div", {
+        cls: "ir-review-context-header",
+        text: `Source · ${sourceCtx.title}`,
+      });
+      const ctxScroll = ctxCol.createDiv({ cls: "ir-review-context-scroll" });
+      const ctxBody = ctxScroll.createDiv({
+        cls: "ir-review-context-markdown ir-review-body",
+      });
+      await MarkdownRenderer.render(
+        this.app,
+        sourceCtx.raw,
+        ctxBody,
+        sourceCtx.path,
+        this,
+      );
+    }
+
+    const mainCol = columns.createDiv({ cls: "ir-review-main-col" });
+    const scroll = mainCol.createDiv({ cls: "ir-review-scroll" });
 
     const reading = this.isReading(slot);
     const label = slot.file?.basename ?? labelFor(slot.element);
@@ -470,7 +529,9 @@ export class IrReviewView extends ItemView {
                 `<mark class="ir-cloze-answer">${ans}</mark>`,
             )
           : raw;
-    const body = parent.createEl("div", { cls: "ir-review-body" });
+    const body = parent.createEl("div", {
+      cls: "ir-review-body ir-review-main-body",
+    });
     const slot = this.current;
     await MarkdownRenderer.render(
       this.app,
@@ -542,7 +603,7 @@ export class IrReviewView extends ItemView {
     if (!sel || sel.isCollapsed) {
       return { ok: false, reason: "Nothing selected." };
     }
-    const bodyEl = this.contentEl.querySelector(".ir-review-body");
+    const bodyEl = this.contentEl.querySelector(".ir-review-main-body");
     if (!bodyEl || !sel.anchorNode || !bodyEl.contains(sel.anchorNode)) {
       return { ok: false, reason: "Selection must be inside the card body." };
     }

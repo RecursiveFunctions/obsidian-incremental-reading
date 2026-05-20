@@ -74,6 +74,14 @@ Recommendation: ship **B2** first as the universal answer, then add **B1**
 incrementally because in-tree editing is a separate ergonomic win the
 user will want anyway. They are not exclusive.
 
+**Status (2026-05):** B2 (status-bar prompt) and **B1** (click `pNN` in the
+element tree → inline numeric field, Enter/blur commit, Esc cancel) are
+implemented. **Alt+P** opens (or reveals) the IR tree and auto-opens that
+inline editor for the active note when it maps to a store element; otherwise
+the status-bar prompt runs unchanged. The review leaf shows a **source column**
+(parent note body or stored parent text) next to the card under review
+(UI commitment #2 — single surface, no modal).
+
 Steps for B2:
 1. New file `src/priority-prompt.ts` (or extend `status-bar.ts`). Export
    a pure helper that, given current value, validates a candidate number

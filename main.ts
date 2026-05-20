@@ -40,7 +40,11 @@ import { toAnkiTsv } from "./src/ir/anki-export";
 import { planSourceDeletion } from "./src/ir/deletion";
 import { nextLamport } from "./src/ir/log";
 import { newEventId } from "./src/ir/ids";
-import type { IrElement, IrEvent } from "./src/ir/model";
+import {
+  clampPriority,
+  type IrElement,
+  type IrEvent,
+} from "./src/ir/model";
 import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
@@ -122,7 +126,9 @@ export default class IncrementalReadingPlugin extends Plugin {
             "Incremental Reading: store not ready for tree view.",
           );
         }
-        return new IrTreeView(leaf, this.store);
+        return new IrTreeView(leaf, this.store, (elementId, file, priority) =>
+          this.applyIrPriorityChange(elementId, file, priority),
+        );
       },
     );
 
@@ -206,12 +212,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           return false;
         }
         if (!checking) {
-          const cur = getPriority(
-            this.app,
-            file,
-            this.settings.defaultPriority,
-          );
-          this.promptPriority(file, cur);
+          void this.openTreeAndFocusPriorityEditor(file);
         }
         return true;
       },
@@ -520,6 +521,27 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
+   * Alt+P: reveal the IR tree and open the inline `pNN` editor for the active
+   * note when it maps to a store element; otherwise fall back to the
+   * status-bar prompt (SCOPE-MODAL-REMOVAL.md).
+   */
+  private async openTreeAndFocusPriorityEditor(file: TFile): Promise<void> {
+    const current = getPriority(
+      this.app,
+      file,
+      this.settings.defaultPriority,
+    );
+    await this.openTreeView();
+    const leaf = this.app.workspace.getLeavesOfType(IR_TREE_VIEW_TYPE)[0];
+    const view = leaf?.view;
+    if (view instanceof IrTreeView) {
+      const ok = await view.revealPriorityEditorForNotePath(file.path);
+      if (ok) return;
+    }
+    this.promptPriority(file, current);
+  }
+
+  /**
    * Open (or reveal) the session-log view. Refreshes its contents when
    * revealed so the user sees what's there now, not what was there last
    * time the view rendered.
@@ -546,16 +568,63 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
+  /**
+   * Resolve the store element id for a vault note path (queue + tree use the
+   * folded store, not frontmatter alone).
+   */
+  private async resolveElementIdForFile(
+    file: TFile,
+  ): Promise<ElementId | null> {
+    if (!this.store) return null;
+    const state = await this.store.load();
+    for (const el of state.elements.values()) {
+      if (el.notePath === file.path) return el.id;
+    }
+    return null;
+  }
+
+  /** Append `priority-set`, dual-write frontmatter, reconcile `.ir/state`. */
+  private async applyIrPriorityChange(
+    elementId: ElementId,
+    file: TFile | null,
+    priority: number,
+  ): Promise<void> {
+    if (!this.store) return;
+    const p = clampPriority(priority);
+    await this.store.appendEvent({
+      id: newEventId(),
+      ts: Date.now(),
+      lamport: Date.now(),
+      device: await this.store.getDeviceId(),
+      kind: "priority-set",
+      target: elementId,
+      payload: { priority: p },
+    });
+    if (file) await setPriority(this.app, file, p);
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after priority failed", e);
+    });
+    void this.refreshStatusBar();
+  }
+
   private promptPriority(file: TFile, current: number): void {
     if (!this.statusBarEl) {
       new Notice("Incremental Reading: status bar is not available.");
       return;
     }
     openPriorityPrompt(this.statusBarEl, current, (p) => {
-      void setPriority(this.app, file, p).then(() => {
-        new Notice(`Priority of "${file.basename}" set to ${p}.`);
-        void this.refreshStatusBar();
-      });
+      void (async () => {
+        const id = await this.resolveElementIdForFile(file);
+        if (id) {
+          await this.applyIrPriorityChange(id, file, p);
+        } else {
+          await setPriority(this.app, file, p);
+          void this.refreshStatusBar();
+        }
+        new Notice(
+          `Priority of "${file.basename}" set to ${clampPriority(p)}.`,
+        );
+      })();
     }, () => {
       void this.refreshStatusBar();
     });

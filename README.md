@@ -90,7 +90,7 @@ The v0.1 MVP is complete. State has since moved off frontmatter into the structu
 
 ### Now (toward v0.3)
 
-Per the [UI commitments contract](docs/UI-COMMITMENTS.md), the next pass removes the three remaining modals (Stats, Priority, Review) and replaces them with workspace views or inline controls. Scope and per-phase plan in [`docs/SCOPE-MODAL-REMOVAL.md`](docs/SCOPE-MODAL-REMOVAL.md).
+Per the [UI commitments contract](docs/UI-COMMITMENTS.md), the modal-removal pass replaced Stats, Priority, and Review with workspace views / non-modal controls (see [`docs/SCOPE-MODAL-REMOVAL.md`](docs/SCOPE-MODAL-REMOVAL.md)). **Done:** stats leaf, status-bar priority prompt (fallback when a note has no store element), review `ItemView` with a **source column** for parent context (commitment #2), in-tree priority click-to-edit, **Alt+P** opens the tree and focuses that inline editor when the active note maps to an element.
 
 ### Stretch
 

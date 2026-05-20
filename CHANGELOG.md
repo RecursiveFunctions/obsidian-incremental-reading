@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **In-tree priority edit (v0.3 / modal-removal phase B1):** In the IR element tree, click the `pNN` priority badge (or focus it and press Enter/Space) to edit inline. Commits append a `priority-set` store event and dual-write `ir-priority` on the note, same as the review pane. The status-bar *Set IR priority* path (Alt+P / file menu) now also updates the store so the queue cannot drift behind frontmatter-only edits.
+- **Alt+P tree focus:** When the active markdown note is an IR element, **Set IR priority** reveals the element tree and opens the inline `pNN` field for that row; otherwise the status-bar prompt is used.
+- **Review source column (UI commitment #2):** During review, when the current element has a parent, the parent's note body (or stored text) renders in a scrollable column beside the card in the same `ItemView` (no modal).
+
+### Fixed
+
+- **Priority hotkey vs queue:** Changing priority via the status-bar prompt previously wrote only frontmatter while the folded store kept the old value until some other review event ran; queue order now stays consistent.
+
 ## [0.0.2] — 2026-05-19
 
 ### Added
