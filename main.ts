@@ -22,7 +22,8 @@ import {
   setDismissed,
   setPriority,
 } from "./src/ir-note";
-import { ReviewModal, dueQueue } from "./src/review";
+import { dueQueue, type ReviewSlot } from "./src/review";
+import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
 import { openPriorityPrompt } from "./src/priority-prompt";
 import { IrStore, META } from "./src/ir/store";
 import {
@@ -45,6 +46,14 @@ import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 import { redistribute, type MercyEntry } from "./src/ir/mercy";
 import { nextClozeNumber, wrapCloze } from "./src/cloze";
+
+/**
+ * Ephemeral review session for {@link IrReviewView}: set in
+ * {@link IncrementalReadingPlugin.startReview} immediately before opening
+ * the leaf; read once by the `registerView` factory, then cleared.
+ */
+let pendingIrReviewQueue: ReviewSlot[] | null = null;
+let pendingIrReviewElements: Map<ElementId, IrElement> | null = null;
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -138,6 +147,31 @@ export default class IncrementalReadingPlugin extends Plugin {
           );
         }
         return new IrStatsView(leaf, this.store);
+      },
+    );
+
+    this.registerView(IR_REVIEW_VIEW_TYPE, (leaf: WorkspaceLeaf) => {
+        if (!this.store) {
+          throw new Error(
+            "Incremental Reading: store not ready for review view.",
+          );
+        }
+        const queue = pendingIrReviewQueue;
+        const elementsById = pendingIrReviewElements;
+        if (!queue || !elementsById) {
+          throw new Error(
+            "Incremental Reading: review session not prepared.",
+          );
+        }
+        return new IrReviewView(
+          leaf,
+          this,
+          this.settings,
+          this.store,
+          queue,
+          elementsById,
+          () => void this.refreshStatusBar(),
+        );
       },
     );
 
@@ -342,6 +376,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     if (this.statusBarEl) {
       disposeStatusBar(this.statusBarEl);
       this.statusBarEl = undefined;
@@ -448,15 +483,21 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: nothing due for review.");
       return;
     }
-    new ReviewModal(
-      this.app,
-      this,
-      this.settings,
-      this.store,
-      queue,
-      state.elements,
-      () => void this.refreshStatusBar(),
-    ).open();
+    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
+    pendingIrReviewQueue = queue;
+    pendingIrReviewElements = state.elements;
+    try {
+      const leaf = this.app.workspace.getRightLeaf(false);
+      if (!leaf) {
+        new Notice("Incremental Reading: no place to open the review view.");
+        return;
+      }
+      await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
+      this.app.workspace.revealLeaf(leaf);
+    } finally {
+      pendingIrReviewQueue = null;
+      pendingIrReviewElements = null;
+    }
   }
 
   private async openTreeView(): Promise<void> {
