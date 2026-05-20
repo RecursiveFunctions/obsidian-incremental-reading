@@ -9,6 +9,7 @@ import {
 } from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
 import { IR_TREE_VIEW_TYPE, IrTreeView } from "./src/tree-view";
+import { IR_SESSION_VIEW_TYPE, IrSessionView } from "./src/session-view";
 import {
   IrNoteResult,
   createCloze,
@@ -58,6 +59,12 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /** Status bar queue-load indicator (UI commitment #4). */
   private statusBarEl?: HTMLElement;
+
+  /**
+   * Wall-clock at plugin load; the session audit (UI commitment #7) filters
+   * the store event log to events newer than this.
+   */
+  private sessionStartMs = Date.now();
 
   async onload() {
     await this.loadSettings();
@@ -110,6 +117,18 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     );
 
+    this.registerView(
+      IR_SESSION_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) => {
+        if (!this.store) {
+          throw new Error(
+            "Incremental Reading: store not ready for session view.",
+          );
+        }
+        return new IrSessionView(leaf, this.store, this.sessionStartMs);
+      },
+    );
+
     this.addRibbonIcon("list-tree", "Open IR element tree", () => {
       void this.openTreeView();
     });
@@ -120,6 +139,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "list-tree",
       hotkeys: [{ modifiers: ["Alt"], key: "i" }],
       callback: () => void this.openTreeView(),
+    });
+
+    this.addCommand({
+      id: "open-session-log",
+      name: "Open IR session log",
+      icon: "history",
+      hotkeys: [{ modifiers: ["Alt"], key: "l" }],
+      callback: () => void this.openSessionView(),
     });
 
     this.addCommand({
@@ -315,6 +342,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   onunload() {
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
     if (this.statusBarEl) {
       disposeStatusBar(this.statusBarEl);
       this.statusBarEl = undefined;
@@ -448,6 +476,33 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     await leaf.setViewState({ type: IR_TREE_VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * Open (or reveal) the session-log view. Refreshes its contents when
+   * revealed so the user sees what's there now, not what was there last
+   * time the view rendered.
+   */
+  private async openSessionView(): Promise<void> {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const existing = this.app.workspace.getLeavesOfType(IR_SESSION_VIEW_TYPE);
+    if (existing.length > 0) {
+      const leaf = existing[0];
+      this.app.workspace.revealLeaf(leaf);
+      const view = leaf.view;
+      if (view instanceof IrSessionView) void view.render();
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf) {
+      new Notice("Incremental Reading: no place to open the session log.");
+      return;
+    }
+    await leaf.setViewState({ type: IR_SESSION_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
 

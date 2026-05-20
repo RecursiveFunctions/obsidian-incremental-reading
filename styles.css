@@ -227,3 +227,82 @@
 .ir-status-bar-inflow {
   color: var(--text-muted);
 }
+
+/* Session log view (UI commitment #7). Side-panel list of every action
+ * taken this session, newest first. */
+.ir-session-view {
+  padding: 0.5em 0.75em;
+}
+
+.ir-session-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5em;
+}
+
+.ir-session-header h4 {
+  margin: 0;
+}
+
+.ir-session-refresh {
+  font-size: var(--font-ui-small);
+  padding: 2px 8px;
+}
+
+.ir-session-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.ir-session-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 3px 0;
+  font-size: var(--font-ui-small);
+  border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+
+.ir-session-entry:last-child {
+  border-bottom: none;
+}
+
+.ir-session-time {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-ui-smaller);
+}
+
+.ir-session-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.ir-session-action {
+  color: var(--text-muted);
+}
+
+.ir-session-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ir-session-link {
+  cursor: pointer;
+  color: var(--text-accent);
+}
+
+.ir-session-link:hover {
+  text-decoration: underline;
+}
+
+.ir-session-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
