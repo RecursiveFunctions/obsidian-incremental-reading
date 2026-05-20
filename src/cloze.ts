@@ -24,6 +24,23 @@ export function hasCloze(text: string): boolean {
   return CLOZE_RE.test(text);
 }
 
+/**
+ * Next free cloze group number for `text`: max existing `cN` plus one,
+ * or 1 if there are none. Used when splicing another deletion into a note
+ * that already has clozes (Anki multi-cloze semantics: each unique N
+ * generates one card on import).
+ */
+export function nextClozeNumber(text: string): number {
+  CLOZE_RE.lastIndex = 0;
+  let max = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CLOZE_RE.exec(text)) !== null) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
+}
+
 export interface ClozeBuild {
   /** The lines, with the selected span wrapped as a cloze deletion. */
   body: string;

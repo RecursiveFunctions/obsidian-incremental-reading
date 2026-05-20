@@ -5,6 +5,7 @@ import {
   buildClozeBody,
   buildClozeFromText,
   hasCloze,
+  nextClozeNumber,
   wrapCloze,
 } from "../src/cloze";
 
@@ -83,4 +84,17 @@ test("buildClozeFromText: end-of-line selection lands at column length", () => {
   const r = buildClozeFromText(raw, 0, 5);
   assert.equal(r.answer, "alpha");
   assert.equal(r.body, "{{c1::alpha}}");
+});
+
+test("nextClozeNumber returns 1 on text with no clozes", () => {
+  assert.equal(nextClozeNumber(""), 1);
+  assert.equal(nextClozeNumber("nothing hidden here"), 1);
+});
+
+test("nextClozeNumber returns max existing + 1, ignoring order", () => {
+  assert.equal(nextClozeNumber("a {{c1::x}} b"), 2);
+  assert.equal(nextClozeNumber("a {{c1::x}} {{c2::y}} b"), 3);
+  // Out-of-order or non-contiguous numbers still pick the next free slot
+  // strictly above the max so an Anki import keeps each card distinct.
+  assert.equal(nextClozeNumber("a {{c5::x}} {{c2::y}} b"), 6);
 });
