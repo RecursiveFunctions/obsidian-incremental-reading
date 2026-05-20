@@ -27,6 +27,12 @@ export interface IrSettings {
   mercyCeiling: number;
   /** Priority strictly below which mercy never postpones. */
   mercyPriorityCutoff: number;
+  /**
+   * When you run Extract or Cloze on a plain markdown note (not yet an IR
+   * element), mark it as a topic automatically instead of refusing. Off
+   * brings back the explicit "Mark as IR topic first" prompt.
+   */
+  autoMarkSourceAsTopic: boolean;
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
@@ -39,6 +45,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   ankiDeckName: "IR",
   mercyCeiling: 40,
   mercyPriorityCutoff: 10,
+  autoMarkSourceAsTopic: true,
 };
 
 export class IrSettingTab extends PluginSettingTab {
@@ -82,6 +89,22 @@ export class IrSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.extractFolder)
           .onChange(async (value) => {
             this.plugin.settings.extractFolder = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-mark source as topic")
+      .setDesc(
+        "When you run Extract or Cloze on a plain markdown note (not yet " +
+          "an IR element), mark it as a topic automatically. Off restores " +
+          "the explicit 'Mark as IR topic first' prompt.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.autoMarkSourceAsTopic)
+          .onChange(async (value) => {
+            this.plugin.settings.autoMarkSourceAsTopic = value;
             await this.plugin.saveSettings();
           }),
       );
