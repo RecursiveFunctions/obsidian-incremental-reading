@@ -1,7 +1,39 @@
 /* Styles for the Incremental Reading plugin. Populated as UI lands. */
 
+/* Review leaf: cap width on desktop; full width on narrow panes / phone. */
 .ir-review-modal {
   width: min(720px, 90vw);
+}
+
+/* Column layout: scrollable reading column + fixed bottom dock (commitment:
+ * mobile incremental reading — controls stay off the text, thumb-reachable). */
+.ir-review-modal.ir-review-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.ir-review-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ir-review-dock {
+  flex-shrink: 0;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 0.75em;
+  padding-left: max(0.5em, env(safe-area-inset-left, 0px));
+  padding-right: max(0.5em, env(safe-area-inset-right, 0px));
+  padding-bottom: max(0.75em, env(safe-area-inset-bottom, 0px));
+  background: var(--background-primary);
+}
+
+.ir-review-dock .ir-review-controls {
+  margin-bottom: 0;
 }
 
 .ir-review-progress {
@@ -68,6 +100,41 @@
   flex-wrap: wrap;
   gap: 0.5em;
   justify-content: flex-end;
+}
+
+/* Obsidian mobile app: larger tap targets, two-column grid, primary full-width. */
+.ir-review--mobile .ir-review-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6em;
+  justify-content: stretch;
+}
+
+.ir-review--mobile .ir-review-buttons button {
+  min-height: 44px;
+  width: 100%;
+}
+
+.ir-review--mobile .ir-review-buttons button.mod-cta {
+  grid-column: 1 / -1;
+}
+
+.ir-review--mobile .ir-priority-row {
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: var(--font-ui-medium);
+}
+
+.ir-review--mobile .ir-priority-input {
+  flex: 1 1 6em;
+  min-width: 6em;
+  min-height: 44px;
+  font-size: var(--font-ui-medium);
+}
+
+.ir-review--mobile .ir-priority-hint {
+  flex-basis: 100%;
+  margin-top: 0.15em;
 }
 
 .ir-priority-row {

@@ -10,6 +10,7 @@ import {
   ItemView,
   MarkdownRenderer,
   Notice,
+  Platform,
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
@@ -128,6 +129,10 @@ export class IrReviewView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.contentEl.addClass("ir-review-modal");
+    this.contentEl.addClass("ir-review-layout");
+    if (Platform.isMobile) {
+      this.contentEl.addClass("ir-review--mobile");
+    }
 
     this.registerDomEvent(this.contentEl, "keydown", (evt: KeyboardEvent) => {
       if (evt.altKey && (evt.key === "x" || evt.key === "X")) {
@@ -274,6 +279,14 @@ export class IrReviewView extends ItemView {
     });
   }
 
+  /**
+   * Button copy: desktop keeps hotkey hints; mobile omits them (no hardware
+   * keyboard by default, and labels stay readable on narrow screens).
+   */
+  private labelWithHotkey(base: string, hint: string): string {
+    return Platform.isMobile ? base : `${base} (${hint})`;
+  }
+
   /** Compact priority editor; reordering is a first-class IR action. */
   private renderPriorityRow(parent: HTMLElement, slot: ReviewSlot) {
     const row = parent.createEl("div", { cls: "ir-priority-row" });
@@ -346,11 +359,12 @@ export class IrReviewView extends ItemView {
 
     const slot = this.current;
     if (!slot) {
-      contentEl.createEl("h3", { text: "Nothing due" });
-      contentEl.createEl("p", {
+      const scroll = contentEl.createDiv({ cls: "ir-review-scroll" });
+      scroll.createEl("h3", { text: "Nothing due" });
+      scroll.createEl("p", {
         text: "No IR notes are due for review right now.",
       });
-      contentEl
+      scroll
         .createEl("button", { text: "Close", cls: "mod-cta" })
         .addEventListener("click", () => this.leaf.detach());
       return;
@@ -358,9 +372,11 @@ export class IrReviewView extends ItemView {
 
     await this.ensureLoaded(slot);
 
+    const scroll = contentEl.createDiv({ cls: "ir-review-scroll" });
+
     const reading = this.isReading(slot);
     const label = slot.file?.basename ?? labelFor(slot.element);
-    contentEl.createEl("div", {
+    scroll.createEl("div", {
       cls: "ir-review-progress",
       text:
         `${this.index + 1} of ${this.queue.length}  ·  ` +
@@ -369,7 +385,7 @@ export class IrReviewView extends ItemView {
 
     const ancestors = ancestorChain(slot.element, this.elementsById);
     if (ancestors.length > 0) {
-      contentEl.createEl("div", {
+      scroll.createEl("div", {
         cls: "ir-review-breadcrumb",
         text: ancestors.map((a) => labelFor(a)).join("  /  "),
       });
@@ -378,12 +394,13 @@ export class IrReviewView extends ItemView {
     const isCloze = !reading && hasCloze(this.currentRaw);
 
     if (this.editing && this.canEdit()) {
-      this.renderEditor(contentEl);
+      this.renderEditor(scroll);
     } else {
-      await this.renderBody(contentEl, this.currentRaw, isCloze);
+      await this.renderBody(scroll, this.currentRaw, isCloze);
     }
 
-    const controls = contentEl.createEl("div", { cls: "ir-review-controls" });
+    const dock = contentEl.createDiv({ cls: "ir-review-dock" });
+    const controls = dock.createEl("div", { cls: "ir-review-controls" });
 
     if (reading) {
       this.renderPriorityRow(controls, slot);
@@ -391,20 +408,30 @@ export class IrReviewView extends ItemView {
       this.renderChildButtons(bar);
       this.renderEditToggle(bar);
       bar
-        .createEl("button", { text: "Next (Space)", cls: "mod-cta" })
+        .createEl("button", {
+          text: this.labelWithHotkey("Next", "Space"),
+          cls: "mod-cta",
+        })
         .addEventListener("click", () => void this.next());
       bar
-        .createEl("button", { text: "Later today (L)" })
+        .createEl("button", {
+          text: this.labelWithHotkey("Later today", "L"),
+        })
         .addEventListener("click", () => void this.later());
       bar
-        .createEl("button", { text: "Dismiss (D)" })
+        .createEl("button", {
+          text: this.labelWithHotkey("Dismiss", "D"),
+        })
         .addEventListener("click", () => void this.dismiss());
       return;
     }
 
     if (isCloze && !this.revealed) {
       controls
-        .createEl("button", { text: "Show answer (Space)", cls: "mod-cta" })
+        .createEl("button", {
+          text: this.labelWithHotkey("Show answer", "Space"),
+          cls: "mod-cta",
+        })
         .addEventListener("click", () => {
           this.revealed = true;
           void this.renderCard();
@@ -416,12 +443,15 @@ export class IrReviewView extends ItemView {
     const bar = controls.createEl("div", { cls: "ir-review-buttons" });
     this.renderEditToggle(bar);
     for (const { grade, label: gLabel, key } of GRADES) {
+      const text = Platform.isMobile ? gLabel : `${gLabel} (${key})`;
       bar
-        .createEl("button", { text: `${gLabel} (${key})` })
+        .createEl("button", { text })
         .addEventListener("click", () => void this.grade(grade));
     }
     bar
-      .createEl("button", { text: "Dismiss (D)" })
+      .createEl("button", {
+        text: this.labelWithHotkey("Dismiss", "D"),
+      })
       .addEventListener("click", () => void this.dismiss());
   }
 
@@ -478,10 +508,14 @@ export class IrReviewView extends ItemView {
   private renderChildButtons(parent: HTMLElement) {
     if (!this.canMakeChild()) return;
     parent
-      .createEl("button", { text: "Extract (Alt+X)" })
+      .createEl("button", {
+        text: this.labelWithHotkey("Extract", "Alt+X"),
+      })
       .addEventListener("click", () => void this.handleExtract());
     parent
-      .createEl("button", { text: "Cloze (Alt+Z)" })
+      .createEl("button", {
+        text: this.labelWithHotkey("Cloze", "Alt+Z"),
+      })
       .addEventListener("click", () => void this.handleCloze());
   }
 
