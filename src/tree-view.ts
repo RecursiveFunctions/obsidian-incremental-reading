@@ -1,4 +1,11 @@
-import { ItemView, WorkspaceLeaf, TFile, setIcon, Notice } from "obsidian";
+import {
+  ItemView,
+  Notice,
+  Platform,
+  TFile,
+  WorkspaceLeaf,
+  setIcon,
+} from "obsidian";
 
 import { IrStore } from "./ir/store";
 import { buildTree, TreeNode } from "./ir/tree";
@@ -120,6 +127,9 @@ export class IrTreeView extends ItemView {
     const container = this.contentEl;
     container.empty();
     container.addClass("ir-tree-view");
+    if (Platform.isMobile) {
+      container.addClass("ir-tree--mobile");
+    }
 
     const header = container.createDiv({ cls: "ir-tree-header" });
     header.createEl("h4", { text: "IR element tree" });

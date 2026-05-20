@@ -3,6 +3,7 @@ import {
   MarkdownView,
   Menu,
   Notice,
+  Platform,
   Plugin,
   TFile,
   WorkspaceLeaf,
@@ -323,7 +324,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     // file-menu carries the note-level actions that have no hotkey path on
     // mobile (no keyboard, ribbon is hidden behind a swipe). Tapping the
     // three-dot button on a note surfaces this menu, so mark-as-topic,
-    // priority, and dismiss live here as well.
+    // priority, dismiss, and (on mobile) the full IR command set live here.
     // Vault delete handler: when a source note disappears, the pure
     // planSourceDeletion decides which extracts auto-promote to standalone
     // notes (so their reviewable text never disappears) and emits a
@@ -347,6 +348,7 @@ export default class IncrementalReadingPlugin extends Plugin {
               .setIcon("book-open")
               .onClick(() => void this.markActiveFileAsTopic(file)),
           );
+          this.addMobileIrFileMenuNav(menu);
           return;
         }
         menu.addItem((item) =>
@@ -369,7 +371,55 @@ export default class IncrementalReadingPlugin extends Plugin {
             .setIcon(dismissed ? "rotate-ccw" : "ban")
             .onClick(() => void this.toggleDismiss(file)),
         );
+        this.addMobileIrFileMenuNav(menu);
       }),
+    );
+  }
+
+  /**
+   * Obsidian mobile hides the ribbon behind a swipe; hotkeys are unavailable
+   * without hardware keys. Mirror the main IR commands on the per-note file
+   * menu so review, tree, session log, stats, mercy, and Anki export stay
+   * reachable (README stretch: mobile parity).
+   */
+  private addMobileIrFileMenuNav(menu: Menu): void {
+    if (!Platform.isMobile) return;
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("Start IR review")
+        .setIcon("play-circle")
+        .onClick(() => void this.startReview()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Open IR element tree")
+        .setIcon("list-tree")
+        .onClick(() => void this.openTreeView()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Open IR session log")
+        .setIcon("history")
+        .onClick(() => void this.openSessionView()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Show IR stats")
+        .setIcon("bar-chart-3")
+        .onClick(() => void this.openStatsView()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Postpone overdue elements (mercy)")
+        .setIcon("clock")
+        .onClick(() => void this.runMercy()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Export IR items to Anki TSV")
+        .setIcon("download")
+        .onClick(() => void this.exportAnkiTsv()),
     );
   }
 

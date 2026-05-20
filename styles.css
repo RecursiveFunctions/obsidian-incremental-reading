@@ -217,6 +217,52 @@
   padding: 0.5em 0.75em;
 }
 
+/* Mobile Obsidian: larger tap targets on tree rows (stretch: full mobile parity). */
+.ir-tree--mobile .ir-tree-row {
+  min-height: 44px;
+  padding: 0.35em 0;
+  gap: 0.5em;
+  font-size: var(--font-ui-medium);
+}
+
+.ir-tree--mobile .ir-tree-toggle,
+.ir-tree--mobile .ir-tree-toggle-empty {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  flex-shrink: 0;
+}
+
+.ir-tree--mobile .ir-tree-toggle {
+  border-radius: var(--radius-s);
+}
+
+.ir-tree--mobile .ir-tree-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.ir-tree--mobile .ir-tree-priority--clickable {
+  min-width: 2.75em;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.35em;
+}
+
+.ir-tree--mobile .ir-tree-priority-input {
+  min-height: 44px;
+  width: 4.5em;
+  font-size: var(--font-ui-medium);
+}
+
+.ir-tree--mobile .ir-tree-refresh {
+  min-height: 40px;
+  padding: 0.35em 0.85em;
+  font-size: var(--font-ui-small);
+}
+
 .ir-tree-header {
   display: flex;
   align-items: center;
