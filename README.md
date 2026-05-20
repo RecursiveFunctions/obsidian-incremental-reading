@@ -83,6 +83,10 @@ The v0.1 MVP is complete. State has since moved off frontmatter into the structu
 - [ ] **Browser extension** for one-click import of web pages into the IR queue.
 - [ ] **Mobile support.** Manifest marks the plugin mobile-eligible (`isDesktopOnly: false`) and the bundle uses no Node-only APIs, but iOS/Android Obsidian is not yet tested. Bug reports welcome.
 
+### Under consideration
+
+- **SuperMemo-direction export.** A one-way export of the IR tree (topics, extracts, cloze items, priorities) into a format SuperMemo can import: HTML topics with `[...]` markers for clozes, plus a Q&A item file per cloze. Scheduling state would not transfer (FSRS and SM-15/17/18 don't share parameters), so SM would re-schedule on import. Open an issue if this would matter to you so we can scope it.
+
 ### Not planned
 
 - Reimplementing the proprietary SM-15/17/18 algorithm. FSRS is good enough. Reverse engineering it costs too much time and legal risk for a small scheduling gain.
