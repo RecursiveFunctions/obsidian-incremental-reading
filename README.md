@@ -15,14 +15,8 @@ Two things keep IR out of reach. SuperMemo is Windows-only and stores your knowl
 1. **A faithful SuperMemo element tree.** Source to extract to extract to item, with a dedicated hierarchy view and a graph that stays clean instead of drowning in review scaffolding. No other Obsidian plugin models this; the only tool that does is Logseq-only and stalled.
 2. **Principled postpone.** When the queue overloads it redistributes by priority and never tells the scheduler a card was reviewed when it was not. Overload handling that does not corrupt your scheduling data.
 3. **A multi-scheduler divergence picker.** Default FSRS, FSRS optimized on your own review history, and classic SM-2 run in parallel; when they disagree enough about an interval you can see why and choose. Opt-in, off by default, out of the way otherwise.
-
-
-4. **Developed with mobile in mind**
-One thing I lamented about supermemo was the inability to use it on the go without some hacky workarounds. I intend to make this plugin feel good to use on both mobile and the desktop version. 
-
-
-6. **A privacy property, not a privacy policy.** See below.
-
+4. **Developed with mobile in mind.** One thing I lamented about SuperMemo was the inability to use it on the go without some hacky workarounds. I intend to make this plugin feel good to use on both mobile and the desktop version.
+5. **A privacy property, not a privacy policy.** See below.
 
 ## Security and trust
 
@@ -48,12 +42,21 @@ State lives in a local store inside your vault, designed to survive multi-device
 
 ## Keyboard
 
-Defaults follow SuperMemo:
+Every IR command ships with a default `Alt+letter` binding. The full set:
 
-- `Alt+X`: extract the selection into a child note.
-- `Alt+Z`: cloze the selection into a review item.
+- `Alt+X`: extract selection into a child note.
+- `Alt+Z`: cloze selection into a review item.
+- `Alt+R`: start a review session.
+- `Alt+T`: mark current note as an IR topic.
+- `Alt+P`: set IR priority of current element.
+- `Alt+I`: open the IR element tree.
+- `Alt+L`: open the IR session log.
+- `Alt+S`: show IR stats.
+- `Alt+M`: postpone overdue elements (mercy).
+- `Alt+D`: dismiss or restore the current element.
+- `Alt+E`: export IR items to Anki TSV.
 
-Rebind or clear them under Settings, Hotkeys.
+Rebind or clear any of them under Settings, Hotkeys.
 
 ## Roadmap
 
@@ -71,19 +74,30 @@ Smallest plugin that delivers real IR value. Open an issue before building any i
 
 The v0.1 MVP is complete. State has since moved off frontmatter into the structured store described in [`docs/DESIGN.md`](docs/DESIGN.md); v0.2 builds on that substrate.
 
-### v0.2
+### v0.2 (shipped, current release 0.0.4)
 
-- [ ] **Reading bookmarks.** When you stop mid-topic, the next review of that topic resumes from where you stopped (highlighted line plus scroll to position).
-- [ ] **Element tree view.** A side panel showing the parent, extracts, and clozes hierarchy for any element.
-- [ ] **Bulk import.** Paste a long article; it becomes a topic in one step. Paste-only by design: the plugin never fetches a URL, because the zero-network privacy property above is not negotiable for a one-off convenience.
-- [ ] **Statistics.** Daily reviews completed, retention rate, queue size, FSRS parameter optimization.
+- [x] **Reading bookmarks.** When you stop mid-topic, the next review of that topic resumes from where you stopped.
+- [x] **Element tree view.** Side panel showing parent, extracts, and clozes for any element, with expand/collapse and a breadcrumb in the review pane.
+- [x] **Bulk import.** Paste a long article; it becomes a topic in one step. Paste-only by design: the plugin never fetches a URL, because the zero-network privacy property is not negotiable for a one-off convenience.
+- [x] **Statistics.** Daily reviews completed, retention rate, queue size.
+- [x] **Anki TSV export.** One-way export of IR items into Anki's import format.
+- [x] **Mercy / postpone.** Single command to redistribute an overloaded queue by priority without lying to the scheduler.
+- [x] **Status-bar queue load.** Glanceable due / postponed / inflow counts at all times.
+- [x] **Session audit log.** Per-session view of every item, extract, and source you touched.
+- [x] **Multi-cloze on items.** Add more cloze deletions to an existing item in place.
+- [x] **Auto-mark plain notes.** Optional setting: notes you start reviewing are promoted to topics automatically.
+- [x] **Mobile surfaces.** Mark-as-topic, priority, and dismiss are reachable from the file menu on mobile. Full mobile parity is still in progress.
+
+### Now (toward v0.3)
+
+Per the [UI commitments contract](docs/UI-COMMITMENTS.md), the next pass removes the three remaining modals (Stats, Priority, Review) and replaces them with workspace views or inline controls. Scope and per-phase plan in [`docs/SCOPE-MODAL-REMOVAL.md`](docs/SCOPE-MODAL-REMOVAL.md).
 
 ### Stretch
 
 - [ ] **PDF support.** Selection to extract from a PDF, with page references preserved.
 - [ ] **Image occlusion** for visual cards.
 - [ ] **Browser extension** for one-click import of web pages into the IR queue.
-- [ ] **Mobile support.** Manifest marks the plugin mobile-eligible (`isDesktopOnly: false`) and the bundle uses no Node-only APIs, but iOS/Android Obsidian is not yet tested. Bug reports welcome.
+- [ ] **Full mobile parity.** Manifest already marks the plugin mobile-eligible (`isDesktopOnly: false`) and the bundle uses no Node-only APIs; remaining work is the review and tree surfaces on small screens.
 
 ### Under consideration
 
@@ -96,13 +110,13 @@ The v0.1 MVP is complete. State has since moved off frontmatter into the structu
 
 ## Installation
 
-**Beta (BRAT):** pre-release `v0.0.1` is available for cross-device testing via [BRAT](https://github.com/TfTHacker/obsidian42-brat).
+**Beta (BRAT):** current pre-release is `v0.0.4`, installable via [BRAT](https://github.com/TfTHacker/obsidian42-brat).
 
 1. Install BRAT from Community Plugins and enable it.
 2. *Settings -> BRAT -> Add Beta plugin*, paste `RecursiveFunctions/obsidian-incremental-reading`.
 3. Enable *Incremental Reading* under Community Plugins.
 
-Treat the beta as alpha-quality: it is not yet tested in a real long-lived vault, mobile support is unverified, and frontmatter/store format may still change between releases. Back up before adding to a vault you care about.
+Treat the beta as alpha-quality: I am dogfooding it in my own vault, mobile support is partial, and the store format may still change between releases. Back up before adding to a vault you care about.
 
 **Stable:** From the Obsidian Community Plugins directory after the plugin meets submission requirements.
 
@@ -129,7 +143,7 @@ ln -s /absolute/path/to/obsidian-incremental-reading .obsidian/plugins/increment
 
 `npm run build` runs a one-shot production build with type-checking.
 
-`npm test` runs the headless suite. It covers cloze offset math, FSRS frontmatter round-trip, queue ordering, and the extract/cloze/dismiss/topic-mark file flows against an in-memory fake of the Obsidian API. Not covered there, and still needing a real vault: the review modal, hotkeys, ribbons, and `processFrontMatter` against the live app.
+`npm test` runs the headless suite. It covers cloze offset math, FSRS round-trip, queue ordering, the structured store, mercy/postpone, tree and tree-action plans, bookmark math, bulk-import parsing, divergence picker config, anki-export, stats, and the extract/cloze/dismiss/topic-mark file flows against an in-memory fake of the Obsidian API. Not covered there, and still needing a real vault: the review surface itself, hotkeys, ribbons, and `processFrontMatter` against the live app.
 
 ## Contributing
 
