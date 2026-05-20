@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, TFile, setIcon, Notice } from "obsidian";
 
 import { IrStore } from "./ir/store";
 import { buildTree, TreeNode } from "./ir/tree";
+import { labelFor } from "./ir/labels";
 import type { IrElement, IrType } from "./ir/model";
 
 export const IR_TREE_VIEW_TYPE = "ir-tree-view";
@@ -14,6 +15,11 @@ const ICONS: Record<IrType, string> = {
 
 export class IrTreeView extends ItemView {
   private store: IrStore;
+  /**
+   * Element ids the user has explicitly collapsed. Session-only state
+   * (UI commitment #5: expand/collapse per node). Default = expanded.
+   */
+  private collapsed: Set<string> = new Set();
 
   constructor(leaf: WorkspaceLeaf, store: IrStore) {
     super(leaf);
@@ -87,6 +93,27 @@ export class IrTreeView extends ItemView {
     const li = parent.createEl("li", { cls: "ir-tree-node" });
 
     const row = li.createDiv({ cls: "ir-tree-row" });
+    const hasChildren = node.children.length > 0;
+    const isCollapsed = this.collapsed.has(node.id);
+
+    if (hasChildren) {
+      const toggle = row.createSpan({ cls: "ir-tree-toggle" });
+      setIcon(toggle, isCollapsed ? "chevron-right" : "chevron-down");
+      toggle.setAttribute(
+        "aria-label",
+        isCollapsed ? "Expand subtree" : "Collapse subtree",
+      );
+      toggle.onclick = (e) => {
+        e.stopPropagation();
+        if (isCollapsed) this.collapsed.delete(node.id);
+        else this.collapsed.add(node.id);
+        void this.render();
+      };
+    } else {
+      // Spacer keeps leaf rows aligned with their non-leaf siblings.
+      row.createSpan({ cls: "ir-tree-toggle-empty" });
+    }
+
     const iconSpan = row.createSpan({ cls: "ir-tree-icon" });
     setIcon(iconSpan, ICONS[node.type] ?? "circle");
 
@@ -109,7 +136,7 @@ export class IrTreeView extends ItemView {
       text: node.type,
     });
 
-    if (node.children.length > 0) {
+    if (hasChildren && !isCollapsed) {
       const ul = li.createEl("ul", { cls: "ir-tree-children" });
       for (const child of node.children) {
         this.renderNode(ul, child);
@@ -125,14 +152,4 @@ export class IrTreeView extends ItemView {
     }
     await this.app.workspace.getLeaf(false).openFile(file);
   }
-}
-
-function labelFor(element: IrElement): string {
-  if (element.notePath) {
-    const base = element.notePath.split("/").pop() ?? element.notePath;
-    return base.replace(/\.md$/i, "");
-  }
-  const text = element.text.trim().replace(/\s+/g, " ");
-  if (text.length === 0) return `(${element.type})`;
-  return text.length > 80 ? text.slice(0, 77) + "..." : text;
 }

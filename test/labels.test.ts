@@ -1,0 +1,109 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { ancestorChain, labelFor } from "../src/ir/labels";
+import type { IrElement } from "../src/ir/model";
+import type { ElementId } from "../src/ir/ids";
+
+function el(
+  p: Omit<Partial<IrElement>, "id" | "parentId"> & {
+    id: string;
+    parentId?: string | null;
+  },
+): IrElement {
+  const { id, parentId, ...rest } = p;
+  return {
+    type: "topic",
+    priority: 50,
+    parentId: (parentId ?? null) as ElementId | null,
+    dismissed: false,
+    created: 0,
+    text: "",
+    anchorState: "ok",
+    ...rest,
+    id: id as ElementId,
+  };
+}
+
+test("labelFor: notePath wins, .md stripped", () => {
+  assert.equal(
+    labelFor(el({ id: "x", notePath: "Some/Folder/My Note.md" })),
+    "My Note",
+  );
+});
+
+test("labelFor: falls back to first ~80 chars of text", () => {
+  const long = "A".repeat(100);
+  const out = labelFor(el({ id: "x", text: long }));
+  assert.equal(out, "A".repeat(77) + "...");
+});
+
+test("labelFor: whitespace-only text falls back to (type) tag", () => {
+  assert.equal(
+    labelFor(el({ id: "x", type: "extract", text: "   \n  " })),
+    "(extract)",
+  );
+});
+
+test("ancestorChain: empty for a root", () => {
+  const root = el({ id: "a", parentId: null });
+  const byId = new Map([[root.id, root]]);
+  assert.deepEqual(ancestorChain(root, byId), []);
+});
+
+test("ancestorChain: returns chain in root-first order", () => {
+  const root = el({ id: "root", notePath: "Root.md" });
+  const mid = el({ id: "mid", parentId: "root", notePath: "Mid.md" });
+  const leaf = el({ id: "leaf", parentId: "mid", notePath: "Leaf.md" });
+  const byId = new Map<string, IrElement>([
+    ["root", root],
+    ["mid", mid],
+    ["leaf", leaf],
+  ]);
+  const chain = ancestorChain(leaf, byId);
+  assert.deepEqual(
+    chain.map((e) => e.id),
+    ["root", "mid"],
+  );
+});
+
+test("ancestorChain: stops at missing parent (orphan)", () => {
+  const orphan = el({ id: "o", parentId: "ghost" });
+  const byId = new Map([[orphan.id, orphan]]);
+  assert.deepEqual(ancestorChain(orphan, byId), []);
+});
+
+test("ancestorChain: maxDepth limits chain length", () => {
+  const a = el({ id: "a" });
+  const b = el({ id: "b", parentId: "a" });
+  const c = el({ id: "c", parentId: "b" });
+  const d = el({ id: "d", parentId: "c" });
+  const e = el({ id: "e", parentId: "d" });
+  const byId = new Map<string, IrElement>([
+    ["a", a],
+    ["b", b],
+    ["c", c],
+    ["d", d],
+    ["e", e],
+  ]);
+  const chain = ancestorChain(e, byId, 2);
+  assert.equal(chain.length, 2);
+  assert.deepEqual(
+    chain.map((x) => x.id),
+    ["c", "d"],
+  );
+});
+
+test("ancestorChain: cycle terminates", () => {
+  const a = el({ id: "a", parentId: "b" });
+  const b = el({ id: "b", parentId: "a" });
+  const byId = new Map<string, IrElement>([
+    ["a", a],
+    ["b", b],
+  ]);
+  const chain = ancestorChain(a, byId);
+  // a's parent is b; b's parent is a, which is `start`, so seen detects it.
+  assert.deepEqual(
+    chain.map((x) => x.id),
+    ["b"],
+  );
+});

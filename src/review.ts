@@ -69,6 +69,7 @@ import {
   type IrEventKind,
   type ReadSchedule,
 } from "./ir/model";
+import { ancestorChain, labelFor } from "./ir/labels";
 import { newEventId, type ElementId } from "./ir/ids";
 
 const GRADES: { grade: Grade; label: string; key: string }[] = [
@@ -178,6 +179,12 @@ export class ReviewModal extends Modal {
     private settings: IrSettings,
     private store: IrStore,
     private queue: ReviewSlot[],
+    /**
+     * All elements indexed by id, used to render the parent-chain
+     * breadcrumb (UI commitment #5). Passed in rather than re-derived so
+     * the modal does not need to touch the store mid-session.
+     */
+    private elementsById: Map<string, IrElement>,
     /**
      * Fired after any state change (grade, advance, postpone, dismiss,
      * child created) and on close. Lets the host plugin refresh the queue
@@ -416,13 +423,24 @@ export class ReviewModal extends Modal {
     await this.ensureLoaded(slot);
 
     const reading = this.isReading(slot);
-    const label = slot.file?.basename ?? slot.id;
+    const label = slot.file?.basename ?? labelFor(slot.element);
     contentEl.createEl("div", {
       cls: "ir-review-progress",
       text:
         `${this.index + 1} of ${this.queue.length}  ·  ` +
         `${reading ? "Reading" : "Review"}  ·  ${label}`,
     });
+
+    // Breadcrumb of ancestor titles (root-first). UI commitment #5: gives
+    // the user "where am I in the element tree" without leaving the review
+    // pane. Suppressed when the element is a root.
+    const ancestors = ancestorChain(slot.element, this.elementsById);
+    if (ancestors.length > 0) {
+      contentEl.createEl("div", {
+        cls: "ir-review-breadcrumb",
+        text: ancestors.map((a) => labelFor(a)).join("  /  "),
+      });
+    }
 
     const isCloze = !reading && hasCloze(this.currentRaw);
 

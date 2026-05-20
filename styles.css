@@ -7,7 +7,18 @@
 .ir-review-progress {
   font-size: var(--font-ui-small);
   color: var(--text-muted);
-  margin-bottom: 1em;
+  margin-bottom: 0.25em;
+}
+
+/* Ancestor breadcrumb in the review pane (commitment #5). Smaller than the
+ * progress line, faint, separated from the body with a small gap. */
+.ir-review-breadcrumb {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  margin-bottom: 0.75em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ir-review-body {
@@ -114,6 +125,28 @@
   gap: 0.4em;
   padding: 2px 0;
   font-size: var(--font-ui-small);
+}
+
+/* Chevron expand/collapse toggle for non-leaf rows. The empty span keeps
+ * leaf rows aligned with their toggle-bearing siblings. */
+.ir-tree-toggle {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ir-tree-toggle:hover {
+  color: var(--text-normal);
+}
+
+.ir-tree-toggle-empty {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
 }
 
 .ir-tree-icon {

@@ -427,6 +427,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.settings,
       this.store,
       queue,
+      state.elements,
       () => void this.refreshStatusBar(),
     ).open();
   }
