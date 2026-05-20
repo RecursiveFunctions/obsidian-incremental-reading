@@ -67,8 +67,8 @@ import {
   isReadType,
   type IrElement,
   type IrEventKind,
-  type ReadSchedule,
 } from "./ir/model";
+import { dueMsOf, scheduleToTopicState, topicStateToSchedule } from "./ir/queue-adapter";
 import { ancestorChain, labelFor } from "./ir/labels";
 import { newEventId, type ElementId } from "./ir/ids";
 
@@ -88,20 +88,6 @@ export interface ReviewSlot {
   id: ElementId;
   element: IrElement;
   file: TFile | null;
-}
-
-function dueMsOf(el: IrElement): number {
-  if (el.type === "item") return el.card?.due ?? NaN;
-  return el.schedule?.due ?? NaN;
-}
-
-function scheduleToTopicState(s: ReadSchedule | undefined): TopicState | null {
-  if (!s) return null;
-  return { dueMs: s.due, interval: s.interval, aFactor: s.aFactor };
-}
-
-function topicStateToSchedule(t: TopicState): ReadSchedule {
-  return { due: t.dueMs, interval: t.interval, aFactor: t.aFactor };
 }
 
 /**
