@@ -4,7 +4,7 @@
  * APIs, no I/O, so they unit-test directly.
  */
 
-import type { IrElement } from "./model";
+import type { IrElement, IrType } from "./model";
 
 /** Human label for an element. Prefer the note basename; fall back to the
  *  first ~80 chars of stored text; fall back to a "(type)" tag. */
@@ -16,6 +16,58 @@ export function labelFor(el: IrElement): string {
   const text = el.text.trim().replace(/\s+/g, " ");
   if (text.length === 0) return `(${el.type})`;
   return text.length > 80 ? text.slice(0, 77) + "..." : text;
+}
+
+/** Short disambiguator from a store element id (filename-safe-ish). */
+export function shortElementTag(id: string): string {
+  const alnum = id.replace(/[^a-zA-Z0-9]/g, "");
+  return (alnum.slice(0, 6) || id.slice(0, 6)).toLowerCase();
+}
+
+/** Non-spoilery type word for cloze/extract rows where titles leak answers. */
+export function neutralTypeLabel(type: IrType): string {
+  switch (type) {
+    case "topic":
+      return "Topic";
+    case "extract":
+      return "Extract";
+    case "item":
+      return "Cloze item";
+  }
+}
+
+/**
+ * Tree / session-log row title. Topics keep real names; extracts and items
+ * use generated paths from quoted text (often the answer), so we show a
+ * neutral label plus a short id for disambiguation.
+ */
+export function treeRowLabel(el: IrElement): string {
+  if (el.type === "topic") return labelFor(el);
+  return `${neutralTypeLabel(el.type)} (${shortElementTag(el.id)})`;
+}
+
+/**
+ * Review pane progress line (`1 of N · Review · …`). For cloze items before
+ * reveal, note basenames usually spoil the card; use a neutral headline.
+ */
+export function reviewHeadlineLabel(
+  el: IrElement,
+  maskClozeTitle: boolean,
+): string {
+  if (!maskClozeTitle || el.type !== "item") return labelFor(el);
+  return `${neutralTypeLabel(el.type)} (${shortElementTag(el.id)})`;
+}
+
+/**
+ * Breadcrumb segment for an ancestor. When `maskClozeContext` is true (cloze
+ * item before reveal), ancestor note titles often restate the answer.
+ */
+export function ancestorBreadcrumbLabel(
+  el: IrElement,
+  maskClozeContext: boolean,
+): string {
+  if (!maskClozeContext) return labelFor(el);
+  return neutralTypeLabel(el.type);
 }
 
 /**

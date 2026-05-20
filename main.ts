@@ -542,12 +542,10 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     this.irReviewSession = { queue, elementsById: state.elements };
     try {
-      const leaf = this.app.workspace.getRightLeaf(false);
-      if (!leaf) {
-        new Notice("Incremental Reading: no place to open the review view.");
-        this.irReviewSession = null;
-        return;
-      }
+      // Main workspace tab (not the right sidebar) so review uses the full
+      // editor width and mobile does not keep the previous note visible in a
+      // split beside a 90vw-wide pane that overflows the narrow leaf.
+      const leaf = this.app.workspace.getLeaf("tab");
       await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
     } catch (e) {
@@ -569,11 +567,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.app.workspace.revealLeaf(existing[0]);
       return;
     }
-    const leaf = this.app.workspace.getRightLeaf(false);
-    if (!leaf) {
-      new Notice("Incremental Reading: no place to open the tree view.");
-      return;
-    }
+    const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: IR_TREE_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
@@ -617,11 +611,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       if (view instanceof IrSessionView) void view.render();
       return;
     }
-    const leaf = this.app.workspace.getRightLeaf(false);
-    if (!leaf) {
-      new Notice("Incremental Reading: no place to open the session log.");
-      return;
-    }
+    const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: IR_SESSION_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
@@ -701,11 +691,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       if (view instanceof IrStatsView) void view.onOpen();
       return;
     }
-    const leaf = this.app.workspace.getRightLeaf(false);
-    if (!leaf) {
-      new Notice("Incremental Reading: no place to open the stats view.");
-      return;
-    }
+    const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: IR_STATS_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
   }

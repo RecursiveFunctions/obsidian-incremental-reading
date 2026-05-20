@@ -1,13 +1,18 @@
 /* Styles for the Incremental Reading plugin. Populated as UI lands. */
 
-/* Review leaf: cap width on desktop; full width on narrow panes / phone. */
+/* Review leaf: fill the workspace leaf. Avoid vw-based widths — they are tied
+ * to the viewport, not the leaf, and overflow narrow sidebars (mobile peek). */
 .ir-review-modal {
-  width: min(720px, 90vw);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
-/* Wider when a source column is present (UI commitment #2). */
+/* Source column + card still share the leaf width (commitment #2). */
 .ir-review-modal.ir-review-layout.ir-review-has-context {
-  width: min(1100px, 98vw);
+  width: 100%;
+  max-width: 100%;
 }
 
 /* Column layout: scrollable reading column + fixed bottom dock (commitment:
@@ -38,12 +43,11 @@
   min-height: 0;
 }
 
-.ir-review-context-header {
-  flex-shrink: 0;
+.ir-review-context-placeholder {
+  margin: 0.5em 0.65em 0.75em;
   font-size: var(--font-ui-small);
   color: var(--text-muted);
-  padding: 0.35em 0.5em 0.5em;
-  border-bottom: 1px dashed var(--background-modifier-border);
+  line-height: var(--line-height-normal);
 }
 
 .ir-review-context-scroll {

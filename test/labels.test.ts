@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ancestorChain, labelFor } from "../src/ir/labels";
+import {
+  ancestorBreadcrumbLabel,
+  ancestorChain,
+  labelFor,
+  reviewHeadlineLabel,
+  shortElementTag,
+  treeRowLabel,
+} from "../src/ir/labels";
 import type { IrElement } from "../src/ir/model";
 import type { ElementId } from "../src/ir/ids";
 
@@ -106,4 +113,51 @@ test("ancestorChain: cycle terminates", () => {
     chain.map((x) => x.id),
     ["b"],
   );
+});
+
+test("shortElementTag: strips non-alphanumeric", () => {
+  assert.equal(shortElementTag("abc-def-012"), "abcdef");
+});
+
+test("treeRowLabel: topic uses note title", () => {
+  assert.equal(
+    treeRowLabel(
+      el({ id: "x1", type: "topic", notePath: "T/My Topic.md" }),
+    ),
+    "My Topic",
+  );
+});
+
+test("treeRowLabel: item is neutral + tag", () => {
+  assert.equal(
+    treeRowLabel(
+      el({
+        id: "item-uuid-99",
+        type: "item",
+        notePath: "continuous delivery spoiler.md",
+      }),
+    ),
+    "Cloze item (itemuu)",
+  );
+});
+
+test("reviewHeadlineLabel: masks item until caller says reveal", () => {
+  const item = el({
+    id: "abc",
+    type: "item",
+    notePath: "Secret Title.md",
+  });
+  assert.equal(reviewHeadlineLabel(item, true), "Cloze item (abc)");
+  assert.equal(reviewHeadlineLabel(item, false), "Secret Title");
+});
+
+test("reviewHeadlineLabel: topic never masked by item flag", () => {
+  const topic = el({ id: "t", type: "topic", notePath: "X.md" });
+  assert.equal(reviewHeadlineLabel(topic, true), "X");
+});
+
+test("ancestorBreadcrumbLabel: masks to type word", () => {
+  const topic = el({ id: "r", type: "topic", notePath: "Root.md" });
+  assert.equal(ancestorBreadcrumbLabel(topic, true), "Topic");
+  assert.equal(ancestorBreadcrumbLabel(topic, false), "Root");
 });

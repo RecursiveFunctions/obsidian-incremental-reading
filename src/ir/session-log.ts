@@ -9,7 +9,7 @@
  * mechanism (which would risk drifting from the store's truth).
  */
 
-import { labelFor } from "./labels";
+import { treeRowLabel } from "./labels";
 import type { IrElement, IrEvent, IrEventKind } from "./model";
 
 export interface SessionEntry {
@@ -57,7 +57,7 @@ export function sessionEntries(
       ts: ev.ts,
       kind: ev.kind,
       elementId: ev.target,
-      label: el ? labelFor(el) : ev.target,
+      label: el ? treeRowLabel(el) : ev.target,
       notePath: el?.notePath,
     });
   }

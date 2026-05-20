@@ -9,7 +9,7 @@ import {
 
 import { IrStore } from "./ir/store";
 import { buildTree, TreeNode } from "./ir/tree";
-import { labelFor } from "./ir/labels";
+import { treeRowLabel } from "./ir/labels";
 import { clampPriority, type IrElement, type IrType } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 
@@ -199,7 +199,7 @@ export class IrTreeView extends ItemView {
     const iconSpan = row.createSpan({ cls: "ir-tree-icon" });
     setIcon(iconSpan, ICONS[node.type] ?? "circle");
 
-    const label = labelFor(node.element);
+    const label = treeRowLabel(node.element);
     const titleEl = row.createSpan({
       cls: "ir-tree-title",
       text: label,

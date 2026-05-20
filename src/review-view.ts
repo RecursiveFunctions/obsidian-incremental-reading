@@ -45,7 +45,12 @@ import {
   type IrEventKind,
 } from "./ir/model";
 import { scheduleToTopicState, topicStateToSchedule } from "./ir/queue-adapter";
-import { ancestorChain, labelFor } from "./ir/labels";
+import {
+  ancestorBreadcrumbLabel,
+  ancestorChain,
+  labelFor,
+  reviewHeadlineLabel,
+} from "./ir/labels";
 import { newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
 
@@ -415,30 +420,45 @@ export class IrReviewView extends ItemView {
     else contentEl.removeClass("ir-review-has-context");
 
     const columns = contentEl.createDiv({ cls: "ir-review-columns" });
+    const reading = this.isReading(slot);
+    const isCloze = !reading && hasCloze(this.currentRaw);
+    const maskClozeChrome = !reading && isCloze && !this.revealed;
+
     if (sourceCtx) {
       const ctxCol = columns.createDiv({ cls: "ir-review-context-col" });
+      const sourceHeaderText = maskClozeChrome
+        ? "Source (hidden until reveal)"
+        : `Source · ${sourceCtx.title}`;
       ctxCol.createEl("div", {
         cls: "ir-review-context-header",
-        text: `Source · ${sourceCtx.title}`,
+        text: sourceHeaderText,
       });
       const ctxScroll = ctxCol.createDiv({ cls: "ir-review-context-scroll" });
-      const ctxBody = ctxScroll.createDiv({
-        cls: "ir-review-context-markdown ir-review-body",
-      });
-      await MarkdownRenderer.render(
-        this.app,
-        sourceCtx.raw,
-        ctxBody,
-        sourceCtx.path,
-        this,
-      );
+      if (maskClozeChrome) {
+        ctxScroll.createEl("p", {
+          cls: "ir-review-context-placeholder",
+          text:
+            "Parent note text is hidden until you reveal this card so titles " +
+            "and excerpts cannot spoil the answer.",
+        });
+      } else {
+        const ctxBody = ctxScroll.createDiv({
+          cls: "ir-review-context-markdown ir-review-body",
+        });
+        await MarkdownRenderer.render(
+          this.app,
+          sourceCtx.raw,
+          ctxBody,
+          sourceCtx.path,
+          this,
+        );
+      }
     }
 
     const mainCol = columns.createDiv({ cls: "ir-review-main-col" });
     const scroll = mainCol.createDiv({ cls: "ir-review-scroll" });
 
-    const reading = this.isReading(slot);
-    const label = slot.file?.basename ?? labelFor(slot.element);
+    const label = reviewHeadlineLabel(slot.element, maskClozeChrome);
     scroll.createEl("div", {
       cls: "ir-review-progress",
       text:
@@ -450,11 +470,11 @@ export class IrReviewView extends ItemView {
     if (ancestors.length > 0) {
       scroll.createEl("div", {
         cls: "ir-review-breadcrumb",
-        text: ancestors.map((a) => labelFor(a)).join("  /  "),
+        text: ancestors
+          .map((a) => ancestorBreadcrumbLabel(a, maskClozeChrome))
+          .join("  /  "),
       });
     }
-
-    const isCloze = !reading && hasCloze(this.currentRaw);
 
     if (this.editing && this.canEdit()) {
       this.renderEditor(scroll);
