@@ -110,7 +110,7 @@ Per the [UI commitments contract](docs/UI-COMMITMENTS.md), the modal-removal pas
 
 ## Installation
 
-**Beta (BRAT):** current pre-release is `v0.0.5`, installable via [BRAT](https://github.com/TfTHacker/obsidian42-brat).
+**Beta (BRAT):** current pre-release is `v0.0.6`, installable via [BRAT](https://github.com/TfTHacker/obsidian42-brat).
 
 1. Install BRAT from Community Plugins and enable it.
 2. *Settings -> BRAT -> Add Beta plugin*, paste `RecursiveFunctions/obsidian-incremental-reading`.

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] — 2026-05-20
+
 ### Fixed
 
 - **Review "session not prepared":** `startReview` cleared the pending queue in a `finally` after `await setViewState`, but the workspace can construct the `ItemView` after that await settles, so the factory sometimes saw `null` and threw. Session payload now lives on the plugin instance and is consumed only inside the `registerView` factory; opening failures clear it in `catch`. If a review leaf is restored from an older workspace with no payload, the view opens with an empty queue and explains how to start again instead of throwing.
@@ -59,7 +61,8 @@ First BRAT-installable pre-release. Bundles the v0.1 MVP (topic mark, extract, c
 - Frontmatter/FSRS serialization layer (`src/fsrs.ts`, `src/ir-note.ts`, `src/types.ts`), the shared foundation later IR features build on.
 - Initial repository scaffold: Obsidian plugin skeleton, TypeScript + esbuild build pipeline, `ts-fsrs` dependency for scheduling, MIT license, CI build workflow, issue templates.
 
-[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.5...HEAD
+[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.6...HEAD
+[0.0.6]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.5...0.0.6
 [0.0.5]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.4...0.0.5
 [0.0.2]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases/tag/0.0.2
 [0.0.1]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases/tag/0.0.1
