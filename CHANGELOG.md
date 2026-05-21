@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Release automation:** Pushing a semver git tag runs `.github/workflows/release.yml`, which builds `main.js` and creates a **GitHub Release** with `manifest.json`, `main.js`, and `styles.css` so **BRAT ≥ 1.1.0** can install updates (tags alone are insufficient). Manual repair: `workflow_dispatch` on that workflow with the tag name, or see [`docs/RELEASE.md`](docs/RELEASE.md).
+
+### Changed
+
+- **Docs / agent rules:** `docs/RELEASE.md` is the canonical ship checklist; `.cursor/rules/brat-version-on-commit.mdc` now matches BRAT’s GitHub Release requirement.
 
 ## [0.0.10] — 2026-05-21
 

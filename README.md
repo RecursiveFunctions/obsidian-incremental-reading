@@ -2,7 +2,7 @@
 
 The full SuperMemo element tree in Obsidian: read sources, extract passages into a real source-to-extract-to-item hierarchy, and review it on a queue that interleaves reading and recall.
 
-**Status:** Pre-release alpha. I'm testing it on my own vault. If you want to give it a try, treat everything as unstable until the first tagged release. The plugin is being rebuilt against the architecture in [`docs/DESIGN.md`](docs/DESIGN.md). This niche is briefly open and the work is moving fast.
+**Status:** Pre-release alpha. **BRAT** users: installs come from **GitHub Releases** (see [`docs/RELEASE.md`](docs/RELEASE.md)); a version bump on `main` alone is not enough.
 
 ## What this is
 

@@ -1,29 +1,38 @@
 ---
-description: Version bump + git tag + push for BRAT whenever shipping plugin changes
+description: BRAT releases require GitHub Releases with assets; tag + manifest bump alone is not enough
 alwaysApply: true
 ---
 
-# BRAT releases: version bump, tag, and push
+# BRAT releases (read this before “shipping” a plugin version)
 
-[BRAT](https://github.com/TfTHacker/obsidian42-brat) needs a **new semver on GitHub** *and* (for this project / typical beta flows) a **git tag** that matches that release so installers resolve the right ref. Pushing `main` alone is not enough if BRAT or the release pipeline keys off tags.
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) **≥ v1.1.0** installs from **GitHub Releases**, not from `main` and **not** from a bare **git tag**. It downloads **`manifest.json`**, **`main.js`**, and **`styles.css`** from **release assets**.
 
-## On every ship (commit that changes shipped plugin code)
+Pushing only `manifest.json` + a tag to `main` **will not** update BRAT. That is the usual reason “BRAT doesn’t see the new version.”
 
-1. **Bump** — keep these in lockstep (same patch/minor/major):
-   - **`manifest.json`** → `"version"`
-   - **`package.json`** → `"version"`
-   - **`versions.json`** → new key for that version → `manifest.json` `"minAppVersion"`
+Canonical doc in this repo: **`docs/RELEASE.md`**.
 
-   Preferred: **`npm version patch`** (or `minor` / `major` as appropriate), which runs `version-bump.mjs` from the `version` script. Bump by hand only if you mirror that script exactly.
+## Every ship checklist (agent or human)
 
-2. **Commit** the code + metadata together (one coherent release commit is fine).
+1. **Code + tests** — `npm test` and `npm run build` pass locally (or rely on CI on `main`).
+2. **Bump semver in lockstep** (same `X.Y.Z` everywhere):
+   - `package.json` → `version`
+   - `manifest.json` → `version`
+   - `versions.json` → new key `X.Y.Z` → `manifest.minAppVersion`  
+   Preferred: **`npm version patch`** (or `minor` / `major`), which runs `version-bump.mjs` via the `version` npm script.
+3. **Commit** the changes (including `CHANGELOG.md` when applicable).
+4. **Tag** — name **must** equal `manifest.json` `version` exactly (this repo: `0.0.10`, **no** `v` prefix).
+5. **Push** — `git push origin main` **and** `git push origin <tag>` (or `--follow-tags`).
+6. **GitHub Release with assets** — **required for BRAT**:
+   - **Automated:** pushing the tag triggers **`.github/workflows/release.yml`**, which builds `main.js` and runs `softprops/action-gh-release` with the three files. **Wait for that workflow to finish** and confirm the Release exists on GitHub before telling anyone to “update in BRAT.”
+   - **If the workflow failed or did not exist yet:** repair with the one-off commands in `docs/RELEASE.md` (build at the tag, then `gh release create …` with the three files).
 
-3. **Tag** — after the commit is on `main`, create a tag whose **name equals** `manifest.json` `"version"` exactly (e.g. `0.0.8`, no `v` prefix unless the repo already standardizes on `v`—here use plain semver to match `manifest.json`).
+Do **not** mark a release “done” until the **Release** workflow is green **or** the Release exists with all three assets.
 
-4. **Push** — `git push origin main` **and** `git push origin <tag>` (or `git push origin main --tags` when pushing multiple tags). BRAT users do not see the update until the tag exists on the remote.
+## This repo’s specifics
 
-Do **not** skip the version bump on “small” commits when those commits change what users install. Do **not** consider the release done until **push + tag push** succeed.
+- **`main.js` is gitignored** — it is **not** on `main`; it is produced by `npm run build` and attached by the Release workflow. That is intentional; BRAT still works as long as **Releases** carry `main.js`.
+- **`styles.css` must be attached** to every Release (workflow does this) so installs are consistent.
 
-## If the user says they will tag manually
+## If the user only asked to “bump and tag”
 
-Still bump and commit; remind them the tag name must match `manifest.json` and must be pushed. Do not assume `main` alone updates BRAT.
+Still run the checklist through step 6: without a GitHub Release, BRAT users see nothing. Point them to `docs/RELEASE.md` and verify the workflow run.
