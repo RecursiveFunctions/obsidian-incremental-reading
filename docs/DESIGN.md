@@ -29,6 +29,12 @@ Three independent features each force this conclusion on their own:
 
 This is no longer a debatable default. It is a requirement.
 
+**Note (vault reality, 0.0.10):** IR *items* are still stored as normal
+Markdown notes so they remain portable in the vault graph; FSRS state lives
+in frontmatter / the structured store. Cloze *markup* in the note body uses
+Anki-style `{{cN::answer}}` with optional `{{cN::answer::hint}}` for
+SuperMemo-style hints during review.
+
 ## 2. Extracts
 
 Extracts are **block-anchored inside their source note by default**. An

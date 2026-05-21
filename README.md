@@ -45,7 +45,7 @@ State lives in a local store inside your vault, designed to survive multi-device
 Every IR command ships with a default `Alt+letter` binding. The full set:
 
 - `Alt+X`: extract selection into a child note.
-- `Alt+Z`: cloze selection into a review item.
+- `Alt+Z`: cloze selection into a review item (optional SuperMemo-style hint; stored as `{{cN::answer::hint}}`, Anki-compatible).
 - `Alt+R`: start a review session.
 - `Alt+T`: mark current note as an IR topic.
 - `Alt+P`: set IR priority of current element.
@@ -57,6 +57,15 @@ Every IR command ships with a default `Alt+letter` binding. The full set:
 - `Alt+E`: export IR items to Anki TSV.
 
 Rebind or clear any of them under Settings, Hotkeys.
+
+## Cloze markup
+
+- Deletions use **Anki-compatible** syntax: `{{c1::hidden text}}`.
+- Optional **hint** (SuperMemo-style): `{{c1::hidden text::your hint}}`. The
+  last `::` inside the tag separates hint from answer, so the hidden span may
+  itself contain `::`. Hints cannot contain `::` (reserved). Creating a cloze
+  via **Alt+Z** or the IR review **Cloze** button opens a short prompt; you
+  can also type hints by hand in the editor.
 
 ## Roadmap
 

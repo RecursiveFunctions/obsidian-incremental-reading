@@ -21,7 +21,12 @@ import {
   setPriority,
   type IrNoteResult,
 } from "./ir-note";
-import { CLOZE_RE, hasCloze } from "./cloze";
+import {
+  CLOZE_RE,
+  escapeClozeHtmlFragment,
+  hasCloze,
+  parseClozeInner,
+} from "./cloze";
 import {
   Grade,
   cardToStored,
@@ -53,6 +58,7 @@ import {
 } from "./ir/labels";
 import { newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
+import { promptClozeHint } from "./cloze-hint-modal";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -140,17 +146,17 @@ export class IrReviewView extends ItemView {
     }
 
     this.registerDomEvent(this.contentEl, "keydown", (evt: KeyboardEvent) => {
-      if (evt.altKey && (evt.key === "x" || evt.key === "X")) {
+      // Use `code` so Alt+X / Alt+Z work across layouts (Alt often changes `key`).
+      if (
+        evt.altKey &&
+        !evt.ctrlKey &&
+        !evt.metaKey &&
+        (evt.code === "KeyX" || evt.code === "KeyZ")
+      ) {
         if (this.canMakeChild()) {
           evt.preventDefault();
-          void this.handleExtract();
-        }
-        return;
-      }
-      if (evt.altKey && (evt.key === "z" || evt.key === "Z")) {
-        if (this.canMakeChild()) {
-          evt.preventDefault();
-          void this.handleCloze();
+          if (evt.code === "KeyX") void this.handleExtract();
+          else void this.handleCloze();
         }
         return;
       }
@@ -336,11 +342,12 @@ export class IrReviewView extends ItemView {
     }
     this.currentRaw = this.rawOnDisk;
     this.loadedSlotId = slot.id;
-    // Reading topics/extracts: start in the editor so extract, cloze, and
-    // edits work without an extra "Edit" click (rendered markdown selection
-    // is fragile for formatted text).
-    this.editing =
-      this.isReading(slot) && !!slot.file && !this.bodyMissing;
+    // Reading topics/extracts: start in rendered markdown (same pipeline as
+    // Preview). **Edit** or a click on the card body (outside links) opens the
+    // raw textarea. Extract/cloze from the preview use DOM selection → source
+    // offsets (works for typical text; switch to Edit if the tool reports
+    // ambiguity across heavy formatting).
+    this.editing = false;
   }
 
   /**
@@ -496,7 +503,10 @@ export class IrReviewView extends ItemView {
       this.renderEditToggle(bar);
       bar
         .createEl("button", {
-          text: this.labelWithHotkey("Next", "Space"),
+          text: this.labelWithHotkey(
+            "Next",
+            this.editing ? "Ctrl+Enter" : "Space",
+          ),
           cls: "mod-cta",
         })
         .addEventListener("click", () => void this.next());
@@ -549,13 +559,18 @@ export class IrReviewView extends ItemView {
   ): Promise<void> {
     const shown =
       isCloze && !this.revealed
-        ? raw.replace(CLOZE_RE, "**[ ... ]**")
+        ? raw.replace(CLOZE_RE, (_m, _n, inner) => {
+            const { hint } = parseClozeInner(inner);
+            const hintPart = hint
+              ? ` <span class="ir-cloze-hint">(${escapeClozeHtmlFragment(hint)})</span>`
+              : "";
+            return `<mark class="ir-cloze-elision"><span class="ir-cloze-gap">[ ... ]</span>${hintPart}</mark>`;
+          })
         : isCloze
-          ? raw.replace(
-              CLOZE_RE,
-              (_m, _n, ans) =>
-                `<mark class="ir-cloze-answer">${ans}</mark>`,
-            )
+          ? raw.replace(CLOZE_RE, (_m, _n, inner) => {
+              const { answer } = parseClozeInner(inner);
+              return `<mark class="ir-cloze-answer">${escapeClozeHtmlFragment(answer)}</mark>`;
+            })
           : raw;
     const body = parent.createEl("div", {
       cls: "ir-review-body ir-review-main-body",
@@ -568,6 +583,25 @@ export class IrReviewView extends ItemView {
       slot?.file?.path ?? "",
       this,
     );
+
+    // Click (not mousedown) so drag-to-select in preview still works for
+    // extract/cloze; skip embedded controls so links and task checkboxes behave.
+    if (slot && this.canEdit() && !this.editing) {
+      body.addClass("ir-review-main-body--click-to-edit");
+      body.addEventListener("click", (evt: MouseEvent) => {
+        const el = evt.target as HTMLElement | null;
+        if (!el) return;
+        if (
+          el.closest(
+            "a, button, input, select, textarea, iframe, video, audio",
+          )
+        ) {
+          return;
+        }
+        this.editing = true;
+        void this.renderCard();
+      });
+    }
   }
 
   private renderEditor(parent: HTMLElement) {
@@ -576,6 +610,28 @@ export class IrReviewView extends ItemView {
     ta.spellcheck = true;
     ta.addEventListener("input", () => {
       this.currentRaw = ta.value;
+    });
+    // Plain `addEventListener`: textarea is recreated each `renderCard`; avoid
+    // stacking `registerDomEvent` cleanups on the view for every card.
+    ta.addEventListener("keydown", (evt: KeyboardEvent) => {
+      const slot = this.current;
+      if (!slot || !this.isReading(slot)) return;
+      if (evt.code === "Enter" && (evt.ctrlKey || evt.metaKey)) {
+        evt.preventDefault();
+        void this.next();
+        return;
+      }
+      if (
+        evt.altKey &&
+        !evt.ctrlKey &&
+        !evt.metaKey &&
+        (evt.code === "KeyX" || evt.code === "KeyZ") &&
+        this.canMakeChild()
+      ) {
+        evt.preventDefault();
+        if (evt.code === "KeyX") void this.handleExtract();
+        else void this.handleCloze();
+      }
     });
     requestAnimationFrame(() => {
       // On mobile, programmatic focus opens the IME and shrinks the viewport,
@@ -605,18 +661,30 @@ export class IrReviewView extends ItemView {
       });
   }
 
+  /**
+   * Prevents the button from taking focus on pointer down so a textarea
+   * selection survives until `click` runs (see `resolveSelection` when editing).
+   * Plain `addEventListener` (not `registerDomEvent`): buttons are recreated on
+   * every `renderCard`; listeners are dropped with the removed DOM nodes.
+   */
+  private preventClickStealingFocus(el: HTMLElement) {
+    el.addEventListener("mousedown", (e: MouseEvent) => {
+      if (e.button === 0) e.preventDefault();
+    });
+  }
+
   private renderChildButtons(parent: HTMLElement) {
     if (!this.canMakeChild()) return;
-    parent
-      .createEl("button", {
-        text: this.labelWithHotkey("Extract", "Alt+X"),
-      })
-      .addEventListener("click", () => void this.handleExtract());
-    parent
-      .createEl("button", {
-        text: this.labelWithHotkey("Cloze", "Alt+Z"),
-      })
-      .addEventListener("click", () => void this.handleCloze());
+    const extractBtn = parent.createEl("button", {
+      text: this.labelWithHotkey("Extract", "Alt+X"),
+    });
+    this.preventClickStealingFocus(extractBtn);
+    extractBtn.addEventListener("click", () => void this.handleExtract());
+    const clozeBtn = parent.createEl("button", {
+      text: this.labelWithHotkey("Cloze", "Alt+Z"),
+    });
+    this.preventClickStealingFocus(clozeBtn);
+    clozeBtn.addEventListener("click", () => void this.handleCloze());
   }
 
   private resolveSelection():
@@ -692,6 +760,8 @@ export class IrReviewView extends ItemView {
       new Notice(`Incremental Reading: ${sel.reason}`);
       return;
     }
+    const hintR = await promptClozeHint(this.app);
+    if (!hintR.ok) return;
     await this.flushEdits();
     const result = await createClozeFromText(
       this.app,
@@ -700,6 +770,7 @@ export class IrReviewView extends ItemView {
       sel.start,
       sel.end,
       this.settings,
+      hintR.hint,
     );
     await this.afterChildCreated(result, "Cloze item created:");
   }

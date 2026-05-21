@@ -87,6 +87,14 @@ no inline workflow requires dismissing a popup to continue.
 **Common violations:** "are you sure?" dialogs for reversible operations,
 modal forms for adding extracts, popups for showing review stats.
 
+**Documented exception (0.0.10+):** The optional **cloze hint** prompt
+(`src/cloze-hint-modal.ts`) is a small `Modal` shown when creating a cloze
+from the editor or IR review. It mirrors SuperMemo-style hint entry, stays
+skippable (Continue with an empty field), and is not used for destructive
+actions. **Reversal plan:** replace with an inline hint field on the review /
+editor surface if commitment #6 strictness becomes more important than this
+workflow shortcut.
+
 ## 7. Session audit ("what did I touch")
 
 One command shows the user every item, extract, and source touched in the

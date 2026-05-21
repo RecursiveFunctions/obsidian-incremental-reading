@@ -1,21 +1,62 @@
 /**
  * Cloze deletion format.
  *
- * One Anki-compatible syntax, defined in exactly one place so the writer
+ * Anki-compatible syntax, defined in exactly one place so the writer
  * (extract/cloze creation) and the future reader (Review UI) cannot drift:
  *
  *     {{c1::hidden answer}}
+ *     {{c1::hidden answer::optional hint}}   // hint shown while hidden (SM-style)
+ *
+ * When a hint is present, everything before the **last** `::` inside the tag
+ * is the hidden answer (so answers may contain `::`). The hint must not
+ * contain `::` (validated in the creation modal).
  *
  * The numbered group supports multiple deletions per note later without a
  * format change.
  */
 
-/** Wrap `answer` as cloze group `n` (defaults to 1). */
-export function wrapCloze(answer: string, n = 1): string {
+/** Escape minimal HTML entities for safe injection into `<mark>` bodies. */
+export function escapeClozeHtmlFragment(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Split the inside of `{{cN::<inner>}}`: last `::` separates optional hint
+ * (Anki / SuperMemo-style).
+ */
+export function parseClozeInner(inner: string): {
+  answer: string;
+  hint?: string;
+} {
+  const parts = inner.split("::");
+  if (parts.length < 2) return { answer: inner };
+  const rawHint = parts[parts.length - 1] ?? "";
+  const hint = rawHint.trim();
+  const answer = parts.slice(0, -1).join("::");
+  if (!hint) return { answer };
+  return { answer, hint };
+}
+
+/** Wrap `answer` as cloze group `n` (defaults to 1), with optional `hint`. */
+export function wrapCloze(answer: string, n = 1, hint?: string): string {
+  const h = hint?.trim();
+  if (h) {
+    if (h.includes("::")) {
+      console.warn(
+        "Incremental Reading: cloze hint contains illegal `::`; hint dropped.",
+      );
+      return `{{c${n}::${answer}}}`;
+    }
+    return `{{c${n}::${answer}::${h}}}`;
+  }
   return `{{c${n}::${answer}}}`;
 }
 
-/** Global matcher for cloze spans; capture group 1 is the hidden answer. */
+/** Global matcher for cloze spans; capture group 2 is the full inner payload. */
 export const CLOZE_RE = /\{\{c(\d+)::([\s\S]*?)\}\}/g;
 
 /** True if `text` contains at least one cloze deletion. */
@@ -59,6 +100,7 @@ export function buildClozeBody(
   spannedLines: string[],
   fromCh: number,
   toCh: number,
+  hint?: string,
 ): ClozeBuild {
   const block = spannedLines.join("\n");
   const last = spannedLines[spannedLines.length - 1] ?? "";
@@ -66,7 +108,8 @@ export function buildClozeBody(
   const end =
     spannedLines.length === 1 ? toCh : block.length - last.length + toCh;
   const answer = block.slice(start, end);
-  const body = block.slice(0, start) + wrapCloze(answer) + block.slice(end);
+  const body =
+    block.slice(0, start) + wrapCloze(answer, 1, hint) + block.slice(end);
   return { body, answer };
 }
 
@@ -80,6 +123,7 @@ export function buildClozeFromText(
   raw: string,
   selStart: number,
   selEnd: number,
+  hint?: string,
 ): ClozeBuild {
   const lines = raw.split("\n");
   let acc = 0;
@@ -107,5 +151,10 @@ export function buildClozeFromText(
     endLine = lines.length - 1;
     toCh = lines[endLine]?.length ?? 0;
   }
-  return buildClozeBody(lines.slice(startLine, endLine + 1), fromCh, toCh);
+  return buildClozeBody(
+    lines.slice(startLine, endLine + 1),
+    fromCh,
+    toCh,
+    hint,
+  );
 }

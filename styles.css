@@ -132,6 +132,16 @@
   line-height: var(--line-height-normal);
 }
 
+/* Rendered card body: click switches to the source editor (review-view). */
+.ir-review-main-body--click-to-edit {
+  cursor: text;
+}
+
+.ir-review-main-body--click-to-edit:hover {
+  box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+
 .ir-review-textarea {
   width: 100%;
   min-height: 16em;
@@ -152,14 +162,31 @@
   border-color: var(--interactive-accent);
 }
 
-/* SuperMemo-style highlight for the revealed cloze answer. Uses theme
- * accent vars so it adapts to light and dark themes without hardcoding. */
+/* SuperMemo-style: every cloze span stays visibly highlighted — hidden gaps
+ * show a padded elision marker; revealed answers keep the same fill. */
+.ir-cloze-elision,
 .ir-cloze-answer {
   background: var(--text-highlight-bg, rgba(255, 208, 0, 0.35));
   color: var(--text-normal);
-  padding: 0.05em 0.15em;
+  padding: 0.05em 0.25em;
   border-radius: 2px;
   font-weight: 600;
+}
+
+.ir-cloze-elision {
+  border: 1px dashed var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+/* Optional hint (SuperMemo-style), shown only while the cloze is hidden. */
+.ir-cloze-hint {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.ir-cloze-answer {
+  border: 1px solid transparent;
 }
 
 .ir-review-controls {

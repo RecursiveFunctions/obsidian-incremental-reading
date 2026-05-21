@@ -133,7 +133,10 @@ This step is mostly mechanical and reduces the surface area of C2.
     view does not, so the contentEl needs `tabIndex = -1` and focus()
     inside onOpen so keys land. The Vim plugin should be untouched
     because keys are bound to the view's contentEl, not globally.
-  - The textarea-typing guard (`isTypingInTextarea`) keeps working.
+  - The textarea-typing guard (`isTypingInTextarea`) keeps working; reading
+    cards default to **rendered** markdown (click body or **Edit** for the
+    raw textarea). **Ctrl+Enter** advances a reading card while the textarea
+    is focused.
   - `MarkdownRenderer.render` already takes a Component; pass `this`
     (ItemView extends Component) or pass the plugin as before.
   - `onClose()` should fire the `onChange?.()` callback (same as today's
@@ -167,7 +170,7 @@ imports. Run `npm run build` and the full test suite.
 For every phase, the PR template's UI commitment checklist must be checked
 end-to-end. Specifically:
 
-- [ ] No new modals introduced.
+- [ ] No new modals introduced, except the [documented cloze-hint exception](UI-COMMITMENTS.md#6-no-popups-that-block-the-document) in UI commitment #6.
 - [ ] Existing keyboard shortcuts still work (Alt+X, Alt+Z in editor;
       in-review keys 1-4, Space, Enter, L, D, Alt+X, Alt+Z).
 - [ ] Status bar continues to refresh after grading / postponing /

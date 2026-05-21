@@ -239,6 +239,7 @@ export async function createCloze(
   source: TFile,
   editor: Editor,
   settings: IrNoteSettings,
+  hint?: string,
 ): Promise<IrNoteResult> {
   const answer = editor.getSelection().trim();
   if (!answer) return { error: "Nothing selected." };
@@ -250,7 +251,7 @@ export async function createCloze(
     spanned.push(editor.getLine(line));
   }
 
-  const { body } = buildClozeBody(spanned, from.ch, to.ch);
+  const { body } = buildClozeBody(spanned, from.ch, to.ch, hint);
   return createChildNote(app, source, "item", body, answer, settings);
 }
 
@@ -266,9 +267,10 @@ export async function createClozeFromText(
   selStart: number,
   selEnd: number,
   settings: IrNoteSettings,
+  hint?: string,
 ): Promise<IrNoteResult> {
   if (selEnd <= selStart) return { error: "Nothing selected." };
-  const { body, answer } = buildClozeFromText(raw, selStart, selEnd);
+  const { body, answer } = buildClozeFromText(raw, selStart, selEnd, hint);
   const trimmed = answer.trim();
   if (!trimmed) return { error: "Nothing selected." };
   return createChildNote(app, source, "item", body, trimmed, settings);

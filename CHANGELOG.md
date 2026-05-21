@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.0.10] — 2026-05-21
+
+### Added
+
+- **Cloze hints (SuperMemo-style):** Optional hint using Anki-compatible `{{cN::answer::hint}}`. Creating a cloze from the note editor or IR review opens a short prompt (leave blank for none); in review, the hint appears in muted parentheses next to the hidden gap. You can also type the syntax by hand; answers may contain `::`, but hints cannot.
+
+### Changed
+
+- **IR review reading pane:** Topics and extracts open in **rendered** markdown (wikilinks, emphasis, like preview). **Click the card body** (outside links and embedded controls) to switch to the source editor; **Edit** / **Preview** still toggles explicitly. Use **Edit** when extract/cloze selection must map exactly to raw markdown.
+- **IR review cloze cards:** Hidden and revealed cloze deletions use a SuperMemo-style highlight band (theme `text-highlight-bg`); hidden gaps use a dashed outline and `[ ... ]` inside the mark.
+
+### Fixed
+
+- **IR review:** Extract/Cloze clicks no longer move focus off the textarea before the handler runs (selection + “click into the editor first” bug). **Alt+X** / **Alt+Z** use `KeyboardEvent.code` so layouts where Alt changes `key` still work; while editing a reading body, **Ctrl+Enter** ( **Cmd+Enter** on macOS) runs **Next** and the Next button label reflects that.
+
 ## [0.0.9] — 2026-05-20
 
 ### Fixed

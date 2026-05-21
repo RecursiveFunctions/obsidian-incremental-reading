@@ -4,8 +4,10 @@ import {
   CLOZE_RE,
   buildClozeBody,
   buildClozeFromText,
+  escapeClozeHtmlFragment,
   hasCloze,
   nextClozeNumber,
+  parseClozeInner,
   wrapCloze,
 } from "../src/cloze";
 
@@ -14,11 +16,31 @@ test("wrapCloze uses group 1 by default and honors n", () => {
   assert.equal(wrapCloze("x", 2), "{{c2::x}}");
 });
 
-test("CLOZE_RE captures group number and answer; hasCloze detects", () => {
+test("wrapCloze optional hint", () => {
+  assert.equal(wrapCloze("Paris", 1, "capital"), "{{c1::Paris::capital}}");
+  assert.equal(wrapCloze("a::b", 2, "hint"), "{{c2::a::b::hint}}");
+});
+
+test("parseClozeInner splits on last ::", () => {
+  assert.deepEqual(parseClozeInner("only"), { answer: "only" });
+  assert.deepEqual(parseClozeInner("a::b"), { answer: "a", hint: "b" });
+  assert.deepEqual(parseClozeInner("a::b::c"), { answer: "a::b", hint: "c" });
+  assert.deepEqual(parseClozeInner("a::"), { answer: "a" });
+});
+
+test("escapeClozeHtmlFragment escapes markup", () => {
+  assert.equal(escapeClozeHtmlFragment("<x>"), "&lt;x&gt;");
+});
+
+test("CLOZE_RE captures group number and inner payload; hasCloze detects", () => {
   CLOZE_RE.lastIndex = 0;
   const m = CLOZE_RE.exec("a {{c3::hidden}} b");
   assert.equal(m?.[1], "3");
   assert.equal(m?.[2], "hidden");
+  CLOZE_RE.lastIndex = 0;
+  const m2 = CLOZE_RE.exec("x {{c1::ans::hint}} y");
+  assert.equal(m2?.[1], "1");
+  assert.equal(m2?.[2], "ans::hint");
   assert.equal(hasCloze("no cloze here"), false);
   assert.equal(hasCloze("has {{c1::one}}"), true);
 });
@@ -27,6 +49,12 @@ test("single-line selection in the middle", () => {
   const r = buildClozeBody(["The quick brown fox"], 4, 9);
   assert.equal(r.answer, "quick");
   assert.equal(r.body, "The {{c1::quick}} brown fox");
+});
+
+test("buildClozeBody with optional hint", () => {
+  const r = buildClozeBody(["The quick brown fox"], 4, 9, "color word");
+  assert.equal(r.answer, "quick");
+  assert.equal(r.body, "The {{c1::quick::color word}} brown fox");
 });
 
 test("single-line: picks the selected occurrence, not the first match", () => {

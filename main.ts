@@ -51,6 +51,7 @@ import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 import { redistribute, type MercyEntry } from "./src/ir/mercy";
 import { nextClozeNumber, wrapCloze } from "./src/cloze";
+import { promptClozeHint } from "./src/cloze-hint-modal";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -475,14 +476,17 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async clozeSelection(editor: Editor, source: TFile) {
     if (!(await this.ensureIrSource(source))) return;
     if (getIrType(this.app, source) === "item") {
-      this.addClozeInPlace(editor, source);
+      await this.addClozeInPlace(editor, source);
       return;
     }
+    const hintR = await promptClozeHint(this.app);
+    if (!hintR.ok) return;
     const result = await createCloze(
       this.app,
       source,
       editor,
       this.settings,
+      hintR.hint,
     );
     await this.openResult(result, "Cloze item created:");
   }
@@ -496,14 +500,19 @@ export default class IncrementalReadingPlugin extends Plugin {
    * extra cloze just expands the hidden span on the same card, which is
    * usually what the user wants when they're elaborating an existing item.
    */
-  private addClozeInPlace(editor: Editor, source: TFile): void {
+  private async addClozeInPlace(
+    editor: Editor,
+    source: TFile,
+  ): Promise<void> {
     const answer = editor.getSelection().trim();
     if (!answer) {
       new Notice("Incremental Reading: nothing selected.");
       return;
     }
+    const hintR = await promptClozeHint(this.app);
+    if (!hintR.ok) return;
     const n = nextClozeNumber(editor.getValue());
-    editor.replaceSelection(wrapCloze(answer, n));
+    editor.replaceSelection(wrapCloze(answer, n, hintR.hint));
     new Notice(`Added cloze c${n} to "${source.basename}".`);
   }
 

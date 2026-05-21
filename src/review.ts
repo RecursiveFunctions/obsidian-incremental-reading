@@ -20,12 +20,12 @@
  * Priority (the SuperMemo 0-100 percentile that orders the queue) is editable
  * inline on every element, since reordering is a constant part of the flow.
  *
- * In-place editing and child-note creation are also first-class: while a
- * topic or extract is on screen the body can be edited (a textarea takes
- * over the rendered view), text can be selected and turned into a child
- * extract or cloze item, and edits auto-save when the card advances. For
- * cloze items, edit/extract/cloze are gated until the answer is revealed,
- * because the raw body is the answer.
+ * In-place editing and child-note creation are also first-class: topics and
+ * extracts open as rendered markdown; **Edit** swaps in a textarea over the
+ * preview. Text can be selected in either mode for extract/cloze (preview
+ * selection maps back to the markdown source when possible), and edits
+ * auto-save when the card advances. For cloze items, edit/extract/cloze are
+ * gated until the answer is revealed, because the raw body is the answer.
  */
 
 import { App, TFile } from "obsidian";
