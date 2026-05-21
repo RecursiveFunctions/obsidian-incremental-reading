@@ -59,6 +59,7 @@ import {
 import { newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
 import { promptClozeHint } from "./cloze-hint-modal";
+import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -103,6 +104,9 @@ export class IrReviewView extends ItemView {
   /** True if the current slot's source note is missing from the vault. */
   private bodyMissing = false;
 
+  /** Reading-position bookmarks loaded once on open, saved incrementally. */
+  private bookmarks: BookmarkMap = {};
+
   constructor(
     leaf: WorkspaceLeaf,
     /** Mirrors ReviewModal's Component; MarkdownRenderer uses `this` as Component. */
@@ -139,6 +143,7 @@ export class IrReviewView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    this.bookmarks = await this.store.loadBookmarks();
     this.contentEl.addClass("ir-review-modal");
     this.contentEl.addClass("ir-review-layout");
     if (Platform.isMobile) {
@@ -224,9 +229,10 @@ export class IrReviewView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.captureBookmark();
     this.contentEl.empty();
-    void this.store
-      .reconcile()
+    void this.persistBookmarks()
+      .then(() => this.store.reconcile())
       .catch((e) => {
         console.error("Incremental Reading: reconcile after review failed", e);
       })
@@ -384,10 +390,78 @@ export class IrReviewView extends ItemView {
   }
 
   /**
+   * Snapshot the current scroll position and cursor for the active reading
+   * slot. No-op for non-reading elements (items have no meaningful position
+   * to resume). Returns silently when nothing is visible yet.
+   */
+  private captureBookmark(): void {
+    const slot = this.current;
+    if (!slot || !this.isReading(slot)) return;
+
+    const scroll = this.contentEl.querySelector<HTMLElement>(
+      ".ir-review-main-col .ir-review-scroll",
+    );
+    const scrollTop = scroll?.scrollTop ?? 0;
+
+    let charOffset = 0;
+    if (this.editing) {
+      const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
+        ".ir-review-textarea",
+      );
+      if (ta) charOffset = ta.selectionStart ?? 0;
+    }
+
+    this.bookmarks = setBookmark(this.bookmarks, {
+      elementId: slot.id,
+      line: charOffset,
+      ch: 0,
+      scrollTop,
+      updatedAt: Date.now(),
+    });
+  }
+
+  /**
+   * After the DOM for a reading slot has been painted, restore the
+   * previously-saved scroll position (and cursor when editing).
+   */
+  private restoreBookmark(slot: ReviewSlot): void {
+    if (!this.isReading(slot)) return;
+    const bm = getBookmark(this.bookmarks, slot.id);
+    if (!bm) return;
+
+    requestAnimationFrame(() => {
+      const scroll = this.contentEl.querySelector<HTMLElement>(
+        ".ir-review-main-col .ir-review-scroll",
+      );
+      if (scroll) scroll.scrollTop = bm.scrollTop;
+
+      if (this.editing) {
+        const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
+          ".ir-review-textarea",
+        );
+        if (ta) {
+          const pos = Math.min(bm.line, ta.value.length);
+          ta.setSelectionRange(pos, pos);
+          ta.scrollTop = bm.scrollTop;
+        }
+      }
+    });
+  }
+
+  private async persistBookmarks(): Promise<void> {
+    try {
+      await this.store.saveBookmarks(this.bookmarks);
+    } catch (e) {
+      console.error("Incremental Reading: saving bookmarks failed", e);
+    }
+  }
+
+  /**
    * Persist any pending edit to disk before advancing or creating a child.
    * Idempotent: re-flushing is a no-op when the buffer matches disk.
    */
   private async flushEdits(): Promise<void> {
+    this.captureBookmark();
     const slot = this.current;
     if (!slot || !slot.file || this.bodyMissing) return;
     if (this.currentRaw === this.rawOnDisk) return;
@@ -520,6 +594,7 @@ export class IrReviewView extends ItemView {
           text: this.labelWithHotkey("Dismiss", "D"),
         })
         .addEventListener("click", () => void this.dismiss());
+      this.restoreBookmark(slot);
       return;
     }
 
@@ -797,6 +872,7 @@ export class IrReviewView extends ItemView {
   }
 
   private advance(doneVerb: string) {
+    void this.persistBookmarks();
     this.index += 1;
     this.revealed = false;
     this.editing = false;

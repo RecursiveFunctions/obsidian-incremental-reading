@@ -55,6 +55,7 @@ Every IR command ships with a default `Alt+letter` binding. The full set:
 - `Alt+M`: postpone overdue elements (mercy).
 - `Alt+D`: dismiss or restore the current element.
 - `Alt+E`: export IR items to Anki TSV.
+- `Alt+B`: import clipboard text as an IR topic (bulk import).
 
 Rebind or clear any of them under Settings, Hotkeys.
 

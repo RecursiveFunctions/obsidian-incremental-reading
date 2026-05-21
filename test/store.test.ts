@@ -172,3 +172,42 @@ test("malformed shard lines are skipped, not fatal", async () => {
   const s = await store.load();
   assert.equal(s.elements.get(id)?.card?.due, 1234);
 });
+
+test("loadBookmarks returns empty map when file is missing", async () => {
+  const fs = memFs();
+  const store = new IrStore(fs);
+  await store.init();
+  const bm = await store.loadBookmarks();
+  assert.deepEqual(bm, {});
+});
+
+test("saveBookmarks + loadBookmarks round-trips", async () => {
+  const fs = memFs();
+  const store = new IrStore(fs);
+  await store.init();
+  const id = newElementId();
+  const bm = {
+    [id]: { elementId: id, line: 42, ch: 7, scrollTop: 300, updatedAt: 1000 },
+  };
+  await store.saveBookmarks(bm);
+  const loaded = await store.loadBookmarks();
+  assert.deepEqual(loaded, bm);
+});
+
+test("saveBookmarks overwrites previous bookmarks", async () => {
+  const fs = memFs();
+  const store = new IrStore(fs);
+  await store.init();
+  const id1 = newElementId();
+  const id2 = newElementId();
+  await store.saveBookmarks({
+    [id1]: { elementId: id1, line: 1, ch: 0, scrollTop: 0, updatedAt: 1000 },
+  });
+  await store.saveBookmarks({
+    [id2]: { elementId: id2, line: 99, ch: 3, scrollTop: 500, updatedAt: 2000 },
+  });
+  const loaded = await store.loadBookmarks();
+  assert.equal(Object.keys(loaded).length, 1);
+  assert.equal(loaded[id2]?.line, 99);
+  assert.equal(loaded[id1], undefined);
+});

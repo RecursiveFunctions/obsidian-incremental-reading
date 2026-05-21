@@ -12,6 +12,7 @@
 import { fold, compact, type LogState } from "./log";
 import { newDeviceId, type DeviceId, type ElementId } from "./ids";
 import type { IrEvent } from "./model";
+import type { BookmarkMap } from "./bookmark";
 
 // Fixed paths (constants in the module)
 export const META = ".ir/meta.json";
@@ -21,6 +22,7 @@ export const SNAPSHOT = ".ir/snapshot.jsonl";
 export const RHISTDIR = ".ir/review-history";
 export const STATEDIR = ".ir/state";
 export const TOMBSTONES = ".ir/tombstones.json";
+export const BOOKMARKS = ".ir/bookmarks.json";
 
 export interface VaultFs {
   exists(path: string): Promise<boolean>;
@@ -233,6 +235,21 @@ export class IrStore {
       archived: result.archived.length,
       dropped: result.dropped.length,
     };
+  }
+
+  async loadBookmarks(): Promise<BookmarkMap> {
+    if (!(await this.fs.exists(BOOKMARKS))) return {};
+    try {
+      const raw = await this.fs.read(BOOKMARKS);
+      return JSON.parse(raw) as BookmarkMap;
+    } catch {
+      return {};
+    }
+  }
+
+  async saveBookmarks(bm: BookmarkMap): Promise<void> {
+    const data = deterministicJsonStringify(bm);
+    await this.fs.write(BOOKMARKS, data);
   }
 
   async reconcile(): Promise<LogState> {

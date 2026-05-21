@@ -52,6 +52,7 @@ import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 import { redistribute, type MercyEntry } from "./src/ir/mercy";
 import { nextClozeNumber, wrapCloze } from "./src/cloze";
 import { promptClozeHint } from "./src/cloze-hint-modal";
+import { planBulkImport } from "./src/ir/bulk-import";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -304,6 +305,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "bulk-import",
+      name: "Import clipboard as IR topic",
+      icon: "clipboard-paste",
+      hotkeys: [{ modifiers: ["Alt"], key: "b" }],
+      callback: () => void this.bulkImport(),
+    });
+
     this.registerEvent(
       this.app.workspace.on(
         "editor-menu",
@@ -425,6 +434,12 @@ export default class IncrementalReadingPlugin extends Plugin {
         .setTitle("Export IR items to Anki TSV")
         .setIcon("download")
         .onClick(() => void this.exportAnkiTsv()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Import clipboard as IR topic")
+        .setIcon("clipboard-paste")
+        .onClick(() => void this.bulkImport()),
     );
   }
 
@@ -728,6 +743,59 @@ export default class IncrementalReadingPlugin extends Plugin {
       `Incremental Reading: wrote ${itemCount} item` +
         `${itemCount === 1 ? "" : "s"} to ${outPath}.`,
     );
+  }
+
+  /**
+   * Import the current clipboard text as a new IR topic. The pure
+   * `planBulkImport` resolves title, body, and frontmatter; this method
+   * creates the vault note, records it in the store, and opens it.
+   * The plugin never fetches a URL; paste-only is the privacy contract.
+   */
+  private async bulkImport(): Promise<void> {
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      new Notice(
+        "Incremental Reading: could not read the clipboard. " +
+          "Copy some text first, then run this command.",
+      );
+      return;
+    }
+    if (!text.trim()) {
+      new Notice("Incremental Reading: clipboard is empty.");
+      return;
+    }
+
+    const plan = planBulkImport({
+      text,
+      defaultPriority: this.settings.defaultPriority,
+      now: Date.now(),
+    });
+
+    const folder = this.settings.extractFolder.trim().replace(/^\/+|\/+$/g, "");
+    const stem = plan.title.replace(/[\\/:*?"<>|#^[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "IR import";
+    const dir = folder ? `${folder}/` : "";
+    let path = `${dir}${stem}.md`;
+    let n = 2;
+    while (this.app.vault.getAbstractFileByPath(path)) {
+      path = `${dir}${stem} ${n}.md`;
+      n += 1;
+    }
+
+    if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
+      await this.app.vault.createFolder(folder);
+    }
+
+    const file = await this.app.vault.create(path, plan.body.trim() + "\n");
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      for (const [k, v] of Object.entries(plan.frontmatter)) fm[k] = v;
+      writeTopicToFrontmatter(fm, newTopicState(this.settings));
+    });
+
+    await this.recordElement(file);
+    new Notice(`Imported "${plan.title}" as an IR topic.`);
+    await this.app.workspace.getLeaf(true).openFile(file);
   }
 
   /**
