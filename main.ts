@@ -142,6 +142,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrPriorityChange(elementId, file, priority),
           (elementId, file, dismissed) =>
             this.applyIrDismissChange(elementId, file, dismissed),
+          (elementId, file, days) =>
+            this.applyIrPostponeChange(elementId, file, days),
         );
       },
     );
@@ -703,6 +705,30 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (file) await setDismissed(this.app, file, dismissed);
     await this.store.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after dismiss failed", e);
+    });
+    void this.refreshStatusBar();
+  }
+
+  /** Postpone an element by N days via a mercy-postponed event. */
+  private async applyIrPostponeChange(
+    elementId: ElementId,
+    _file: TFile | null,
+    days: number,
+  ): Promise<void> {
+    if (!this.store) return;
+    const now = Date.now();
+    const newDue = now + days * 24 * 60 * 60 * 1000;
+    await this.store.appendEvent({
+      id: newEventId(),
+      ts: now,
+      lamport: now,
+      device: await this.store.getDeviceId(),
+      kind: "mercy-postponed",
+      target: elementId,
+      payload: { newDue },
+    });
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after postpone failed", e);
     });
     void this.refreshStatusBar();
   }

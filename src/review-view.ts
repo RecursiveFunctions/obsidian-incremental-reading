@@ -58,7 +58,6 @@ import {
 } from "./ir/labels";
 import { newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
-import { promptClozeHint } from "./cloze-hint-modal";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import { findExtractRange } from "./ir/extract-range";
 
@@ -860,8 +859,80 @@ export class IrReviewView extends ItemView {
       new Notice(`Incremental Reading: ${sel.reason}`);
       return;
     }
-    const hintR = await promptClozeHint(this.app);
-    if (!hintR.ok) return;
+    this.showInlineHintPrompt(slot, sel);
+  }
+
+  /**
+   * Inline hint bar: replaces the modal so cloze creation stays in-pane
+   * (UI commitment #6). Enter submits (empty = no hint), Esc cancels.
+   */
+  private showInlineHintPrompt(
+    slot: ReviewSlot,
+    sel: { text: string; start: number; end: number },
+  ): void {
+    const existing = this.contentEl.querySelector(".ir-hint-bar");
+    if (existing) existing.remove();
+
+    const dock = this.contentEl.querySelector(".ir-review-dock");
+    if (!dock) return;
+
+    const bar = createDiv({ cls: "ir-hint-bar" });
+    dock.prepend(bar);
+
+    bar.createSpan({
+      cls: "ir-hint-bar-label",
+      text: "Cloze hint (optional):",
+    });
+    const input = bar.createEl("input", {
+      cls: "ir-hint-bar-input",
+      type: "text",
+      placeholder: "e.g. capital of France — Enter to confirm, Esc to cancel",
+    });
+    const submit = bar.createEl("button", {
+      cls: "mod-cta ir-hint-bar-btn",
+      text: "OK",
+    });
+    const cancel = bar.createEl("button", {
+      cls: "ir-hint-bar-btn",
+      text: "Cancel",
+    });
+
+    let finished = false;
+    const finish = (hint: string | null) => {
+      if (finished) return;
+      finished = true;
+      bar.remove();
+      if (hint === null) return;
+      if (hint.includes("::")) {
+        new Notice(
+          'Incremental Reading: hints cannot contain "::" (reserved for cloze syntax).',
+        );
+        return;
+      }
+      void this.commitCloze(slot, sel, hint);
+    };
+
+    input.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        finish(input.value.trim());
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        finish(null);
+      }
+    });
+    submit.addEventListener("click", () => finish(input.value.trim()));
+    cancel.addEventListener("click", () => finish(null));
+
+    requestAnimationFrame(() => input.focus());
+  }
+
+  private async commitCloze(
+    slot: ReviewSlot,
+    sel: { text: string; start: number; end: number },
+    hint: string,
+  ): Promise<void> {
+    if (!slot.file) return;
     await this.flushEdits();
     const result = await createClozeFromText(
       this.app,
@@ -870,7 +941,7 @@ export class IrReviewView extends ItemView {
       sel.start,
       sel.end,
       this.settings,
-      hintR.hint,
+      hint,
     );
     await this.afterChildCreated(result, "Cloze item created:");
   }

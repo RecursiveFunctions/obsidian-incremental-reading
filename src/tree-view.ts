@@ -1,5 +1,6 @@
 import {
   ItemView,
+  Menu,
   Notice,
   Platform,
   TFile,
@@ -30,6 +31,13 @@ export type CommitIrDismissFn = (
   dismissed: boolean,
 ) => Promise<void>;
 
+/** Postpone an element by N days in the store + note frontmatter. */
+export type CommitIrPostponeFn = (
+  elementId: ElementId,
+  file: TFile | null,
+  days: number,
+) => Promise<void>;
+
 const ICONS: Record<IrType, string> = {
   topic: "book-open",
   extract: "scissors",
@@ -55,6 +63,7 @@ export class IrTreeView extends ItemView {
     store: IrStore,
     private readonly commitPriority?: CommitIrPriorityFn,
     private readonly commitDismiss?: CommitIrDismissFn,
+    private readonly commitPostpone?: CommitIrPostponeFn,
   ) {
     super(leaf);
     this.store = store;
@@ -348,12 +357,80 @@ export class IrTreeView extends ItemView {
       row.createSpan({ cls: "ir-tree-dismissed-badge", text: "dismissed" });
     }
 
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showRowContextMenu(e, node, file);
+    });
+
     if (hasChildren && !isCollapsed) {
       const ul = li.createEl("ul", { cls: "ir-tree-children" });
       for (const child of node.children) {
         this.renderNode(ul, child);
       }
     }
+  }
+
+  private showRowContextMenu(
+    e: MouseEvent,
+    node: TreeNode,
+    file: TFile | null,
+  ): void {
+    const menu = new Menu();
+    const elId = node.id as ElementId;
+
+    if (node.element.notePath) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Open note")
+          .setIcon("file-text")
+          .onClick(() => void this.openNote(node.element.notePath!)),
+      );
+    }
+
+    if (this.commitDismiss) {
+      const isDismissed = node.element.dismissed;
+      menu.addItem((item) =>
+        item
+          .setTitle(isDismissed ? "Restore" : "Dismiss")
+          .setIcon(isDismissed ? "rotate-ccw" : "eye-off")
+          .onClick(() => {
+            void (async () => {
+              try {
+                await this.commitDismiss!(elId, file, !isDismissed);
+              } catch (err) {
+                console.error("Incremental Reading: dismiss toggle failed", err);
+                new Notice("Incremental Reading: could not toggle dismiss.");
+              }
+              void this.render();
+            })();
+          }),
+      );
+    }
+
+    if (this.commitPostpone && !node.element.dismissed) {
+      for (const days of [1, 3, 7, 14, 30]) {
+        const label = days === 1 ? "1 day" : `${days} days`;
+        menu.addItem((item) =>
+          item
+            .setTitle(`Postpone ${label}`)
+            .setIcon("clock")
+            .onClick(() => {
+              void (async () => {
+                try {
+                  await this.commitPostpone!(elId, file, days);
+                } catch (err) {
+                  console.error("Incremental Reading: postpone failed", err);
+                  new Notice("Incremental Reading: could not postpone.");
+                }
+                void this.render();
+              })();
+            }),
+        );
+      }
+    }
+
+    menu.showAtMouseEvent(e);
   }
 
   /**
