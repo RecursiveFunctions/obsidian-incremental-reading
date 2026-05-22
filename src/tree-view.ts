@@ -38,6 +38,12 @@ export type CommitIrPostponeFn = (
   days: number,
 ) => Promise<void>;
 
+/** Move an element to a new parent in the store. */
+export type CommitIrReparentFn = (
+  elementId: ElementId,
+  newParentId: ElementId | null,
+) => Promise<void>;
+
 const ICONS: Record<IrType, string> = {
   topic: "book-open",
   extract: "scissors",
@@ -58,12 +64,16 @@ export class IrTreeView extends ItemView {
   /** When true, dismissed elements are visible with a restore action. */
   private showDismissed = false;
 
+  /** Element id currently being dragged (session-only). */
+  private dragSourceId: string | null = null;
+
   constructor(
     leaf: WorkspaceLeaf,
     store: IrStore,
     private readonly commitPriority?: CommitIrPriorityFn,
     private readonly commitDismiss?: CommitIrDismissFn,
     private readonly commitPostpone?: CommitIrPostponeFn,
+    private readonly commitReparent?: CommitIrReparentFn,
   ) {
     super(leaf);
     this.store = store;
@@ -224,6 +234,38 @@ export class IrTreeView extends ItemView {
 
     const roots = buildTree(elements);
     this.lastNodeIds = this.collectNodeIds(roots);
+    this.lastRenderedRoots = roots;
+
+    if (this.commitReparent) {
+      const dropRoot = body.createDiv({ cls: "ir-tree-drop-root" });
+      dropRoot.setText("Drop here to make a root element");
+      dropRoot.addEventListener("dragover", (e) => {
+        if (!this.dragSourceId) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        dropRoot.addClass("ir-tree-drop-root--active");
+      });
+      dropRoot.addEventListener("dragleave", () => {
+        dropRoot.removeClass("ir-tree-drop-root--active");
+      });
+      dropRoot.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropRoot.removeClass("ir-tree-drop-root--active");
+        const sourceId = this.dragSourceId;
+        if (!sourceId) return;
+        this.dragSourceId = null;
+        void (async () => {
+          try {
+            await this.commitReparent!(sourceId as ElementId, null);
+          } catch (err) {
+            console.error("Incremental Reading: reparent to root failed", err);
+            new Notice("Incremental Reading: could not move element.");
+          }
+          void this.render();
+        })();
+      });
+    }
+
     const ul = body.createEl("ul", { cls: "ir-tree-root" });
     for (const root of roots) {
       this.renderNode(ul, root);
@@ -231,6 +273,7 @@ export class IrTreeView extends ItemView {
   }
 
   private lastNodeIds: Set<string> = new Set();
+  private lastRenderedRoots: TreeNode[] = [];
 
   private collectNodeIds(nodes: TreeNode[]): Set<string> {
     const ids = new Set<string>();
@@ -363,12 +406,83 @@ export class IrTreeView extends ItemView {
       this.showRowContextMenu(e, node, file);
     });
 
+    if (this.commitReparent) {
+      row.draggable = true;
+      row.setAttribute("data-ir-drag-id", node.id);
+
+      row.addEventListener("dragstart", (e) => {
+        this.dragSourceId = node.id;
+        e.dataTransfer?.setData("text/plain", node.id);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+        requestAnimationFrame(() => row.addClass("ir-tree-row--dragging"));
+      });
+      row.addEventListener("dragend", () => {
+        this.dragSourceId = null;
+        this.contentEl
+          .querySelectorAll(".ir-tree-row--dragging, .ir-tree-row--drop-target")
+          .forEach((el) => {
+            el.removeClass("ir-tree-row--dragging");
+            el.removeClass("ir-tree-row--drop-target");
+          });
+      });
+      row.addEventListener("dragover", (e) => {
+        if (!this.dragSourceId || this.dragSourceId === node.id) return;
+        if (this.isDescendantOf(this.dragSourceId, node.id)) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        row.addClass("ir-tree-row--drop-target");
+      });
+      row.addEventListener("dragleave", () => {
+        row.removeClass("ir-tree-row--drop-target");
+      });
+      row.addEventListener("drop", (e) => {
+        e.preventDefault();
+        row.removeClass("ir-tree-row--drop-target");
+        const sourceId = this.dragSourceId;
+        if (!sourceId || sourceId === node.id) return;
+        if (this.isDescendantOf(sourceId, node.id)) return;
+        this.dragSourceId = null;
+        void (async () => {
+          try {
+            await this.commitReparent!(
+              sourceId as ElementId,
+              node.id as ElementId,
+            );
+          } catch (err) {
+            console.error("Incremental Reading: reparent failed", err);
+            new Notice("Incremental Reading: could not move element.");
+          }
+          void this.render();
+        })();
+      });
+    }
+
     if (hasChildren && !isCollapsed) {
       const ul = li.createEl("ul", { cls: "ir-tree-children" });
       for (const child of node.children) {
         this.renderNode(ul, child);
       }
     }
+  }
+
+  /** Check if `candidateAncestorId` is an ancestor of `nodeId` in the current tree. */
+  private isDescendantOf(candidateAncestorId: string, nodeId: string): boolean {
+    const find = (nodes: TreeNode[], target: string): TreeNode | undefined => {
+      for (const n of nodes) {
+        if (n.id === target) return n;
+        const found = find(n.children, target);
+        if (found) return found;
+      }
+      return undefined;
+    };
+    const subtreeContains = (node: TreeNode, id: string): boolean => {
+      if (node.id === id) return true;
+      return node.children.some((c) => subtreeContains(c, id));
+    };
+    const roots = this.lastRenderedRoots;
+    const ancestor = find(roots, candidateAncestorId);
+    if (!ancestor) return false;
+    return subtreeContains(ancestor, nodeId);
   }
 
   private showRowContextMenu(
