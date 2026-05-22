@@ -460,6 +460,37 @@
   cursor: pointer;
 }
 
+.ir-tree-row--dragging {
+  opacity: 0.4;
+}
+
+.ir-tree-row--drop-target {
+  outline: 2px solid var(--text-accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-s);
+}
+
+.ir-tree-drop-root {
+  display: none;
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  text-align: center;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+
+.ir-tree-view:has(.ir-tree-row--dragging) .ir-tree-drop-root {
+  display: block;
+}
+
+.ir-tree-drop-root--active {
+  border-color: var(--text-accent);
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+}
+
 .ir-stats-table {
   width: 100%;
   border-collapse: collapse;

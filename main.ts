@@ -144,6 +144,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrDismissChange(elementId, file, dismissed),
           (elementId, file, days) =>
             this.applyIrPostponeChange(elementId, file, days),
+          (elementId, newParentId) =>
+            this.applyIrReparent(elementId, newParentId),
         );
       },
     );
@@ -733,6 +735,27 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /** Postpone an element by N days via a mercy-postponed event. */
+  /** Move an element to a new parent via a reparented event. */
+  private async applyIrReparent(
+    elementId: ElementId,
+    newParentId: ElementId | null,
+  ): Promise<void> {
+    if (!this.store) return;
+    await this.store.appendEvent({
+      id: newEventId(),
+      ts: Date.now(),
+      lamport: Date.now(),
+      device: await this.store.getDeviceId(),
+      kind: "reparented",
+      target: elementId,
+      payload: { parentId: newParentId },
+    });
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after reparent failed", e);
+    });
+    void this.refreshStatusBar();
+  }
+
   private async applyIrPostponeChange(
     elementId: ElementId,
     _file: TFile | null,

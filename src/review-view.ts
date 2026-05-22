@@ -616,10 +616,7 @@ export class IrReviewView extends ItemView {
       this.renderEditToggle(bar);
       bar
         .createEl("button", {
-          text: this.labelWithHotkey(
-            "Next",
-            this.editing ? "Ctrl+Enter" : "Space",
-          ),
+          text: this.labelWithHotkey("Next", "Space"),
           cls: "mod-cta",
         })
         .addEventListener("click", () => void this.next());
@@ -634,6 +631,7 @@ export class IrReviewView extends ItemView {
         })
         .addEventListener("click", () => void this.dismiss());
       this.restoreBookmark(slot);
+      this.ensureFocus();
       return;
     }
 
@@ -647,6 +645,7 @@ export class IrReviewView extends ItemView {
           this.revealed = true;
           void this.renderCard();
         });
+      this.ensureFocus();
       return;
     }
 
@@ -664,6 +663,21 @@ export class IrReviewView extends ItemView {
         text: this.labelWithHotkey("Dismiss", "D"),
       })
       .addEventListener("click", () => void this.dismiss());
+    this.ensureFocus();
+  }
+
+  /**
+   * After rendering a card, make sure the view can receive keyboard events.
+   * If editing, the textarea already got focus via renderEditor; otherwise
+   * focus the contentEl so the keydown handler fires.
+   */
+  private ensureFocus(): void {
+    if (this.editing) return;
+    requestAnimationFrame(() => {
+      if (!this.isTypingInInput()) {
+        this.contentEl.focus();
+      }
+    });
   }
 
   private async renderBody(
@@ -728,6 +742,12 @@ export class IrReviewView extends ItemView {
     // Plain `addEventListener`: textarea is recreated each `renderCard`; avoid
     // stacking `registerDomEvent` cleanups on the view for every card.
     ta.addEventListener("keydown", (evt: KeyboardEvent) => {
+      if (evt.key === "Escape") {
+        evt.preventDefault();
+        this.editing = false;
+        void this.renderCard();
+        return;
+      }
       const slot = this.current;
       if (!slot || !this.isReading(slot)) return;
       if (evt.code === "Enter" && (evt.ctrlKey || evt.metaKey)) {
@@ -864,6 +884,8 @@ export class IrReviewView extends ItemView {
       this.settings,
     );
     await this.afterChildCreated(result, "Extracted to");
+    await this.reloadCurrentRaw();
+    await this.renderCard();
   }
 
   public async handleCloze() {
@@ -959,6 +981,17 @@ export class IrReviewView extends ItemView {
       hint,
     );
     await this.afterChildCreated(result, "Cloze item created:");
+    await this.reloadCurrentRaw();
+    await this.renderCard();
+  }
+
+  /** Re-read the current slot's note content after a child was created from it. */
+  private async reloadCurrentRaw(): Promise<void> {
+    const slot = this.current;
+    if (!slot?.file) return;
+    try {
+      this.currentRaw = await this.app.vault.read(slot.file);
+    } catch { /* file may have been deleted */ }
   }
 
   private async afterChildCreated(result: IrNoteResult, verb: string) {
