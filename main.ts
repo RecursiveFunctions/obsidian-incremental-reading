@@ -523,7 +523,15 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (!(await this.ensureIrSource(source))) return;
     const selection = editor.getSelection();
     const offsets = selectionOffsetsInBody(editor.getValue(), selection);
-    if (offsets) await markExtractedSpan(this.app, source, offsets.start, offsets.end);
+    if (offsets) {
+      await markExtractedSpan(
+        this.app,
+        source,
+        offsets.start,
+        offsets.end,
+        selection,
+      );
+    }
     const result = await createExtract(
       this.app,
       source,

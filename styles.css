@@ -43,6 +43,16 @@
   min-height: 0;
 }
 
+/* Persisted extract markers in note bodies (written when you extract). */
+.ir-review-body mark.ir-extract-source,
+.ir-review-context-markdown mark.ir-extract-source,
+.markdown-source-view mark.ir-extract-source,
+.markdown-preview-view mark.ir-extract-source {
+  background: var(--text-highlight-bg, rgba(255, 208, 0, 0.35));
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 /* Extract highlight in the source column: marks where the current extract
  * was pulled from in the parent note (uses resolveAnchor or text search). */
 .ir-extract-highlight {
