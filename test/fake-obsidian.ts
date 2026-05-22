@@ -108,6 +108,26 @@ export class FakeApp {
   }
 }
 
+function lineOffset(lines: string[], pos: { line: number; ch: number }): number {
+  let off = 0;
+  for (let i = 0; i < pos.line; i += 1) off += lines[i]!.length + 1;
+  return off + pos.ch;
+}
+
+function offsetToLine(
+  lines: string[],
+  offset: number,
+): { line: number; ch: number } {
+  let acc = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const lineEnd = acc + lines[i]!.length;
+    if (offset <= lineEnd) return { line: i, ch: offset - acc };
+    acc = lineEnd + 1;
+  }
+  const last = lines.length - 1;
+  return { line: last, ch: lines[last]?.length ?? 0 };
+}
+
 /** A fixed-selection Editor over `lines`, selecting [from .. to]. */
 export function fakeEditor(
   lines: string[],
@@ -127,6 +147,8 @@ export function fakeEditor(
     getSelection: () => selection,
     getCursor: (which: "from" | "to") => (which === "from" ? from : to),
     getLine: (n: number) => lines[n],
+    posToOffset: (pos: { line: number; ch: number }) => lineOffset(lines, pos),
+    offsetToPos: (offset: number) => offsetToLine(lines, offset),
   } as unknown as Editor;
 }
 

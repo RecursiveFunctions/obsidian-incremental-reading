@@ -60,11 +60,9 @@ import { newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import { findExtractRange } from "./ir/extract-range";
-import {
-  stripFrontmatter,
-  saveBody,
-  wrapExtractHighlight,
-} from "./ir/frontmatter-body";
+import { stripFrontmatter, saveBody } from "./ir/frontmatter-body";
+import { mapRenderedSelectionToRaw } from "./ir/selection-map";
+import { markExtractedSpan } from "./ir-note";
 import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
@@ -892,31 +890,31 @@ export class IrReviewView extends ItemView {
       };
     }
     const sel = this.contentEl.ownerDocument.getSelection();
-    if (!sel || sel.isCollapsed) {
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
       return { ok: false, reason: "Nothing selected." };
     }
     const bodyEl = this.contentEl.querySelector(".ir-review-main-body");
     if (!bodyEl || !sel.anchorNode || !bodyEl.contains(sel.anchorNode)) {
       return { ok: false, reason: "Selection must be inside the card body." };
     }
-    const text = sel.toString();
-    if (!text.trim()) return { ok: false, reason: "Nothing selected." };
-    const first = this.currentRaw.indexOf(text);
-    if (first === -1) {
+    const mapped = mapRenderedSelectionToRaw(
+      this.currentRaw,
+      bodyEl as HTMLElement,
+      sel.getRangeAt(0),
+    );
+    if (!mapped) {
       return {
         ok: false,
         reason:
           "Selection spans formatting; switch to Edit mode for an exact cloze.",
       };
     }
-    if (this.currentRaw.indexOf(text, first + 1) !== -1) {
-      return {
-        ok: false,
-        reason:
-          "Selection is ambiguous (matches multiple spots); switch to Edit mode.",
-      };
-    }
-    return { ok: true, text, start: first, end: first + text.length };
+    return {
+      ok: true,
+      text: mapped.text,
+      start: mapped.start,
+      end: mapped.end,
+    };
   }
 
   public async handleExtract() {
@@ -928,7 +926,7 @@ export class IrReviewView extends ItemView {
       return;
     }
     await this.flushEdits();
-    await this.applyExtractHighlight(slot.file, sel.start, sel.end);
+    await this.applyExtractHighlight(slot.file, sel.start, sel.end, sel.text);
     const result = await createExtract(
       this.app,
       slot.file,
@@ -1045,13 +1043,18 @@ export class IrReviewView extends ItemView {
     file: TFile,
     start: number,
     end: number,
+    selectedText: string,
   ): Promise<void> {
-    const updated = wrapExtractHighlight(this.currentRaw, start, end);
-    if (updated === this.currentRaw) return;
-    this.currentRaw = updated;
-    this.rawOnDisk = updated;
     try {
-      await saveBody(this.app, file, updated);
+      await markExtractedSpan(
+        this.app,
+        file,
+        start,
+        end,
+        selectedText,
+      );
+      this.currentRaw = stripFrontmatter(await this.app.vault.read(file));
+      this.rawOnDisk = this.currentRaw;
     } catch (e) {
       console.error("Incremental Reading: marking extract highlight failed", e);
     }

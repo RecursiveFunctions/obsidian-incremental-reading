@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.15] — 2026-05-22
+
+### Fixed
+
+- **Cloze: multi-line selections:** Review preview and the editor now keep full line context when a cloze spans multiple lines (not just the line with the cursor).
+- **Extract highlights:** Extracted text is marked with `<mark class="ir-extract-source">` in the source note and ancestor topics (via `ir-parent`), with styles so highlights show in Reading view and IR review.
+
 ## [0.0.14] — 2026-05-22
 
 ### Added

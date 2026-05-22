@@ -18,10 +18,9 @@ export function sanitizeExtractSelection(text: string): string {
   return stripFrontmatter(text).trim();
 }
 
-/**
- * Wrap a body span with Obsidian `==highlight==` so extracted passages stay
- * visible in the parent topic/extract. Skips when already highlighted.
- */
+const EXTRACT_MARK_OPEN = '<mark class="ir-extract-source">';
+const EXTRACT_MARK_CLOSE = "</mark>";
+
 /**
  * Map a selection string to body offsets when the editor shows the full file
  * (YAML + body). Returns null if the selection is missing or ambiguous in the
@@ -40,12 +39,32 @@ export function selectionOffsetsInBody(
   return { start: idx, end: idx + selection.length };
 }
 
+/**
+ * Wrap a body span with a visible HTML mark so extracted passages stay
+ * visible in the topic/extract in Reading view and in IR review.
+ */
+function isInsideExtractMark(body: string, start: number, end: number): boolean {
+  const open = body.lastIndexOf(EXTRACT_MARK_OPEN, start);
+  if (open === -1) return false;
+  const close = body.indexOf(EXTRACT_MARK_CLOSE, open);
+  return close !== -1 && open < start && end <= close + EXTRACT_MARK_CLOSE.length;
+}
+
 export function wrapExtractHighlight(
   body: string,
   start: number,
   end: number,
 ): string {
   if (end <= start || start < 0 || end > body.length) return body;
+  const inner = body.slice(start, end);
+  if (!inner.trim()) return body;
+  if (isInsideExtractMark(body, start, end)) return body;
+  if (
+    inner.startsWith(EXTRACT_MARK_OPEN) &&
+    inner.endsWith(EXTRACT_MARK_CLOSE)
+  ) {
+    return body;
+  }
   if (
     start >= 2 &&
     body.slice(start - 2, start) === "==" &&
@@ -53,8 +72,13 @@ export function wrapExtractHighlight(
   ) {
     return body;
   }
-  const inner = body.slice(start, end);
-  return body.slice(0, start) + "==" + inner + "==" + body.slice(end);
+  return (
+    body.slice(0, start) +
+    EXTRACT_MARK_OPEN +
+    inner +
+    EXTRACT_MARK_CLOSE +
+    body.slice(end)
+  );
 }
 
 /**

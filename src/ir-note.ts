@@ -25,6 +25,7 @@ import {
   stripFrontmatter,
   wrapExtractHighlight,
 } from "./ir/frontmatter-body";
+import { locateTextInBody } from "./ir/selection-map";
 
 /**
  * Slash-only stand-in for Obsidian's `normalizePath`: collapse repeats,
@@ -220,19 +221,46 @@ async function createChildNote(
  * as a sub-topic.
  */
 /**
- * Mark the extracted span in the source note body (Obsidian `==highlight==`).
- * Offsets are in the stripped body, matching review-mode selection math.
+ * Mark the extracted span in the source note and every ancestor topic/extract
+ * (via `ir-parent`), so the original passage stays visible when you open the
+ * parent topic. Body offsets match review-mode selection math.
  */
 export async function markExtractedSpan(
   app: App,
   source: TFile,
   start: number,
   end: number,
+  selectedText: string,
 ): Promise<void> {
   const body = stripFrontmatter(await app.vault.cachedRead(source));
   const updated = wrapExtractHighlight(body, start, end);
-  if (updated === body) return;
-  await saveBody(app, source, updated);
+  if (updated !== body) await saveBody(app, source, updated);
+
+  let parentPath = app.metadataCache.getFileCache(source)?.frontmatter?.[
+    IR_KEYS.parent
+  ];
+  while (typeof parentPath === "string" && parentPath.length > 0) {
+    const parent = app.vault.getAbstractFileByPath(parentPath);
+    if (!parent || !("extension" in parent) || parent.extension !== "md") break;
+    const parentFile = parent as TFile;
+    const parentBody = stripFrontmatter(
+      await app.vault.cachedRead(parentFile),
+    );
+    const located = locateTextInBody(parentBody, selectedText);
+    if (located) {
+      const parentUpdated = wrapExtractHighlight(
+        parentBody,
+        located.start,
+        located.end,
+      );
+      if (parentUpdated !== parentBody) {
+        await saveBody(app, parentFile, parentUpdated);
+      }
+    }
+    parentPath = app.metadataCache.getFileCache(parentFile)?.frontmatter?.[
+      IR_KEYS.parent
+    ];
+  }
 }
 
 export async function createExtract(
@@ -258,18 +286,28 @@ export async function createCloze(
   settings: IrNoteSettings,
   hint?: string,
 ): Promise<IrNoteResult> {
-  const answer = editor.getSelection().trim();
-  if (!answer) return { error: "Nothing selected." };
+  const anchor = editor.getCursor("from");
+  const head = editor.getCursor("to");
+  const selStart = editor.posToOffset(anchor);
+  const selEnd = editor.posToOffset(head);
+  if (selEnd <= selStart) return { error: "Nothing selected." };
 
-  const from = editor.getCursor("from");
-  const to = editor.getCursor("to");
+  const fromPos = editor.offsetToPos(selStart);
+  const toPos = editor.offsetToPos(selEnd);
   const spanned: string[] = [];
-  for (let line = from.line; line <= to.line; line += 1) {
+  for (let line = fromPos.line; line <= toPos.line; line += 1) {
     spanned.push(editor.getLine(line));
   }
 
-  const { body } = buildClozeBody(spanned, from.ch, to.ch, hint);
-  return createChildNote(app, source, "item", body, answer, settings);
+  const { body, answer } = buildClozeBody(
+    spanned,
+    fromPos.ch,
+    toPos.ch,
+    hint,
+  );
+  const trimmed = answer.trim();
+  if (!trimmed) return { error: "Nothing selected." };
+  return createChildNote(app, source, "item", body, trimmed, settings);
 }
 
 /**
