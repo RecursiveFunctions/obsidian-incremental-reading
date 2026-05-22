@@ -89,11 +89,12 @@ modal forms for adding extracts, popups for showing review stats.
 
 **Documented exception (0.0.10+):** The optional **cloze hint** prompt
 (`src/cloze-hint-modal.ts`) is a small `Modal` shown when creating a cloze
-from the editor or IR review. It mirrors SuperMemo-style hint entry, stays
-skippable (Continue with an empty field), and is not used for destructive
-actions. **Reversal plan:** replace with an inline hint field on the review /
-editor surface if commitment #6 strictness becomes more important than this
-workflow shortcut.
+from the **editor** (Alt+Z outside review). It mirrors SuperMemo-style hint
+entry, stays skippable (Continue with an empty field), and is not used for
+destructive actions. **Partial reversal (post-0.0.10):** the **review view**
+now uses an inline hint bar instead of the modal, so cloze creation during
+review never blocks the document. The editor path still uses the modal
+because there is no persistent inline surface to anchor the prompt to.
 
 ## 7. Session audit ("what did I touch")
 

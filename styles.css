@@ -587,3 +587,27 @@
   color: var(--text-muted);
   font-style: italic;
 }
+
+/* Inline cloze hint bar (replaces modal — commitment #6) */
+.ir-hint-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ir-hint-bar-label {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ir-hint-bar-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ir-hint-bar-btn {
+  white-space: nowrap;
+}
