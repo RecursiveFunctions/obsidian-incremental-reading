@@ -117,6 +117,19 @@
   margin-bottom: 0;
 }
 
+.ir-review-progress-bar {
+  height: 3px;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ir-review-progress-fill {
+  height: 100%;
+  background: var(--text-accent);
+  transition: width 0.3s ease;
+}
+
 .ir-review-progress {
   font-size: var(--font-ui-small);
   color: var(--text-muted);
@@ -458,6 +471,20 @@
   font-size: var(--font-ui-smaller);
   padding: 1px 6px;
   cursor: pointer;
+}
+
+.ir-tree-search {
+  padding: 4px 8px;
+}
+
+.ir-tree-search-input {
+  width: 100%;
+}
+
+.ir-tree-empty-filter {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px;
 }
 
 .ir-tree-row--dragging {

@@ -146,6 +146,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrPostponeChange(elementId, file, days),
           (elementId, newParentId) =>
             this.applyIrReparent(elementId, newParentId),
+          (elementId, parentId) =>
+            this.applyIrDelete(elementId, parentId),
         );
       },
     );
@@ -735,6 +737,47 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /** Postpone an element by N days via a mercy-postponed event. */
+  /** Delete an element, reparenting its children to its parent. */
+  private async applyIrDelete(
+    elementId: ElementId,
+    parentId: ElementId | null,
+  ): Promise<void> {
+    if (!this.store) return;
+    const state = await this.store.load();
+    const device = await this.store.getDeviceId();
+    const now = Date.now();
+    let lamport = now;
+
+    for (const el of state.elements.values()) {
+      if (el.parentId === elementId) {
+        await this.store.appendEvent({
+          id: newEventId(),
+          ts: now,
+          lamport,
+          device,
+          kind: "reparented",
+          target: el.id,
+          payload: { parentId },
+        });
+        lamport++;
+      }
+    }
+
+    await this.store.appendEvent({
+      id: newEventId(),
+      ts: now,
+      lamport,
+      device,
+      kind: "element-deleted",
+      target: elementId,
+      payload: {},
+    });
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after delete failed", e);
+    });
+    void this.refreshStatusBar();
+  }
+
   /** Move an element to a new parent via a reparented event. */
   private async applyIrReparent(
     elementId: ElementId,
