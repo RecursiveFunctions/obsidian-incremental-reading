@@ -60,6 +60,8 @@ import { newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import { findExtractRange } from "./ir/extract-range";
+import { stripFrontmatter, saveBody } from "./ir/frontmatter-body";
+import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -69,25 +71,6 @@ const GRADES: { grade: Grade; label: string; key: string }[] = [
   { grade: "good", label: "Good", key: "3" },
   { grade: "easy", label: "Easy", key: "4" },
 ];
-
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
-
-/** Drop the YAML frontmatter block so only the note body is rendered. */
-function stripFrontmatter(content: string): string {
-  return content.replace(FRONTMATTER_RE, "").trim();
-}
-
-/**
- * Write a new body back to a note while preserving its existing frontmatter
- * block byte-for-byte. The Obsidian `processFrontMatter` API only lets us
- * mutate frontmatter, not body, so we splice via `vault.modify` instead.
- */
-async function saveBody(app: App, file: TFile, newBody: string): Promise<void> {
-  const full = await app.vault.read(file);
-  const fm = full.match(FRONTMATTER_RE);
-  const prefix = fm ? fm[0] : "";
-  await app.vault.modify(file, prefix + newBody.trimEnd() + "\n");
-}
 
 export class IrReviewView extends ItemView {
   private index = 0;
@@ -340,6 +323,40 @@ export class IrReviewView extends ItemView {
     row.createEl("span", {
       cls: "ir-priority-hint",
       text: "0 = most important",
+    });
+
+    if (this.isReading(slot) && slot.element.schedule) {
+      this.renderAFactorRow(parent, slot);
+    }
+  }
+
+  private renderAFactorRow(parent: HTMLElement, slot: ReviewSlot) {
+    const sched = slot.element.schedule;
+    if (!sched) return;
+
+    const row = parent.createEl("div", { cls: "ir-priority-row" });
+    row.createEl("span", { text: "A-Factor" });
+    const input = row.createEl("input", { cls: "ir-priority-input" });
+    input.type = "number";
+    input.min = "1.1";
+    input.max = "10";
+    input.step = "0.1";
+    input.value = String(Math.round(sched.aFactor * 100) / 100);
+    const commit = async () => {
+      const n = Number(input.value);
+      if (!Number.isFinite(n) || n <= 1) return;
+      const clamped = Math.min(10, Math.max(1.1, n));
+      const newSchedule = { ...sched, aFactor: clamped };
+      await this.emit("topic-advanced", slot.id, { schedule: newSchedule });
+      slot.element = {
+        ...slot.element,
+        schedule: newSchedule,
+      };
+    };
+    input.addEventListener("change", () => void commit());
+    row.createEl("span", {
+      cls: "ir-priority-hint",
+      text: "interval multiplier",
     });
   }
 
@@ -1050,13 +1067,31 @@ export class IrReviewView extends ItemView {
     void this.renderCard();
   }
 
-  private async grade(grade: Grade) {
+  private async grade(g: Grade) {
     const slot = this.current;
     if (!slot) return;
     await this.flushEdits();
 
-    const next = schedule(storedToCard(slot.element.card), grade);
+    const next = schedule(storedToCard(slot.element.card), g);
     const stored = cardToStored(next);
+
+    const div = slot.element.card
+      ? checkGradeDivergence(slot.element.card, stored, g, Date.now())
+      : null;
+
+    if (div) {
+      this.showDivergencePicker(slot, g, next, stored, div);
+      return;
+    }
+
+    await this.applyGrade(slot, next, stored);
+  }
+
+  private async applyGrade(
+    slot: ReviewSlot,
+    next: import("ts-fsrs").Card,
+    stored: import("./ir/model").StoredCard,
+  ) {
     await this.emit("graded", slot.id, { card: stored });
     slot.element = { ...slot.element, card: stored };
     if (slot.file) {
@@ -1065,6 +1100,58 @@ export class IrReviewView extends ItemView {
       });
     }
     this.advance("Review complete");
+  }
+
+  /**
+   * Inline divergence picker (DESIGN.md Section 5, UI commitment #6).
+   * Shown when FSRS and SM-2 predict significantly different intervals.
+   */
+  private showDivergencePicker(
+    slot: ReviewSlot,
+    g: Grade,
+    fsrsCard: import("ts-fsrs").Card,
+    fsrsStored: import("./ir/model").StoredCard,
+    div: DivergenceCheck,
+  ) {
+    const existing = this.contentEl.querySelector(".ir-divergence-bar");
+    if (existing) existing.remove();
+
+    const dock = this.contentEl.querySelector(".ir-review-dock");
+    if (!dock) {
+      void this.applyGrade(slot, fsrsCard, fsrsStored);
+      return;
+    }
+
+    const bar = createDiv({ cls: "ir-divergence-bar" });
+    dock.prepend(bar);
+
+    bar.createSpan({
+      cls: "ir-divergence-msg",
+      text: div.config.message,
+    });
+
+    const btnRow = bar.createDiv({ cls: "ir-divergence-buttons" });
+
+    for (const m of div.config.members) {
+      const btn = btnRow.createEl("button", {
+        cls: m.id === div.config.primaryId ? "mod-cta" : "",
+        text: `${m.id}: ${m.intervalDays}d`,
+      });
+      btn.addEventListener("click", () => {
+        bar.remove();
+        if (m.id === "FSRS") {
+          void this.applyGrade(slot, fsrsCard, fsrsStored);
+        } else {
+          const overridden = {
+            ...fsrsStored,
+            due: div.sm2Due,
+            scheduledDays: div.sm2IntervalDays,
+          };
+          const overriddenCard = storedToCard(overridden);
+          void this.applyGrade(slot, overriddenCard, overridden);
+        }
+      });
+    }
   }
 
   private async next() {

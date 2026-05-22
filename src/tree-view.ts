@@ -50,6 +50,18 @@ export type CommitIrDeleteFn = (
   parentId: ElementId | null,
 ) => Promise<void>;
 
+/** Promote an extract to a standalone note. */
+export type CommitIrPromoteFn = (
+  elementId: ElementId,
+  element: IrElement,
+) => Promise<void>;
+
+/** Attempt to re-anchor a drifted extract against its current source. */
+export type CommitIrReanchorFn = (
+  elementId: ElementId,
+  element: IrElement,
+) => Promise<boolean>;
+
 const ICONS: Record<IrType, string> = {
   topic: "book-open",
   extract: "scissors",
@@ -84,6 +96,8 @@ export class IrTreeView extends ItemView {
     private readonly commitPostpone?: CommitIrPostponeFn,
     private readonly commitReparent?: CommitIrReparentFn,
     private readonly commitDelete?: CommitIrDeleteFn,
+    private readonly commitPromote?: CommitIrPromoteFn,
+    private readonly commitReanchor?: CommitIrReanchorFn,
   ) {
     super(leaf);
     this.store = store;
@@ -442,6 +456,16 @@ export class IrTreeView extends ItemView {
       text: node.type,
     });
 
+    if (node.element.anchorState === "needs-reanchor") {
+      const badge = row.createSpan({ cls: "ir-tree-anchor-badge ir-tree-anchor-badge--warn" });
+      setIcon(badge, "alert-triangle");
+      badge.setAttribute("aria-label", "Anchor needs re-resolution");
+    } else if (node.element.anchorState === "detached") {
+      const badge = row.createSpan({ cls: "ir-tree-anchor-badge ir-tree-anchor-badge--detached" });
+      setIcon(badge, "unlink");
+      badge.setAttribute("aria-label", "Source deleted; element survives on stored text");
+    }
+
     if (node.element.dismissed && this.commitDismiss) {
       row.addClass("ir-tree-row--dismissed");
       const restoreBtn = row.createEl("button", {
@@ -607,6 +631,57 @@ export class IrTreeView extends ItemView {
             }),
         );
       }
+    }
+
+    if (
+      this.commitPromote &&
+      node.element.type === "extract" &&
+      !node.element.notePath
+    ) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Promote to standalone note")
+          .setIcon("file-plus")
+          .onClick(() => {
+            void (async () => {
+              try {
+                await this.commitPromote!(elId, node.element);
+              } catch (err) {
+                console.error("Incremental Reading: promote failed", err);
+                new Notice("Incremental Reading: could not promote extract.");
+              }
+              void this.render();
+            })();
+          }),
+      );
+    }
+
+    if (
+      this.commitReanchor &&
+      node.element.anchor &&
+      node.element.anchorState === "needs-reanchor"
+    ) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Re-anchor to source")
+          .setIcon("anchor")
+          .onClick(() => {
+            void (async () => {
+              try {
+                const ok = await this.commitReanchor!(elId, node.element);
+                if (ok) {
+                  new Notice("Anchor repaired.");
+                } else {
+                  new Notice("Could not re-anchor: text not found in source.");
+                }
+              } catch (err) {
+                console.error("Incremental Reading: re-anchor failed", err);
+                new Notice("Incremental Reading: could not re-anchor.");
+              }
+              void this.render();
+            })();
+          }),
+      );
     }
 
     if (this.commitDelete) {

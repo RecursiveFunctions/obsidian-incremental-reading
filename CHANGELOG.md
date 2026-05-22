@@ -7,21 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.13] — 2026-05-22
+
 ### Added
 
-- **Extract highlighting in source column:** When reviewing an extract, the parent note body highlights the exact range the extract was pulled from. Uses the anchor layered selector chain (position hint, text-quote, normalized match) with a plain substring fallback for pre-store extracts. The highlight auto-scrolls into view.
-- **Tree view: expand / collapse all:** Header buttons to expand or collapse every node at once.
-- **Tree view: due-date badges:** Each tree row shows a relative due-date label (e.g. "due", "3d", "2mo", "1y"); overdue items get an accent color.
-- **Tree view: dismissed element toggle and restore:** "Show dismissed" button reveals dismissed elements with reduced opacity. A **Restore** button on each dismissed row writes a `dismiss-set` event to the store and updates frontmatter, making dismissed elements recoverable directly from the tree.
-- **Reading position bookmarks:** The review view saves and restores scroll position and cursor offset per element, persisted to `.ir/bookmarks.json`. Bookmarks survive session close and are restored when the same element reappears in a future review.
-- **Bulk import (Alt+B):** Command "Import clipboard as IR topic" creates a new IR topic note from clipboard text with a generated title. Available from the command palette, hotkey, and mobile file menu.
-- **Release automation:** Pushing a semver git tag runs `.github/workflows/release.yml`, which builds `main.js` and creates a **GitHub Release** with `manifest.json`, `main.js`, and `styles.css` so **BRAT >= 1.1.0** can install updates (tags alone are insufficient). Manual repair: `workflow_dispatch` on that workflow with the tag name, or see [`docs/RELEASE.md`](docs/RELEASE.md).
+- **Tree view: search/filter:** Type-to-filter input in the tree header narrows the tree to matching elements plus their ancestors. All nodes auto-expand during filtering.
+- **Tree view: drag-to-reparent (UI commitment #5):** Drag any row onto another to make it a child. Cycle detection prevents dropping a parent onto its own descendant. A root drop zone appears during drag to promote elements to root level.
+- **Tree view: element deletion:** "Delete element" in the context menu reparents children to the deleted element's parent, with a confirmation dialog.
+- **Tree view: promote extract:** "Promote to standalone note" context menu item for extracts that don't yet have a note path. Creates the note on disk and emits a `promoted` event.
+- **Tree view: anchor state badges:** Warning triangle icon for `needs-reanchor` elements, unlink icon for `detached` elements. Visual feedback for drifted anchors.
+- **Tree view: re-anchor action:** "Re-anchor to source" context menu item for drifted extracts. Re-resolves the anchor against the current source text and emits an `anchor-repaired` event on success.
+- **Review: visual progress bar:** Thin accent-colored bar above the card showing session completion. Queue composition breakdown in the progress text (e.g. "3 topics, 8 items left").
+- **Review: per-element A-Factor editing:** Reading elements (topics/extracts) now show an A-Factor input in the review dock, next to priority. Adjusting the interval multiplier writes a `topic-advanced` event.
+- **Review: queue composition notice:** Starting a review session shows a Notice with the breakdown (e.g. "Starting review: 3 topics, 5 items (8 total)").
+- **Review: divergence picker (DESIGN.md Section 5):** When FSRS and SM-2 predict significantly different next intervals after grading, an inline picker bar appears so the user can choose which interval to use. SM-2 state is approximated from the FSRS card.
 
 ### Changed
 
-- **`findExtractRange` extracted to pure module:** The extract-range resolution logic (anchor chain + substring fallback) is now in `src/ir/extract-range.ts`, directly unit-testable without Obsidian.
-- **`formatDueLabel` extracted to pure module:** Due-date label formatting is now in `src/ir/due-label.ts` with year-scale support (365+ days shows "Ny").
-- **Docs / agent rules:** `docs/RELEASE.md` is the canonical ship checklist; `.cursor/rules/brat-version-on-commit.mdc` now matches BRAT's GitHub Release requirement.
+- **Review: Escape exits editing:** Pressing Escape in the textarea returns to preview mode. "Next" button always shows "Space" since Escape then Space is the natural flow.
+- **Review: focus management:** `ensureFocus()` restores keyboard focus to the review view after every card render, cloze/extract creation, and grading, so hotkeys work without clicking first.
+- **Code cleanup:** Deduplicated `IrType`, `PRIORITY_MIN/MAX`, `clampPriority` across `src/types.ts`, `src/ir/model.ts`, `src/ir-note.ts`. Extracted `stripFrontmatter`/`saveBody` into `src/ir/frontmatter-body.ts`. Removed dead code from `src/review.ts`.
+
+### Fixed
+
+- **Review: inline hint bar steals hotkeys:** The cloze hint input now blocks keyboard shortcuts while typing (broadened `isTypingInInput` to cover `HTMLInputElement`, not just `HTMLTextAreaElement`). Typing "d" in the hint input no longer triggers dismiss.
+- **Review: Alt+X / Alt+Z broken in review view:** Extract and cloze commands used `editorCheckCallback` which only fires in a MarkdownView. Switched to `checkCallback` with review view priority so the hotkey works in the IR review ItemView.
+- **Review: 1-4 grading hotkeys broken on revealed cloze:** Removed the `isTypingInTextarea` guard for grade keys on revealed cloze cards. Grading is the primary action and should work regardless of textarea focus.
+- **Review: Ctrl+Enter for Next:** Added a contentEl-level Ctrl+Enter handler so Next works even when focus is not on the textarea.
+
+## [0.0.12] — 2026-05-21
+
+### Fixed
+
+- **Review hotkeys broken by textarea/input focus guards:** 1-4 grade keys, Alt+X/Z extract/cloze, Ctrl+Enter for Next, and inline hint bar input all fixed (see Unreleased for details of each fix that shipped in 0.0.12).
+
+## [0.0.11] — 2026-05-21
+
+### Added
+
+- **Tree view: context menu:** Right-click any tree row for a native Obsidian context menu with Open note, Dismiss/Restore, and Postpone (1/3/7/14/30 days). Postpone writes a `mercy-postponed` event without corrupting scheduler state.
+- **Review: inline cloze hint bar (UI commitment #6 partial reversal):** Cloze hint entry in the review view is now an inline bar in the dock instead of a modal dialog. The editor path (Alt+Z) still uses the modal. Updated `docs/UI-COMMITMENTS.md` to reflect the partial reversal.
+- **Tree view: dismiss/restore action:** Dismissed elements in the tree have a Restore button that writes a `dismiss-set` event and updates frontmatter.
+- **Extract highlighting in source column:** When reviewing an extract, the parent note body highlights the exact range the extract was pulled from.
+- **Tree view: expand/collapse all, due-date badges, dismissed toggle.**
+- **Reading position bookmarks** persisted to `.ir/bookmarks.json`.
+- **Bulk import (Alt+B):** Import clipboard text as an IR topic.
+- **Release automation** via `.github/workflows/release.yml`.
+
+### Changed
+
+- **`findExtractRange` and `formatDueLabel` extracted to pure modules** (`src/ir/extract-range.ts`, `src/ir/due-label.ts`) for direct unit testing.
+- **`formatDueLabel`:** Added year-scale support (365+ days shows "Ny").
 
 ## [0.0.10] — 2026-05-21
 
@@ -73,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **In-tree priority edit (v0.3 / modal-removal phase B1):** In the IR element tree, click the `pNN` priority badge (or focus it and press Enter/Space) to edit inline. Commits append a `priority-set` store event and dual-write `ir-priority` on the note, same as the review pane. The status-bar *Set IR priority* path (Alt+P / file menu) now also updates the store so the queue cannot drift behind frontmatter-only edits.
 - **Alt+P tree focus:** When the active markdown note is an IR element, **Set IR priority** reveals the element tree and opens the inline `pNN` field for that row; otherwise the status-bar prompt is used.
 - **Review source column (UI commitment #2):** During review, when the current element has a parent, the parent's note body (or stored text) renders in a scrollable column beside the card in the same `ItemView` (no modal).
-- **Mobile file menu (parity):** On Obsidian mobile, the note file menu (⋯) gains the same IR commands that desktop users reach via hotkeys or the ribbon: start review, open element tree, session log, stats, mercy postpone, and Anki TSV export (after *Mark as IR topic* or the IR priority/dismiss entries).
+- **Mobile file menu (parity):** On Obsidian mobile, the note file menu gains the same IR commands that desktop users reach via hotkeys or the ribbon: start review, open element tree, session log, stats, mercy postpone, and Anki TSV export (after *Mark as IR topic* or the IR priority/dismiss entries).
 - **Mobile tree tap targets:** The element tree view uses larger rows, chevrons, and priority controls when `Platform.isMobile` so expand/collapse and inline priority editing are easier to hit with a thumb.
 
 ### Fixed
@@ -114,7 +150,10 @@ First BRAT-installable pre-release. Bundles the v0.1 MVP (topic mark, extract, c
 - Frontmatter/FSRS serialization layer (`src/fsrs.ts`, `src/ir-note.ts`, `src/types.ts`), the shared foundation later IR features build on.
 - Initial repository scaffold: Obsidian plugin skeleton, TypeScript + esbuild build pipeline, `ts-fsrs` dependency for scheduling, MIT license, CI build workflow, issue templates.
 
-[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.10...HEAD
+[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.13...HEAD
+[0.0.13]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.12...0.0.13
+[0.0.12]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.11...0.0.12
+[0.0.11]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.10...0.0.11
 [0.0.10]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.9...0.0.10
 [0.0.9]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.8...0.0.9
 [0.0.8]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.6...0.0.8

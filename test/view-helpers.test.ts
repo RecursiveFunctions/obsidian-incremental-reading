@@ -1,13 +1,15 @@
 /**
  * Tests for pure helpers extracted from view modules:
- *   - findExtractRange (src/review-view.ts)
- *   - formatDueLabel  (src/tree-view.ts)
+ *   - findExtractRange    (src/ir/extract-range.ts)
+ *   - formatDueLabel      (src/ir/due-label.ts)
+ *   - stripFrontmatter    (src/ir/frontmatter-body.ts)
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { findExtractRange } from "../src/ir/extract-range";
 import { formatDueLabel } from "../src/ir/due-label";
+import { stripFrontmatter } from "../src/ir/frontmatter-body";
 import type { IrElement } from "../src/ir/model";
 
 /* ------------------------------------------------------------------ */
@@ -149,4 +151,35 @@ test("formatDueLabel: due in 365 days shows 1y", () => {
 
 test("formatDueLabel: due in 730 days shows 2y", () => {
   assert.equal(formatDueLabel(NOW + MS_PER_DAY * 730, NOW), "2y");
+});
+
+/* ------------------------------------------------------------------ */
+/* stripFrontmatter                                                    */
+/* ------------------------------------------------------------------ */
+
+test("stripFrontmatter: removes YAML front matter", () => {
+  const input = "---\ntitle: Hello\n---\nBody text here.";
+  assert.equal(stripFrontmatter(input), "Body text here.");
+});
+
+test("stripFrontmatter: preserves body when no front matter", () => {
+  assert.equal(stripFrontmatter("Just a body."), "Just a body.");
+});
+
+test("stripFrontmatter: empty string returns empty", () => {
+  assert.equal(stripFrontmatter(""), "");
+});
+
+test("stripFrontmatter: front matter only returns empty", () => {
+  assert.equal(stripFrontmatter("---\nkey: val\n---\n"), "");
+});
+
+test("stripFrontmatter: trims whitespace around body", () => {
+  const input = "---\nk: v\n---\n\n  Body  \n\n";
+  assert.equal(stripFrontmatter(input), "Body");
+});
+
+test("stripFrontmatter: handles multi-line front matter", () => {
+  const input = "---\na: 1\nb: 2\nc: 3\n---\nContent after.";
+  assert.equal(stripFrontmatter(input), "Content after.");
 });

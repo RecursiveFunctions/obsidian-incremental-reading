@@ -10,7 +10,8 @@
  */
 
 import type { App, Editor, TFile } from "obsidian";
-import { IR_KEYS, IrType, PRIORITY_MAX, PRIORITY_MIN } from "./types";
+import { IR_KEYS } from "./types";
+import { clampPriority, type IrType, PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
 import { newCard, writeCardToFrontmatter } from "./fsrs";
 import {
   TopicScheduleSettings,
@@ -39,12 +40,6 @@ function normalizePath(p: string): string {
 export interface IrNoteSettings extends TopicScheduleSettings {
   defaultPriority: number;
   extractFolder: string;
-}
-
-/** Clamp an arbitrary number into the valid 0-100 priority range. */
-export function clampPriority(value: number): number {
-  if (!Number.isFinite(value)) return PRIORITY_MAX;
-  return Math.min(PRIORITY_MAX, Math.max(PRIORITY_MIN, Math.round(value)));
 }
 
 /** The current IR type of a file, or null if it isn't an IR element yet. */

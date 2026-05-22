@@ -53,6 +53,8 @@ import { redistribute, type MercyEntry } from "./src/ir/mercy";
 import { nextClozeNumber, wrapCloze } from "./src/cloze";
 import { promptClozeHint } from "./src/cloze-hint-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
+import { buildPromoteEvent } from "./src/ir/extract";
+import { resolveAnchor } from "./src/ir/anchor";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -148,6 +150,10 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrReparent(elementId, newParentId),
           (elementId, parentId) =>
             this.applyIrDelete(elementId, parentId),
+          (elementId, element) =>
+            this.applyIrPromote(elementId, element),
+          (elementId, element) =>
+            this.applyIrReanchor(elementId, element),
         );
       },
     );
@@ -597,6 +603,19 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: nothing due for review.");
       return;
     }
+    const counts = { topics: 0, extracts: 0, items: 0 };
+    for (const s of queue) {
+      const t = s.element.type;
+      if (t === "topic") counts.topics++;
+      else if (t === "extract") counts.extracts++;
+      else counts.items++;
+    }
+    const parts: string[] = [];
+    if (counts.topics > 0) parts.push(`${counts.topics} topic${counts.topics !== 1 ? "s" : ""}`);
+    if (counts.extracts > 0) parts.push(`${counts.extracts} extract${counts.extracts !== 1 ? "s" : ""}`);
+    if (counts.items > 0) parts.push(`${counts.items} item${counts.items !== 1 ? "s" : ""}`);
+    new Notice(`Starting review: ${parts.join(", ")} (${queue.length} total).`);
+
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     this.irReviewSession = { queue, elementsById: state.elements };
     try {
@@ -776,6 +795,73 @@ export default class IncrementalReadingPlugin extends Plugin {
       console.error("Incremental Reading: reconcile after delete failed", e);
     });
     void this.refreshStatusBar();
+  }
+
+  /**
+   * Promote an extract to a standalone note. Creates the note on disk,
+   * emits a `promoted` event pointing the element at the new note path.
+   */
+  private async applyIrPromote(
+    elementId: ElementId,
+    element: IrElement,
+  ): Promise<void> {
+    if (!this.store) return;
+    const notePath = this.promoteOrphanPath(element);
+    await this.materializePromotedNote(notePath, element);
+
+    const ev = buildPromoteEvent({
+      elementId,
+      notePath,
+      eventId: newEventId(),
+      device: await this.store.getDeviceId(),
+      lamport: Date.now(),
+      now: Date.now(),
+    });
+    await this.store.appendEvent(ev);
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after promote failed", e);
+    });
+    new Notice(`Promoted extract to "${notePath}".`);
+    void this.refreshStatusBar();
+  }
+
+  /**
+   * Re-anchor a drifted extract by re-resolving its anchor against the
+   * current source text. Returns true if the anchor was repaired.
+   */
+  private async applyIrReanchor(
+    elementId: ElementId,
+    element: IrElement,
+  ): Promise<boolean> {
+    if (!this.store || !element.anchor) return false;
+
+    const sourceFile = this.app.vault.getAbstractFileByPath(
+      element.anchor.sourcePath,
+    );
+    if (!(sourceFile instanceof TFile)) return false;
+
+    const raw = await this.app.vault.cachedRead(sourceFile);
+    const result = resolveAnchor(element.anchor, raw);
+    if (result.status !== "ok") return false;
+
+    const repairedAnchor = {
+      ...element.anchor,
+      position: { start: result.start, end: result.end },
+    };
+
+    await this.store.appendEvent({
+      id: newEventId(),
+      ts: Date.now(),
+      lamport: Date.now(),
+      device: await this.store.getDeviceId(),
+      kind: "anchor-repaired",
+      target: elementId,
+      payload: { anchor: repairedAnchor },
+    });
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after re-anchor failed", e);
+    });
+    return true;
   }
 
   /** Move an element to a new parent via a reparented event. */

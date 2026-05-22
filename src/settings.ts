@@ -6,7 +6,7 @@
 
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type IncrementalReadingPlugin from "../main";
-import { PRIORITY_MAX, PRIORITY_MIN } from "./types";
+import { PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
 
 export interface IrSettings {
   /** Priority assigned to a note when it's first marked as a topic. */
