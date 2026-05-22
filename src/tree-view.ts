@@ -12,6 +12,7 @@ import { buildTree, TreeNode } from "./ir/tree";
 import { treeRowLabel } from "./ir/labels";
 import { clampPriority, type IrElement, type IrType } from "./ir/model";
 import type { ElementId } from "./ir/ids";
+import { dueMsOf } from "./ir/queue-adapter";
 
 export const IR_TREE_VIEW_TYPE = "ir-tree-view";
 
@@ -28,6 +29,18 @@ const ICONS: Record<IrType, string> = {
   item: "brackets",
 };
 
+const MS_PER_DAY = 86_400_000;
+
+function formatDueLabel(dueMs: number, now: number): string {
+  const diff = dueMs - now;
+  if (diff <= 0) return "due";
+  const days = Math.ceil(diff / MS_PER_DAY);
+  if (days === 1) return "1d";
+  if (days < 30) return `${days}d`;
+  const months = Math.round(days / 30);
+  return `${months}mo`;
+}
+
 export class IrTreeView extends ItemView {
   private store: IrStore;
   /**
@@ -35,6 +48,9 @@ export class IrTreeView extends ItemView {
    * (UI commitment #5: expand/collapse per node). Default = expanded.
    */
   private collapsed: Set<string> = new Set();
+
+  /** When true, dismissed elements are visible with a restore action. */
+  private showDismissed = false;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -133,7 +149,37 @@ export class IrTreeView extends ItemView {
 
     const header = container.createDiv({ cls: "ir-tree-header" });
     header.createEl("h4", { text: "IR element tree" });
-    const refresh = header.createEl("button", {
+
+    const actions = header.createDiv({ cls: "ir-tree-actions" });
+    const expandAll = actions.createEl("button", {
+      cls: "ir-tree-refresh",
+      attr: { "aria-label": "Expand all" },
+    });
+    setIcon(expandAll, "chevrons-down-up");
+    expandAll.onclick = () => {
+      this.collapsed.clear();
+      void this.render();
+    };
+    const collapseAll = actions.createEl("button", {
+      cls: "ir-tree-refresh",
+      attr: { "aria-label": "Collapse all" },
+    });
+    setIcon(collapseAll, "chevrons-up-down");
+    collapseAll.onclick = () => {
+      for (const id of this.lastNodeIds) this.collapsed.add(id);
+      void this.render();
+    };
+
+    const dismissToggle = actions.createEl("button", {
+      cls: "ir-tree-refresh",
+      text: this.showDismissed ? "Hide dismissed" : "Show dismissed",
+    });
+    dismissToggle.onclick = () => {
+      this.showDismissed = !this.showDismissed;
+      void this.render();
+    };
+
+    const refresh = actions.createEl("button", {
       text: "Refresh",
       cls: "ir-tree-refresh",
     });
@@ -153,22 +199,39 @@ export class IrTreeView extends ItemView {
       return;
     }
 
-    const elements: IrElement[] = Array.from(state.elements.values()).filter(
-      (e) => !e.dismissed,
-    );
+    const allElements = Array.from(state.elements.values());
+    const elements = this.showDismissed
+      ? allElements
+      : allElements.filter((e) => !e.dismissed);
+    const dismissedCount = allElements.filter((e) => e.dismissed).length;
+
     if (elements.length === 0) {
       body.createEl("p", {
-        text:
-          "No IR elements yet. Mark a note as an IR topic to get started.",
+        text: dismissedCount > 0
+          ? `No active IR elements. ${dismissedCount} dismissed (toggle above).`
+          : "No IR elements yet. Mark a note as an IR topic to get started.",
       });
       return;
     }
 
     const roots = buildTree(elements);
+    this.lastNodeIds = this.collectNodeIds(roots);
     const ul = body.createEl("ul", { cls: "ir-tree-root" });
     for (const root of roots) {
       this.renderNode(ul, root);
     }
+  }
+
+  private lastNodeIds: Set<string> = new Set();
+
+  private collectNodeIds(nodes: TreeNode[]): Set<string> {
+    const ids = new Set<string>();
+    const walk = (n: TreeNode) => {
+      if (n.children.length > 0) ids.add(n.id);
+      for (const c of n.children) walk(c);
+    };
+    for (const r of nodes) walk(r);
+    return ids;
   }
 
   private renderNode(parent: HTMLElement, node: TreeNode): void {
@@ -248,10 +311,25 @@ export class IrTreeView extends ItemView {
       });
     }
 
+    const dueMs = dueMsOf(node.element);
+    if (Number.isFinite(dueMs)) {
+      const dueLabel = formatDueLabel(dueMs, Date.now());
+      const dueEl = row.createSpan({
+        cls: "ir-tree-due",
+        text: dueLabel,
+      });
+      if (dueMs <= Date.now()) dueEl.addClass("ir-tree-due--now");
+    }
+
     row.createSpan({
       cls: "ir-tree-type",
       text: node.type,
     });
+
+    if (node.element.dismissed) {
+      row.addClass("ir-tree-row--dismissed");
+      row.createSpan({ cls: "ir-tree-dismissed-badge", text: "dismissed" });
+    }
 
     if (hasChildren && !isCollapsed) {
       const ul = li.createEl("ul", { cls: "ir-tree-children" });

@@ -60,6 +60,7 @@ import { newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
 import { promptClozeHint } from "./cloze-hint-modal";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
+import { resolveAnchor } from "./ir/anchor";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -359,34 +360,61 @@ export class IrReviewView extends ItemView {
   /**
    * Parent note body or stored parent text for the side column (UI
    * commitment #2 — source context in the same review surface).
+   * When the current element has an anchor or verbatim text that can be
+   * located in the source, `highlightRange` marks the span to highlight.
    */
   private async loadSourceContext(
     slot: ReviewSlot,
-  ): Promise<{ title: string; raw: string; path: string } | null> {
+  ): Promise<{
+    title: string;
+    raw: string;
+    path: string;
+    highlightRange?: { start: number; end: number };
+  } | null> {
     const pid = slot.element.parentId;
     if (!pid) return null;
     const parent = this.elementsById.get(pid);
     if (!parent) return null;
+    let raw: string | null = null;
+    let path = "";
     if (parent.notePath) {
       const af = this.app.vault.getAbstractFileByPath(parent.notePath);
       if (af instanceof TFile) {
-        const raw = stripFrontmatter(await this.app.vault.cachedRead(af));
-        return {
-          title: labelFor(parent),
-          raw,
-          path: parent.notePath,
-        };
+        raw = stripFrontmatter(await this.app.vault.cachedRead(af));
+        path = parent.notePath;
       }
     }
-    const t = parent.text.trim();
-    if (t.length > 0) {
-      return {
-        title: labelFor(parent),
-        raw: t,
-        path: slot.file?.path ?? parent.notePath ?? "",
-      };
+    if (raw === null) {
+      const t = parent.text.trim();
+      if (t.length === 0) return null;
+      raw = t;
+      path = slot.file?.path ?? parent.notePath ?? "";
     }
-    return null;
+
+    const highlightRange = this.findExtractRange(slot.element, raw);
+    return { title: labelFor(parent), raw, path, highlightRange };
+  }
+
+  /**
+   * Locate the extract's text within the parent source. Tries the anchor's
+   * layered resolution first (position hint -> text-quote -> normalized
+   * match); falls back to a plain substring search on the stored verbatim
+   * text when no anchor exists (pre-store extracts).
+   */
+  private findExtractRange(
+    el: IrElement,
+    sourceRaw: string,
+  ): { start: number; end: number } | undefined {
+    if (el.anchor) {
+      const res = resolveAnchor(el.anchor, sourceRaw);
+      if (res.status === "ok") return { start: res.start, end: res.end };
+    }
+    const text = el.text.trim();
+    if (!text) return undefined;
+    const idx = sourceRaw.indexOf(text);
+    if (idx === -1) return undefined;
+    if (sourceRaw.indexOf(text, idx + 1) !== -1) return undefined;
+    return { start: idx, end: idx + text.length };
   }
 
   /**
@@ -530,13 +558,31 @@ export class IrReviewView extends ItemView {
         const ctxBody = ctxScroll.createDiv({
           cls: "ir-review-context-markdown ir-review-body",
         });
+        const ctxRaw = sourceCtx.highlightRange
+          ? sourceCtx.raw.slice(0, sourceCtx.highlightRange.start) +
+            '<mark class="ir-extract-highlight">' +
+            sourceCtx.raw.slice(
+              sourceCtx.highlightRange.start,
+              sourceCtx.highlightRange.end,
+            ) +
+            "</mark>" +
+            sourceCtx.raw.slice(sourceCtx.highlightRange.end)
+          : sourceCtx.raw;
         await MarkdownRenderer.render(
           this.app,
-          sourceCtx.raw,
+          ctxRaw,
           ctxBody,
           sourceCtx.path,
           this,
         );
+        if (sourceCtx.highlightRange) {
+          requestAnimationFrame(() => {
+            const mark = ctxBody.querySelector(".ir-extract-highlight");
+            if (mark) {
+              mark.scrollIntoView({ block: "center", behavior: "smooth" });
+            }
+          });
+        }
       }
     }
 
