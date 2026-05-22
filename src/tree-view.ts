@@ -23,23 +23,21 @@ export type CommitIrPriorityFn = (
   priority: number,
 ) => Promise<void>;
 
+/** Toggle dismiss in the store + note frontmatter. */
+export type CommitIrDismissFn = (
+  elementId: ElementId,
+  file: TFile | null,
+  dismissed: boolean,
+) => Promise<void>;
+
 const ICONS: Record<IrType, string> = {
   topic: "book-open",
   extract: "scissors",
   item: "brackets",
 };
 
-const MS_PER_DAY = 86_400_000;
-
-function formatDueLabel(dueMs: number, now: number): string {
-  const diff = dueMs - now;
-  if (diff <= 0) return "due";
-  const days = Math.ceil(diff / MS_PER_DAY);
-  if (days === 1) return "1d";
-  if (days < 30) return `${days}d`;
-  const months = Math.round(days / 30);
-  return `${months}mo`;
-}
+import { formatDueLabel } from "./ir/due-label";
+export { formatDueLabel };
 
 export class IrTreeView extends ItemView {
   private store: IrStore;
@@ -56,6 +54,7 @@ export class IrTreeView extends ItemView {
     leaf: WorkspaceLeaf,
     store: IrStore,
     private readonly commitPriority?: CommitIrPriorityFn,
+    private readonly commitDismiss?: CommitIrDismissFn,
   ) {
     super(leaf);
     this.store = store;
@@ -326,7 +325,25 @@ export class IrTreeView extends ItemView {
       text: node.type,
     });
 
-    if (node.element.dismissed) {
+    if (node.element.dismissed && this.commitDismiss) {
+      row.addClass("ir-tree-row--dismissed");
+      const restoreBtn = row.createEl("button", {
+        cls: "ir-tree-restore-btn",
+        text: "Restore",
+      });
+      restoreBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void (async () => {
+          try {
+            await this.commitDismiss!(node.id as ElementId, file, false);
+          } catch (err) {
+            console.error("Incremental Reading: restore failed", err);
+            new Notice("Incremental Reading: could not restore. See the developer console.");
+          }
+          void this.render();
+        })();
+      });
+    } else if (node.element.dismissed) {
       row.addClass("ir-tree-row--dismissed");
       row.createSpan({ cls: "ir-tree-dismissed-badge", text: "dismissed" });
     }

@@ -60,7 +60,7 @@ import { newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
 import { promptClozeHint } from "./cloze-hint-modal";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
-import { resolveAnchor } from "./ir/anchor";
+import { findExtractRange } from "./ir/extract-range";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -391,31 +391,10 @@ export class IrReviewView extends ItemView {
       path = slot.file?.path ?? parent.notePath ?? "";
     }
 
-    const highlightRange = this.findExtractRange(slot.element, raw);
+    const highlightRange = findExtractRange(slot.element, raw);
     return { title: labelFor(parent), raw, path, highlightRange };
   }
 
-  /**
-   * Locate the extract's text within the parent source. Tries the anchor's
-   * layered resolution first (position hint -> text-quote -> normalized
-   * match); falls back to a plain substring search on the stored verbatim
-   * text when no anchor exists (pre-store extracts).
-   */
-  private findExtractRange(
-    el: IrElement,
-    sourceRaw: string,
-  ): { start: number; end: number } | undefined {
-    if (el.anchor) {
-      const res = resolveAnchor(el.anchor, sourceRaw);
-      if (res.status === "ok") return { start: res.start, end: res.end };
-    }
-    const text = el.text.trim();
-    if (!text) return undefined;
-    const idx = sourceRaw.indexOf(text);
-    if (idx === -1) return undefined;
-    if (sourceRaw.indexOf(text, idx + 1) !== -1) return undefined;
-    return { start: idx, end: idx + text.length };
-  }
 
   /**
    * Snapshot the current scroll position and cursor for the active reading

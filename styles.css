@@ -454,6 +454,12 @@
   font-style: italic;
 }
 
+.ir-tree-restore-btn {
+  font-size: var(--font-ui-smaller);
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
 .ir-stats-table {
   width: 100%;
   border-collapse: collapse;

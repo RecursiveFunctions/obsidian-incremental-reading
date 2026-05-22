@@ -9,11 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Release automation:** Pushing a semver git tag runs `.github/workflows/release.yml`, which builds `main.js` and creates a **GitHub Release** with `manifest.json`, `main.js`, and `styles.css` so **BRAT ≥ 1.1.0** can install updates (tags alone are insufficient). Manual repair: `workflow_dispatch` on that workflow with the tag name, or see [`docs/RELEASE.md`](docs/RELEASE.md).
+- **Extract highlighting in source column:** When reviewing an extract, the parent note body highlights the exact range the extract was pulled from. Uses the anchor layered selector chain (position hint, text-quote, normalized match) with a plain substring fallback for pre-store extracts. The highlight auto-scrolls into view.
+- **Tree view: expand / collapse all:** Header buttons to expand or collapse every node at once.
+- **Tree view: due-date badges:** Each tree row shows a relative due-date label (e.g. "due", "3d", "2mo", "1y"); overdue items get an accent color.
+- **Tree view: dismissed element toggle and restore:** "Show dismissed" button reveals dismissed elements with reduced opacity. A **Restore** button on each dismissed row writes a `dismiss-set` event to the store and updates frontmatter, making dismissed elements recoverable directly from the tree.
+- **Reading position bookmarks:** The review view saves and restores scroll position and cursor offset per element, persisted to `.ir/bookmarks.json`. Bookmarks survive session close and are restored when the same element reappears in a future review.
+- **Bulk import (Alt+B):** Command "Import clipboard as IR topic" creates a new IR topic note from clipboard text with a generated title. Available from the command palette, hotkey, and mobile file menu.
+- **Release automation:** Pushing a semver git tag runs `.github/workflows/release.yml`, which builds `main.js` and creates a **GitHub Release** with `manifest.json`, `main.js`, and `styles.css` so **BRAT >= 1.1.0** can install updates (tags alone are insufficient). Manual repair: `workflow_dispatch` on that workflow with the tag name, or see [`docs/RELEASE.md`](docs/RELEASE.md).
 
 ### Changed
 
-- **Docs / agent rules:** `docs/RELEASE.md` is the canonical ship checklist; `.cursor/rules/brat-version-on-commit.mdc` now matches BRAT’s GitHub Release requirement.
+- **`findExtractRange` extracted to pure module:** The extract-range resolution logic (anchor chain + substring fallback) is now in `src/ir/extract-range.ts`, directly unit-testable without Obsidian.
+- **`formatDueLabel` extracted to pure module:** Due-date label formatting is now in `src/ir/due-label.ts` with year-scale support (365+ days shows "Ny").
+- **Docs / agent rules:** `docs/RELEASE.md` is the canonical ship checklist; `.cursor/rules/brat-version-on-commit.mdc` now matches BRAT's GitHub Release requirement.
 
 ## [0.0.10] — 2026-05-21
 
@@ -28,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **IR review:** Extract/Cloze clicks no longer move focus off the textarea before the handler runs (selection + “click into the editor first” bug). **Alt+X** / **Alt+Z** use `KeyboardEvent.code` so layouts where Alt changes `key` still work; while editing a reading body, **Ctrl+Enter** ( **Cmd+Enter** on macOS) runs **Next** and the Next button label reflects that.
+- **IR review:** Extract/Cloze clicks no longer move focus off the textarea before the handler runs (selection + "click into the editor first" bug). **Alt+X** / **Alt+Z** use `KeyboardEvent.code` so layouts where Alt changes `key` still work; while editing a reading body, **Ctrl+Enter** ( **Cmd+Enter** on macOS) runs **Next** and the Next button label reflects that.
 
 ## [0.0.9] — 2026-05-20
 
@@ -106,9 +114,11 @@ First BRAT-installable pre-release. Bundles the v0.1 MVP (topic mark, extract, c
 - Frontmatter/FSRS serialization layer (`src/fsrs.ts`, `src/ir-note.ts`, `src/types.ts`), the shared foundation later IR features build on.
 - Initial repository scaffold: Obsidian plugin skeleton, TypeScript + esbuild build pipeline, `ts-fsrs` dependency for scheduling, MIT license, CI build workflow, issue templates.
 
-[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.8...HEAD
-[0.0.8]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.7...0.0.8
+[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.10...HEAD
+[0.0.10]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.9...0.0.10
+[0.0.9]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.8...0.0.9
+[0.0.8]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.6...0.0.8
 [0.0.6]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.5...0.0.6
-[0.0.5]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.4...0.0.5
+[0.0.5]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.2...0.0.5
 [0.0.2]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases/tag/0.0.2
 [0.0.1]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases/tag/0.0.1

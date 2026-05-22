@@ -135,8 +135,13 @@ export default class IncrementalReadingPlugin extends Plugin {
             "Incremental Reading: store not ready for tree view.",
           );
         }
-        return new IrTreeView(leaf, this.store, (elementId, file, priority) =>
-          this.applyIrPriorityChange(elementId, file, priority),
+        return new IrTreeView(
+          leaf,
+          this.store,
+          (elementId, file, priority) =>
+            this.applyIrPriorityChange(elementId, file, priority),
+          (elementId, file, dismissed) =>
+            this.applyIrDismissChange(elementId, file, dismissed),
         );
       },
     );
@@ -675,6 +680,29 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (file) await setPriority(this.app, file, p);
     await this.store.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after priority failed", e);
+    });
+    void this.refreshStatusBar();
+  }
+
+  /** Append `dismiss-set`, dual-write frontmatter, reconcile `.ir/state`. */
+  private async applyIrDismissChange(
+    elementId: ElementId,
+    file: TFile | null,
+    dismissed: boolean,
+  ): Promise<void> {
+    if (!this.store) return;
+    await this.store.appendEvent({
+      id: newEventId(),
+      ts: Date.now(),
+      lamport: Date.now(),
+      device: await this.store.getDeviceId(),
+      kind: "dismiss-set",
+      target: elementId,
+      payload: { dismissed },
+    });
+    if (file) await setDismissed(this.app, file, dismissed);
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after dismiss failed", e);
     });
     void this.refreshStatusBar();
   }
