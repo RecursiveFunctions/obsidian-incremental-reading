@@ -580,14 +580,35 @@ export class IrReviewView extends ItemView {
     }
 
     const mainCol = columns.createDiv({ cls: "ir-review-main-col" });
+    const pct = this.queue.length > 0
+      ? Math.round(((this.index) / this.queue.length) * 100)
+      : 0;
+    const progressWrap = mainCol.createDiv({ cls: "ir-review-progress-bar" });
+    const fill = progressWrap.createDiv({ cls: "ir-review-progress-fill" });
+    fill.style.width = `${pct}%`;
+
     const scroll = mainCol.createDiv({ cls: "ir-review-scroll" });
+
+    const remaining = this.queue.length - this.index;
+    const remainingByType = { topics: 0, extracts: 0, items: 0 };
+    for (let i = this.index; i < this.queue.length; i++) {
+      const t = this.queue[i]!.element.type;
+      if (t === "topic") remainingByType.topics++;
+      else if (t === "extract") remainingByType.extracts++;
+      else remainingByType.items++;
+    }
+    const parts: string[] = [];
+    if (remainingByType.topics > 0) parts.push(`${remainingByType.topics} topic${remainingByType.topics !== 1 ? "s" : ""}`);
+    if (remainingByType.extracts > 0) parts.push(`${remainingByType.extracts} extract${remainingByType.extracts !== 1 ? "s" : ""}`);
+    if (remainingByType.items > 0) parts.push(`${remainingByType.items} item${remainingByType.items !== 1 ? "s" : ""}`);
 
     const label = reviewHeadlineLabel(slot.element, maskClozeChrome);
     scroll.createEl("div", {
       cls: "ir-review-progress",
       text:
         `${this.index + 1} of ${this.queue.length}  ·  ` +
-        `${reading ? "Reading" : "Review"}  ·  ${label}`,
+        `${reading ? "Reading" : "Review"}  ·  ${label}` +
+        (parts.length > 0 ? `  ·  ${parts.join(", ")} left` : ""),
     });
 
     const ancestors = ancestorChain(slot.element, this.elementsById);

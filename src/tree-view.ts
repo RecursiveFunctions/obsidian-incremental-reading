@@ -44,6 +44,12 @@ export type CommitIrReparentFn = (
   newParentId: ElementId | null,
 ) => Promise<void>;
 
+/** Delete an element from the store, reparenting its children. */
+export type CommitIrDeleteFn = (
+  elementId: ElementId,
+  parentId: ElementId | null,
+) => Promise<void>;
+
 const ICONS: Record<IrType, string> = {
   topic: "book-open",
   extract: "scissors",
@@ -64,6 +70,9 @@ export class IrTreeView extends ItemView {
   /** When true, dismissed elements are visible with a restore action. */
   private showDismissed = false;
 
+  /** Current search/filter text (case-insensitive substring match). */
+  private filterText = "";
+
   /** Element id currently being dragged (session-only). */
   private dragSourceId: string | null = null;
 
@@ -74,6 +83,7 @@ export class IrTreeView extends ItemView {
     private readonly commitDismiss?: CommitIrDismissFn,
     private readonly commitPostpone?: CommitIrPostponeFn,
     private readonly commitReparent?: CommitIrReparentFn,
+    private readonly commitDelete?: CommitIrDeleteFn,
   ) {
     super(leaf);
     this.store = store;
@@ -203,6 +213,27 @@ export class IrTreeView extends ItemView {
     });
     refresh.onclick = () => void this.render();
 
+    const searchRow = container.createDiv({ cls: "ir-tree-search" });
+    const searchInput = searchRow.createEl("input", {
+      cls: "ir-tree-search-input",
+      type: "search",
+      placeholder: "Filter elements\u2026",
+    });
+    searchInput.value = this.filterText;
+    searchInput.addEventListener("input", () => {
+      this.filterText = searchInput.value;
+      void this.render();
+    });
+    if (this.filterText) {
+      requestAnimationFrame(() => {
+        searchInput.focus();
+        searchInput.setSelectionRange(
+          searchInput.value.length,
+          searchInput.value.length,
+        );
+      });
+    }
+
     const body = container.createDiv({ cls: "ir-tree-body" });
 
     let state;
@@ -232,7 +263,20 @@ export class IrTreeView extends ItemView {
       return;
     }
 
-    const roots = buildTree(elements);
+    let roots = buildTree(elements);
+    if (this.filterText.trim()) {
+      roots = this.filterTree(roots, this.filterText.trim().toLowerCase());
+      if (roots.length === 0) {
+        body.createEl("p", {
+          cls: "ir-tree-empty-filter",
+          text: `No elements matching "${this.filterText.trim()}".`,
+        });
+        this.lastNodeIds = new Set();
+        this.lastRenderedRoots = [];
+        return;
+      }
+      for (const id of this.lastNodeIds) this.collapsed.delete(id);
+    }
     this.lastNodeIds = this.collectNodeIds(roots);
     this.lastRenderedRoots = roots;
 
@@ -274,6 +318,27 @@ export class IrTreeView extends ItemView {
 
   private lastNodeIds: Set<string> = new Set();
   private lastRenderedRoots: TreeNode[] = [];
+
+  /**
+   * Return a pruned copy of the tree keeping only nodes whose label matches
+   * the query (case-insensitive) plus all ancestors needed to reach them.
+   */
+  private filterTree(roots: TreeNode[], query: string): TreeNode[] {
+    const filter = (node: TreeNode): TreeNode | null => {
+      const label = treeRowLabel(node.element).toLowerCase();
+      const selfMatch = label.includes(query);
+      const filteredChildren = node.children
+        .map(filter)
+        .filter((c): c is TreeNode => c !== null);
+      if (selfMatch || filteredChildren.length > 0) {
+        return { ...node, children: filteredChildren };
+      }
+      return null;
+    };
+    return roots
+      .map(filter)
+      .filter((r): r is TreeNode => r !== null);
+  }
 
   private collectNodeIds(nodes: TreeNode[]): Set<string> {
     const ids = new Set<string>();
@@ -542,6 +607,31 @@ export class IrTreeView extends ItemView {
             }),
         );
       }
+    }
+
+    if (this.commitDelete) {
+      menu.addSeparator();
+      menu.addItem((item) =>
+        item
+          .setTitle("Delete element")
+          .setIcon("trash-2")
+          .onClick(() => {
+            const childCount = node.children.length;
+            const msg = childCount > 0
+              ? `Delete "${treeRowLabel(node.element)}"? Its ${childCount} child${childCount !== 1 ? "ren" : ""} will be reparented to its parent.`
+              : `Delete "${treeRowLabel(node.element)}"?`;
+            if (!confirm(msg)) return;
+            void (async () => {
+              try {
+                await this.commitDelete!(elId, node.element.parentId);
+              } catch (err) {
+                console.error("Incremental Reading: delete failed", err);
+                new Notice("Incremental Reading: could not delete element.");
+              }
+              void this.render();
+            })();
+          }),
+      );
     }
 
     menu.showAtMouseEvent(e);
