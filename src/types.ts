@@ -5,10 +5,14 @@
  * round-trips cleanly through Git, Obsidian Sync, and any Markdown tooling.
  * The key names here are the single source of truth. Every reader/writer in
  * the plugin must go through `IR_KEYS`, never string literals.
+ *
+ * Shared domain primitives (`IrType`, `PRIORITY_MIN`, `PRIORITY_MAX`) are
+ * canonical in `src/ir/model.ts` and re-exported here so legacy callers
+ * that import from `./types` keep working.
  */
 
-/** What role a note plays in the IR element tree. */
-export type IrType = "topic" | "extract" | "item";
+export type { IrType } from "./ir/model";
+export { PRIORITY_MIN, PRIORITY_MAX } from "./ir/model";
 
 /**
  * Frontmatter key names. Flat and human-editable on purpose: a user should be
@@ -40,7 +44,3 @@ export const IR_KEYS = {
   state: "ir-state",
   lastReview: "ir-last-review",
 } as const;
-
-/** Priority is a 0-100 SuperMemo-style percentile; lower = more important. */
-export const PRIORITY_MIN = 0;
-export const PRIORITY_MAX = 100;

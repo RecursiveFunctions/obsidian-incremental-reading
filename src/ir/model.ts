@@ -7,8 +7,8 @@
  * source tombstones, and the append-only event log. Pure data plus a few
  * total helpers; no Obsidian API, no I/O, so it is trivially unit tested.
  *
- * The old frontmatter model in src/types.ts still exists during the migration.
- * It is removed once every consumer is moved onto this model.
+ * src/types.ts re-exports IrType, PRIORITY_MIN, and PRIORITY_MAX from here
+ * so legacy callers that import from `./types` keep working.
  */
 
 import type { ElementId, EventId, DeviceId } from "./ids";

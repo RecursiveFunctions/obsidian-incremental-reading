@@ -33,7 +33,7 @@ import { interleavedQueue, type QueueEntry } from "./queue";
 import type { LogState } from "./ir/log";
 import type { IrElement } from "./ir/model";
 import type { ElementId } from "./ir/ids";
-import { dueMsOf, scheduleToTopicState, topicStateToSchedule } from "./ir/queue-adapter";
+import { dueMsOf } from "./ir/queue-adapter";
 
 /**
  * One element scheduled into the session: its current store state plus the
@@ -79,23 +79,4 @@ export function dueQueue(
   return interleavedQueue(entries, reviewsPerReading, now.getTime())
     .map((id) => slots.get(id))
     .filter((s): s is ReviewSlot => s !== undefined);
-}
-
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
-
-/** Drop the YAML frontmatter block so only the note body is rendered. */
-function stripFrontmatter(content: string): string {
-  return content.replace(FRONTMATTER_RE, "").trim();
-}
-
-/**
- * Write a new body back to a note while preserving its existing frontmatter
- * block byte-for-byte. The Obsidian `processFrontMatter` API only lets us
- * mutate frontmatter, not body, so we splice via `vault.modify` instead.
- */
-async function saveBody(app: App, file: TFile, newBody: string): Promise<void> {
-  const full = await app.vault.read(file);
-  const fm = full.match(FRONTMATTER_RE);
-  const prefix = fm ? fm[0] : "";
-  await app.vault.modify(file, prefix + newBody.trimEnd() + "\n");
 }

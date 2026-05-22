@@ -669,3 +669,45 @@
 .ir-hint-bar-btn {
   white-space: nowrap;
 }
+
+/* Inline divergence picker (DESIGN.md Section 5, commitment #6) */
+.ir-divergence-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  margin-bottom: 4px;
+}
+
+.ir-divergence-msg {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.ir-divergence-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+/* Anchor state badges in tree view */
+.ir-tree-anchor-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+}
+
+.ir-tree-anchor-badge svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ir-tree-anchor-badge--warn {
+  color: var(--text-warning);
+}
+
+.ir-tree-anchor-badge--detached {
+  color: var(--text-muted);
+}
