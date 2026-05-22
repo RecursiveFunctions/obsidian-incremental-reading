@@ -9,7 +9,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { findExtractRange } from "../src/ir/extract-range";
 import { formatDueLabel } from "../src/ir/due-label";
-import { stripFrontmatter } from "../src/ir/frontmatter-body";
+import {
+  sanitizeExtractSelection,
+  stripFrontmatter,
+  wrapExtractHighlight,
+} from "../src/ir/frontmatter-body";
 import type { IrElement } from "../src/ir/model";
 
 /* ------------------------------------------------------------------ */
@@ -182,4 +186,19 @@ test("stripFrontmatter: trims whitespace around body", () => {
 test("stripFrontmatter: handles multi-line front matter", () => {
   const input = "---\na: 1\nb: 2\nc: 3\n---\nContent after.";
   assert.equal(stripFrontmatter(input), "Content after.");
+});
+
+test("sanitizeExtractSelection: strips accidental YAML from a selection", () => {
+  const sel = "---\nir-type: topic\n---\nActual quote";
+  assert.equal(sanitizeExtractSelection(sel), "Actual quote");
+});
+
+test("wrapExtractHighlight: wraps a body span with Obsidian highlights", () => {
+  const body = "The quick brown fox";
+  assert.equal(wrapExtractHighlight(body, 4, 9), "The ==quick== brown fox");
+});
+
+test("wrapExtractHighlight: does not double-wrap", () => {
+  const body = "The ==quick== brown fox";
+  assert.equal(wrapExtractHighlight(body, 6, 11), body);
 });

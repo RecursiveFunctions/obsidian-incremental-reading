@@ -16,6 +16,7 @@ import {
   IrNoteResult,
   createCloze,
   createExtract,
+  markExtractedSpan,
   getIrType,
   getPriority,
   isDismissed,
@@ -55,6 +56,7 @@ import { promptClozeHint } from "./src/cloze-hint-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
 import { buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
+import { selectionOffsetsInBody } from "./src/ir/frontmatter-body";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -519,10 +521,13 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async extractSelection(editor: Editor, source: TFile) {
     if (!(await this.ensureIrSource(source))) return;
+    const selection = editor.getSelection();
+    const offsets = selectionOffsetsInBody(editor.getValue(), selection);
+    if (offsets) await markExtractedSpan(this.app, source, offsets.start, offsets.end);
     const result = await createExtract(
       this.app,
       source,
-      editor.getSelection(),
+      selection,
       this.settings,
     );
     await this.openResult(result, "Extracted to");

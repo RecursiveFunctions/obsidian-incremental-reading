@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.14] — 2026-05-22
+
+### Added
+
+- **Extract: source highlight:** Creating an extract wraps the selected span in the parent topic/extract with Obsidian `==highlight==` so you can see what was already pulled out.
+
+### Fixed
+
+- **Review: Escape in edit mode:** Escape leaves the textarea and returns to preview instead of closing the whole review session.
+- **Review: duplicate front matter after extract:** Reloading the card after extract/cloze no longer injects YAML into the edit buffer; selections that accidentally include front matter are stripped before creating a child note.
+
 ## [0.0.13] — 2026-05-22
 
 ### Added

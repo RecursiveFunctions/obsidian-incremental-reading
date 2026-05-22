@@ -117,6 +117,15 @@ test("createExtract rejects an empty selection", async () => {
   assert.match(r.error!, /Nothing selected/);
 });
 
+test("createExtract strips YAML accidentally included in the selection", async () => {
+  const app = new FakeApp();
+  const src = app.seed("T.md", { [IR_KEYS.type]: "topic" });
+  const sel = "---\nir-type: topic\nir-priority: 33\n---\nKept text";
+  const r = await createExtract(app.asApp(), src as any, sel, SETTINGS);
+  assert.ok(r.file);
+  assert.equal(app.bodyOf(r.file!.path), "Kept text\n");
+});
+
 test("createCloze hides the selected span inside its line context", async () => {
   const app = new FakeApp();
   const src = app.seed("src/Topic.md", { [IR_KEYS.type]: "topic" });

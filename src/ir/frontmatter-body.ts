@@ -10,6 +10,54 @@ export function stripFrontmatter(content: string): string {
 }
 
 /**
+ * Selection text copied from a note that still includes YAML (for example
+ * after a bad reload) must not become a child note body with a second FM
+ * block layered on by `processFrontMatter`.
+ */
+export function sanitizeExtractSelection(text: string): string {
+  return stripFrontmatter(text).trim();
+}
+
+/**
+ * Wrap a body span with Obsidian `==highlight==` so extracted passages stay
+ * visible in the parent topic/extract. Skips when already highlighted.
+ */
+/**
+ * Map a selection string to body offsets when the editor shows the full file
+ * (YAML + body). Returns null if the selection is missing or ambiguous in the
+ * stripped body.
+ */
+export function selectionOffsetsInBody(
+  fullFile: string,
+  selection: string,
+): { start: number; end: number } | null {
+  if (!selection) return null;
+  const fm = fullFile.match(FRONTMATTER_RE);
+  const body = fm ? fullFile.slice(fm[0].length) : fullFile;
+  const idx = body.indexOf(selection);
+  if (idx === -1) return null;
+  if (body.indexOf(selection, idx + 1) !== -1) return null;
+  return { start: idx, end: idx + selection.length };
+}
+
+export function wrapExtractHighlight(
+  body: string,
+  start: number,
+  end: number,
+): string {
+  if (end <= start || start < 0 || end > body.length) return body;
+  if (
+    start >= 2 &&
+    body.slice(start - 2, start) === "==" &&
+    body.slice(end, end + 2) === "=="
+  ) {
+    return body;
+  }
+  const inner = body.slice(start, end);
+  return body.slice(0, start) + "==" + inner + "==" + body.slice(end);
+}
+
+/**
  * Write a new body back to a note while preserving its existing frontmatter
  * block byte-for-byte. The Obsidian `processFrontMatter` API only lets us
  * mutate frontmatter, not body, so we splice via `vault.modify` instead.
