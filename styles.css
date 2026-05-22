@@ -43,6 +43,14 @@
   min-height: 0;
 }
 
+/* Extract highlight in the source column: marks where the current extract
+ * was pulled from in the parent note (uses resolveAnchor or text search). */
+.ir-extract-highlight {
+  background: var(--text-highlight-bg, rgba(255, 208, 0, 0.35));
+  border-radius: 2px;
+  padding: 0.05em 0;
+}
+
 .ir-review-context-placeholder {
   margin: 0.5em 0.65em 0.75em;
   font-size: var(--font-ui-small);
@@ -415,6 +423,35 @@
   font-size: var(--font-ui-smaller);
   padding: 0.1em 0.25em;
   margin: 0;
+}
+
+.ir-tree-actions {
+  display: flex;
+  gap: 0.35em;
+  align-items: center;
+}
+
+/* Due date badge: muted by default, accent when due now. */
+.ir-tree-due {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-tree-due--now {
+  color: var(--text-accent);
+  font-weight: 600;
+}
+
+/* Dismissed row: faded, with a small badge. */
+.ir-tree-row--dismissed {
+  opacity: 0.5;
+}
+
+.ir-tree-dismissed-badge {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  font-style: italic;
 }
 
 .ir-stats-table {
