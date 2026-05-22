@@ -168,9 +168,23 @@ export class IrReviewView extends ItemView {
       if (evt.altKey) return;
 
       const slot = this.current;
+      const typing = this.isTypingInInput();
+
+      // Ctrl+Enter / Cmd+Enter: advance reading elements even when editing.
+      if (
+        evt.code === "Enter" &&
+        (evt.ctrlKey || evt.metaKey) &&
+        slot &&
+        this.isReading(slot)
+      ) {
+        evt.preventDefault();
+        void this.next();
+        return;
+      }
+
+      // Space: reveal cloze or advance reading (only when not typing).
       if (evt.key === " ") {
-        if (!slot) return;
-        if (this.isTypingInTextarea()) return;
+        if (!slot || typing) return;
         if (this.isReading(slot)) {
           evt.preventDefault();
           void this.next();
@@ -182,38 +196,36 @@ export class IrReviewView extends ItemView {
         return;
       }
       if (evt.key === "Enter") {
-        if (slot && this.isReading(slot) && !this.isTypingInTextarea()) {
+        if (slot && this.isReading(slot) && !typing) {
           evt.preventDefault();
           void this.next();
         }
         return;
       }
+
+      // L / D: later today / dismiss. When editing, only fire with Ctrl held
+      // so bare keystrokes still type into the textarea.
       if (evt.key === "l" || evt.key === "L") {
-        if (
-          slot &&
-          this.isReading(slot) &&
-          !this.isTypingInTextarea()
-        ) {
+        if (slot && this.isReading(slot) && !typing) {
           evt.preventDefault();
           void this.later();
         }
         return;
       }
       if (evt.key === "d" || evt.key === "D") {
-        if (this.current && !this.isTypingInTextarea()) {
+        if (this.current && !typing) {
           evt.preventDefault();
           void this.dismiss();
         }
         return;
       }
+
+      // 1-4 grade keys: work on revealed cloze items even when editing, since
+      // grading is the primary action and typing digits in the source during
+      // review is not the expected flow.
       for (const { grade, key } of GRADES) {
         if (evt.key === key) {
-          if (
-            slot &&
-            !this.isReading(slot) &&
-            this.revealed &&
-            !this.isTypingInTextarea()
-          ) {
+          if (slot && !this.isReading(slot) && this.revealed) {
             evt.preventDefault();
             void this.grade(grade);
           }
@@ -249,9 +261,12 @@ export class IrReviewView extends ItemView {
   }
 
   /** Whether typing characters should go to a textarea, not to hotkeys. */
-  private isTypingInTextarea(): boolean {
+  private isTypingInInput(): boolean {
     const active = this.contentEl.ownerDocument.activeElement;
-    return active instanceof HTMLTextAreaElement;
+    return (
+      active instanceof HTMLTextAreaElement ||
+      active instanceof HTMLInputElement
+    );
   }
 
   /**
@@ -833,7 +848,7 @@ export class IrReviewView extends ItemView {
     return { ok: true, text, start: first, end: first + text.length };
   }
 
-  private async handleExtract() {
+  public async handleExtract() {
     const slot = this.current;
     if (!slot || !slot.file || !this.canMakeChild()) return;
     const sel = this.resolveSelection();
@@ -851,7 +866,7 @@ export class IrReviewView extends ItemView {
     await this.afterChildCreated(result, "Extracted to");
   }
 
-  private async handleCloze() {
+  public async handleCloze() {
     const slot = this.current;
     if (!slot || !slot.file || !this.canMakeChild()) return;
     const sel = this.resolveSelection();

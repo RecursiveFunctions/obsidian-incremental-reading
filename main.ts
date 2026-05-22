@@ -288,15 +288,25 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     // SuperMemo parity: Alt+X extract, Alt+Z cloze. Defaults only; users
     // can rebind or clear them in Settings -> Hotkeys.
+    // Uses checkCallback (not editorCheckCallback) so the hotkey also works
+    // inside the IR review ItemView, which is not a MarkdownView.
     this.addCommand({
       id: "extract-selection",
       name: "Extract selection to IR child note",
       icon: "scissors",
       hotkeys: [{ modifiers: ["Alt"], key: "x" }],
-      editorCheckCallback: (checking, editor, view) => {
-        if (!view.file || !editor.getSelection().trim()) return false;
-        if (!checking) void this.extractSelection(editor, view.file);
-        return true;
+      checkCallback: (checking) => {
+        const rv = this.getActiveReviewView();
+        if (rv) {
+          if (!checking) void rv.handleExtract();
+          return true;
+        }
+        const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (mv?.file && mv.editor.getSelection().trim()) {
+          if (!checking) void this.extractSelection(mv.editor, mv.file);
+          return true;
+        }
+        return false;
       },
     });
 
@@ -305,10 +315,18 @@ export default class IncrementalReadingPlugin extends Plugin {
       name: "Cloze selection into an IR item",
       icon: "brackets",
       hotkeys: [{ modifiers: ["Alt"], key: "z" }],
-      editorCheckCallback: (checking, editor, view) => {
-        if (!view.file || !editor.getSelection().trim()) return false;
-        if (!checking) void this.clozeSelection(editor, view.file);
-        return true;
+      checkCallback: (checking) => {
+        const rv = this.getActiveReviewView();
+        if (rv) {
+          if (!checking) void rv.handleCloze();
+          return true;
+        }
+        const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (mv?.file && mv.editor.getSelection().trim()) {
+          if (!checking) void this.clozeSelection(mv.editor, mv.file);
+          return true;
+        }
+        return false;
       },
     });
 
@@ -448,6 +466,11 @@ export default class IncrementalReadingPlugin extends Plugin {
         .setIcon("clipboard-paste")
         .onClick(() => void this.bulkImport()),
     );
+  }
+
+  private getActiveReviewView(): IrReviewView | null {
+    const leaf = this.app.workspace.getActiveViewOfType(IrReviewView);
+    return leaf ?? null;
   }
 
   onunload() {
