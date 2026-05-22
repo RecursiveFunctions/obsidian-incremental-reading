@@ -15,7 +15,6 @@ import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
 import {
   IrNoteResult,
   createCloze,
-  createExtract,
   markExtractedSpan,
   getIrType,
   getPriority,
@@ -37,11 +36,11 @@ import {
   ObsidianVaultFs,
   type ObsidianDataAdapter,
 } from "./src/ir/obsidian-vault-fs";
-import { migrateNotes, type FrontmatterNote } from "./src/ir/migrate";
+import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
 import { toAnkiTsv } from "./src/ir/anki-export";
 import { planSourceDeletion } from "./src/ir/deletion";
 import { nextLamport } from "./src/ir/log";
-import { newEventId } from "./src/ir/ids";
+import { newElementId, newEventId } from "./src/ir/ids";
 import {
   clampPriority,
   type IrElement,
@@ -50,13 +49,17 @@ import {
 import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
+import { topicStateToSchedule } from "./src/ir/queue-adapter";
 import { redistribute, type MercyEntry } from "./src/ir/mercy";
 import { nextClozeNumber, wrapCloze } from "./src/cloze";
 import { promptClozeHint } from "./src/cloze-hint-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
-import { buildPromoteEvent } from "./src/ir/extract";
+import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
-import { selectionOffsetsInBody } from "./src/ir/frontmatter-body";
+import {
+  selectionOffsetsInBody,
+  stripFrontmatter,
+} from "./src/ir/frontmatter-body";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -304,7 +307,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     // inside the IR review ItemView, which is not a MarkdownView.
     this.addCommand({
       id: "extract-selection",
-      name: "Extract selection to IR child note",
+      name: "Extract selection (anchored in source)",
       icon: "scissors",
       hotkeys: [{ modifiers: ["Alt"], key: "x" }],
       checkCallback: (checking) => {
@@ -521,24 +524,62 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async extractSelection(editor: Editor, source: TFile) {
     if (!(await this.ensureIrSource(source))) return;
-    const selection = editor.getSelection();
-    const offsets = selectionOffsetsInBody(editor.getValue(), selection);
-    if (offsets) {
-      await markExtractedSpan(
-        this.app,
-        source,
-        offsets.start,
-        offsets.end,
-        selection,
-      );
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
     }
-    const result = await createExtract(
+    const selection = editor.getSelection().trim();
+    if (!selection) {
+      new Notice("Incremental Reading: nothing selected.");
+      return;
+    }
+    const offsets = selectionOffsetsInBody(editor.getValue(), selection);
+    if (!offsets) {
+      new Notice(
+        "Incremental Reading: could not locate the selection in the note body.",
+      );
+      return;
+    }
+    await markExtractedSpan(
       this.app,
       source,
+      offsets.start,
+      offsets.end,
       selection,
-      this.settings,
     );
-    await this.openResult(result, "Extracted to");
+    const parentId =
+      (await this.resolveElementIdForFile(source)) ??
+      elementIdForPath(source.path);
+    const now = Date.now();
+    try {
+      const ev = buildExtractEvent({
+        sourcePath: source.path,
+        sourceText: stripFrontmatter(editor.getValue()),
+        selStart: offsets.start,
+        selEnd: offsets.end,
+        parentId,
+        priority: getPriority(this.app, source, this.settings.defaultPriority),
+        elementId: newElementId(),
+        eventId: newEventId(),
+        device: await this.store.getDeviceId(),
+        lamport: now,
+        now,
+        schedule: topicStateToSchedule(
+          newTopicState(this.settings, new Date(now)),
+        ),
+      });
+      await this.store.appendEvent(ev);
+      await this.store.reconcile();
+      void this.refreshStatusBar();
+      new Notice(
+        `Extracted (anchored in "${source.basename}", not a separate note).`,
+      );
+    } catch (e) {
+      console.error("Incremental Reading: anchored extract failed", e);
+      new Notice(
+        "Incremental Reading: could not record the extract in the store. See the developer console.",
+      );
+    }
   }
 
   private async clozeSelection(editor: Editor, source: TFile) {

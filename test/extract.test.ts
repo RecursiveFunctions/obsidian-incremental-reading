@@ -98,6 +98,17 @@ test("buildExtractEvent: context window honours contextLen", async (t) => {
   assert.equal(el.anchor!.quote.suffix, " br");
 });
 
+test("buildExtractEvent: optional schedule is attached for the reading queue", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/extract.ts not implemented yet");
+
+  const sched = { due: 1_700_000_000_000, interval: 0, aFactor: 2 };
+  const el = m
+    .buildExtractEvent({ ...baseInput(), schedule: sched })
+    .payload.element as IrElement;
+  assert.deepEqual(el.schedule, sched);
+});
+
 test("buildExtractEvent: deterministic (byte-identical on re-run)", async (t) => {
   const m = await load();
   if (!m) return t.skip("src/ir/extract.ts not implemented yet");

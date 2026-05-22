@@ -1,5 +1,5 @@
 import { newElement, clampPriority } from "./model";
-import type { IrElement, IrEvent } from "./model";
+import type { IrElement, IrEvent, ReadSchedule } from "./model";
 import type { ElementId, EventId, DeviceId } from "./ids";
 
 export interface ExtractInput {
@@ -15,6 +15,8 @@ export interface ExtractInput {
   lamport: number;
   now: number;
   contextLen?: number;
+  /** When set, the extract enters the reading queue (same as a migrated extract note). */
+  schedule?: ReadSchedule;
 }
 
 export function buildExtractEvent(input: ExtractInput): IrEvent {
@@ -49,6 +51,7 @@ export function buildExtractEvent(input: ExtractInput): IrEvent {
     }),
     text,
     anchor,
+    ...(input.schedule ? { schedule: input.schedule } : {}),
   };
 
   return {
