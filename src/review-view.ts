@@ -16,7 +16,6 @@ import {
 } from "obsidian";
 import {
   createClozeFromText,
-  createExtract,
   setDismissed,
   setPriority,
   type IrNoteResult,
@@ -37,6 +36,7 @@ import {
 import {
   advanceTopic,
   laterToday,
+  newTopicState,
   writeTopicToFrontmatter,
   type TopicState,
 } from "./topic";
@@ -56,7 +56,8 @@ import {
   labelFor,
   reviewHeadlineLabel,
 } from "./ir/labels";
-import { newEventId, type ElementId } from "./ir/ids";
+import { buildExtractEvent } from "./ir/extract";
+import { newElementId, newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import { findExtractRange } from "./ir/extract-range";
@@ -927,13 +928,35 @@ export class IrReviewView extends ItemView {
     }
     await this.flushEdits();
     await this.applyExtractHighlight(slot.file, sel.start, sel.end, sel.text);
-    const result = await createExtract(
-      this.app,
-      slot.file,
-      sel.text,
-      this.settings,
-    );
-    await this.afterChildCreated(result, "Extracted to");
+    try {
+      const now = Date.now();
+      const ev = buildExtractEvent({
+        sourcePath: slot.file.path,
+        sourceText: this.currentRaw,
+        selStart: sel.start,
+        selEnd: sel.end,
+        parentId: slot.id,
+        priority: slot.element.priority,
+        elementId: newElementId(),
+        eventId: newEventId(),
+        device: await this.store.getDeviceId(),
+        lamport: now,
+        now,
+        schedule: topicStateToSchedule(newTopicState(this.settings, new Date(now))),
+      });
+      await this.store.appendEvent(ev);
+      const created = ev.payload.element as IrElement;
+      this.elementsById.set(created.id, created);
+      new Notice(
+        `Extracted (anchored in "${slot.file.basename}", not a separate note).`,
+      );
+      this.onChange?.();
+    } catch (e) {
+      console.error("Incremental Reading: anchored extract failed", e);
+      new Notice(
+        "Incremental Reading: could not record the extract in the store. See the developer console.",
+      );
+    }
     await this.reloadCurrentRaw();
     await this.renderCard();
   }
