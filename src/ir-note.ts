@@ -19,6 +19,12 @@ import {
   writeTopicToFrontmatter,
 } from "./topic";
 import { buildClozeBody, buildClozeFromText } from "./cloze";
+import {
+  sanitizeExtractSelection,
+  saveBody,
+  stripFrontmatter,
+  wrapExtractHighlight,
+} from "./ir/frontmatter-body";
 
 /**
  * Slash-only stand-in for Obsidian's `normalizePath`: collapse repeats,
@@ -213,13 +219,29 @@ async function createChildNote(
  * extract. The new note holds only the selected text and enters the queue
  * as a sub-topic.
  */
+/**
+ * Mark the extracted span in the source note body (Obsidian `==highlight==`).
+ * Offsets are in the stripped body, matching review-mode selection math.
+ */
+export async function markExtractedSpan(
+  app: App,
+  source: TFile,
+  start: number,
+  end: number,
+): Promise<void> {
+  const body = stripFrontmatter(await app.vault.cachedRead(source));
+  const updated = wrapExtractHighlight(body, start, end);
+  if (updated === body) return;
+  await saveBody(app, source, updated);
+}
+
 export async function createExtract(
   app: App,
   source: TFile,
   selection: string,
   settings: IrNoteSettings,
 ): Promise<IrNoteResult> {
-  const text = selection.trim();
+  const text = sanitizeExtractSelection(selection);
   if (!text) return { error: "Nothing selected." };
   return createChildNote(app, source, "extract", text, text, settings);
 }

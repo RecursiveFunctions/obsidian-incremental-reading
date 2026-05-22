@@ -60,7 +60,11 @@ import { newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import { findExtractRange } from "./ir/extract-range";
-import { stripFrontmatter, saveBody } from "./ir/frontmatter-body";
+import {
+  stripFrontmatter,
+  saveBody,
+  wrapExtractHighlight,
+} from "./ir/frontmatter-body";
 import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
@@ -134,6 +138,14 @@ export class IrReviewView extends ItemView {
     }
 
     this.registerDomEvent(this.contentEl, "keydown", (evt: KeyboardEvent) => {
+      if (evt.key === "Escape" && this.editing) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        this.editing = false;
+        void this.renderCard();
+        return;
+      }
+
       // Use `code` so Alt+X / Alt+Z work across layouts (Alt often changes `key`).
       if (
         evt.altKey &&
@@ -782,6 +794,7 @@ export class IrReviewView extends ItemView {
     ta.addEventListener("keydown", (evt: KeyboardEvent) => {
       if (evt.key === "Escape") {
         evt.preventDefault();
+        evt.stopPropagation();
         this.editing = false;
         void this.renderCard();
         return;
@@ -915,6 +928,7 @@ export class IrReviewView extends ItemView {
       return;
     }
     await this.flushEdits();
+    await this.applyExtractHighlight(slot.file, sel.start, sel.end);
     const result = await createExtract(
       this.app,
       slot.file,
@@ -1023,12 +1037,34 @@ export class IrReviewView extends ItemView {
     await this.renderCard();
   }
 
-  /** Re-read the current slot's note content after a child was created from it. */
+  /**
+   * Highlight the extracted span in the source note (body offsets) and keep
+   * the in-memory review buffer aligned before creating the child.
+   */
+  private async applyExtractHighlight(
+    file: TFile,
+    start: number,
+    end: number,
+  ): Promise<void> {
+    const updated = wrapExtractHighlight(this.currentRaw, start, end);
+    if (updated === this.currentRaw) return;
+    this.currentRaw = updated;
+    this.rawOnDisk = updated;
+    try {
+      await saveBody(this.app, file, updated);
+    } catch (e) {
+      console.error("Incremental Reading: marking extract highlight failed", e);
+    }
+  }
+
+  /** Re-read the current slot's note body after a child was created from it. */
   private async reloadCurrentRaw(): Promise<void> {
     const slot = this.current;
     if (!slot?.file) return;
     try {
-      this.currentRaw = await this.app.vault.read(slot.file);
+      const body = stripFrontmatter(await this.app.vault.read(slot.file));
+      this.currentRaw = body;
+      this.rawOnDisk = body;
     } catch { /* file may have been deleted */ }
   }
 
