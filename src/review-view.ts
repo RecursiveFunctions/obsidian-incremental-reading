@@ -11,6 +11,7 @@ import {
   MarkdownRenderer,
   Notice,
   Platform,
+  Scope,
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
@@ -134,6 +135,21 @@ export class IrReviewView extends ItemView {
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
     }
+
+    // Escape needs to go through Obsidian's keymap (Scope), not DOM keydown:
+    // Obsidian's keymap dispatcher runs in document capture phase, so it
+    // resolves Escape before our textarea/contentEl listeners get a chance,
+    // and unbound Escape can close the active leaf. Registering on the view's
+    // scope makes Escape ours whenever the review view is focused.
+    const scope = new Scope(this.app.scope);
+    this.scope = scope;
+    scope.register([], "Escape", (evt) => {
+      if (!this.editing) return; // pass through to Obsidian's default
+      evt.preventDefault();
+      this.editing = false;
+      void this.renderCard();
+      return false;
+    });
 
     this.registerDomEvent(this.contentEl, "keydown", (evt: KeyboardEvent) => {
       if (evt.key === "Escape" && this.editing) {
