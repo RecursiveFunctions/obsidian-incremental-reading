@@ -8,6 +8,7 @@ import {
   hasCloze,
   nextClozeNumber,
   parseClozeInner,
+  transformClozes,
   wrapCloze,
 } from "../src/cloze";
 
@@ -125,4 +126,71 @@ test("nextClozeNumber returns max existing + 1, ignoring order", () => {
   // Out-of-order or non-contiguous numbers still pick the next free slot
   // strictly above the max so an Anki import keeps each card distinct.
   assert.equal(nextClozeNumber("a {{c5::x}} {{c2::y}} b"), 6);
+});
+
+/* ------------------------------------------------------------------ */
+/* transformClozes                                                     */
+/* ------------------------------------------------------------------ */
+
+test("transformClozes: replaces bare cloze markers without code wrap", () => {
+  const out = transformClozes(
+    "The {{c1::quick}} brown fox",
+    ({ answer }, inCodeSpan) =>
+      inCodeSpan ? `<code>[${answer}]</code>` : `[${answer}]`,
+  );
+  assert.equal(out, "The [quick] brown fox");
+});
+
+test("transformClozes: consumes surrounding backticks and signals inCodeSpan", () => {
+  const out = transformClozes(
+    "use `{{c1::pip install}}` here",
+    ({ answer }, inCodeSpan) =>
+      inCodeSpan ? `<code>[${answer}]</code>` : `[${answer}]`,
+  );
+  assert.equal(out, "use <code>[pip install]</code> here");
+});
+
+test("transformClozes: only consumes backticks when present on BOTH sides", () => {
+  // Leading backtick only — leave it; not a balanced inline-code span.
+  assert.equal(
+    transformClozes(
+      "a `{{c1::x}} b",
+      ({ answer }, inCodeSpan) =>
+        inCodeSpan ? `<code>[${answer}]</code>` : `[${answer}]`,
+    ),
+    "a `[x] b",
+  );
+  // Trailing backtick only — same.
+  assert.equal(
+    transformClozes(
+      "a {{c1::x}}` b",
+      ({ answer }, inCodeSpan) =>
+        inCodeSpan ? `<code>[${answer}]</code>` : `[${answer}]`,
+    ),
+    "a [x]` b",
+  );
+});
+
+test("transformClozes: passes parsed hint through", () => {
+  const out = transformClozes(
+    "Q: {{c1::Paris::capital}}.",
+    ({ answer, hint }) => `[${answer}|${hint ?? ""}]`,
+  );
+  assert.equal(out, "Q: [Paris|capital].");
+});
+
+test("transformClozes: handles multiple markers, mixed contexts", () => {
+  const out = transformClozes(
+    "use `{{c1::pip}}` then {{c2::twine}} to publish",
+    ({ answer }, inCodeSpan) =>
+      inCodeSpan ? `<code>[${answer}]</code>` : `[${answer}]`,
+  );
+  assert.equal(out, "use <code>[pip]</code> then [twine] to publish");
+});
+
+test("transformClozes: no markers yields the input unchanged", () => {
+  assert.equal(
+    transformClozes("no clozes here", () => "X"),
+    "no clozes here",
+  );
 });

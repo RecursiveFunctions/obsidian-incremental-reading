@@ -158,3 +158,47 @@ export function buildClozeFromText(
     hint,
   );
 }
+
+/**
+ * Walk `raw` and rewrite each `{{cN::…}}` marker to whatever HTML `build`
+ * returns. When a marker is immediately surrounded by a single backtick on
+ * each side (i.e. the marker is the body of an inline-code span), the
+ * backticks are consumed and `build` is told `inCodeSpan = true` so the
+ * caller can wrap its replacement in `<code>…</code>`.
+ *
+ * Why: Obsidian's markdown renderer escapes HTML that sits inside an inline
+ * code span, so `\`{{c1::…}}\`` → `\`<mark>…</mark>\`` ends up displayed as
+ * literal HTML text. Consuming the backticks at substitution time avoids the
+ * code-span context entirely while still preserving monospaced styling via
+ * an explicit `<code>` wrapper.
+ *
+ * Pure: no Obsidian imports, so it's testable in isolation.
+ */
+export function transformClozes(
+  raw: string,
+  build: (
+    parsed: { answer: string; hint?: string },
+    inCodeSpan: boolean,
+  ) => string,
+): string {
+  const re = /\{\{c(\d+)::([\s\S]*?)\}\}/g;
+  let out = "";
+  let lastEnd = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    const inCodeSpan =
+      start > 0 &&
+      raw[start - 1] === "`" &&
+      end < raw.length &&
+      raw[end] === "`";
+    const sliceStart = inCodeSpan ? start - 1 : start;
+    const sliceEnd = inCodeSpan ? end + 1 : end;
+    out += raw.slice(lastEnd, sliceStart);
+    out += build(parseClozeInner(m[2]), inCodeSpan);
+    lastEnd = sliceEnd;
+  }
+  out += raw.slice(lastEnd);
+  return out;
+}

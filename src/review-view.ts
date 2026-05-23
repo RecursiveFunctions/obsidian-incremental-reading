@@ -21,10 +21,9 @@ import {
   type IrNoteResult,
 } from "./ir-note";
 import {
-  CLOZE_RE,
   escapeClozeHtmlFragment,
   hasCloze,
-  parseClozeInner,
+  transformClozes,
 } from "./cloze";
 import {
   Grade,
@@ -736,17 +735,17 @@ export class IrReviewView extends ItemView {
   ): Promise<void> {
     const shown =
       isCloze && !this.revealed
-        ? raw.replace(CLOZE_RE, (_m, _n, inner) => {
-            const { hint } = parseClozeInner(inner);
+        ? transformClozes(raw, ({ hint }, inCodeSpan) => {
             const hintPart = hint
               ? ` <span class="ir-cloze-hint">(${escapeClozeHtmlFragment(hint)})</span>`
               : "";
-            return `<mark class="ir-cloze-elision"><span class="ir-cloze-gap">[ ... ]</span>${hintPart}</mark>`;
+            const html = `<mark class="ir-cloze-elision"><span class="ir-cloze-gap">[ ... ]</span>${hintPart}</mark>`;
+            return inCodeSpan ? `<code>${html}</code>` : html;
           })
         : isCloze
-          ? raw.replace(CLOZE_RE, (_m, _n, inner) => {
-              const { answer } = parseClozeInner(inner);
-              return `<mark class="ir-cloze-answer">${escapeClozeHtmlFragment(answer)}</mark>`;
+          ? transformClozes(raw, ({ answer }, inCodeSpan) => {
+              const html = `<mark class="ir-cloze-answer">${escapeClozeHtmlFragment(answer)}</mark>`;
+              return inCodeSpan ? `<code>${html}</code>` : html;
             })
           : raw;
     const body = parent.createEl("div", {
