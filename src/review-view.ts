@@ -17,6 +17,7 @@ import {
 } from "obsidian";
 import {
   createClozeFromText,
+  getIrType,
   setDismissed,
   setPriority,
   type IrNoteResult,
@@ -42,7 +43,7 @@ import {
 } from "./topic";
 import type { IrSettings } from "./settings";
 import type { IrStore } from "./ir/store";
-import { migrateNotes } from "./ir/migrate";
+import { elementIdForPath, migrateNotes } from "./ir/migrate";
 import {
   clampPriority,
   isReadType,
@@ -65,6 +66,7 @@ import {
   stripFrontmatter,
   saveBody,
   stripExtractMarks,
+  wrapExtractHighlight,
 } from "./ir/frontmatter-body";
 import { mapRenderedSelectionToRaw } from "./ir/selection-map";
 import { markExtractedSpan } from "./ir-note";
@@ -301,11 +303,59 @@ export class IrReviewView extends ItemView {
    * Extract and cloze creation share an extra constraint with edit: the
    * source must be a topic or extract (items cannot have children), and for
    * items we'd be back to leaking the answer.
+   *
+   * File-backed topics/extracts are the common case. Anchored extracts (store
+   * body, no `notePath`) still need children: resolve a vault note for
+   * provenance (`buildExtractEvent.sourcePath`) and for cloze placement +
+   * migration (`createChildNote`).
    */
   private canMakeChild(): boolean {
     const slot = this.current;
-    if (!slot || !slot.file || this.bodyMissing) return false;
-    return this.isReading(slot);
+    if (!slot || this.bodyMissing || !this.isReading(slot)) return false;
+    if (slot.file) return true;
+    const body = slot.element.text?.trim() ?? "";
+    if (!body) return false;
+    return (
+      this.resolveProvenanceSourcePath(slot) !== null &&
+      this.resolvePlacementFile(slot) !== null
+    );
+  }
+
+  /** First vault path on the ancestor chain (for anchor provenance). */
+  private resolveProvenanceSourcePath(slot: ReviewSlot): string | null {
+    let cur: IrElement | undefined = slot.element;
+    const seen = new Set<ElementId>();
+    while (cur) {
+      if (seen.has(cur.id)) break;
+      seen.add(cur.id);
+      if (cur.notePath) return cur.notePath;
+      if (!cur.parentId) break;
+      cur = this.elementsById.get(cur.parentId);
+    }
+    return slot.element.anchor?.sourcePath ?? null;
+  }
+
+  /**
+   * Nearest vault-backed topic/extract file for operations that still create
+   * a real `.md` (cloze items) or validate IR frontmatter.
+   */
+  private resolvePlacementFile(slot: ReviewSlot): TFile | null {
+    let cur: IrElement | undefined = slot.element;
+    const seen = new Set<ElementId>();
+    while (cur) {
+      if (seen.has(cur.id)) break;
+      seen.add(cur.id);
+      if (cur.notePath) {
+        const af = this.app.vault.getAbstractFileByPath(cur.notePath);
+        if (af instanceof TFile) {
+          const t = getIrType(this.app, af);
+          if (t === "topic" || t === "extract") return af;
+        }
+      }
+      if (!cur.parentId) break;
+      cur = this.elementsById.get(cur.parentId);
+    }
+    return null;
   }
 
   /** Append a store event for the current element's state change. */
@@ -968,19 +1018,31 @@ export class IrReviewView extends ItemView {
 
   public async handleExtract() {
     const slot = this.current;
-    if (!slot || !slot.file || !this.canMakeChild()) return;
+    if (!slot || !this.canMakeChild()) return;
     const sel = this.resolveSelection();
     if (!sel.ok) {
       new Notice(`Incremental Reading: ${sel.reason}`);
       return;
     }
+    const sourcePath =
+      slot.file?.path ?? this.resolveProvenanceSourcePath(slot);
+    if (!sourcePath) {
+      new Notice(
+        "Incremental Reading: could not resolve a vault path for this extract.",
+      );
+      return;
+    }
     await this.flushEdits();
     const bodyBeforeExtract = this.currentRaw;
-    await this.applyExtractHighlight(slot.file, sel.start, sel.end, sel.text);
+    if (slot.file) {
+      await this.applyExtractHighlight(slot.file, sel.start, sel.end, sel.text);
+    } else {
+      await this.applyExtractHighlightInStore(slot, sel.start, sel.end);
+    }
     try {
       const now = Date.now();
       const ev = buildExtractEvent({
-        sourcePath: slot.file.path,
+        sourcePath,
         sourceText: bodyBeforeExtract,
         selStart: sel.start,
         selEnd: sel.end,
@@ -997,8 +1059,9 @@ export class IrReviewView extends ItemView {
       await this.store.appendEvent(ev);
       const created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
+      const label = sourcePath.split("/").pop() ?? sourcePath;
       new Notice(
-        `Extracted (anchored in "${slot.file.basename}", not a separate note).`,
+        `Extracted (anchored in "${label}", not a separate note).`,
       );
       this.onChange?.();
     } catch (e) {
@@ -1013,7 +1076,7 @@ export class IrReviewView extends ItemView {
 
   public async handleCloze() {
     const slot = this.current;
-    if (!slot || !slot.file || !this.canMakeChild()) return;
+    if (!slot || !this.canMakeChild()) return;
     const sel = this.resolveSelection();
     if (!sel.ok) {
       new Notice(`Incremental Reading: ${sel.reason}`);
@@ -1092,11 +1155,17 @@ export class IrReviewView extends ItemView {
     sel: { text: string; start: number; end: number },
     hint: string,
   ): Promise<void> {
-    if (!slot.file) return;
+    const placement = slot.file ?? this.resolvePlacementFile(slot);
+    if (!placement) {
+      new Notice(
+        "Incremental Reading: could not find a vault-backed topic to place this cloze item.",
+      );
+      return;
+    }
     await this.flushEdits();
     const result = await createClozeFromText(
       this.app,
-      slot.file,
+      placement,
       this.currentRaw,
       sel.start,
       sel.end,
@@ -1104,6 +1173,14 @@ export class IrReviewView extends ItemView {
       hint,
     );
     await this.afterChildCreated(result, "Cloze item created:");
+    if (!slot.file && result.file) {
+      const id = elementIdForPath(result.file.path);
+      await this.emit("reparented", id, { parentId: slot.id });
+      const el = this.elementsById.get(id);
+      if (el) {
+        this.elementsById.set(id, { ...el, parentId: slot.id });
+      }
+    }
     await this.reloadCurrentRaw();
     await this.renderCard();
   }
@@ -1133,15 +1210,57 @@ export class IrReviewView extends ItemView {
     }
   }
 
+  /**
+   * Same as {@link applyExtractHighlight} for anchored extracts: wrap the
+   * span in the store-backed body and persist via `text-edited`.
+   */
+  private async applyExtractHighlightInStore(
+    slot: ReviewSlot,
+    start: number,
+    end: number,
+  ): Promise<void> {
+    try {
+      const wrapped = wrapExtractHighlight(this.currentRaw, start, end);
+      if (wrapped === this.currentRaw) return;
+      const now = Date.now();
+      const ev = buildTextEditedEvent({
+        elementId: slot.id,
+        text: wrapped,
+        eventId: newEventId(),
+        device: await this.store.getDeviceId(),
+        lamport: now,
+        now,
+      });
+      await this.store.appendEvent(ev);
+      const updated = { ...slot.element, text: wrapped };
+      slot.element = updated;
+      this.elementsById.set(slot.id, updated);
+      this.currentRaw = stripExtractMarks(wrapped);
+      this.rawOnDisk = this.currentRaw;
+      this.onChange?.();
+    } catch (e) {
+      console.error("Incremental Reading: marking extract highlight failed", e);
+    }
+  }
+
   /** Re-read the current slot's note body after a child was created from it. */
   private async reloadCurrentRaw(): Promise<void> {
     const slot = this.current;
-    if (!slot?.file) return;
-    try {
-      const body = stripFrontmatter(await this.app.vault.read(slot.file));
-      this.currentRaw = body;
-      this.rawOnDisk = body;
-    } catch { /* file may have been deleted */ }
+    if (!slot) return;
+    if (slot.file) {
+      try {
+        const body = stripFrontmatter(await this.app.vault.read(slot.file));
+        this.currentRaw = body;
+        this.rawOnDisk = body;
+      } catch {
+        /* file may have been deleted */
+      }
+      return;
+    }
+    if (slot.element.text) {
+      this.currentRaw = stripExtractMarks(slot.element.text);
+      this.rawOnDisk = this.currentRaw;
+    }
   }
 
   private async afterChildCreated(result: IrNoteResult, verb: string) {
@@ -1158,7 +1277,13 @@ export class IrReviewView extends ItemView {
         [{ path: result.file.path, frontmatter: fm }],
         Date.now(),
       );
-      for (const ev of events) await this.store.appendEvent(ev);
+      for (const ev of events) {
+        await this.store.appendEvent(ev);
+        if (ev.kind === "element-created") {
+          const el = ev.payload.element as IrElement;
+          this.elementsById.set(el.id, el);
+        }
+      }
     } catch (e) {
       console.error("Incremental Reading: recording child element failed", e);
     }

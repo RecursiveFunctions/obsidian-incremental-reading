@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.22] — 2026-05-23
+
+### Fixed
+
+- **Review: extract/cloze from anchored (store-only) extracts:** `canMakeChild` no longer requires `slot.file`. The view walks the ancestor chain for a vault `notePath` (or `anchor.sourcePath`) for provenance, finds a vault-backed topic/extract for cloze placement, wraps highlights in the store body when there is no file, and reparents cloze items created under a store-backed card.
+
 ## [0.0.21] — 2026-05-23
 
 ### Fixed
