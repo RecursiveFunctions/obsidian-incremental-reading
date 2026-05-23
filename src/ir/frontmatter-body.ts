@@ -22,21 +22,36 @@ const EXTRACT_MARK_OPEN = '<mark class="ir-extract-source">';
 const EXTRACT_MARK_CLOSE = "</mark>";
 
 /**
- * Map a selection string to body offsets when the editor shows the full file
- * (YAML + body). Returns null if the selection is missing or ambiguous in the
- * stripped body.
+ * Map a selection range from full-file offsets (as produced by
+ * `editor.posToOffset`) onto body offsets that match what `stripFrontmatter`
+ * returns (frontmatter stripped, body trimmed). Returns null only when the
+ * selection lies entirely inside the frontmatter or the surrounding
+ * whitespace — i.e., when there is no body text to anchor against.
+ *
+ * Anchoring by editor position (rather than by searching for the selection
+ * text) means the extract works even when the selection is duplicated in
+ * the body, when it crosses an existing `<mark class="ir-extract-source">`
+ * span, or when it contains otherwise-non-unique text.
  */
-export function selectionOffsetsInBody(
+export function bodyOffsetsFromFullOffsets(
   fullFile: string,
-  selection: string,
+  fromOffset: number,
+  toOffset: number,
 ): { start: number; end: number } | null {
-  if (!selection) return null;
+  if (toOffset <= fromOffset) return null;
   const fm = fullFile.match(FRONTMATTER_RE);
-  const body = fm ? fullFile.slice(fm[0].length) : fullFile;
-  const idx = body.indexOf(selection);
-  if (idx === -1) return null;
-  if (body.indexOf(selection, idx + 1) !== -1) return null;
-  return { start: idx, end: idx + selection.length };
+  const fmLen = fm ? fm[0].length : 0;
+  const afterFm = fullFile.slice(fmLen);
+  const leadingWs = afterFm.length - afterFm.trimStart().length;
+  const trimmedLen = afterFm.trim().length;
+  const bodyStartInFull = fmLen + leadingWs;
+  const bodyEndInFull = bodyStartInFull + trimmedLen;
+  if (toOffset <= bodyStartInFull) return null;
+  if (fromOffset >= bodyEndInFull) return null;
+  const start = Math.max(0, fromOffset - bodyStartInFull);
+  const end = Math.min(trimmedLen, toOffset - bodyStartInFull);
+  if (end <= start) return null;
+  return { start, end };
 }
 
 /**

@@ -57,7 +57,7 @@ import { planBulkImport } from "./src/ir/bulk-import";
 import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
 import {
-  selectionOffsetsInBody,
+  bodyOffsetsFromFullOffsets,
   stripFrontmatter,
 } from "./src/ir/frontmatter-body";
 
@@ -528,15 +528,28 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: store is not ready.");
       return;
     }
-    const selection = editor.getSelection().trim();
+    const fromPos = editor.getCursor("from");
+    const toPos = editor.getCursor("to");
+    const fromOffset = editor.posToOffset(fromPos);
+    const toOffset = editor.posToOffset(toPos);
+    const rawSelection = editor.getRange(fromPos, toPos);
+    // Shrink the range past surrounding whitespace so the wrap and the
+    // ancestor-propagation text stay aligned and don't include stray spaces.
+    const leadingWs = rawSelection.length - rawSelection.trimStart().length;
+    const trailingWs = rawSelection.length - rawSelection.trimEnd().length;
+    const selection = rawSelection.trim();
     if (!selection) {
       new Notice("Incremental Reading: nothing selected.");
       return;
     }
-    const offsets = selectionOffsetsInBody(editor.getValue(), selection);
+    const offsets = bodyOffsetsFromFullOffsets(
+      editor.getValue(),
+      fromOffset + leadingWs,
+      toOffset - trailingWs,
+    );
     if (!offsets) {
       new Notice(
-        "Incremental Reading: could not locate the selection in the note body.",
+        "Incremental Reading: selection is outside the note body.",
       );
       return;
     }

@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { findExtractRange } from "../src/ir/extract-range";
 import { formatDueLabel } from "../src/ir/due-label";
 import {
+  bodyOffsetsFromFullOffsets,
   sanitizeExtractSelection,
   stripFrontmatter,
   wrapExtractHighlight,
@@ -208,4 +209,63 @@ test("wrapExtractHighlight: does not double-wrap mark or legacy ==", () => {
   assert.equal(wrapExtractHighlight(marked, q, q + 5), marked);
   const legacy = "The ==quick== brown fox";
   assert.equal(wrapExtractHighlight(legacy, 6, 11), legacy);
+});
+
+/* ------------------------------------------------------------------ */
+/* bodyOffsetsFromFullOffsets                                          */
+/* ------------------------------------------------------------------ */
+
+test("bodyOffsetsFromFullOffsets: maps offsets past frontmatter", () => {
+  const full = "---\ntitle: Hello\n---\nBody text here.";
+  const bodyStart = full.indexOf("Body");
+  const r = bodyOffsetsFromFullOffsets(full, bodyStart, bodyStart + 4);
+  assert.deepEqual(r, { start: 0, end: 4 });
+  assert.equal(stripFrontmatter(full).slice(r!.start, r!.end), "Body");
+});
+
+test("bodyOffsetsFromFullOffsets: accounts for leading whitespace trimmed by stripFrontmatter", () => {
+  const full = "---\nk: v\n---\n\n  Body  \n";
+  const stripped = stripFrontmatter(full);
+  assert.equal(stripped, "Body");
+  const bodyStart = full.indexOf("Body");
+  const r = bodyOffsetsFromFullOffsets(full, bodyStart, bodyStart + 4);
+  assert.deepEqual(r, { start: 0, end: 4 });
+  assert.equal(stripped.slice(r!.start, r!.end), "Body");
+});
+
+test("bodyOffsetsFromFullOffsets: works for files without frontmatter", () => {
+  const full = "The quick brown fox";
+  const r = bodyOffsetsFromFullOffsets(full, 4, 9);
+  assert.deepEqual(r, { start: 4, end: 9 });
+  assert.equal(full.slice(r!.start, r!.end), "quick");
+});
+
+test("bodyOffsetsFromFullOffsets: returns null for selection inside frontmatter", () => {
+  const full = "---\ntitle: Hello\n---\nBody text.";
+  assert.equal(bodyOffsetsFromFullOffsets(full, 4, 9), null);
+});
+
+test("bodyOffsetsFromFullOffsets: returns null for empty/inverted range", () => {
+  const full = "Hello body.";
+  assert.equal(bodyOffsetsFromFullOffsets(full, 5, 5), null);
+  assert.equal(bodyOffsetsFromFullOffsets(full, 7, 3), null);
+});
+
+test("bodyOffsetsFromFullOffsets: anchors duplicate substrings by position, not by text", () => {
+  // Same phrase appears twice; substring-search would bail, position-map
+  // resolves to the exact selected occurrence.
+  const full = "---\nk: v\n---\nfoo bar foo bar";
+  // Second "foo" is at full offset 21.
+  const r = bodyOffsetsFromFullOffsets(full, 21, 24);
+  assert.deepEqual(r, { start: 8, end: 11 });
+  assert.equal(stripFrontmatter(full).slice(r!.start, r!.end), "foo");
+});
+
+test("bodyOffsetsFromFullOffsets: clamps when selection extends past trimmed body", () => {
+  const full = "---\nk: v\n---\nBody  \n";
+  const stripped = stripFrontmatter(full);
+  // Try to select "Body  " (includes trailing whitespace stripped by trim).
+  const r = bodyOffsetsFromFullOffsets(full, 13, 19);
+  assert.deepEqual(r, { start: 0, end: stripped.length });
+  assert.equal(stripped.slice(r!.start, r!.end), "Body");
 });
