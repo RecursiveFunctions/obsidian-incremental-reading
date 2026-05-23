@@ -148,7 +148,8 @@ export type IrEventKind =
   | "promoted"
   | "reparented"
   | "source-tombstoned"
-  | "element-deleted";
+  | "element-deleted"
+  | "text-edited";
 
 export interface IrEvent {
   id: EventId;

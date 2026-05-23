@@ -141,6 +141,13 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
         elements.delete(target);
         break;
       }
+
+      case "text-edited": {
+        if (element) {
+          element.text = event.payload.text as string;
+        }
+        break;
+      }
     }
   }
 

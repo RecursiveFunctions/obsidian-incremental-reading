@@ -56,12 +56,16 @@ import {
   labelFor,
   reviewHeadlineLabel,
 } from "./ir/labels";
-import { buildExtractEvent } from "./ir/extract";
+import { buildExtractEvent, buildTextEditedEvent } from "./ir/extract";
 import { newElementId, newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import { findExtractRange } from "./ir/extract-range";
-import { stripFrontmatter, saveBody } from "./ir/frontmatter-body";
+import {
+  stripFrontmatter,
+  saveBody,
+  stripExtractMarks,
+} from "./ir/frontmatter-body";
 import { mapRenderedSelectionToRaw } from "./ir/selection-map";
 import { markExtractedSpan } from "./ir-note";
 import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
@@ -285,7 +289,10 @@ export class IrReviewView extends ItemView {
    */
   private canEdit(): boolean {
     const slot = this.current;
-    if (!slot || !slot.file || this.bodyMissing) return false;
+    if (!slot || this.bodyMissing) return false;
+    // Anchored elements (no backing file) edit through a "text-edited" store
+    // event; file-backed elements edit through `saveBody`. Both paths are
+    // wired through `flushEdits`.
     if (this.isReading(slot)) return true;
     return this.revealed;
   }
@@ -398,9 +405,15 @@ export class IrReviewView extends ItemView {
         await this.app.vault.cachedRead(slot.file),
       );
       this.bodyMissing = false;
+    } else if (slot.element.text) {
+      // Strip any `<mark class="ir-extract-source">` chrome that may have
+      // leaked into the stored text for extracts created before the
+      // creation-time strip landed. Without this, the chrome renders as
+      // escaped HTML in the body and breadcrumb.
+      this.rawOnDisk = stripExtractMarks(slot.element.text);
+      this.bodyMissing = false;
     } else {
       this.rawOnDisk =
-        slot.element.text ||
         "_The source note for this element is no longer in the vault._";
       this.bodyMissing = true;
     }
@@ -521,16 +534,36 @@ export class IrReviewView extends ItemView {
   }
 
   /**
-   * Persist any pending edit to disk before advancing or creating a child.
-   * Idempotent: re-flushing is a no-op when the buffer matches disk.
+   * Persist any pending edit before advancing or creating a child.
+   * Idempotent: re-flushing is a no-op when the buffer matches the last
+   * saved state. File-backed elements save the whole body via `saveBody`;
+   * anchored elements (no file) record a `text-edited` event in the store
+   * so the change survives across folds without rewriting the parent note.
    */
   private async flushEdits(): Promise<void> {
     this.captureBookmark();
     const slot = this.current;
-    if (!slot || !slot.file || this.bodyMissing) return;
+    if (!slot || this.bodyMissing) return;
     if (this.currentRaw === this.rawOnDisk) return;
     try {
-      await saveBody(this.app, slot.file, this.currentRaw);
+      if (slot.file) {
+        await saveBody(this.app, slot.file, this.currentRaw);
+      } else {
+        const now = Date.now();
+        const ev = buildTextEditedEvent({
+          elementId: slot.id,
+          text: this.currentRaw,
+          eventId: newEventId(),
+          device: await this.store.getDeviceId(),
+          lamport: now,
+          now,
+        });
+        await this.store.appendEvent(ev);
+        const updated = { ...slot.element, text: this.currentRaw };
+        slot.element = updated;
+        this.elementsById.set(slot.id, updated);
+        this.onChange?.();
+      }
       this.rawOnDisk = this.currentRaw;
     } catch (e) {
       console.error("Incremental Reading: saving edits failed", e);

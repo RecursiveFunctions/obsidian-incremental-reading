@@ -1,6 +1,7 @@
 import { newElement, clampPriority } from "./model";
 import type { IrElement, IrEvent, ReadSchedule } from "./model";
 import type { ElementId, EventId, DeviceId } from "./ids";
+import { stripExtractMarks } from "./frontmatter-body";
 
 export interface ExtractInput {
   sourcePath: string;
@@ -21,7 +22,12 @@ export interface ExtractInput {
 
 export function buildExtractEvent(input: ExtractInput): IrEvent {
   const contextLen = input.contextLen ?? 64;
-  const text = input.sourceText.slice(input.selStart, input.selEnd);
+  // `rawSlice` keeps any `<mark class="ir-extract-source">` chrome from prior
+  // sibling extracts because the anchor uses it to re-locate the span in the
+  // source. The element's stored `text`, by contrast, is what the user sees
+  // in the review pane and breadcrumb, so the chrome is stripped from there.
+  const rawSlice = input.sourceText.slice(input.selStart, input.selEnd);
+  const text = stripExtractMarks(rawSlice);
   const prefix = input.sourceText.slice(
     Math.max(0, input.selStart - contextLen),
     input.selStart,
@@ -34,7 +40,7 @@ export function buildExtractEvent(input: ExtractInput): IrEvent {
   const anchor = {
     sourcePath: input.sourcePath,
     quote: {
-      exact: text,
+      exact: rawSlice,
       prefix,
       suffix,
     },
@@ -81,5 +87,30 @@ export function buildPromoteEvent(args: {
     kind: "promoted",
     target: args.elementId,
     payload: { notePath: args.notePath },
+  };
+}
+
+/**
+ * Edit the stored text of an existing element. The anchor's `quote.exact`
+ * and `position` are intentionally left untouched: those exist so the
+ * source span can be re-located if the parent note moves, and rewriting
+ * them would amount to silently re-pointing the anchor.
+ */
+export function buildTextEditedEvent(args: {
+  elementId: ElementId;
+  text: string;
+  eventId: EventId;
+  device: DeviceId;
+  lamport: number;
+  now: number;
+}): IrEvent {
+  return {
+    id: args.eventId,
+    ts: args.now,
+    lamport: args.lamport,
+    device: args.device,
+    kind: "text-edited",
+    target: args.elementId,
+    payload: { text: args.text },
   };
 }

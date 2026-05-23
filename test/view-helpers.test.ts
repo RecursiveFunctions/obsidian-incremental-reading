@@ -12,6 +12,7 @@ import { formatDueLabel } from "../src/ir/due-label";
 import {
   bodyOffsetsFromFullOffsets,
   sanitizeExtractSelection,
+  stripExtractMarks,
   stripFrontmatter,
   wrapExtractHighlight,
 } from "../src/ir/frontmatter-body";
@@ -268,4 +269,43 @@ test("bodyOffsetsFromFullOffsets: clamps when selection extends past trimmed bod
   const r = bodyOffsetsFromFullOffsets(full, 13, 19);
   assert.deepEqual(r, { start: 0, end: stripped.length });
   assert.equal(stripped.slice(r!.start, r!.end), "Body");
+});
+
+/* ------------------------------------------------------------------ */
+/* stripExtractMarks                                                   */
+/* ------------------------------------------------------------------ */
+
+test("stripExtractMarks: leaves text without marks unchanged", () => {
+  assert.equal(stripExtractMarks("plain text"), "plain text");
+  assert.equal(stripExtractMarks(""), "");
+});
+
+test("stripExtractMarks: removes a single extract-source mark", () => {
+  assert.equal(
+    stripExtractMarks(
+      'The <mark class="ir-extract-source">quick</mark> brown fox',
+    ),
+    "The quick brown fox",
+  );
+});
+
+test("stripExtractMarks: removes multiple sibling marks", () => {
+  assert.equal(
+    stripExtractMarks(
+      'a <mark class="ir-extract-source">b</mark> c <mark class="ir-extract-source">d</mark> e',
+    ),
+    "a b c d e",
+  );
+});
+
+test("stripExtractMarks: unwraps nested extract marks", () => {
+  // An extract whose body itself contains a sibling extract mark.
+  const nested =
+    '<mark class="ir-extract-source">outer <mark class="ir-extract-source">inner</mark> tail</mark>';
+  assert.equal(stripExtractMarks(nested), "outer inner tail");
+});
+
+test("stripExtractMarks: leaves unrelated mark classes alone", () => {
+  const cloze = '<mark class="ir-cloze-elision">[ ... ]</mark>';
+  assert.equal(stripExtractMarks(cloze), cloze);
 });

@@ -55,6 +55,30 @@ export function bodyOffsetsFromFullOffsets(
 }
 
 /**
+ * Strip the `<mark class="ir-extract-source">...</mark>` chrome that
+ * `wrapExtractHighlight` injects, leaving only the visible text. Iteratively
+ * removes pairs from the inside out so it handles nested marks (an extract
+ * that itself contains a sibling extract span).
+ *
+ * Used when storing an extract's verbatim text and when rendering a label
+ * built from another extract's body, so the literal HTML never leaks into
+ * the UI as escaped text.
+ */
+const EXTRACT_MARK_PAIR_RE =
+  /<mark\s+class="ir-extract-source">([\s\S]*?)<\/mark>/gi;
+
+export function stripExtractMarks(s: string): string {
+  if (!s.includes(EXTRACT_MARK_OPEN)) return s;
+  let result = s;
+  let prev: string;
+  do {
+    prev = result;
+    result = result.replace(EXTRACT_MARK_PAIR_RE, "$1");
+  } while (result !== prev);
+  return result;
+}
+
+/**
  * Wrap a body span with a visible HTML mark so extracted passages stay
  * visible in the topic/extract in Reading view and in IR review.
  */

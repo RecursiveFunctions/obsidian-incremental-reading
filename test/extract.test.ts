@@ -143,3 +143,70 @@ test("fold applies the extract; promotion sets notePath", async (t) => {
   assert.ok(after);
   assert.equal(after!.notePath, "Promoted/Quick.md");
 });
+
+test("buildExtractEvent: strips extract-mark chrome from stored text but keeps it in the anchor", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/extract.ts not implemented yet");
+
+  // Source body where an earlier sibling extract already wrapped "brown" in
+  // <mark>; the user now extracts a span that includes that nested chrome.
+  const sourceWithMark =
+    'The quick <mark class="ir-extract-source">brown</mark> fox.';
+  const ev = m.buildExtractEvent({
+    ...baseInput(),
+    sourceText: sourceWithMark,
+    selStart: sourceWithMark.indexOf("quick"),
+    selEnd: sourceWithMark.indexOf("fox") + "fox".length,
+  });
+  const el = ev.payload.element as IrElement;
+  // Stored text is what the user sees: chrome stripped.
+  assert.equal(el.text, "quick brown fox");
+  // Anchor's verbatim slice keeps the chrome so re-locate-by-text still
+  // matches the parent body as it actually exists on disk.
+  assert.ok(el.anchor);
+  assert.equal(
+    el.anchor!.quote.exact,
+    'quick <mark class="ir-extract-source">brown</mark> fox',
+  );
+});
+
+test("buildTextEditedEvent + fold updates element.text without touching the anchor", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/extract.ts not implemented yet");
+
+  const create = m.buildExtractEvent(baseInput());
+  const edit = m.buildTextEditedEvent({
+    elementId: "el_extract" as ElementId,
+    text: "quick (my notes on quickness)",
+    eventId: "ev_edit" as EventId,
+    device: "dev_test" as DeviceId,
+    lamport: 9,
+    now: 1_700_000_000_002,
+  });
+  assert.equal(edit.kind, "text-edited");
+
+  const after = fold([create, edit]).elements.get("el_extract" as ElementId);
+  assert.ok(after);
+  assert.equal(after!.text, "quick (my notes on quickness)");
+  // Anchor untouched: source span still points to "quick" in the parent.
+  assert.equal(after!.anchor?.quote.exact, "quick");
+  assert.deepEqual(after!.anchor?.position, { start: 4, end: 9 });
+});
+
+test("buildTextEditedEvent: deterministic", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/extract.ts not implemented yet");
+
+  const args = {
+    elementId: "el_extract" as ElementId,
+    text: "edited",
+    eventId: "ev_edit" as EventId,
+    device: "dev_test" as DeviceId,
+    lamport: 5,
+    now: 1_700_000_000_000,
+  };
+  assert.equal(
+    JSON.stringify(m.buildTextEditedEvent(args)),
+    JSON.stringify(m.buildTextEditedEvent(args)),
+  );
+});

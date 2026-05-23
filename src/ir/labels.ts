@@ -5,15 +5,20 @@
  */
 
 import type { IrElement, IrType } from "./model";
+import { stripExtractMarks } from "./frontmatter-body";
 
 /** Human label for an element. Prefer the note basename; fall back to the
- *  first ~80 chars of stored text; fall back to a "(type)" tag. */
+ *  first ~80 chars of stored text; fall back to a "(type)" tag.
+ *
+ *  Strips `<mark class="ir-extract-source">` chrome so a label drawn from
+ *  the stored text of an extract whose body contained a sibling extract
+ *  does not show the raw HTML as escaped text in the breadcrumb. */
 export function labelFor(el: IrElement): string {
   if (el.notePath) {
     const base = el.notePath.split("/").pop() ?? el.notePath;
     return base.replace(/\.md$/i, "");
   }
-  const text = el.text.trim().replace(/\s+/g, " ");
+  const text = stripExtractMarks(el.text).trim().replace(/\s+/g, " ");
   if (text.length === 0) return `(${el.type})`;
   return text.length > 80 ? text.slice(0, 77) + "..." : text;
 }

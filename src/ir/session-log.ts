@@ -33,6 +33,7 @@ const KIND_LABEL: Record<IrEventKind, string> = {
   reparented: "reparented",
   "source-tombstoned": "source removed",
   "element-deleted": "deleted",
+  "text-edited": "text edited",
 };
 
 export function actionLabel(kind: IrEventKind): string {
