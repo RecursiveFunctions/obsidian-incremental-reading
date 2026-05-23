@@ -1,38 +1,60 @@
 ---
-description: BRAT releases require GitHub Releases with assets; tag + manifest bump alone is not enough
+description: A code change in this repo is not done until a GitHub Release exists with main.js, manifest.json, styles.css attached. Use `npm run ship:patch`.
 alwaysApply: true
 ---
 
-# BRAT releases (read this before “shipping” a plugin version)
+# Shipping is mandatory, not optional
 
-[BRAT](https://github.com/TfTHacker/obsidian42-brat) **≥ v1.1.0** installs from **GitHub Releases**, not from `main` and **not** from a bare **git tag**. It downloads **`manifest.json`**, **`main.js`**, and **`styles.css`** from **release assets**.
+Read `AGENTS.md` at the repo root. The non-negotiables are repeated here.
 
-Pushing only `manifest.json` + a tag to `main` **will not** update BRAT. That is the usual reason “BRAT doesn’t see the new version.”
+## The done bar
 
-Canonical doc in this repo: **`docs/RELEASE.md`**.
+A code change is **done** when **all** of these are true:
 
-## Every ship checklist (agent or human)
+1. `package.json`, `manifest.json`, `versions.json` are bumped in lockstep to the new `X.Y.Z`.
+2. A plain semver tag (no `v` prefix) exists at the bump commit on `origin`.
+3. A GitHub Release exists at that tag with **`main.js`**, **`manifest.json`**, **`styles.css`** attached.
+4. The **Release** workflow run for that tag is green.
 
-1. **Code + tests** — `npm test` and `npm run build` pass locally (or rely on CI on `main`).
-2. **Bump semver in lockstep** (same `X.Y.Z` everywhere):
-   - `package.json` → `version`
-   - `manifest.json` → `version`
-   - `versions.json` → new key `X.Y.Z` → `manifest.minAppVersion`  
-   Preferred: **`npm version patch`** (or `minor` / `major`), which runs `version-bump.mjs` via the `version` npm script.
-3. **Commit** the changes (including `CHANGELOG.md` when applicable).
-4. **Tag** — name **must** equal `manifest.json` `version` exactly (this repo: `0.0.10`, **no** `v` prefix).
-5. **Push** — `git push origin main` **and** `git push origin <tag>` (or `--follow-tags`).
-6. **GitHub Release with assets** — **required for BRAT**:
-   - **Automated:** pushing the tag triggers **`.github/workflows/release.yml`**, which builds `main.js` and runs `softprops/action-gh-release` with the three files. **Wait for that workflow to finish** and confirm the Release exists on GitHub before telling anyone to “update in BRAT.”
-   - **If the workflow failed or did not exist yet:** repair with the one-off commands in `docs/RELEASE.md` (build at the tag, then `gh release create …` with the three files).
+Anything less and BRAT keeps every user pinned on the previous version. A commit on `main` without (2)-(4) is a half-finished release, not a shipped change.
 
-Do **not** mark a release “done” until the **Release** workflow is green **or** the Release exists with all three assets.
+## The one command
 
-## This repo’s specifics
+```bash
+npm run ship:patch    # bugfix
+npm run ship:minor    # new user-facing feature
+npm run ship:major    # breaking change
+```
 
-- **`main.js` is gitignored** — it is **not** on `main`; it is produced by `npm run build` and attached by the Release workflow. That is intentional; BRAT still works as long as **Releases** carry `main.js`.
-- **`styles.css` must be attached** to every Release (workflow does this) so installs are consistent.
+That runs tests + build + `npm version`, which bumps all three version files, commits, tags, and (via `postversion`) pushes branch + tag. The tag push triggers `.github/workflows/release.yml`, which builds `main.js` in CI and creates the GitHub Release with the three assets.
 
-## If the user only asked to “bump and tag”
+`.npmrc` in this repo pins `tag-version-prefix=""` so the tag is `0.0.23`, not `v0.0.23`. Don't override it.
 
-Still run the checklist through step 6: without a GitHub Release, BRAT users see nothing. Point them to `docs/RELEASE.md` and verify the workflow run.
+## Verify, then report done
+
+After `npm run ship:patch` returns, run:
+
+```bash
+gh run watch    # wait for Release workflow
+gh release view "$(node -p 'require(\"./manifest.json\").version')" --json assets \
+  --jq '.assets[].name' | sort
+```
+
+You must see exactly:
+
+```
+main.js
+manifest.json
+styles.css
+```
+
+If you don't, the release is broken. Repair with the one-off commands in `docs/RELEASE.md`. **Do not** tell the user the task is done until that verification passes.
+
+## When to skip the bump
+
+Skip only if **no** code in `src/`, `main.ts`, or `styles.css` changed. Docs-only (`README.md`, `docs/**`), test-only, or CI-only commits don't need a release. Everything else does.
+
+## Past incidents (don't repeat)
+
+- 0.0.8 (2026-05-20): agent bumped `manifest.json`, pushed the source commit, didn't tag or release. BRAT stayed on 0.0.7 until the human did it manually.
+- The auto-memory `obsidian_ir_brat_release_checklist` exists because this keeps happening. Don't add another entry to it.

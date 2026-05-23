@@ -7,7 +7,11 @@
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test": "node --import tsx --test test/*.test.ts",
-    "version": "node version-bump.mjs && git add manifest.json versions.json"
+    "version": "node version-bump.mjs && git add manifest.json versions.json",
+    "postversion": "git push origin HEAD --follow-tags",
+    "ship:patch": "npm test && npm run build && npm version patch -m '%s'",
+    "ship:minor": "npm test && npm run build && npm version minor -m '%s'",
+    "ship:major": "npm test && npm run build && npm version major -m '%s'"
   },
   "keywords": [
     "obsidian",
