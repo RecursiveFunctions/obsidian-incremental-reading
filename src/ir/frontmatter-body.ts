@@ -18,8 +18,9 @@ export function sanitizeExtractSelection(text: string): string {
   return stripFrontmatter(text).trim();
 }
 
-const EXTRACT_MARK_OPEN = '<mark class="ir-extract-source">';
-const EXTRACT_MARK_CLOSE = "</mark>";
+/** Persisted highlight wrapper written around new extracts in source bodies. */
+export const EXTRACT_MARK_OPEN = '<mark class="ir-extract-source">';
+export const EXTRACT_MARK_CLOSE = "</mark>";
 
 /**
  * Map a selection range from full-file offsets (as produced by

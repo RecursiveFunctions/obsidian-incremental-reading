@@ -1,10 +1,20 @@
 import { newElement, clampPriority } from "./model";
 import type { IrElement, IrEvent, ReadSchedule } from "./model";
 import type { ElementId, EventId, DeviceId } from "./ids";
-import { stripExtractMarks } from "./frontmatter-body";
+import {
+  stripExtractMarks,
+  EXTRACT_MARK_OPEN,
+  EXTRACT_MARK_CLOSE,
+} from "./frontmatter-body";
 
 export interface ExtractInput {
   sourcePath: string;
+  /**
+   * Note body used for `slice(selStart, selEnd)` and prefix/suffix windows.
+   * When {@link persistedExtractMark} is true, this must be the body **before**
+   * `wrapExtractHighlight` runs — offsets are pre-wrap, while `quote.exact`
+   * on disk includes the mark tags.
+   */
   sourceText: string;
   selStart: number;
   selEnd: number;
@@ -18,6 +28,13 @@ export interface ExtractInput {
   contextLen?: number;
   /** When set, the extract enters the reading queue (same as a migrated extract note). */
   schedule?: ReadSchedule;
+  /**
+   * Set when the caller has just applied (or is about to apply)
+   * `wrapExtractHighlight` at `[selStart, selEnd)` on `sourceText`. The
+   * anchor must store the wrapped span so it matches the file; using post-wrap
+   * `sourceText` with pre-wrap offsets would truncate `quote.exact`.
+   */
+  persistedExtractMark?: boolean;
 }
 
 export function buildExtractEvent(input: ExtractInput): IrEvent {
@@ -37,14 +54,23 @@ export function buildExtractEvent(input: ExtractInput): IrEvent {
     input.selEnd + contextLen,
   );
 
+  const wrapped =
+    input.persistedExtractMark === true
+      ? EXTRACT_MARK_OPEN + rawSlice + EXTRACT_MARK_CLOSE
+      : rawSlice;
+  const positionEnd =
+    input.persistedExtractMark === true
+      ? input.selEnd + EXTRACT_MARK_OPEN.length + EXTRACT_MARK_CLOSE.length
+      : input.selEnd;
+
   const anchor = {
     sourcePath: input.sourcePath,
     quote: {
-      exact: rawSlice,
+      exact: wrapped,
       prefix,
       suffix,
     },
-    position: { start: input.selStart, end: input.selEnd },
+    position: { start: input.selStart, end: positionEnd },
   };
 
   const element: IrElement = {

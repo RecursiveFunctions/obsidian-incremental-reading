@@ -553,6 +553,9 @@ export default class IncrementalReadingPlugin extends Plugin {
       );
       return;
     }
+    const bodyBeforeExtract = stripFrontmatter(
+      await this.app.vault.cachedRead(source),
+    );
     await markExtractedSpan(
       this.app,
       source,
@@ -567,7 +570,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     try {
       const ev = buildExtractEvent({
         sourcePath: source.path,
-        sourceText: stripFrontmatter(editor.getValue()),
+        sourceText: bodyBeforeExtract,
         selStart: offsets.start,
         selEnd: offsets.end,
         parentId,
@@ -580,6 +583,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         schedule: topicStateToSchedule(
           newTopicState(this.settings, new Date(now)),
         ),
+        persistedExtractMark: true,
       });
       await this.store.appendEvent(ev);
       await this.store.reconcile();

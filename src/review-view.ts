@@ -975,12 +975,13 @@ export class IrReviewView extends ItemView {
       return;
     }
     await this.flushEdits();
+    const bodyBeforeExtract = this.currentRaw;
     await this.applyExtractHighlight(slot.file, sel.start, sel.end, sel.text);
     try {
       const now = Date.now();
       const ev = buildExtractEvent({
         sourcePath: slot.file.path,
-        sourceText: this.currentRaw,
+        sourceText: bodyBeforeExtract,
         selStart: sel.start,
         selEnd: sel.end,
         parentId: slot.id,
@@ -991,6 +992,7 @@ export class IrReviewView extends ItemView {
         lamport: now,
         now,
         schedule: topicStateToSchedule(newTopicState(this.settings, new Date(now))),
+        persistedExtractMark: true,
       });
       await this.store.appendEvent(ev);
       const created = ev.payload.element as IrElement;

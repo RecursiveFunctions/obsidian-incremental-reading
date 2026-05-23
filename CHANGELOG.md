@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.21] — 2026-05-23
+
+### Fixed
+
+- **Extract: truncated stored text after highlight wrap:** `buildExtractEvent` was slicing selection offsets against the post-wrap note body, so `quote.exact` and `element.text` were cut off mid-passage (often after the opening `<mark class="ir-extract-source">`). Anchors now use the pre-wrap body plus an explicit `persistedExtractMark` flag so the stored extract matches the full selection.
+
 ## [0.0.16] — 2026-05-22
 
 ### Changed
