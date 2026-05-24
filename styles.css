@@ -143,9 +143,8 @@
   flex-direction: column;
 }
 
-/* Floating quick-actions entry (replaces Alt+Shift+U on mobile). Fixed to the
- * viewport so it is not clipped by flex children or lost inside cardHost. */
-.ir-review--mobile .ir-review-fab {
+/* Workspace FAB: markdown notes + IR review (replaces Alt+Shift+U on mobile). */
+.ir-workspace-fab {
   position: fixed;
   right: max(0.85em, env(safe-area-inset-right, 0px));
   bottom: max(
@@ -166,18 +165,17 @@
   pointer-events: auto;
 }
 
-.ir-review--mobile .ir-review-fab:active {
+.ir-workspace-fab.is-hidden {
+  display: none;
+}
+
+.ir-workspace-fab:active {
   transform: scale(0.96);
 }
 
-.ir-review--mobile .ir-review-fab svg {
+.ir-workspace-fab svg {
   width: 22px;
   height: 22px;
-}
-
-/* Hide FAB while editing so it does not cover the textarea / keyboard area. */
-.ir-review--mobile.ir-review--editing .ir-review-fab {
-  display: none;
 }
 
 /* Edit mode: drop the source column and bulky dock chrome so the textarea
