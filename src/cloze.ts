@@ -82,6 +82,76 @@ export function nextClozeNumber(text: string): number {
   return max + 1;
 }
 
+/**
+ * Replace the hint of the `n`-th cloze group inside `body` with `hint`. Pass
+ * `null` (or an empty string) to drop the hint entirely, leaving a bare
+ * `{{cN::answer}}`. The answer text is preserved verbatim — only the hint
+ * portion (text after the last `::` inside the span) changes.
+ *
+ * If `n` is not present in `body`, returns the body unchanged. Throws when
+ * `hint` contains the reserved `::` separator (which would silently bleed
+ * into the answer at parse time and corrupt the card).
+ *
+ * Pure: no Obsidian imports, so the same helper can be called from the tree
+ * context menu, the review pane, and unit tests.
+ */
+export function setClozeHint(
+  body: string,
+  n: number,
+  hint: string | null,
+): string {
+  const trimmed = hint?.trim() ?? "";
+  if (trimmed.includes("::")) {
+    throw new Error('cloze hint cannot contain "::"');
+  }
+  const re = /\{\{c(\d+)::([\s\S]*?)\}\}/g;
+  let out = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    out += body.slice(last, start);
+    const matchN = Number(m[1]);
+    if (matchN === n) {
+      const parsed = parseClozeInner(m[2] ?? "");
+      out += wrapCloze(parsed.answer, matchN, trimmed || undefined);
+    } else {
+      out += m[0];
+    }
+    last = end;
+  }
+  out += body.slice(last);
+  return out;
+}
+
+/**
+ * Enumerate every cloze span in `body` with its group number, answer text,
+ * and current hint (if any). Used by the tree-view edit-hint UI to populate
+ * one labeled input per group; callers iterate the array and call
+ * `setClozeHint` for each group whose hint changed.
+ */
+export interface ClozeGroupInfo {
+  n: number;
+  answer: string;
+  hint?: string;
+}
+
+export function listClozeGroups(body: string): ClozeGroupInfo[] {
+  const out: ClozeGroupInfo[] = [];
+  const re = /\{\{c(\d+)::([\s\S]*?)\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const n = Number(m[1]);
+    if (!Number.isFinite(n)) continue;
+    const parsed = parseClozeInner(m[2] ?? "");
+    const info: ClozeGroupInfo = { n, answer: parsed.answer };
+    if (parsed.hint !== undefined) info.hint = parsed.hint;
+    out.push(info);
+  }
+  return out;
+}
+
 /** Distinct `cN` group numbers present in `text`, sorted ascending. */
 export function listClozeGroupNumbers(text: string): number[] {
   const seen = new Set<number>();

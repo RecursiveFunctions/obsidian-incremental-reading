@@ -133,3 +133,76 @@ test("node carries the source element; deterministic", async (t) => {
   const b = JSON.stringify(m.buildTree(forest()));
   assert.equal(a, b);
 });
+
+/* ------------------------------------------------------------------ */
+/* filterTreeByPredicate                                              */
+/* ------------------------------------------------------------------ */
+
+test("filterTreeByPredicate: keeps only matching leaves", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  const roots = m.buildTree(forest());
+  // Match only the gc1 item leaf.
+  const filtered = m.filterTreeByPredicate(
+    roots,
+    (n: { id: string }) => n.id === "el_gc1",
+  );
+  assert.deepEqual(flatten(filtered), ["el_root1", "el_c1", "el_gc1"]);
+});
+
+test("filterTreeByPredicate: keeps ancestors of matches", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  // Type-filter scenario: keep only items. Topics and extracts that have an
+  // item descendant must survive so the tree stays navigable; siblings
+  // without items are pruned.
+  const roots = m.buildTree(forest());
+  const filtered = m.filterTreeByPredicate(
+    roots,
+    (n: { type: string }) => n.type === "item",
+  );
+  // Only path that has an item is root1 -> c1 -> gc1; c2 and the cycle/orphan
+  // branches have no items and must drop.
+  assert.deepEqual(flatten(filtered), ["el_root1", "el_c1", "el_gc1"]);
+});
+
+test("filterTreeByPredicate: returns empty when nothing matches", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  const roots = m.buildTree(forest());
+  const filtered = m.filterTreeByPredicate(roots, () => false);
+  assert.deepEqual(filtered, []);
+});
+
+test("filterTreeByPredicate: predicate-true-on-all is a deep clone, not the same nodes", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  const roots = m.buildTree(forest());
+  const filtered = m.filterTreeByPredicate(roots, () => true);
+  assert.deepEqual(flatten(filtered), flatten(roots));
+  // The helper must not mutate or alias the original roots — clones each
+  // node so callers can safely re-filter without contaminating earlier
+  // renders.
+  for (let i = 0; i < roots.length; i += 1) {
+    assert.notEqual(filtered[i], roots[i]);
+  }
+});
+
+test("filterTreeByPredicate: composes a text-and-type predicate cleanly", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  const roots = m.buildTree(forest());
+  // Compose: extract whose id includes "c2". Only c2 self-matches; root1 is
+  // kept because it's the ancestor.
+  const filtered = m.filterTreeByPredicate(
+    roots,
+    (n: { id: string; type: string }) =>
+      n.type === "extract" && n.id.includes("c2"),
+  );
+  assert.deepEqual(flatten(filtered), ["el_root1", "el_c2"]);
+});

@@ -8,9 +8,11 @@ import {
   escapeClozeHtmlFragment,
   hasCloze,
   listClozeGroupNumbers,
+  listClozeGroups,
   nextClozeNumber,
   parseClozeInner,
   redactClozeAnswers,
+  setClozeHint,
   spliceClozeIntoText,
   transformClozes,
   wrapCloze,
@@ -295,4 +297,88 @@ test("redactClozeAnswers: fixed marker length doesn't telegraph answer length", 
 
 test("redactClozeAnswers: honors a custom marker", () => {
   assert.equal(redactClozeAnswers("a {{c1::b}} c", "[?]"), "a [?] c");
+});
+
+/* ------------------------------------------------------------------ */
+/* setClozeHint / listClozeGroups                                     */
+/* ------------------------------------------------------------------ */
+
+test("setClozeHint: adds a hint to a hint-less cloze", () => {
+  assert.equal(
+    setClozeHint("Capital of France: {{c1::Paris}}.", 1, "city"),
+    "Capital of France: {{c1::Paris::city}}.",
+  );
+});
+
+test("setClozeHint: rewrites an existing hint", () => {
+  assert.equal(
+    setClozeHint("Q: {{c1::Paris::old hint}}.", 1, "capital"),
+    "Q: {{c1::Paris::capital}}.",
+  );
+});
+
+test("setClozeHint: drops the hint when the new value is empty", () => {
+  assert.equal(
+    setClozeHint("Q: {{c1::Paris::old}}.", 1, ""),
+    "Q: {{c1::Paris}}.",
+  );
+  assert.equal(
+    setClozeHint("Q: {{c1::Paris::old}}.", 1, null),
+    "Q: {{c1::Paris}}.",
+  );
+});
+
+test("setClozeHint: trims whitespace-only hints to none", () => {
+  assert.equal(
+    setClozeHint("Q: {{c1::Paris::old}}.", 1, "   "),
+    "Q: {{c1::Paris}}.",
+  );
+});
+
+test("setClozeHint: only touches the targeted group", () => {
+  // Sibling groups must keep their (own) hints intact; only c2 changes.
+  assert.equal(
+    setClozeHint(
+      "First {{c1::A::keep}} and second {{c2::B::old}} done.",
+      2,
+      "new",
+    ),
+    "First {{c1::A::keep}} and second {{c2::B::new}} done.",
+  );
+});
+
+test("setClozeHint: preserves answers containing :: (parser ambiguity guard)", () => {
+  // The answer here is "a::b"; the parser splits on the LAST ::, so the
+  // existing hint is "old" and the answer survives wrapping.
+  assert.equal(
+    setClozeHint("X {{c1::a::b::old}} Y", 1, "new"),
+    "X {{c1::a::b::new}} Y",
+  );
+});
+
+test("setClozeHint: refuses :: in the new hint (would corrupt the answer)", () => {
+  assert.throws(
+    () => setClozeHint("Q: {{c1::a}}.", 1, "bad::hint"),
+    /::/,
+  );
+});
+
+test("setClozeHint: returns the body unchanged when the group is missing", () => {
+  const before = "no {{c1::a}} here";
+  assert.equal(setClozeHint(before, 7, "anything"), before);
+});
+
+test("listClozeGroups: returns answer + hint per cloze in document order", () => {
+  const groups = listClozeGroups(
+    "First {{c1::A}} then {{c3::B::hint}} done.",
+  );
+  assert.deepEqual(groups, [
+    { n: 1, answer: "A" },
+    { n: 3, answer: "B", hint: "hint" },
+  ]);
+});
+
+test("listClozeGroups: empty input yields an empty array", () => {
+  assert.deepEqual(listClozeGroups(""), []);
+  assert.deepEqual(listClozeGroups("plain prose, no clozes"), []);
 });

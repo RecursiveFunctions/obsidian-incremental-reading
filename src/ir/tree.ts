@@ -85,3 +85,37 @@ export function buildTree(elements: IrElement[]): TreeNode[] {
   roots.sort(compareRoots);
   return roots;
 }
+
+/**
+ * Prune a forest to nodes the predicate accepts, plus every ancestor needed
+ * to reach them. Used by the tree view's search and type-filter chips.
+ *
+ * Why ancestors are kept regardless of their own match: a topic that holds
+ * the only matching extract still needs to render so the user can see where
+ * the match lives. The tree view's chevrons stay collapsed/expanded
+ * independently of the filter.
+ *
+ * Pure: the caller is responsible for any per-node side-effects (label
+ * lookups, body reads). The predicate is consulted node-by-node so the
+ * caller can compose multiple filters (text + type + due-status) cheaply.
+ *
+ * The returned forest is a deep copy of the matching slice; the original
+ * `roots` argument is left untouched. Returns an empty array when no node
+ * passes — callers should treat that as "no matches" rather than re-render
+ * the whole tree.
+ */
+export function filterTreeByPredicate(
+  roots: TreeNode[],
+  predicate: (node: TreeNode) => boolean,
+): TreeNode[] {
+  const walk = (node: TreeNode): TreeNode | null => {
+    const filteredChildren = node.children
+      .map(walk)
+      .filter((c): c is TreeNode => c !== null);
+    if (predicate(node) || filteredChildren.length > 0) {
+      return { ...node, children: filteredChildren };
+    }
+    return null;
+  };
+  return roots.map(walk).filter((n): n is TreeNode => n !== null);
+}

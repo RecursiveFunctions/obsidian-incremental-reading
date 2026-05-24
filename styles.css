@@ -491,10 +491,107 @@
   width: 100%;
 }
 
+.ir-tree-type-filter {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 8px 6px 8px;
+}
+
+.ir-tree-type-chip {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.ir-tree-type-chip:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ir-tree-type-chip--active {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ir-tree-type-chip--active:hover {
+  background: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
+}
+
+.ir-tree--mobile .ir-tree-type-chip {
+  font-size: var(--font-ui-small);
+  padding: 6px 14px;
+  min-height: 36px;
+}
+
 .ir-tree-empty-filter {
   color: var(--text-muted);
   font-style: italic;
   padding: 8px;
+}
+
+.ir-tree-hint-editor {
+  margin: 4px 0 8px 26px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--interactive-accent);
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ir-tree-hint-editor-header {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ir-tree-hint-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ir-tree-hint-editor-tag {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  min-width: 2em;
+}
+
+.ir-tree-hint-editor-answer {
+  font-style: italic;
+  color: var(--text-faint);
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ir-tree-hint-editor-input {
+  flex: 1 1 12em;
+  min-width: 8em;
+}
+
+.ir-tree-hint-editor-buttons {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.ir-tree--mobile .ir-tree-hint-editor-input {
+  min-height: 36px;
+  font-size: var(--font-ui-small);
 }
 
 /* Row representing the slot the user is reviewing right now. Makes
