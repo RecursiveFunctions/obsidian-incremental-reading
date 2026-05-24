@@ -74,6 +74,12 @@ import {
   stripFrontmatter,
   wrapExtractHighlight,
 } from "./src/ir/frontmatter-body";
+import {
+  captureEditorSelection,
+  restoreEditorSelection,
+  snapshotSelectionText,
+  type EditorSelectionSnapshot,
+} from "./src/ir/editor-selection-snapshot";
 import { locateTextInBody } from "./src/ir/selection-map";
 import {
   findAllBlockquotes,
@@ -130,6 +136,12 @@ export default class IncrementalReadingPlugin extends Plugin {
   private statusBarEl?: HTMLElement;
 
   /**
+   * Markdown selection captured on FAB pointerdown before mobile blur clears
+   * it; used to build the radial and restore cursors when a petal runs.
+   */
+  private hubSelectionSnapshot: EditorSelectionSnapshot | null = null;
+
+  /**
    * Wall-clock at plugin load; the session audit (UI commitment #7) filters
    * the store event log to events newer than this.
    */
@@ -160,7 +172,10 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     if (Platform.isMobile) {
       this.register(
-        registerWorkspaceIrFab(this, () => void this.openIrActionsHub()),
+        registerWorkspaceIrFab(this, {
+          prepareOpenHub: () => this.captureHubEditorSelection(),
+          openHub: () => void this.openIrActionsHub(),
+        }),
       );
     }
 
@@ -2110,11 +2125,49 @@ export default class IncrementalReadingPlugin extends Plugin {
     return { cx: window.innerWidth / 2, cy: window.innerHeight / 2 };
   }
 
+  /** Snapshot the active markdown selection before focus moves to the FAB. */
+  private captureHubEditorSelection(): void {
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const file = mv?.file;
+    const editor = mv?.editor;
+    if (!file || !editor || file.extension !== "md") {
+      this.hubSelectionSnapshot = null;
+      return;
+    }
+    this.hubSelectionSnapshot = captureEditorSelection(file, editor);
+  }
+
+  private hubSelectionFor(file: TFile, editor: Editor): string {
+    return snapshotSelectionText(this.hubSelectionSnapshot, file, editor);
+  }
+
+  private restoreHubSelection(file: TFile, editor: Editor): void {
+    restoreEditorSelection(this.hubSelectionSnapshot, file, editor);
+  }
+
+  /** Run a hub action on the active markdown editor, restoring a FAB snapshot. */
+  private runMarkdownHubAction(
+    file: TFile,
+    fn: (editor: Editor, file: TFile) => void | Promise<void>,
+  ): void {
+    void (async () => {
+      const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (!mv?.file || mv.file.path !== file.path) return;
+      this.restoreHubSelection(file, mv.editor);
+      await fn(mv.editor, file);
+    })();
+  }
+
   /** Command palette / ribbon / review: contextual IR actions as a radial wheel. */
   private async openIrActionsHub(): Promise<void> {
     if (!this.store) {
       new Notice("Incremental Reading: store is not ready.");
       return;
+    }
+    if (!this.hubSelectionSnapshot) this.captureHubEditorSelection();
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (mv?.file && mv.editor) {
+      this.restoreHubSelection(mv.file, mv.editor);
     }
     const entries = await this.buildIrHubEntries();
     openIrRadialQuickMenu(this.app, entries, this.irRadialAnchor());
@@ -2152,27 +2205,35 @@ export default class IncrementalReadingPlugin extends Plugin {
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     const file = mv?.file ?? this.app.workspace.getActiveFile();
     const editor = mv?.editor;
-    const sel = editor?.getSelection().trim() ?? "";
+    const sel =
+      editor && file?.extension === "md"
+        ? this.hubSelectionFor(file, editor)
+        : "";
 
     if (editor && file?.extension === "md" && sel) {
       out.push({
         title: "Extract selection",
         description: "Anchored extract in this note (Alt+X).",
         icon: "scissors",
-        run: () => void this.extractSelection(editor, file),
+        run: () =>
+          this.runMarkdownHubAction(file, (ed, f) => this.extractSelection(ed, f)),
       });
       out.push({
         title: "Cloze selection",
         description: "Cloze item from selection (Alt+Z).",
         icon: "brackets",
-        run: () => void this.clozeSelection(editor, file),
+        run: () =>
+          this.runMarkdownHubAction(file, (ed, f) => this.clozeSelection(ed, f)),
       });
       out.push({
         title: "New cloze card (separate item)",
         description:
           "Creates a new FSRS item under the reading parent. On an IR item note, uses ir-parent instead of adding to the same file.",
         icon: "copy-plus",
-        run: () => this.newClozeCardFromSelection(editor, file),
+        run: () =>
+          this.runMarkdownHubAction(file, (ed, f) =>
+            this.newClozeCardFromSelection(ed, f),
+          ),
       });
     }
 
@@ -2236,6 +2297,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     selection: string,
   ): IrHubEntry[] {
     const out: IrHubEntry[] = [];
+    this.restoreHubSelection(file, editor);
     const fullText = editor.getValue();
     const body = stripFrontmatter(fullText);
     const cursor = editor.posToOffset(editor.getCursor());
@@ -2250,7 +2312,10 @@ export default class IncrementalReadingPlugin extends Plugin {
         description:
           "Anchored extract of the paragraph the cursor sits in. No selection needed.",
         icon: "pilcrow",
-        run: () => this.extractParagraphAtCursor(editor, file),
+        run: () =>
+          this.runMarkdownHubAction(file, (ed, f) =>
+            this.extractParagraphAtCursor(ed, f),
+          ),
       });
     }
 
@@ -2260,7 +2325,10 @@ export default class IncrementalReadingPlugin extends Plugin {
         description:
           "Anchored extract from the nearest preceding heading down to the next same-or-higher heading.",
         icon: "heading",
-        run: () => this.extractHeadingSectionAtCursor(editor, file),
+        run: () =>
+          this.runMarkdownHubAction(file, (ed, f) =>
+            this.extractHeadingSectionAtCursor(ed, f),
+          ),
       });
     }
 
@@ -2276,7 +2344,10 @@ export default class IncrementalReadingPlugin extends Plugin {
           ? `Anchored extract per contiguous blockquote in your selection (${bqs.length} found).`
           : `Anchored extract per contiguous blockquote in this note (${bqs.length} found).`,
         icon: "quote",
-        run: () => this.extractEveryBlockquote(editor, file),
+        run: () =>
+          this.runMarkdownHubAction(file, (ed, f) =>
+            this.extractEveryBlockquote(ed, f),
+          ),
       });
     }
 
@@ -2287,7 +2358,10 @@ export default class IncrementalReadingPlugin extends Plugin {
           title: `Extract every list item (${items.length})`,
           description: `One anchored extract per bullet/numbered item in the selection (${items.length} found). Indent-aware: nested items split into their own extracts.`,
           icon: "list",
-          run: () => this.extractEveryListItemInSelection(editor, file),
+          run: () =>
+            this.runMarkdownHubAction(file, (ed, f) =>
+              this.extractEveryListItemInSelection(ed, f),
+            ),
         });
       }
 
@@ -2297,7 +2371,10 @@ export default class IncrementalReadingPlugin extends Plugin {
           title: `Extract every paragraph (${paras.length})`,
           description: `One anchored extract per blank-line-separated block in the selection (${paras.length} found).`,
           icon: "align-left",
-          run: () => this.extractEveryParagraphInSelection(editor, file),
+          run: () =>
+            this.runMarkdownHubAction(file, (ed, f) =>
+              this.extractEveryParagraphInSelection(ed, f),
+            ),
         });
       }
     }
