@@ -537,6 +537,63 @@
   padding: 8px;
 }
 
+.ir-tree-hint-editor {
+  margin: 4px 0 8px 26px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--interactive-accent);
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ir-tree-hint-editor-header {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ir-tree-hint-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ir-tree-hint-editor-tag {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  min-width: 2em;
+}
+
+.ir-tree-hint-editor-answer {
+  font-style: italic;
+  color: var(--text-faint);
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ir-tree-hint-editor-input {
+  flex: 1 1 12em;
+  min-width: 8em;
+}
+
+.ir-tree-hint-editor-buttons {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.ir-tree--mobile .ir-tree-hint-editor-input {
+  min-height: 36px;
+  font-size: var(--font-ui-small);
+}
+
 /* Row representing the slot the user is reviewing right now. Makes
  * position-in-tree obvious while the review pane is open. */
 .ir-tree-row--current {

@@ -15,8 +15,8 @@ import { clampPriority, type IrElement, type IrType } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
 import { findExtractEditorPosition } from "./ir/extract-range";
-import { stripFrontmatter } from "./ir/frontmatter-body";
-import { hasCloze } from "./cloze";
+import { saveBody, stripFrontmatter } from "./ir/frontmatter-body";
+import { hasCloze, listClozeGroups, setClozeHint } from "./cloze";
 
 export const IR_TREE_VIEW_TYPE = "ir-tree-view";
 
@@ -372,9 +372,7 @@ export class IrTreeView extends ItemView {
     }
 
     this.maskSpoilers = this.currentElementId !== null;
-    this.itemBodies = this.maskSpoilers
-      ? await this.loadItemBodies(elements)
-      : new Map();
+    this.itemBodies = await this.loadItemBodies(elements);
 
     let roots = buildTree(elements);
     const queryRaw = this.filterText.trim();
@@ -448,11 +446,13 @@ export class IrTreeView extends ItemView {
   private maskSpoilers = false;
 
   /**
-   * Cloze item note bodies (frontmatter stripped) keyed by element id, so
-   * masked rows can show the cloze question with its answer redacted to
-   * `____`. Populated lazily at the top of each render when masking is on,
-   * via `vault.cachedRead`, so the cost is bounded by the number of
-   * displayed cloze items and shared with Obsidian's read cache.
+   * Cloze item note bodies (frontmatter stripped) keyed by element id. Two
+   * UI features depend on it: (1) masked rows render the cloze question with
+   * its answer redacted to `____`; (2) the row context menu offers
+   * "Edit cloze hint(s)" only for items that actually contain `{{cN::…}}`
+   * syntax. Populated at the top of every render via `vault.cachedRead`, so
+   * the cost is bounded by the number of cloze items and shared with
+   * Obsidian's read cache.
    */
   private itemBodies: Map<string, string> = new Map();
 
@@ -493,6 +493,169 @@ export class IrTreeView extends ItemView {
 
   private rowLabel(el: IrElement): string {
     return treeRowLabel(el, this.maskSpoilers, this.itemBodies.get(el.id));
+  }
+
+  /**
+   * Open an inline panel below `li` that lets the user edit every cloze
+   * group's hint in the item's note. Opens at most once per row; clicking
+   * the menu entry again while the panel is open is a no-op (otherwise we
+   * would lose unsaved input from the first invocation).
+   *
+   * Reads the note body fresh on entry rather than relying on
+   * `this.itemBodies`: that map is rendered-time stale and might predate a
+   * recent edit. Saves go through `saveBody`, which preserves frontmatter
+   * verbatim, so this is safe to call on items that have YAML metadata.
+   *
+   * UX shape: a labeled row per cloze group (`c1: <answer-preview>` plus an
+   * input pre-filled with the current hint, or empty if there is none),
+   * Save/Cancel buttons, focus on the first input. Esc cancels, Enter on
+   * the last input saves; intermediate Enters move focus forward. The
+   * row's spoiler-masking state is unaffected: the answer preview is the
+   * point of editing here, and the user already saw it via the context
+   * menu interaction.
+   *
+   * Trade-off vs a Modal: lives in the tree DOM so users can see other
+   * rows while editing, and a tree re-render disposes the panel along
+   * with everything else (we accept that drop-on-rerender is loss of
+   * unsaved input — acceptable for v1; auto-saves on the keyboard path
+   * are the right follow-up if it bites).
+   */
+  private async beginHintEdit(
+    li: HTMLElement,
+    node: TreeNode,
+    file: TFile,
+  ): Promise<void> {
+    if (li.querySelector(".ir-tree-hint-editor")) return;
+
+    let raw: string;
+    try {
+      raw = await this.app.vault.cachedRead(file);
+    } catch (err) {
+      console.error("Incremental Reading: hint edit read failed", err);
+      new Notice("Incremental Reading: could not read note body.");
+      return;
+    }
+    const body = stripFrontmatter(raw);
+    const groups = listClozeGroups(body);
+    if (groups.length === 0) {
+      new Notice(
+        "Incremental Reading: this item has no cloze syntax to edit.",
+      );
+      return;
+    }
+
+    const panel = createDiv({ cls: "ir-tree-hint-editor" });
+    const rowEl = li.querySelector(".ir-tree-row");
+    if (rowEl?.nextSibling) li.insertBefore(panel, rowEl.nextSibling);
+    else li.appendChild(panel);
+
+    panel.createEl("div", {
+      cls: "ir-tree-hint-editor-header",
+      text: groups.length === 1 ? "Edit cloze hint" : "Edit cloze hints",
+    });
+
+    const inputs: { n: number; el: HTMLInputElement }[] = [];
+    for (const g of groups) {
+      const grp = panel.createDiv({ cls: "ir-tree-hint-editor-row" });
+      grp.createSpan({
+        cls: "ir-tree-hint-editor-tag",
+        text: `c${g.n}`,
+      });
+      const ans = g.answer.length > 30 ? g.answer.slice(0, 27) + "\u2026" : g.answer;
+      grp.createSpan({
+        cls: "ir-tree-hint-editor-answer",
+        text: ans,
+        attr: { title: g.answer },
+      });
+      const input = grp.createEl("input", {
+        cls: "ir-tree-hint-editor-input",
+        type: "text",
+        attr: { placeholder: "hint (optional)" },
+      });
+      input.value = g.hint ?? "";
+      inputs.push({ n: g.n, el: input });
+    }
+
+    const buttons = panel.createDiv({ cls: "ir-tree-hint-editor-buttons" });
+    const save = buttons.createEl("button", {
+      cls: "mod-cta ir-tree-hint-editor-save",
+      text: "Save",
+    });
+    const cancel = buttons.createEl("button", {
+      cls: "ir-tree-hint-editor-cancel",
+      text: "Cancel",
+    });
+
+    let saving = false;
+    const close = (): void => {
+      panel.remove();
+    };
+    const doSave = (): void => {
+      if (saving) return;
+      saving = true;
+      void (async () => {
+        let next = body;
+        for (const { n, el } of inputs) {
+          const v = el.value.trim();
+          if (v.includes("::")) {
+            new Notice(
+              'Incremental Reading: hints cannot contain "::" (reserved for cloze syntax).',
+            );
+            saving = false;
+            return;
+          }
+          try {
+            next = setClozeHint(next, n, v);
+          } catch (err) {
+            console.error("Incremental Reading: setClozeHint failed", err);
+            new Notice("Incremental Reading: could not update hint.");
+            saving = false;
+            return;
+          }
+        }
+        try {
+          await saveBody(this.app, file, next);
+          new Notice(
+            inputs.length === 1
+              ? "Cloze hint saved."
+              : `Cloze hints saved (${inputs.length}).`,
+          );
+        } catch (err) {
+          console.error("Incremental Reading: saveBody failed", err);
+          new Notice("Incremental Reading: could not save note.");
+          saving = false;
+          return;
+        }
+        close();
+        void this.render();
+      })();
+    };
+
+    cancel.addEventListener("click", () => close());
+    save.addEventListener("click", () => doSave());
+
+    for (let i = 0; i < inputs.length; i += 1) {
+      const isLast = i === inputs.length - 1;
+      inputs[i].el.addEventListener("keydown", (ke: KeyboardEvent) => {
+        if (ke.key === "Escape") {
+          ke.preventDefault();
+          close();
+        } else if (ke.key === "Enter") {
+          ke.preventDefault();
+          if (isLast) {
+            doSave();
+          } else {
+            inputs[i + 1].el.focus();
+            inputs[i + 1].el.select();
+          }
+        }
+      });
+    }
+
+    requestAnimationFrame(() => {
+      inputs[0]?.el.focus();
+      inputs[0]?.el.select();
+    });
   }
 
   /**
@@ -663,7 +826,7 @@ export class IrTreeView extends ItemView {
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      this.showRowContextMenu(e, node, file);
+      this.showRowContextMenu(e, node, file, li);
     });
 
     if (this.commitReparent) {
@@ -749,6 +912,7 @@ export class IrTreeView extends ItemView {
     e: MouseEvent,
     node: TreeNode,
     file: TFile | null,
+    li: HTMLElement,
   ): void {
     const menu = new Menu();
     const elId = node.id as ElementId;
@@ -878,6 +1042,27 @@ export class IrTreeView extends ItemView {
             })();
           }),
       );
+    }
+
+    if (
+      node.element.type === "item" &&
+      file &&
+      this.itemBodies.has(node.id)
+    ) {
+      const body = this.itemBodies.get(node.id)!;
+      const groupCount = listClozeGroups(body).length;
+      if (groupCount > 0) {
+        menu.addItem((item) =>
+          item
+            .setTitle(
+              groupCount === 1 ? "Edit cloze hint\u2026" : "Edit cloze hints\u2026",
+            )
+            .setIcon("pencil")
+            .onClick(() => {
+              void this.beginHintEdit(li, node, file);
+            }),
+        );
+      }
     }
 
     if (this.commitDelete) {
