@@ -192,6 +192,52 @@ test("filterTreeByPredicate: predicate-true-on-all is a deep clone, not the same
   }
 });
 
+/* ------------------------------------------------------------------ */
+/* rangeSelectIds                                                     */
+/* ------------------------------------------------------------------ */
+
+test("rangeSelectIds: forward range is inclusive of both endpoints", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  const order = ["a", "b", "c", "d", "e"];
+  assert.deepEqual(m.rangeSelectIds(order, "b", "d"), ["b", "c", "d"]);
+});
+
+test("rangeSelectIds: reversed range still produces an ordered slice", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  const order = ["a", "b", "c", "d", "e"];
+  assert.deepEqual(m.rangeSelectIds(order, "d", "b"), ["b", "c", "d"]);
+});
+
+test("rangeSelectIds: anchor === target returns just that id", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  const order = ["a", "b", "c"];
+  assert.deepEqual(m.rangeSelectIds(order, "b", "b"), ["b"]);
+});
+
+test("rangeSelectIds: missing anchor falls back to target alone", async (t) => {
+  // The view should treat an offscreen anchor (e.g. on a collapsed branch)
+  // as if the user had cmd-clicked the target — pick just that row.
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  const order = ["a", "b", "c"];
+  assert.deepEqual(m.rangeSelectIds(order, "z", "b"), ["b"]);
+});
+
+test("rangeSelectIds: missing target falls back to target alone", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+
+  const order = ["a", "b", "c"];
+  assert.deepEqual(m.rangeSelectIds(order, "a", "z"), ["z"]);
+});
+
 test("filterTreeByPredicate: composes a text-and-type predicate cleanly", async (t) => {
   const m = await load();
   if (!m) return t.skip("src/ir/tree.ts not implemented yet");

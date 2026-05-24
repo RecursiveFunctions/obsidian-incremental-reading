@@ -104,6 +104,32 @@ export function buildTree(elements: IrElement[]): TreeNode[] {
  * passes — callers should treat that as "no matches" rather than re-render
  * the whole tree.
  */
+/**
+ * Compute the inclusive range of visible-tree ids from `anchorId` to
+ * `targetId` for shift-click bulk-selection. The order argument is the
+ * already-flattened pre-order traversal of the currently-rendered tree
+ * (collapsed children excluded), which is what the tree view holds in
+ * `lastRenderedRoots` after each render.
+ *
+ * Returns `[targetId]` alone when either id is missing from the order
+ * (e.g. anchor was on a now-collapsed branch). The caller should treat
+ * that as "selection switches to a single row" rather than an error.
+ *
+ * Pure: lives here so the math is unit-testable without DOM/Obsidian.
+ */
+export function rangeSelectIds(
+  visibleOrder: string[],
+  anchorId: string,
+  targetId: string,
+): string[] {
+  const i1 = visibleOrder.indexOf(anchorId);
+  const i2 = visibleOrder.indexOf(targetId);
+  if (i1 < 0 || i2 < 0) return [targetId];
+  const lo = Math.min(i1, i2);
+  const hi = Math.max(i1, i2);
+  return visibleOrder.slice(lo, hi + 1);
+}
+
 export function filterTreeByPredicate(
   roots: TreeNode[],
   predicate: (node: TreeNode) => boolean,
