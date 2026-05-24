@@ -721,3 +721,38 @@
 .ir-tree-anchor-badge--detached {
   color: var(--text-muted);
 }
+
+.ir-review-hub-row {
+  margin-bottom: 6px;
+}
+
+.ir-review-hub-btn {
+  font-size: var(--font-ui-small);
+}
+
+/* IR actions hub (command + ribbon) */
+.ir-actions-hub-modal .ir-hub-lede {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  margin-top: 0;
+}
+
+.ir-actions-hub-modal .ir-hub-row {
+  margin: 0.75em 0;
+}
+
+.ir-actions-hub-modal .ir-hub-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+
+.ir-actions-hub-modal .ir-hub-action-icon {
+  display: inline-flex;
+}
+
+.ir-actions-hub-modal .ir-hub-desc {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  margin: 0.25em 0 0 0.1em;
+}

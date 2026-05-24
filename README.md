@@ -59,6 +59,8 @@ Every IR command ships with a default `Alt+letter` binding. The full set:
 
 Rebind or clear any of them under Settings, Hotkeys.
 
+In the **IR review** tab (after **Start IR review**), defaults include **`Space`** / **`Enter`** for the next reading card, **`[`** for the **Previous** card in the current session (same as the button; first card disables it), **`L`** / **`D`** for later today / dismiss, **`1`–`4`** on revealed clozes, **`Alt+X`** / **`Alt+Z`** for extract / cloze when the card allows children, and **`Ctrl+Enter`** (**`Cmd+Enter`** on macOS) for next while the reading editor is focused.
+
 ## Cloze markup
 
 - Deletions use **Anki-compatible** syntax: `{{c1::hidden text}}`.

@@ -32,12 +32,24 @@ import { locateTextInBody } from "./ir/selection-map";
  * strip leading/trailing separators, trim. Enough for the folder and file
  * paths this module builds.
  */
-function normalizePath(p: string): string {
+export function normalizePath(p: string): string {
   return p
     .replace(/\\/g, "/")
     .replace(/\/{2,}/g, "/")
     .replace(/^\/+|\/+$/g, "")
     .trim();
+}
+
+/** First unused `<folder>/<stem>.md` path, appending " 2", " 3", ... if taken. */
+export function uniqueMarkdownNotePath(app: App, folder: string, stem: string): string {
+  const dir = folder ? `${folder}/` : "";
+  let candidate = normalizePath(`${dir}${stem}.md`);
+  let n = 2;
+  while (app.vault.getAbstractFileByPath(candidate)) {
+    candidate = normalizePath(`${dir}${stem} ${n}.md`);
+    n += 1;
+  }
+  return candidate;
 }
 
 /**
@@ -149,18 +161,6 @@ function fileStem(text: string): string {
   return stem.replace(/^\.+|\.+$/g, "") || "IR note";
 }
 
-/** First unused `<folder>/<stem>.md` path, appending " 2", " 3", ... if taken. */
-function uniqueNotePath(app: App, folder: string, stem: string): string {
-  const dir = folder ? `${folder}/` : "";
-  let candidate = normalizePath(`${dir}${stem}.md`);
-  let n = 2;
-  while (app.vault.getAbstractFileByPath(candidate)) {
-    candidate = normalizePath(`${dir}${stem} ${n}.md`);
-    n += 1;
-  }
-  return candidate;
-}
-
 /**
  * The result of a child-note creation. `file` is the created note;
  * `error` explains a refusal so the caller can surface a precise Notice.
@@ -197,7 +197,7 @@ async function createChildNote(
     await app.vault.createFolder(folder);
   }
 
-  const path = uniqueNotePath(app, folder, fileStem(nameFrom));
+  const path = uniqueMarkdownNotePath(app, folder, fileStem(nameFrom));
   const file = await app.vault.create(path, body.trim() + "\n");
 
   const inherited = getPriority(app, source, settings.defaultPriority);
@@ -329,4 +329,19 @@ export async function createClozeFromText(
   const trimmed = answer.trim();
   if (!trimmed) return { error: "Nothing selected." };
   return createChildNote(app, source, "item", body, trimmed, settings);
+}
+
+/**
+ * Create a new graded IR **item** note under `parent` (topic or extract file).
+ * Used when the active editor belongs to a different file (e.g. an item) but
+ * `ir-parent` should still point at the reading source.
+ */
+export async function createIrItemChildNote(
+  app: App,
+  parent: TFile,
+  body: string,
+  nameFrom: string,
+  settings: IrNoteSettings,
+): Promise<IrNoteResult> {
+  return createChildNote(app, parent, "item", body, nameFrom, settings);
 }

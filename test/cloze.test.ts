@@ -4,8 +4,10 @@ import {
   CLOZE_RE,
   buildClozeBody,
   buildClozeFromText,
+  bodyWithSingleClozeGroup,
   escapeClozeHtmlFragment,
   hasCloze,
+  listClozeGroupNumbers,
   nextClozeNumber,
   parseClozeInner,
   transformClozes,
@@ -192,5 +194,30 @@ test("transformClozes: no markers yields the input unchanged", () => {
   assert.equal(
     transformClozes("no clozes here", () => "X"),
     "no clozes here",
+  );
+});
+
+test("listClozeGroupNumbers collects distinct ascending N", () => {
+  assert.deepEqual(listClozeGroupNumbers(""), []);
+  assert.deepEqual(listClozeGroupNumbers("plain"), []);
+  assert.deepEqual(listClozeGroupNumbers("{{c2::b}} {{c1::a}}"), [1, 2]);
+});
+
+test("bodyWithSingleClozeGroup keeps one blank as c1", () => {
+  const raw = "A {{c1::one}} B {{c2::two}} C";
+  assert.equal(
+    bodyWithSingleClozeGroup(raw, 1),
+    "A {{c1::one}} B two C",
+  );
+  assert.equal(
+    bodyWithSingleClozeGroup(raw, 2),
+    "A one B {{c1::two}} C",
+  );
+});
+
+test("bodyWithSingleClozeGroup preserves hint on focused group", () => {
+  assert.equal(
+    bodyWithSingleClozeGroup("x {{c3::ans::hint}} y", 3),
+    "x {{c1::ans::hint}} y",
   );
 });

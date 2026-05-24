@@ -15,6 +15,7 @@ import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
 import {
   IrNoteResult,
   createCloze,
+  createIrItemChildNote,
   markExtractedSpan,
   getIrType,
   getPriority,
@@ -22,6 +23,7 @@ import {
   markAsTopic,
   setDismissed,
   setPriority,
+  uniqueMarkdownNotePath,
 } from "./src/ir-note";
 import { dueQueue, type ReviewSlot } from "./src/review";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
@@ -51,7 +53,12 @@ import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 import { topicStateToSchedule } from "./src/ir/queue-adapter";
 import { redistribute, type MercyEntry } from "./src/ir/mercy";
-import { nextClozeNumber, wrapCloze } from "./src/cloze";
+import {
+  bodyWithSingleClozeGroup,
+  listClozeGroupNumbers,
+  nextClozeNumber,
+  wrapCloze,
+} from "./src/cloze";
 import { promptClozeHint } from "./src/cloze-hint-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
 import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
@@ -60,6 +67,10 @@ import {
   bodyOffsetsFromFullOffsets,
   stripFrontmatter,
 } from "./src/ir/frontmatter-body";
+import {
+  IrActionsHubModal,
+  type IrHubEntry,
+} from "./src/ir-actions-hub-modal";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -126,6 +137,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       void this.startReview();
     });
 
+    this.addRibbonIcon("layout-list", "Open IR actions hub", () => {
+      void this.openIrActionsHub();
+    });
+
     this.addCommand({
       id: "start-review",
       name: "Start IR review",
@@ -159,6 +174,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrPromote(elementId, element),
           (elementId, element) =>
             this.applyIrReanchor(elementId, element),
+          (elementId) => void this.forkStoreExtract(elementId),
         );
       },
     );
@@ -206,6 +222,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           queue,
           elementsById,
           () => void this.refreshStatusBar(),
+          () => void this.openIrActionsHub(),
         );
       },
     );
@@ -346,6 +363,42 @@ export default class IncrementalReadingPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "ir-actions-hub",
+      name: "Open IR actions hub",
+      icon: "layout-list",
+      /** Alt+Shift+U: avoids single-modifier Alt+letter core bindings. */
+      hotkeys: [{ modifiers: ["Alt", "Shift"], key: "u" }],
+      callback: () => void this.openIrActionsHub(),
+    });
+
+    this.addCommand({
+      id: "ir-new-cloze-card-separate",
+      name: "New cloze card (separate item from selection)",
+      icon: "copy-plus",
+      hotkeys: [{ modifiers: ["Alt", "Shift"], key: "z" }],
+      editorCheckCallback: (checking, editor, view) => {
+        const file = view.file;
+        if (!file || file.extension !== "md") return false;
+        if (!editor.getSelection().trim()) return false;
+        if (!checking) void this.newClozeCardFromSelection(editor, file);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "ir-split-cloze-items",
+      name: "Split cloze into separate IR item notes",
+      icon: "split",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || file.extension !== "md") return false;
+        if (getIrType(this.app, file) !== "item") return false;
+        if (!checking) void this.splitClozeInActiveEditor();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "bulk-import",
       name: "Import clipboard as IR topic",
       icon: "clipboard-paste",
@@ -357,7 +410,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.app.workspace.on(
         "editor-menu",
         (menu: Menu, editor: Editor, view: MarkdownView) => {
-          if (!view.file || !editor.getSelection().trim()) return;
+          if (!view.file) return;
+          menu.addItem((item) =>
+            item
+              .setTitle("Open IR actions hub")
+              .setIcon("layout-list")
+              .onClick(() => void this.openIrActionsHub()),
+          );
+          if (!editor.getSelection().trim()) return;
           const file = view.file;
           menu.addItem((item) =>
             item
@@ -370,6 +430,12 @@ export default class IncrementalReadingPlugin extends Plugin {
               .setTitle("Cloze to IR item")
               .setIcon("brackets")
               .onClick(() => void this.clozeSelection(editor, file)),
+          );
+          menu.addItem((item) =>
+            item
+              .setTitle("New cloze card (separate item)")
+              .setIcon("copy-plus")
+              .onClick(() => void this.newClozeCardFromSelection(editor, file)),
           );
         },
       ),
@@ -407,6 +473,12 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
         menu.addItem((item) =>
           item
+            .setTitle("Open IR actions hub")
+            .setIcon("layout-list")
+            .onClick(() => void this.openIrActionsHub()),
+        );
+        menu.addItem((item) =>
+          item
             .setTitle("Set IR priority")
             .setIcon("sliders-horizontal")
             .onClick(() => {
@@ -439,6 +511,12 @@ export default class IncrementalReadingPlugin extends Plugin {
   private addMobileIrFileMenuNav(menu: Menu): void {
     if (!Platform.isMobile) return;
     menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("Open IR actions hub")
+        .setIcon("layout-list")
+        .onClick(() => void this.openIrActionsHub()),
+    );
     menu.addItem((item) =>
       item
         .setTitle("Start IR review")
@@ -1283,6 +1361,248 @@ export default class IncrementalReadingPlugin extends Plugin {
     new Notice(
       `${dismiss ? "Dismissed" : "Restored"} "${file.basename}".`,
     );
+    void this.refreshStatusBar();
+  }
+
+  /** Command palette / ribbon / tree: contextual IR actions in one modal. */
+  private async openIrActionsHub(): Promise<void> {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const entries = await this.buildIrHubEntries();
+    new IrActionsHubModal(this.app, entries).open();
+  }
+
+  private async buildIrHubEntries(): Promise<IrHubEntry[]> {
+    const out: IrHubEntry[] = [];
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const file = mv?.file ?? this.app.workspace.getActiveFile();
+    const editor = mv?.editor;
+    const sel = editor?.getSelection().trim() ?? "";
+
+    if (editor && file && sel) {
+      out.push({
+        title: "New cloze card (separate item)",
+        description:
+          "Creates a new FSRS item under the reading parent. On an IR item note, uses ir-parent instead of adding to the same file.",
+        icon: "copy-plus",
+        run: () => this.newClozeCardFromSelection(editor, file),
+      });
+    }
+
+    if (file?.extension === "md" && getIrType(this.app, file) === "item") {
+      let raw = "";
+      if (mv?.file === file) raw = mv.editor.getValue();
+      else raw = await this.app.vault.cachedRead(file);
+      const body = stripFrontmatter(raw);
+      if (listClozeGroupNumbers(body).length >= 2) {
+        out.push({
+          title: "Split cloze into separate item notes",
+          description:
+            "One new note per {{cN::…}} group; each gets its own FSRS card. The original note is left unchanged.",
+          icon: "split",
+          run: () => this.splitClozeInActiveEditor(),
+        });
+      }
+    }
+
+    if (file?.extension === "md" && this.store) {
+      const state = await this.store.load();
+      for (const el of state.elements.values()) {
+        if (el.type === "extract" && el.notePath === file.path) {
+          out.push({
+            title: "Fork this extract",
+            description:
+              "Duplicate this reading element (promoted extract: copy note; anchored: second store element).",
+            icon: "git-branch",
+            run: () => this.forkStoreExtract(el.id),
+          });
+          break;
+        }
+      }
+    }
+
+    return out;
+  }
+
+  /**
+   * Like Alt+Z on a topic/extract, but when the editor is on an **item** note
+   * the new cloze is still placed under the item's `ir-parent` reading source
+   * instead of splicing into the current note.
+   */
+  private async newClozeCardFromSelection(
+    editor: Editor,
+    file: TFile,
+  ): Promise<void> {
+    let parentFile = file;
+    if (getIrType(this.app, file) === "item") {
+      const p = this.app.metadataCache.getFileCache(file)?.frontmatter?.[
+        IR_KEYS.parent
+      ];
+      if (typeof p !== "string" || !p.length) {
+        new Notice(
+          "Incremental Reading: this item has no ir-parent; cannot place a sibling card.",
+        );
+        return;
+      }
+      const abs = this.app.vault.getAbstractFileByPath(p);
+      if (!(abs instanceof TFile)) {
+        new Notice("Incremental Reading: parent note not found.");
+        return;
+      }
+      parentFile = abs;
+    }
+    if (!(await this.ensureIrSource(parentFile))) return;
+    const hintR = await promptClozeHint(this.app);
+    if (!hintR.ok) return;
+    const result = await createCloze(
+      this.app,
+      parentFile,
+      editor,
+      this.settings,
+      hintR.hint,
+    );
+    await this.openResult(result, "New cloze item created:");
+  }
+
+  private async splitClozeInActiveEditor(): Promise<void> {
+    const file = this.app.workspace.getActiveFile();
+    if (!file || file.extension !== "md") {
+      new Notice("Incremental Reading: open an IR item note.");
+      return;
+    }
+    if (getIrType(this.app, file) !== "item") {
+      new Notice("Incremental Reading: split cloze requires an IR item note.");
+      return;
+    }
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const raw =
+      mv?.file === file ? mv.editor.getValue() : await this.app.vault.cachedRead(file);
+    const body = stripFrontmatter(raw);
+    const groups = listClozeGroupNumbers(body);
+    if (groups.length < 2) {
+      new Notice(
+        "Incremental Reading: need at least two {{cN::…}} groups to split.",
+      );
+      return;
+    }
+    const p = this.app.metadataCache.getFileCache(file)?.frontmatter?.[
+      IR_KEYS.parent
+    ];
+    if (typeof p !== "string" || !p.length) {
+      new Notice("Incremental Reading: this item has no ir-parent path.");
+      return;
+    }
+    const parentAbs = this.app.vault.getAbstractFileByPath(p);
+    if (!(parentAbs instanceof TFile)) {
+      new Notice("Incremental Reading: parent note not found.");
+      return;
+    }
+    if (!(await this.ensureIrSource(parentAbs))) return;
+
+    let created = 0;
+    for (const n of groups) {
+      const piece = bodyWithSingleClozeGroup(body, n);
+      const stem = `split c${n}`;
+      const result = await createIrItemChildNote(
+        this.app,
+        parentAbs,
+        piece,
+        stem,
+        this.settings,
+      );
+      if (!result.file) {
+        new Notice(`Incremental Reading: ${result.error}`);
+        return;
+      }
+      await this.recordElement(result.file);
+      created += 1;
+    }
+    new Notice(
+      `Incremental Reading: created ${created} separate item note${created === 1 ? "" : "s"}.`,
+    );
+  }
+
+  /**
+   * Second reading element with the same text/anchor as an existing extract.
+   * Promoted extracts (vault note) are forked by copying the markdown file.
+   */
+  private async forkStoreExtract(elementId: ElementId): Promise<void> {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const state = await this.store.load();
+    const el = state.elements.get(elementId);
+    if (!el || el.type !== "extract") {
+      new Notice("Incremental Reading: fork only applies to IR extracts.");
+      return;
+    }
+    const device = await this.store.getDeviceId();
+    const now = Date.now();
+
+    if (el.notePath) {
+      const src = this.app.vault.getAbstractFileByPath(el.notePath);
+      if (!(src instanceof TFile)) {
+        new Notice("Incremental Reading: extract note not found in vault.");
+        return;
+      }
+      const parentDir = src.parent?.path ?? "";
+      const baseStem = src.basename.replace(/\.md$/i, "");
+      const newPath = uniqueMarkdownNotePath(
+        this.app,
+        parentDir,
+        `${baseStem} (fork)`,
+      );
+      await this.app.vault.copy(src, newPath);
+      const nf = this.app.vault.getAbstractFileByPath(newPath);
+      if (!(nf instanceof TFile)) {
+        new Notice("Incremental Reading: fork copy failed.");
+        return;
+      }
+      await this.app.fileManager.processFrontMatter(nf, (fm) => {
+        writeTopicToFrontmatter(fm, newTopicState(this.settings, new Date(now)));
+      });
+      await this.recordElement(nf);
+      new Notice(`Incremental Reading: forked extract to "${nf.basename}".`);
+      void this.refreshStatusBar();
+      return;
+    }
+
+    const newEl: IrElement = {
+      ...el,
+      id: newElementId(),
+      created: now,
+      dismissed: false,
+      schedule: topicStateToSchedule(
+        newTopicState(this.settings, new Date(now)),
+      ),
+      anchor: el.anchor
+        ? {
+            sourcePath: el.anchor.sourcePath,
+            quote: { ...el.anchor.quote },
+            position: el.anchor.position
+              ? { ...el.anchor.position }
+              : undefined,
+            blockId: el.anchor.blockId,
+          }
+        : undefined,
+    };
+
+    await this.store.appendEvent({
+      id: newEventId(),
+      ts: now,
+      lamport: now,
+      device,
+      kind: "element-created",
+      target: newEl.id,
+      payload: { element: newEl },
+    });
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after fork failed", e);
+    });
+    new Notice("Incremental Reading: forked extract (second reading element).");
     void this.refreshStatusBar();
   }
 

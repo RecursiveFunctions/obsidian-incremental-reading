@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.23] — 2026-05-23
+
+### Added
+
+- **IR actions hub** — Ribbon icon, command palette entry (**Open IR actions hub**), editor/file (IR) menus, mobile file menu, and an **IR actions…** button in the review dock. Lists contextual actions so the main chrome stays uncluttered.
+- **New cloze card (separate item)** — Command + hub + editor menu: on an IR **item** note, creates a sibling item under `ir-parent` instead of adding `{{cN::}}` in place. Default hotkey **Alt+Shift+Z** (distinct from **Alt+Z** cloze).
+- **Split cloze into separate IR item notes** — Hub + command: one new graded note per `{{cN::…}}` group (original unchanged). Assign a hotkey in Settings if desired.
+- **Fork extract** — IR tree context menu on extracts; hub when a promoted extract note is active. Store-only extracts get a second reading element; promoted extracts are forked by copying the markdown file.
+- **IR review: Previous** — Button and **`[`** hotkey (left bracket; `BracketLeft` for non-US layouts) move to the prior element in the **current session** only. Schedules you already advanced past are not rolled back; use this to revisit a reading card for another extract/cloze or to re-read a cloze before grading.
+
 ## [0.0.22] — 2026-05-23
 
 ### Fixed

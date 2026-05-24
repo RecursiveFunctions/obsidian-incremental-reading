@@ -118,6 +118,8 @@ export class IrReviewView extends ItemView {
      * load indicator without this module knowing about it.
      */
     private onChange?: () => void,
+    /** Opens the host plugin's contextual IR actions modal (ribbon parity). */
+    private readonly openIrHub?: () => void,
   ) {
     super(leaf);
   }
@@ -207,6 +209,20 @@ export class IrReviewView extends ItemView {
           evt.preventDefault();
           this.revealed = true;
           void this.renderCard();
+        }
+        return;
+      }
+      // `[` / BracketLeft: go to prior queue item (session only; does not undo
+      // schedules). Matches the Previous button; avoids Alt+P (global priority).
+      if (
+        evt.code === "BracketLeft" &&
+        !evt.altKey &&
+        !evt.ctrlKey &&
+        !evt.metaKey
+      ) {
+        if (!typing) {
+          evt.preventDefault();
+          void this.previous();
         }
         return;
       }
@@ -756,11 +772,26 @@ export class IrReviewView extends ItemView {
     const dock = contentEl.createDiv({ cls: "ir-review-dock" });
     const controls = dock.createEl("div", { cls: "ir-review-controls" });
 
+    if (this.openIrHub) {
+      const hubRow = controls.createDiv({ cls: "ir-review-hub-row" });
+      const hubBtn = hubRow.createEl("button", {
+        text: "IR actions…",
+        cls: "ir-review-hub-btn",
+        type: "button",
+      });
+      hubBtn.addEventListener("click", () => this.openIrHub?.());
+    }
+
     if (reading) {
       this.renderPriorityRow(controls, slot);
       const bar = controls.createEl("div", { cls: "ir-review-buttons" });
       this.renderChildButtons(bar);
       this.renderEditToggle(bar);
+      const prevRead = bar.createEl("button", {
+        text: this.labelWithHotkey("Previous", "["),
+      });
+      if (this.index === 0) prevRead.disabled = true;
+      prevRead.addEventListener("click", () => void this.previous());
       bar
         .createEl("button", {
           text: this.labelWithHotkey("Next", "Space"),
@@ -783,7 +814,13 @@ export class IrReviewView extends ItemView {
     }
 
     if (isCloze && !this.revealed) {
-      controls
+      const preBar = controls.createEl("div", { cls: "ir-review-buttons" });
+      const prevPre = preBar.createEl("button", {
+        text: this.labelWithHotkey("Previous", "["),
+      });
+      if (this.index === 0) prevPre.disabled = true;
+      prevPre.addEventListener("click", () => void this.previous());
+      preBar
         .createEl("button", {
           text: this.labelWithHotkey("Show answer", "Space"),
           cls: "mod-cta",
@@ -798,6 +835,11 @@ export class IrReviewView extends ItemView {
 
     this.renderPriorityRow(controls, slot);
     const bar = controls.createEl("div", { cls: "ir-review-buttons" });
+    const prevGrade = bar.createEl("button", {
+      text: this.labelWithHotkey("Previous", "["),
+    });
+    if (this.index === 0) prevGrade.disabled = true;
+    prevGrade.addEventListener("click", () => void this.previous());
     this.renderEditToggle(bar);
     for (const { grade, label: gLabel, key } of GRADES) {
       const text = Platform.isMobile ? gLabel : `${gLabel} (${key})`;
@@ -1135,12 +1177,16 @@ export class IrReviewView extends ItemView {
       void this.commitCloze(slot, sel, hint);
     };
 
+    // stopPropagation: finish() removes this input before bubble completes; the
+    // contentEl handler would then see no focused input and treat Enter as Next.
     input.addEventListener("keydown", (e: KeyboardEvent) => {
       if (e.key === "Enter") {
         e.preventDefault();
+        e.stopPropagation();
         finish(input.value.trim());
       } else if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         finish(null);
       }
     });
@@ -1301,6 +1347,22 @@ export class IrReviewView extends ItemView {
       this.leaf.detach();
       return;
     }
+    void this.renderCard();
+  }
+
+  /**
+   * Move to the prior element in this session's queue. Does not undo FSRS or
+   * topic schedules already written for cards you moved past — it only
+   * rewinds the in-session cursor (e.g. to add another cloze on a reading card).
+   */
+  private async previous() {
+    if (this.index === 0) return;
+    await this.flushEdits();
+    void this.persistBookmarks();
+    this.index -= 1;
+    this.revealed = false;
+    this.editing = false;
+    this.loadedSlotId = null;
     void this.renderCard();
   }
 

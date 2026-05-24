@@ -172,7 +172,7 @@ end-to-end. Specifically:
 
 - [ ] No new modals introduced, except the [documented cloze-hint exception](UI-COMMITMENTS.md#6-no-popups-that-block-the-document) in UI commitment #6.
 - [ ] Existing keyboard shortcuts still work (Alt+X, Alt+Z in editor;
-      in-review keys 1-4, Space, Enter, L, D, Alt+X, Alt+Z).
+      in-review keys 1-4, Space, Enter, L, D, `[` Previous, Alt+X, Alt+Z).
 - [ ] Status bar continues to refresh after grading / postponing /
       dismissing (`refreshStatusBar` callback wiring intact).
 - [ ] Session log (Alt+L) continues to populate (event wiring intact).

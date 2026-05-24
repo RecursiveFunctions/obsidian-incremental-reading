@@ -62,6 +62,9 @@ export type CommitIrReanchorFn = (
   element: IrElement,
 ) => Promise<boolean>;
 
+/** Fork a store extract (second reading element). */
+export type CommitIrForkFn = (elementId: ElementId) => void | Promise<void>;
+
 const ICONS: Record<IrType, string> = {
   topic: "book-open",
   extract: "scissors",
@@ -98,6 +101,7 @@ export class IrTreeView extends ItemView {
     private readonly commitDelete?: CommitIrDeleteFn,
     private readonly commitPromote?: CommitIrPromoteFn,
     private readonly commitReanchor?: CommitIrReanchorFn,
+    private readonly forkExtract?: CommitIrForkFn,
   ) {
     super(leaf);
     this.store = store;
@@ -677,6 +681,28 @@ export class IrTreeView extends ItemView {
               } catch (err) {
                 console.error("Incremental Reading: re-anchor failed", err);
                 new Notice("Incremental Reading: could not re-anchor.");
+              }
+              void this.render();
+            })();
+          }),
+      );
+    }
+
+    if (
+      this.forkExtract &&
+      node.element.type === "extract"
+    ) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Fork extract (duplicate reading element)")
+          .setIcon("git-branch")
+          .onClick(() => {
+            void (async () => {
+              try {
+                await this.forkExtract!(elId);
+              } catch (err) {
+                console.error("Incremental Reading: fork extract failed", err);
+                new Notice("Incremental Reading: could not fork extract.");
               }
               void this.render();
             })();

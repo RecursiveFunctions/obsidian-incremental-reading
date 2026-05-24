@@ -82,6 +82,49 @@ export function nextClozeNumber(text: string): number {
   return max + 1;
 }
 
+/** Distinct `cN` group numbers present in `text`, sorted ascending. */
+export function listClozeGroupNumbers(text: string): number[] {
+  const seen = new Set<number>();
+  CLOZE_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CLOZE_RE.exec(text)) !== null) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n)) seen.add(n);
+  }
+  return Array.from(seen).sort((a, b) => a - b);
+}
+
+/**
+ * Build a note body where cloze group `focusN` stays hidden as `{{c1::…}}`
+ * (optional hint preserved); every other cloze is replaced with its plain
+ * answer text so the card has a single active blank.
+ */
+export function bodyWithSingleClozeGroup(
+  fullBody: string,
+  focusN: number,
+): string {
+  const re = /\{\{c(\d+)::([\s\S]*?)\}\}/g;
+  let out = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(fullBody)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    out += fullBody.slice(last, start);
+    const n = Number(m[1]);
+    const inner = m[2] ?? "";
+    const parsed = parseClozeInner(inner);
+    if (n === focusN) {
+      out += wrapCloze(parsed.answer, 1, parsed.hint);
+    } else {
+      out += parsed.answer;
+    }
+    last = end;
+  }
+  out += fullBody.slice(last);
+  return out;
+}
+
 export interface ClozeBuild {
   /** The lines, with the selected span wrapped as a cloze deletion. */
   body: string;
