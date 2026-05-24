@@ -88,6 +88,10 @@ import {
   openIrRadialQuickMenu,
   type IrHubEntry,
 } from "./src/ir-actions-radial";
+import {
+  notifyWorkspaceFabSync,
+  registerWorkspaceIrFab,
+} from "./src/ir-mobile-fab";
 
 /**
  * The bulk-extract commands ask for confirmation above this many candidate
@@ -153,6 +157,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.registerInterval(
       window.setInterval(() => void this.refreshStatusBar(), 60_000),
     );
+
+    if (Platform.isMobile) {
+      this.register(
+        registerWorkspaceIrFab(this, () => void this.openIrActionsHub()),
+      );
+    }
 
     this.addRibbonIcon("book-open", "Mark note as IR topic", () => {
       void this.markActiveFileAsTopic();
@@ -254,6 +264,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           () => void this.refreshStatusBar(),
           () => void this.openIrActionsHub(),
           (id) => void this.notifyTreeOfReviewSlot(id),
+          notifyWorkspaceFabSync,
           () => this.undoLastGrade(),
         );
       },
@@ -1005,6 +1016,15 @@ export default class IncrementalReadingPlugin extends Plugin {
    * Already-marked spans are silently skipped — running the command twice
    * on the same note doesn't duplicate extracts on the same passage.
    */
+  /** Public entry for review-pane radial bulk actions. */
+  async runBulkExtractAnchored(
+    source: TFile,
+    spans: Span[],
+    headlineLabel: string,
+  ): Promise<void> {
+    return this.bulkExtractAnchored(source, spans, headlineLabel);
+  }
+
   private async bulkExtractAnchored(
     source: TFile,
     rawSpans: Span[],
@@ -2102,12 +2122,51 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async buildIrHubEntries(): Promise<IrHubEntry[]> {
     const out: IrHubEntry[] = [];
+
+    const review = this.getActiveReviewView();
+    if (review) {
+      out.push(
+        ...review.buildHubExtractEntries((source, spans, headline) =>
+          this.runBulkExtractAnchored(source, spans, headline),
+        ),
+      );
+      const reviewFile = review.getCurrentReviewFile();
+      if (reviewFile?.extension === "md" && this.store) {
+        const state = await this.store.load();
+        for (const el of state.elements.values()) {
+          if (el.type === "extract" && el.notePath === reviewFile.path) {
+            out.push({
+              title: "Fork this extract",
+              description:
+                "Duplicate this reading element (promoted extract: copy note; anchored: second store element).",
+              icon: "git-branch",
+              run: () => this.forkStoreExtract(el.id),
+            });
+            break;
+          }
+        }
+      }
+      return out;
+    }
+
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     const file = mv?.file ?? this.app.workspace.getActiveFile();
     const editor = mv?.editor;
     const sel = editor?.getSelection().trim() ?? "";
 
-    if (editor && file && sel) {
+    if (editor && file?.extension === "md" && sel) {
+      out.push({
+        title: "Extract selection",
+        description: "Anchored extract in this note (Alt+X).",
+        icon: "scissors",
+        run: () => void this.extractSelection(editor, file),
+      });
+      out.push({
+        title: "Cloze selection",
+        description: "Cloze item from selection (Alt+Z).",
+        icon: "brackets",
+        run: () => void this.clozeSelection(editor, file),
+      });
       out.push({
         title: "New cloze card (separate item)",
         description:

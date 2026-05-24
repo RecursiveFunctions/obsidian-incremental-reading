@@ -12,7 +12,6 @@ import {
   Notice,
   Platform,
   Scope,
-  setIcon,
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
@@ -79,6 +78,15 @@ import {
   reviewSwipeMode,
   type SwipeOutcome,
 } from "./ir/review-touch-gestures";
+import {
+  findAllBlockquotes,
+  findAllListItems,
+  findAllParagraphs,
+  findHeadingSectionAtOffset,
+  findParagraphAtOffset,
+  type Span,
+} from "./ir/extract-spans";
+import type { IrHubEntry } from "./ir-actions-radial";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -100,8 +108,6 @@ export class IrReviewView extends ItemView {
   /** Mobile swipe hint overlay; sibling of `cardHostEl`, survives re-renders. */
   private swipeHintEl?: HTMLElement;
   private swipeGestureCleanup?: () => void;
-  /** Fixed quick-actions button; sibling of `cardHostEl` (not inside it). */
-  private fabEl?: HTMLElement;
   private mobileKeyboardCleanup?: () => void;
   /** Working text for the current slot; updated live by the textarea. */
   private currentRaw = "";
@@ -142,6 +148,8 @@ export class IrReviewView extends ItemView {
      * position. `null` means the review pane closed.
      */
     private readonly onSlotChange?: (id: ElementId | null) => void,
+    /** Refreshes workspace FAB visibility when edit mode toggles. */
+    private readonly onMobileChromeChange?: () => void,
     /**
      * Retract the most recent grade event in the log. Returns the affected
      * element's id and a label for the toast, or `null` if there is
@@ -198,7 +206,6 @@ export class IrReviewView extends ItemView {
           onOutcome: (outcome) => this.handleSwipeOutcome(outcome),
         },
       );
-      this.setupMobileFab();
       this.mobileKeyboardCleanup = this.attachMobileKeyboardGuard();
     }
 
@@ -338,7 +345,6 @@ export class IrReviewView extends ItemView {
     this.mobileKeyboardCleanup?.();
     this.mobileKeyboardCleanup = undefined;
     this.swipeHintEl = undefined;
-    this.fabEl = undefined;
     this.cardHostEl = undefined;
     this.contentEl.empty();
     this.onSlotChange?.(null);
@@ -368,21 +374,6 @@ export class IrReviewView extends ItemView {
    * Mobile swipe on the card body (Option B). Pre-reveal: navigate / show
    * answer. Post-reveal: grade cardinals. Reading: prev / next only.
    */
-  /** Persistent fixed FAB on `contentEl` (not inside the per-card host). */
-  private setupMobileFab(): void {
-    if (!Platform.isMobile || !this.openIrHub || this.fabEl) return;
-    const fab = this.contentEl.createDiv({ cls: "ir-review-fab" });
-    fab.setAttr("role", "button");
-    fab.setAttr("aria-label", "IR quick actions");
-    fab.setAttr("title", "IR quick actions");
-    setIcon(fab, "layout-list");
-    fab.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      this.openIrHub?.();
-    });
-    this.fabEl = fab;
-  }
-
   /**
    * Keep the edit textarea above the on-screen keyboard. Uses
    * `visualViewport` when available (iOS/Android WebView) and scrolls the
@@ -413,6 +404,7 @@ export class IrReviewView extends ItemView {
       this.contentEl.removeClass("ir-review--editing");
       this.cardHostEl?.style.removeProperty("padding-bottom");
     }
+    this.onMobileChromeChange?.();
   }
 
   private adjustReviewPaneForKeyboard(): void {
@@ -1470,6 +1462,199 @@ export class IrReviewView extends ItemView {
       return;
     }
     this.showInlineHintPrompt(slot, sel);
+  }
+
+  /** Vault file for the card under review, when the slot is file-backed. */
+  getCurrentReviewFile(): TFile | null {
+    return this.current?.file ?? null;
+  }
+
+  /**
+   * Radial-menu entries while the IR review leaf is active (no MarkdownView).
+   * Selection-based extract/cloze plus cursor/bulk helpers on the card body.
+   */
+  buildHubExtractEntries(
+    onBulkExtract: (
+      source: TFile,
+      spans: Span[],
+      headline: string,
+    ) => Promise<void>,
+  ): IrHubEntry[] {
+    const out: IrHubEntry[] = [];
+    const slot = this.current;
+    if (!slot) return out;
+
+    const selRes = this.resolveSelection();
+    const hasSel = selRes.ok;
+
+    if (this.canMakeChild()) {
+      if (hasSel) {
+        out.push({
+          title: "Extract selection",
+          description: "Anchored extract from the selected span in this card.",
+          icon: "scissors",
+          run: () => void this.handleExtract(),
+        });
+      }
+      if (this.canMakeClozeChild() && hasSel) {
+        out.push({
+          title: "Cloze selection",
+          description: "New cloze item from the selected span.",
+          icon: "brackets",
+          run: () => void this.handleCloze(),
+        });
+      }
+    }
+
+    const reading = this.isReading(slot);
+    if (reading || !slot.file) return out;
+
+    const body = this.currentRaw;
+    const cursor = this.reviewBodyCursor(hasSel ? selRes : null);
+    const range: Span | null =
+      hasSel && selRes.ok
+        ? { start: selRes.start, end: selRes.end }
+        : null;
+
+    if (findParagraphAtOffset(body, cursor)) {
+      out.push({
+        title: "Extract paragraph at cursor",
+        icon: "pilcrow",
+        run: () => void this.extractSpanInReview(
+          findParagraphAtOffset(body, cursor)!,
+        ),
+      });
+    }
+    if (findHeadingSectionAtOffset(body, cursor)) {
+      out.push({
+        title: "Extract heading section",
+        icon: "heading",
+        run: () => void this.extractSpanInReview(
+          findHeadingSectionAtOffset(body, cursor)!,
+        ),
+      });
+    }
+
+    const bqs = findAllBlockquotes(body, range ?? undefined);
+    if (bqs.length >= 2 || (bqs.length === 1 && range)) {
+      out.push({
+        title: `Extract every blockquote (${bqs.length})`,
+        icon: "quote",
+        run: () =>
+          void onBulkExtract(slot.file!, bqs, "Blockquotes extracted"),
+      });
+    }
+    if (range) {
+      const items = findAllListItems(body, range);
+      if (items.length >= 2) {
+        out.push({
+          title: `Extract every list item (${items.length})`,
+          icon: "list",
+          run: () =>
+            void onBulkExtract(slot.file!, items, "List items extracted"),
+        });
+      }
+      const paras = findAllParagraphs(body, range);
+      if (paras.length >= 2) {
+        out.push({
+          title: `Extract every paragraph (${paras.length})`,
+          icon: "align-left",
+          run: () =>
+            void onBulkExtract(slot.file!, paras, "Paragraphs extracted"),
+        });
+      }
+    }
+
+    return out;
+  }
+
+  private reviewBodyCursor(
+    sel: { start: number; end: number } | null,
+  ): number {
+    if (this.editing) {
+      const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(
+        ".ir-review-textarea",
+      );
+      if (ta) return ta.selectionStart ?? 0;
+    }
+    if (sel) return sel.start;
+    const slot = this.current;
+    if (slot && this.isReading(slot)) {
+      const bm = getBookmark(this.bookmarks, slot.id);
+      if (bm) return this.bodyOffsetFromLineCh(this.currentRaw, bm.line, bm.ch);
+    }
+    return 0;
+  }
+
+  private bodyOffsetFromLineCh(body: string, line: number, ch: number): number {
+    const lines = body.split("\n");
+    let off = 0;
+    const cap = Math.min(line, lines.length - 1);
+    for (let i = 0; i < cap; i += 1) off += lines[i]!.length + 1;
+    if (line < lines.length) off += Math.min(ch, lines[line]!.length);
+    return Math.min(body.length, Math.max(0, off));
+  }
+
+  private async extractSpanInReview(span: Span): Promise<void> {
+    const slot = this.current;
+    if (!slot || !this.canMakeChild()) return;
+    const text = this.currentRaw.slice(span.start, span.end).trim();
+    if (!text) {
+      new Notice("Incremental Reading: nothing to extract.");
+      return;
+    }
+    await this.flushEdits();
+    const bodyBeforeExtract = this.currentRaw;
+    if (slot.file) {
+      await this.applyExtractHighlight(
+        slot.file,
+        span.start,
+        span.end,
+        text,
+      );
+    } else {
+      await this.applyExtractHighlightInStore(slot, span.start, span.end);
+    }
+    const sourcePath =
+      slot.file?.path ?? this.resolveProvenanceSourcePath(slot);
+    if (!sourcePath) {
+      new Notice(
+        "Incremental Reading: could not resolve a vault path for this extract.",
+      );
+      return;
+    }
+    try {
+      const now = Date.now();
+      const ev = buildExtractEvent({
+        sourcePath,
+        sourceText: bodyBeforeExtract,
+        selStart: span.start,
+        selEnd: span.end,
+        parentId: slot.id,
+        priority: slot.element.priority,
+        elementId: newElementId(),
+        eventId: newEventId(),
+        device: await this.store.getDeviceId(),
+        lamport: now,
+        now,
+        schedule: topicStateToSchedule(
+          newTopicState(this.settings, new Date(now)),
+        ),
+        persistedExtractMark: true,
+      });
+      await this.store.appendEvent(ev);
+      const created = ev.payload.element as IrElement;
+      this.elementsById.set(created.id, created);
+      new Notice(`Extracted (anchored in "${labelFor(created)}").`);
+      this.onChange?.();
+    } catch (e) {
+      console.error("Incremental Reading: anchored extract failed", e);
+      new Notice(
+        "Incremental Reading: could not record the extract. See the developer console.",
+      );
+    }
+    await this.reloadCurrentRaw();
+    await this.renderCard();
   }
 
   /**
