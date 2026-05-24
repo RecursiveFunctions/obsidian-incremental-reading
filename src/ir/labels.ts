@@ -42,14 +42,13 @@ export function neutralTypeLabel(type: IrType): string {
 }
 
 /**
- * Tree / session-log row title. Topics keep real names. Extracts and items
- * use generated paths from quoted text (often the cloze answer); we only
- * mask them when `maskSpoilers` is true (active review surface), so users
- * can identify rows in the tree at all other times.
+ * Tree / session-log row title. Topics and extracts always keep their real
+ * names — only cloze items risk leaking their hidden answer through the
+ * label (the basename / first chars of text often *are* the answer), so
+ * those are the only rows masked when `maskSpoilers` is on.
  */
 export function treeRowLabel(el: IrElement, maskSpoilers = false): string {
-  if (el.type === "topic") return labelFor(el);
-  if (maskSpoilers) {
+  if (maskSpoilers && el.type === "item") {
     return `${neutralTypeLabel(el.type)} (${shortElementTag(el.id)})`;
   }
   return labelFor(el);

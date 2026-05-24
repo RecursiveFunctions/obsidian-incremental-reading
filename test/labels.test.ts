@@ -155,6 +155,23 @@ test("treeRowLabel: item is neutral + tag when spoilers masked", () => {
   );
 });
 
+test("treeRowLabel: extracts stay readable even when masking is on", () => {
+  // Spoiler risk only applies to cloze items (label can leak the answer).
+  // Extracts are excerpts — keep their title visible during review too,
+  // otherwise the tree is unreadable when a review pane is open.
+  assert.equal(
+    treeRowLabel(
+      el({
+        id: "ex-1",
+        type: "extract",
+        text: "Autoscaling adjusts capacity based on signals.",
+      }),
+      true,
+    ),
+    "Autoscaling adjusts capacity based on signals.",
+  );
+});
+
 test("reviewHeadlineLabel: masks item until caller says reveal", () => {
   const item = el({
     id: "abc",
