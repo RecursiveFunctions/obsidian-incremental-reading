@@ -450,9 +450,16 @@ export class IrTreeView extends ItemView {
       cls: "ir-tree-title",
       text: label,
     });
-    if (node.element.notePath) {
+    // Anchored extracts have no `notePath` (they live in the store; their
+    // text lives inside the parent note's body). Fall back to the anchor's
+    // source path so the row stays clickable and jumps to where the extract
+    // lives in the vault. Without this, only promoted extracts and items
+    // are reachable from the tree.
+    const titleTarget =
+      node.element.notePath ?? node.element.anchor?.sourcePath ?? null;
+    if (titleTarget) {
       titleEl.addClass("ir-tree-link");
-      titleEl.onclick = () => void this.openNote(node.element.notePath!);
+      titleEl.onclick = () => void this.openNote(titleTarget);
     }
 
     const notePath = node.element.notePath ?? "";
@@ -635,12 +642,15 @@ export class IrTreeView extends ItemView {
     const menu = new Menu();
     const elId = node.id as ElementId;
 
-    if (node.element.notePath) {
+    const openTarget =
+      node.element.notePath ?? node.element.anchor?.sourcePath ?? null;
+    if (openTarget) {
+      const title = node.element.notePath ? "Open note" : "Open source note";
       menu.addItem((item) =>
         item
-          .setTitle("Open note")
+          .setTitle(title)
           .setIcon("file-text")
-          .onClick(() => void this.openNote(node.element.notePath!)),
+          .onClick(() => void this.openNote(openTarget)),
       );
     }
 
