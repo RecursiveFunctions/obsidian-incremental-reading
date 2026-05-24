@@ -58,19 +58,38 @@ export function registerWorkspaceIrFab(
     hooks.openHub();
   });
 
+  // When the soft keyboard opens, visualViewport.height shrinks well below the
+  // layout viewport (window.innerHeight). The FAB would otherwise float over
+  // the keyboard and obscure typing on iOS/Android. Threshold: layout viewport
+  // shrunk by more than 150px is the IME, not just URL bar collapse.
+  const isKeyboardOpen = (): boolean => {
+    const vv = window.visualViewport;
+    if (!vv) return false;
+    return window.innerHeight - vv.height > 150;
+  };
+
   const sync = () => {
-    const show = shouldShowWorkspaceFab(plugin.app);
+    const show = shouldShowWorkspaceFab(plugin.app) && !isKeyboardOpen();
     fab.toggleClass("is-hidden", !show);
   };
 
   plugin.registerEvent(plugin.app.workspace.on("active-leaf-change", sync));
   plugin.registerEvent(plugin.app.workspace.on("layout-change", sync));
   plugin.registerInterval(window.setInterval(sync, 500));
+  const vv = window.visualViewport;
+  if (vv) {
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+  }
   workspaceFabSync = sync;
   sync();
 
   return () => {
     workspaceFabSync = null;
+    if (vv) {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+    }
     fab.remove();
   };
 }

@@ -12,6 +12,7 @@ import {
   Notice,
   Platform,
   Scope,
+  setIcon,
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
@@ -90,6 +91,8 @@ import type { IrHubEntry } from "./ir-actions-radial";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
+const IR_SWIPE_LEGEND_KEY = "incremental-reading:swipe-legend-seen";
+
 const GRADES: { grade: Grade; label: string; key: string }[] = [
   { grade: "again", label: "Again", key: "1" },
   { grade: "hard", label: "Hard", key: "2" },
@@ -109,6 +112,7 @@ export class IrReviewView extends ItemView {
   private swipeHintEl?: HTMLElement;
   private swipeGestureCleanup?: () => void;
   private mobileKeyboardCleanup?: () => void;
+  private mobileOrientationCleanup?: () => void;
   /** Working text for the current slot; updated live by the textarea. */
   private currentRaw = "";
   /** Last known on-disk body for the current slot (for dirty-check). */
@@ -117,6 +121,14 @@ export class IrReviewView extends ItemView {
   private loadedSlotId: ElementId | null = null;
   /** True if the current slot's source note is missing from the vault. */
   private bodyMissing = false;
+
+  /** Mobile-only: user has tapped the source header to expand the parent
+   * column over the card; per-session, not persisted. */
+  private mobileSourceExpanded = false;
+
+  /** Mobile-only: dismiss the swipe legend once the user has actually swiped.
+   * Persisted in localStorage so the dock stays compact across sessions. */
+  private swipeLegendDismissed = false;
 
   /** Reading-position bookmarks loaded once on open, saved incrementally. */
   private bookmarks: BookmarkMap = {};
@@ -187,6 +199,19 @@ export class IrReviewView extends ItemView {
     this.cardHostEl = this.contentEl.createDiv({ cls: "ir-review-card-host" });
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
+      try {
+        if (window.localStorage.getItem(IR_SWIPE_LEGEND_KEY) === "1") {
+          this.swipeLegendDismissed = true;
+        }
+      } catch {
+        // localStorage can be blocked or missing on niche WebViews; treat as
+        // "show legend" and move on.
+      }
+      // CSS `@media (orientation: landscape)` is unreliable inside the
+      // Obsidian webview on some devices (the height check at the heart of
+      // the original landscape rule failed on roomier displays). Detect
+      // landscape directly in JS and toggle a class instead.
+      this.mobileOrientationCleanup = this.attachOrientationClass();
       this.swipeHintEl = this.contentEl.createDiv({
         cls: "ir-review-swipe-hint",
       });
@@ -344,6 +369,8 @@ export class IrReviewView extends ItemView {
     this.swipeGestureCleanup = undefined;
     this.mobileKeyboardCleanup?.();
     this.mobileKeyboardCleanup = undefined;
+    this.mobileOrientationCleanup?.();
+    this.mobileOrientationCleanup = undefined;
     this.swipeHintEl = undefined;
     this.cardHostEl = undefined;
     this.contentEl.empty();
@@ -379,6 +406,28 @@ export class IrReviewView extends ItemView {
    * `visualViewport` when available (iOS/Android WebView) and scrolls the
    * card column so the caret stays visible while selecting text.
    */
+  /**
+   * Toggle `.ir-review--landscape` based on the actual window aspect.
+   * Drives the compact landscape dock without relying on CSS media queries,
+   * which proved flaky in the Obsidian webview across devices (the original
+   * `max-height: 500px` gate failed on phones with 510+ CSS px landscape
+   * height, leaving the portrait stack in place).
+   */
+  private attachOrientationClass(): () => void {
+    const update = () => {
+      const landscape = window.innerWidth > window.innerHeight;
+      this.contentEl.toggleClass("ir-review--landscape", landscape);
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+      this.contentEl.removeClass("ir-review--landscape");
+    };
+  }
+
   private attachMobileKeyboardGuard(): () => void {
     const vv = window.visualViewport;
     const adjust = () => this.adjustReviewPaneForKeyboard();
@@ -457,6 +506,18 @@ export class IrReviewView extends ItemView {
   }
 
   private handleSwipeOutcome(outcome: SwipeOutcome): void {
+    if (!this.swipeLegendDismissed) {
+      this.swipeLegendDismissed = true;
+      try {
+        window.localStorage.setItem(IR_SWIPE_LEGEND_KEY, "1");
+      } catch {
+        // Best-effort: in-memory dismissal still applies for the session.
+      }
+      // Compact the dock on the next render.
+      this.contentEl
+        .querySelector(".ir-review-swipe-legend")
+        ?.remove();
+    }
     if (outcome.kind === "nav") {
       if (outcome.action === "previous") {
         void this.previous();
@@ -924,13 +985,62 @@ export class IrReviewView extends ItemView {
 
     if (sourceCtx) {
       const ctxCol = columns.createDiv({ cls: "ir-review-context-col" });
+      if (Platform.isMobile && this.mobileSourceExpanded) {
+        ctxCol.addClass("ir-review-context-col--expanded");
+      }
       const sourceHeaderText = maskClozeChrome
         ? "Source (hidden until reveal)"
         : `Source · ${sourceCtx.title}`;
-      ctxCol.createEl("div", {
+      const header = ctxCol.createEl(Platform.isMobile ? "button" : "div", {
         cls: "ir-review-context-header",
+      });
+      header.createEl("span", {
+        cls: "ir-review-context-header-label",
         text: sourceHeaderText,
       });
+      if (Platform.isMobile) {
+        header.setAttr("type", "button");
+        header.setAttr(
+          "aria-label",
+          this.mobileSourceExpanded
+            ? "Collapse source column"
+            : "Expand source column",
+        );
+        header.setAttr(
+          "aria-expanded",
+          this.mobileSourceExpanded ? "true" : "false",
+        );
+        const chevron = header.createSpan({
+          cls: "ir-review-context-header-chevron",
+        });
+        setIcon(
+          chevron,
+          this.mobileSourceExpanded ? "chevron-up" : "chevron-down",
+        );
+        header.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          this.mobileSourceExpanded = !this.mobileSourceExpanded;
+          ctxCol.toggleClass(
+            "ir-review-context-col--expanded",
+            this.mobileSourceExpanded,
+          );
+          header.setAttr(
+            "aria-expanded",
+            this.mobileSourceExpanded ? "true" : "false",
+          );
+          header.setAttr(
+            "aria-label",
+            this.mobileSourceExpanded
+              ? "Collapse source column"
+              : "Expand source column",
+          );
+          chevron.empty();
+          setIcon(
+            chevron,
+            this.mobileSourceExpanded ? "chevron-up" : "chevron-down",
+          );
+        });
+      }
       const ctxScroll = ctxCol.createDiv({ cls: "ir-review-context-scroll" });
       if (maskClozeChrome) {
         ctxScroll.createEl("p", {
@@ -1056,7 +1166,7 @@ export class IrReviewView extends ItemView {
     const dock = host.createDiv({ cls: "ir-review-dock" });
     const controls = dock.createEl("div", { cls: "ir-review-controls" });
 
-    if (Platform.isMobile) {
+    if (Platform.isMobile && !this.swipeLegendDismissed) {
       const slotForHint = this.current;
       if (slotForHint) {
         const readingHint = this.isReading(slotForHint);
@@ -1097,23 +1207,26 @@ export class IrReviewView extends ItemView {
       this.renderEditToggle(bar);
       const prevRead = bar.createEl("button", {
         text: this.labelWithHotkey("Previous", "["),
+        cls: "ir-review-util-btn",
       });
       if (this.index === 0) prevRead.disabled = true;
       prevRead.addEventListener("click", () => void this.previous());
       bar
         .createEl("button", {
           text: this.labelWithHotkey("Next", "Space"),
-          cls: "mod-cta",
+          cls: "mod-cta ir-review-grade-btn",
         })
         .addEventListener("click", () => void this.next());
       bar
         .createEl("button", {
           text: this.labelWithHotkey("Later today", "L"),
+          cls: "ir-review-util-btn",
         })
         .addEventListener("click", () => void this.later());
       bar
         .createEl("button", {
           text: this.labelWithHotkey("Dismiss", "D"),
+          cls: "ir-review-util-btn",
         })
         .addEventListener("click", () => void this.dismiss());
       this.restoreBookmark(slot);
@@ -1125,13 +1238,14 @@ export class IrReviewView extends ItemView {
       const preBar = controls.createEl("div", { cls: "ir-review-buttons" });
       const prevPre = preBar.createEl("button", {
         text: this.labelWithHotkey("Previous", "["),
+        cls: "ir-review-util-btn",
       });
       if (this.index === 0) prevPre.disabled = true;
       prevPre.addEventListener("click", () => void this.previous());
       preBar
         .createEl("button", {
           text: this.labelWithHotkey("Show answer", "Space"),
-          cls: "mod-cta",
+          cls: "mod-cta ir-review-grade-btn",
         })
         .addEventListener("click", () => {
           this.revealed = true;
@@ -1145,6 +1259,7 @@ export class IrReviewView extends ItemView {
     const bar = controls.createEl("div", { cls: "ir-review-buttons" });
     const prevGrade = bar.createEl("button", {
       text: this.labelWithHotkey("Previous", "["),
+      cls: "ir-review-util-btn",
     });
     if (this.index === 0) prevGrade.disabled = true;
     prevGrade.addEventListener("click", () => void this.previous());
@@ -1152,12 +1267,13 @@ export class IrReviewView extends ItemView {
     for (const { grade, label: gLabel, key } of GRADES) {
       const text = Platform.isMobile ? gLabel : `${gLabel} (${key})`;
       bar
-        .createEl("button", { text })
+        .createEl("button", { text, cls: `ir-review-grade-btn ir-review-grade-btn--${grade}` })
         .addEventListener("click", () => void this.grade(grade));
     }
     bar
       .createEl("button", {
         text: this.labelWithHotkey("Dismiss", "D"),
+        cls: "ir-review-util-btn",
       })
       .addEventListener("click", () => void this.dismiss());
     if (this.commitUndoLastGrade) {
@@ -1166,7 +1282,7 @@ export class IrReviewView extends ItemView {
       // they want one.
       bar
         .createEl("button", {
-          cls: "ir-review-undo",
+          cls: "ir-review-undo ir-review-util-btn",
           text: "Undo last grade",
         })
         .addEventListener("click", () => void this.tryUndoLastGrade());

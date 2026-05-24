@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-05-24
+
+### Changed
+
+- **Mobile review dock, landscape layout:** Dropped the `@media
+  (orientation: landscape) and (max-height: ...)` gate that wasn't firing
+  reliably inside the Obsidian webview, and switched to a JS-driven
+  `.ir-review--landscape` class applied whenever `window.innerWidth >
+  window.innerHeight` on a mobile platform. Grade buttons
+  (Again/Hard/Good/Easy, or Next/Show answer) sit on one row, with utility
+  buttons (Previous/Edit/Dismiss/Later/Undo) on a second row below. Hub
+  button, priority editor, and A-Factor editor share a single line above
+  the buttons grid; the long hint copy ("0 = most important", "interval
+  multiplier") is hidden in landscape. Dock no longer scrolls internally so
+  every button is reachable without a sub-scroll.
+- **Mobile review dock, portrait:** Trimmed vertical padding on the dock and
+  controls so a short card body stays visible above the dock. Swipe legend
+  dismisses itself after the first swipe (remembered across sessions via
+  localStorage).
+- **Mobile review, tap to expand the source column:** The "Source ..." header
+  is now a button. Tap once to expand the parent column to ~75% of the
+  viewport (portrait) or ~68% width (landscape) for long parents; tap again
+  to collapse back to the default cap.
+- **Workspace IR FAB:** Hides automatically while the on-screen keyboard is
+  open so it no longer floats over the IME on iOS/Android.
+
 ## [0.0.24] — 2026-05-24
 
 ### Changed

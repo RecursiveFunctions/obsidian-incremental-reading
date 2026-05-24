@@ -101,6 +101,60 @@
   max-height: 40vh;
   border-right: none;
   border-bottom: 1px solid var(--background-modifier-border);
+  transition: max-height 0.18s ease;
+}
+
+/* Mobile header is a button: lay out label + chevron, keep the chrome from
+ * looking like a CTA button. */
+.ir-review--mobile button.ir-review-context-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  padding: 0.4em 0.65em;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.ir-review--mobile button.ir-review-context-header:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ir-review-context-header-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ir-review-context-header-chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-faint);
+  margin-left: 0.4em;
+}
+
+.ir-review-context-header-chevron svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Expanded: portrait jumps from 40vh to ~75vh; landscape's flex is overridden
+ * inside the landscape media query so the rule stays scoped. */
+.ir-review--mobile .ir-review-context-col--expanded {
+  max-height: 75vh;
 }
 
 .ir-review-scroll {
@@ -471,94 +525,168 @@
   margin-top: 0.15em;
 }
 
-/* Phone landscape: short viewport — stack source beside the card and keep the
- * dock compact so grade/read controls do not eat the whole screen. */
-@media (orientation: landscape) and (max-height: 500px) {
-  .ir-review--mobile .ir-review-columns {
-    flex-direction: row;
-    align-items: stretch;
-  }
+/* Portrait mobile dock breathing room: keep controls stacked, just tighten
+ * vertical padding so a short card is not pushed offscreen by the dock. */
+.ir-review--mobile .ir-review-controls {
+  gap: 0.5em;
+}
 
-  .ir-review--mobile .ir-review-context-col {
-    flex: 0 0 min(40%, 13.5rem);
-    max-width: min(40%, 13.5rem);
-    max-height: none;
-    border-bottom: none;
-    border-right: 1px solid var(--background-modifier-border);
-  }
+.ir-review--mobile .ir-review-dock {
+  padding-top: 0.5em;
+}
 
-  .ir-review--mobile .ir-review-main-col {
-    min-width: 0;
-  }
+.ir-review--mobile .ir-review-swipe-legend {
+  margin-bottom: 0.35em;
+}
 
-  .ir-review--mobile .ir-review-dock {
-    max-height: min(36vh, 8.75rem);
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-top: 0.35em;
-    padding-bottom: max(
-      0.35em,
-      calc(env(safe-area-inset-bottom, 0px) + 0.5rem)
-    );
-  }
+/* Mobile landscape: source beside the card, compact dock, two-row buttons.
+ * Selector instead of `@media (orientation: landscape)` because the webview's
+ * orientation/height matching is unreliable across devices; the class is
+ * applied in TS based on actual window aspect (see attachOrientationClass). */
+.ir-review--mobile.ir-review--landscape .ir-review-columns {
+  flex-direction: row;
+  align-items: stretch;
+}
 
-  .ir-review--mobile .ir-review-swipe-legend {
-    display: none;
-  }
+.ir-review--mobile.ir-review--landscape .ir-review-context-col {
+  flex: 0 0 min(40%, 13.5rem);
+  max-width: min(40%, 13.5rem);
+  max-height: none;
+  border-bottom: none;
+  border-right: 1px solid var(--background-modifier-border);
+  transition: flex-basis 0.18s ease, max-width 0.18s ease;
+}
 
-  .ir-review--mobile .ir-review-controls {
-    gap: 0.35em;
-  }
+.ir-review--mobile.ir-review--landscape .ir-review-context-col--expanded {
+  flex: 0 0 min(68%, 22rem);
+  max-width: min(68%, 22rem);
+  max-height: none;
+}
 
-  .ir-review--mobile .ir-review-buttons {
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    gap: 0.35em;
-    justify-content: flex-start;
-    -webkit-overflow-scrolling: touch;
-    scroll-snap-type: x proximity;
-    padding-bottom: 0.1em;
-  }
+.ir-review--mobile.ir-review--landscape .ir-review-main-col {
+  min-width: 0;
+}
 
-  .ir-review--mobile .ir-review-buttons button {
-    flex: 0 0 auto;
-    min-width: 4.25rem;
-    max-width: 7.5rem;
-    min-height: 2.25rem;
-    width: auto;
-    font-size: var(--font-ui-smaller);
-    padding: 0.3em 0.45em;
-    scroll-snap-align: start;
-  }
+/* Dock: free-flowing height (no internal scroll) so all buttons are
+ * reachable; the bottom-nav padding from the portrait rule is trimmed
+ * since Obsidian's mobile nav is small or absent in landscape. */
+.ir-review--mobile.ir-review--landscape .ir-review-dock {
+  max-height: none;
+  overflow: visible;
+  padding-top: 0.3em;
+  padding-bottom: max(
+    0.35em,
+    calc(env(safe-area-inset-bottom, 0px) + 0.5rem)
+  );
+}
 
-  .ir-review--mobile .ir-review-buttons button.mod-cta {
-    grid-column: unset;
-  }
+.ir-review--mobile.ir-review--landscape .ir-review-swipe-legend {
+  display: none;
+}
 
-  .ir-review--mobile .ir-priority-row {
-    font-size: var(--font-ui-smaller);
-    gap: 0.35em;
-  }
+/* Compact controls: hub button, priority editor, A-Factor editor on one row
+ * above the buttons grid. Each sized so all three fit on a phone landscape. */
+.ir-review--mobile.ir-review--landscape .ir-review-controls {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.3em 0.45em;
+  align-items: center;
+}
 
-  .ir-review--mobile .ir-priority-input {
-    min-height: 2.25rem;
-    font-size: var(--font-ui-smaller);
-  }
+.ir-review--mobile.ir-review--landscape .ir-review-controls .ir-review-hub-row {
+  flex: 0 0 auto;
+  margin: 0;
+}
 
-  .ir-review--mobile .ir-review-hub-btn {
-    min-height: 2.25rem;
-    font-size: var(--font-ui-smaller);
-  }
+.ir-review--mobile.ir-review--landscape .ir-review-controls .ir-priority-row {
+  flex: 1 1 7rem;
+  min-width: 0;
+  gap: 0.25em;
+}
 
-  .ir-workspace-fab {
-    bottom: max(0.65em, calc(env(safe-area-inset-bottom, 0px) + 0.35rem));
-  }
+/* Hide the long "0 = most important" / "interval multiplier" hint in
+ * landscape so the priority editors stay compact. */
+.ir-review--mobile.ir-review--landscape .ir-review-controls .ir-priority-hint {
+  display: none;
+}
 
-  .ir-review--mobile.ir-review--editing .ir-review-dock {
-    max-height: min(28vh, 4.5rem);
-  }
+.ir-review--mobile.ir-review--landscape .ir-review-controls .ir-review-buttons {
+  flex-basis: 100%;
+}
+
+/* Two-row buttons: grade row first (Again/Hard/Good/Easy or Next/Show
+ * answer), utility row second. Reorder with `order` so DOM order stays
+ * desktop-friendly while landscape mobile shows grades first. */
+.ir-review--mobile.ir-review--landscape .ir-review-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  overflow: visible;
+  gap: 0.3em 0.35em;
+  justify-content: stretch;
+  padding-bottom: 0;
+}
+
+.ir-review--mobile.ir-review--landscape .ir-review-buttons button {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+  min-height: 2.25rem;
+  width: auto;
+  font-size: var(--font-ui-smaller);
+  padding: 0.3em 0.45em;
+}
+
+.ir-review--mobile.ir-review--landscape .ir-review-buttons .ir-review-grade-btn {
+  order: 1;
+  flex: 1 1 0;
+}
+
+/* Force the utility row to break onto a new line below the grade row. */
+.ir-review--mobile.ir-review--landscape .ir-review-buttons::after {
+  content: "";
+  flex-basis: 100%;
+  height: 0;
+  order: 2;
+}
+
+.ir-review--mobile.ir-review--landscape .ir-review-buttons .ir-review-util-btn,
+.ir-review--mobile.ir-review--landscape .ir-review-buttons .ir-review-edit-toggle {
+  order: 3;
+  flex: 1 1 0;
+  min-height: 2rem;
+  font-size: var(--font-ui-smaller);
+  padding: 0.25em 0.35em;
+}
+
+.ir-review--mobile.ir-review--landscape .ir-review-buttons button.mod-cta {
+  grid-column: unset;
+}
+
+.ir-review--mobile.ir-review--landscape .ir-priority-row {
+  font-size: var(--font-ui-smaller);
+  gap: 0.35em;
+}
+
+.ir-review--mobile.ir-review--landscape .ir-priority-input {
+  min-height: 2rem;
+  width: 4em;
+  flex: 0 0 4em;
+  font-size: var(--font-ui-smaller);
+}
+
+.ir-review--mobile.ir-review--landscape .ir-review-hub-btn {
+  min-height: 2rem;
+  padding: 0.25em 0.6em;
+  font-size: var(--font-ui-smaller);
+}
+
+.ir-review--mobile.ir-review--landscape .ir-workspace-fab,
+.ir-review--mobile.ir-review--landscape ~ .ir-workspace-fab {
+  bottom: max(0.65em, calc(env(safe-area-inset-bottom, 0px) + 0.35rem));
+}
+
+.ir-review--mobile.ir-review--landscape.ir-review--editing .ir-review-dock {
+  max-height: min(28vh, 4.5rem);
 }
 
 .ir-priority-row {
