@@ -5,6 +5,7 @@ import {
   keyboardShrinkLikelyOpen,
   mobileTopInsetPx,
   radialAnchorCenterBottom,
+  workspaceFabBottomGapPx,
   type MobileViewportInsets,
 } from "../src/ir/mobile-viewport";
 
@@ -78,4 +79,9 @@ test("mobileTopInsetPx uses fallback when WebView reports zero insets", () => {
     visibleHeight: 800,
   };
   assert.equal(mobileTopInsetPx(insets), 32);
+});
+
+test("workspaceFabBottomGapPx adds review dock clearance in portrait", () => {
+  const gap = workspaceFabBottomGapPx(phonePortrait, { reviewDock: true });
+  assert.equal(gap, 80 + 28 + 12 + 168);
 });
