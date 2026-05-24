@@ -1,22 +1,21 @@
 /**
  * Workspace-level IR quick-actions FAB for Obsidian mobile.
  *
- * Fixed to the viewport on markdown source notes so extract/cloze and the
- * radial wheel are one tap away. Hidden only inside the IR review pane
- * (the dock already has extract/cloze there). Mounted on `document.body`
- * so Obsidian workspace transforms do not clip it.
+ * Fixed to the viewport on markdown source notes and during IR review so
+ * extract/cloze and the radial wheel are one tap away. Mounted on
+ * `document.body` so Obsidian workspace transforms do not clip it.
  */
 
 import type { App, Plugin } from "obsidian";
 import { MarkdownView, Platform, setIcon } from "obsidian";
-import { IR_REVIEW_VIEW_TYPE } from "./review-view";
+import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./review-view";
 import { layoutWorkspaceFab } from "./ir/mobile-viewport";
 
 const FAB_CLASS = "ir-workspace-fab";
 
 let workspaceFabSync: (() => void) | null = null;
 
-/** Call after review edit-mode toggles so the FAB hides immediately. */
+/** Call after review edit-mode toggles so the FAB repositions immediately. */
 export function notifyWorkspaceFabSync(): void {
   workspaceFabSync?.();
 }
@@ -59,12 +58,14 @@ export function registerWorkspaceIrFab(
   });
 
   const sync = () => {
-    const show = shouldShowWorkspaceFab(plugin.app);
-    if (show) {
+    const ctx = fabLayoutContext(plugin.app);
+    if (ctx.show) {
       fab.removeClass("is-hidden");
-      layoutWorkspaceFab(fab);
+      fab.toggleClass("ir-workspace-fab--review", ctx.review);
+      layoutWorkspaceFab(fab, { reviewDock: ctx.reviewDock });
     } else {
       fab.addClass("is-hidden");
+      fab.removeClass("ir-workspace-fab--review");
     }
   };
 
@@ -94,18 +95,44 @@ export function registerWorkspaceIrFab(
   };
 }
 
-function shouldShowWorkspaceFab(app: App): boolean {
-  if (!Platform.isMobile) return false;
+function fabLayoutContext(app: App): {
+  show: boolean;
+  review: boolean;
+  reviewDock: boolean;
+} {
+  if (!Platform.isMobile) {
+    return { show: false, review: false, reviewDock: false };
+  }
 
   const leaf = app.workspace.activeLeaf;
-  if (leaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE) return false;
+  if (!leaf) {
+    return { show: false, review: false, reviewDock: false };
+  }
+
+  if (leaf.view instanceof IrReviewView) {
+    return {
+      show: true,
+      review: true,
+      reviewDock: leaf.view.mobileFabAboveDock(),
+    };
+  }
+
+  const vt = leaf.view.getViewType();
+  if (vt === IR_REVIEW_VIEW_TYPE) {
+    return { show: true, review: true, reviewDock: true };
+  }
 
   const mv = app.workspace.getActiveViewOfType(MarkdownView);
-  if (mv?.file?.extension === "md") return true;
-
-  if (leaf?.view.getViewType() === "markdown") {
-    const m = leaf.view as MarkdownView;
-    return !!(m.file && m.file.extension === "md");
+  if (mv?.file?.extension === "md") {
+    return { show: true, review: false, reviewDock: false };
   }
-  return false;
+
+  if (vt === "markdown") {
+    const m = leaf.view as MarkdownView;
+    if (m.file && m.file.extension === "md") {
+      return { show: true, review: false, reviewDock: false };
+    }
+  }
+
+  return { show: false, review: false, reviewDock: false };
 }

@@ -105,15 +105,38 @@ export function isMobileKeyboardLikelyOpen(): boolean {
   return keyboardShrinkLikelyOpen(keyboardBaselineHeight, vv.height);
 }
 
-/** Pin the workspace FAB above Obsidian + system nav; left in landscape. */
-export function layoutWorkspaceFab(fab: HTMLElement): void {
-  const insets = readMobileViewportInsets();
+/** Extra lift when the IR review dock is visible above Obsidian nav. */
+export const REVIEW_DOCK_CLEARANCE_PORTRAIT_PX = 168;
+export const REVIEW_DOCK_CLEARANCE_LANDSCAPE_PX = 96;
+
+export function workspaceFabBottomGapPx(
+  insets: MobileViewportInsets,
+  opts?: { reviewDock?: boolean },
+): number {
   const landscape = insets.layoutWidth > insets.layoutHeight;
-  const bottomGap =
+  const dockClearance =
+    opts?.reviewDock === true
+      ? landscape
+        ? REVIEW_DOCK_CLEARANCE_LANDSCAPE_PX
+        : REVIEW_DOCK_CLEARANCE_PORTRAIT_PX
+      : 0;
+  return (
     insets.bottom +
     OBSIDIAN_MOBILE_NAV_PX +
     ANDROID_SYS_NAV_PX +
-    MOBILE_EDGE_MARGIN_PX;
+    MOBILE_EDGE_MARGIN_PX +
+    dockClearance
+  );
+}
+
+/** Pin the workspace FAB above Obsidian + system nav; left in landscape. */
+export function layoutWorkspaceFab(
+  fab: HTMLElement,
+  opts?: { reviewDock?: boolean },
+): void {
+  const insets = readMobileViewportInsets();
+  const landscape = insets.layoutWidth > insets.layoutHeight;
+  const bottomGap = workspaceFabBottomGapPx(insets, opts);
 
   fab.style.setProperty("bottom", `${bottomGap}px`);
   fab.style.setProperty("top", "auto");

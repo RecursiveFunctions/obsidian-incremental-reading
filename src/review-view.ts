@@ -192,6 +192,11 @@ export class IrReviewView extends ItemView {
     super(leaf);
   }
 
+  /** Whether the review dock is on screen (FAB sits above it). */
+  mobileFabAboveDock(): boolean {
+    return !this.editing;
+  }
+
   getViewType(): string {
     return IR_REVIEW_VIEW_TYPE;
   }
