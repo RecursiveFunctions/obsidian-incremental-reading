@@ -60,30 +60,40 @@ export function readMobileViewportInsets(): MobileViewportInsets {
   };
 }
 
+/** Tracks the tallest visualViewport seen (keyboard dismissed). */
+let keyboardBaselineHeight = 0;
+
+export function resetMobileKeyboardBaseline(): void {
+  keyboardBaselineHeight = 0;
+}
+
 /**
- * True when the soft keyboard is likely open. Does **not** treat
- * contenteditable focus (text selection in the editor) as keyboard-open —
- * that was hiding the FAB while the user selected text for extract/cloze.
+ * Pure helper: keyboard likely open when visible height drops sharply vs baseline.
+ * Exported for unit tests.
+ */
+export function keyboardShrinkLikelyOpen(
+  baselineHeight: number,
+  currentHeight: number,
+): boolean {
+  if (baselineHeight <= 0) return false;
+  const shrink = baselineHeight - currentHeight;
+  if (shrink >= 180) return true;
+  return shrink / baselineHeight >= 0.22;
+}
+
+/**
+ * True when the soft keyboard is likely open. Uses a running baseline of
+ * `visualViewport.height` — do **not** compare to `window.innerHeight`,
+ * which on Android/Obsidian is often 120–200px taller than the visible
+ * viewport even with the keyboard closed (status bar + bottom nav).
  */
 export function isMobileKeyboardLikelyOpen(): boolean {
   const vv = window.visualViewport;
-  if (vv && window.innerHeight - vv.height > 120) return true;
-  const el = document.activeElement;
-  if (el instanceof HTMLTextAreaElement) return true;
-  if (el instanceof HTMLInputElement) {
-    const t = el.type;
-    if (
-      t === "text" ||
-      t === "number" ||
-      t === "search" ||
-      t === "email" ||
-      t === "tel" ||
-      t === "url"
-    ) {
-      return true;
-    }
+  if (!vv) return false;
+  if (vv.height > keyboardBaselineHeight) {
+    keyboardBaselineHeight = vv.height;
   }
-  return false;
+  return keyboardShrinkLikelyOpen(keyboardBaselineHeight, vv.height);
 }
 
 /** Pin the workspace FAB above Obsidian + system nav; left in landscape. */

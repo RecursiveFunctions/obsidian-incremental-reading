@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   clampRadialOrigin,
+  keyboardShrinkLikelyOpen,
   radialAnchorCenterBottom,
   type MobileViewportInsets,
 } from "../src/ir/mobile-viewport";
@@ -44,4 +45,20 @@ test("clampRadialOrigin respects landscape height", () => {
   };
   const clamped = clampRadialOrigin({ cx: 400, cy: 380 }, landscape, 160);
   assert.ok(clamped.cy <= landscape.visibleHeight - 80);
+});
+
+test("keyboardShrinkLikelyOpen: stable viewport is not keyboard-open", () => {
+  assert.equal(keyboardShrinkLikelyOpen(650, 650), false);
+  // Permanent Android chrome gap vs innerHeight — baseline tracks vv, not inner.
+  assert.equal(keyboardShrinkLikelyOpen(650, 520), false);
+});
+
+test("keyboardShrinkLikelyOpen: large shrink means keyboard", () => {
+  assert.equal(keyboardShrinkLikelyOpen(650, 400), true);
+  assert.equal(keyboardShrinkLikelyOpen(400, 280), true);
+});
+
+test("keyboardShrinkLikelyOpen: innerHeight-style false positive avoided", () => {
+  // innerHeight 800, vv.height 650 — old code hid FAB; baseline approach does not.
+  assert.equal(keyboardShrinkLikelyOpen(650, 650), false);
 });

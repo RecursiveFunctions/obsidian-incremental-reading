@@ -15,6 +15,7 @@ import { IR_REVIEW_VIEW_TYPE } from "./review-view";
 import {
   isMobileKeyboardLikelyOpen,
   layoutWorkspaceFab,
+  resetMobileKeyboardBaseline,
 } from "./ir/mobile-viewport";
 
 const FAB_CLASS = "ir-workspace-fab";
@@ -64,14 +65,40 @@ export function registerWorkspaceIrFab(
     hooks.openHub();
   });
 
-  // Hide when the soft keyboard is up (visualViewport shrink or real text
-  // fields). Do not hide on contenteditable focus — selecting text in the
-  // markdown editor would otherwise make the FAB vanish mid-extract.
+  // Hide when the soft keyboard is up (visualViewport shrinks vs baseline).
+  // Debounce hide so transient layout/focus glitches do not flash the FAB off.
+  let pendingHide: number | null = null;
+
   const sync = () => {
     const show =
       shouldShowWorkspaceFab(plugin.app) && !isMobileKeyboardLikelyOpen();
-    fab.toggleClass("is-hidden", !show);
-    if (show) layoutWorkspaceFab(fab);
+    if (show) {
+      if (pendingHide !== null) {
+        clearTimeout(pendingHide);
+        pendingHide = null;
+      }
+      fab.removeClass("is-hidden");
+      layoutWorkspaceFab(fab);
+      return;
+    }
+    if (pendingHide !== null) return;
+    pendingHide = window.setTimeout(() => {
+      pendingHide = null;
+      if (
+        shouldShowWorkspaceFab(plugin.app) &&
+        !isMobileKeyboardLikelyOpen()
+      ) {
+        fab.removeClass("is-hidden");
+        layoutWorkspaceFab(fab);
+        return;
+      }
+      fab.addClass("is-hidden");
+    }, 280);
+  };
+
+  const onOrientationChange = () => {
+    resetMobileKeyboardBaseline();
+    sync();
   };
 
   const focusHandler = () => sync();
@@ -86,18 +113,19 @@ export function registerWorkspaceIrFab(
     vv.addEventListener("resize", sync);
     vv.addEventListener("scroll", sync);
   }
-  window.addEventListener("orientationchange", sync);
+  window.addEventListener("orientationchange", onOrientationChange);
   window.addEventListener("resize", sync);
   workspaceFabSync = sync;
   sync();
 
   return () => {
     workspaceFabSync = null;
+    if (pendingHide !== null) clearTimeout(pendingHide);
     if (vv) {
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
     }
-    window.removeEventListener("orientationchange", sync);
+    window.removeEventListener("orientationchange", onOrientationChange);
     window.removeEventListener("resize", sync);
     document.removeEventListener("focusin", focusHandler, true);
     document.removeEventListener("focusout", focusHandler, true);
@@ -108,12 +136,14 @@ export function registerWorkspaceIrFab(
 function shouldShowWorkspaceFab(app: App): boolean {
   if (!Platform.isMobile) return false;
 
-  // The review pane already has a "Quick actions" button in the dock, so the
-  // FAB would be redundant there and competes with grade/edit buttons for
-  // the bottom-right corner.
-  const reviewLeaf = app.workspace.activeLeaf;
-  if (reviewLeaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE) return false;
+  const leaf = app.workspace.activeLeaf;
+  if (!leaf) return false;
 
-  const mv = app.workspace.getActiveViewOfType(MarkdownView);
-  return !!(mv?.file && mv.file.extension === "md");
+  const viewType = leaf.view.getViewType();
+  if (viewType === IR_REVIEW_VIEW_TYPE) return false;
+
+  if (viewType !== "markdown") return false;
+
+  const mv = leaf.view as MarkdownView;
+  return !!(mv.file && mv.file.extension === "md");
 }
