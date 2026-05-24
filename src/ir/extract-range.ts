@@ -11,6 +11,7 @@
 import type { IrElement } from "./model";
 import { resolveAnchor } from "./anchor";
 import { stripFrontmatter } from "./frontmatter-body";
+import { clozeAnswersInline, hasCloze } from "../cloze";
 
 export function findExtractRange(
   el: IrElement,
@@ -22,10 +23,27 @@ export function findExtractRange(
   }
   const text = el.text.trim();
   if (!text) return undefined;
-  const idx = sourceRaw.indexOf(text);
-  if (idx === -1) return undefined;
-  if (sourceRaw.indexOf(text, idx + 1) !== -1) return undefined;
-  return { start: idx, end: idx + text.length };
+  const direct = uniqueIndexOf(sourceRaw, text);
+  if (direct !== -1) return { start: direct, end: direct + text.length };
+  // Cloze items (especially the split-cloze variant) store their body with
+  // `{{cN::…}}` syntax, but the parent note's body is plain prose. A direct
+  // substring search always misses; falling back to the inlined-answer form
+  // restores source highlighting + scroll-to-position for those cards.
+  if (hasCloze(text)) {
+    const plain = clozeAnswersInline(text).trim();
+    if (plain && plain !== text) {
+      const idx = uniqueIndexOf(sourceRaw, plain);
+      if (idx !== -1) return { start: idx, end: idx + plain.length };
+    }
+  }
+  return undefined;
+}
+
+function uniqueIndexOf(haystack: string, needle: string): number {
+  const idx = haystack.indexOf(needle);
+  if (idx === -1) return -1;
+  if (haystack.indexOf(needle, idx + 1) !== -1) return -1;
+  return idx;
 }
 
 const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;

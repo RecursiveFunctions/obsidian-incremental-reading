@@ -313,6 +313,26 @@ export function redactClozeAnswers(text: string, marker = "____"): string {
 }
 
 /**
+ * Replace every `{{cN::answer}}` (and `{{cN::answer::hint}}`) span with its
+ * plain `answer` text, dropping the cloze braces, group, and hint. Inverse
+ * of `wrapCloze` for the whole body: the result is what the underlying
+ * source prose looked like before any cloze markup was added.
+ *
+ * Used to locate a cloze item inside its parent source: the item's stored
+ * `text` carries `{{cN::…}}` syntax (one active blank, others inlined) which
+ * never appears verbatim in the parent body, so direct substring search
+ * always misses. Stripping to inline answers yields the prose that lives in
+ * the parent and re-enables source highlighting + scroll-to-position.
+ *
+ * Pure: composes `transformClozes`, so inline-code clozes (`` `{{c1::x}}` ``)
+ * have their wrapping backticks consumed the same way the redactor does,
+ * keeping the round-trip back to source prose lossless on that edge case.
+ */
+export function clozeAnswersInline(text: string): string {
+  return transformClozes(text, ({ answer }) => answer);
+}
+
+/**
  * Walk `raw` and rewrite each `{{cN::…}}` marker to whatever HTML `build`
  * returns. When a marker is immediately surrounded by a single backtick on
  * each side (i.e. the marker is the body of an inline-code span), the

@@ -5,6 +5,7 @@ import {
   buildClozeBody,
   buildClozeFromText,
   bodyWithSingleClozeGroup,
+  clozeAnswersInline,
   escapeClozeHtmlFragment,
   hasCloze,
   listClozeGroupNumbers,
@@ -297,6 +298,47 @@ test("redactClozeAnswers: fixed marker length doesn't telegraph answer length", 
 
 test("redactClozeAnswers: honors a custom marker", () => {
   assert.equal(redactClozeAnswers("a {{c1::b}} c", "[?]"), "a [?] c");
+});
+
+/* ------------------------------------------------------------------ */
+/* clozeAnswersInline                                                  */
+/* ------------------------------------------------------------------ */
+
+test("clozeAnswersInline: replaces a single cloze with its answer", () => {
+  assert.equal(
+    clozeAnswersInline("A is defined as {{c1::B}}"),
+    "A is defined as B",
+  );
+});
+
+test("clozeAnswersInline: drops the hint along with the cloze envelope", () => {
+  assert.equal(
+    clozeAnswersInline("Capital of France: {{c1::Paris::city}}."),
+    "Capital of France: Paris.",
+  );
+});
+
+test("clozeAnswersInline: round-trips a multi-cloze body back to plain prose", () => {
+  // Mirrors a split-cloze item where one blank is active and the others have
+  // been inlined: the result must equal what the parent source contains.
+  const item =
+    "Refactor/re-architect targets cloud-native patterns (e.g., {{c1::microservices}}, containers).";
+  const source =
+    "Refactor/re-architect targets cloud-native patterns (e.g., microservices, containers).";
+  assert.equal(clozeAnswersInline(item), source);
+});
+
+test("clozeAnswersInline: consumes wrapping backticks for inline-code clozes", () => {
+  // transformClozes eats the surrounding backticks on inline-code clozes so
+  // the inlined answer doesn't leave dangling code-span chrome behind.
+  assert.equal(
+    clozeAnswersInline("call `{{c1::pip}}` then publish"),
+    "call pip then publish",
+  );
+});
+
+test("clozeAnswersInline: leaves text without clozes unchanged", () => {
+  assert.equal(clozeAnswersInline("no clozes here"), "no clozes here");
 });
 
 /* ------------------------------------------------------------------ */
