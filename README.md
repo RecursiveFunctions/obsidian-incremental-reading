@@ -62,6 +62,20 @@ Rebind or clear any of them under Settings, Hotkeys.
 
 In the **IR review** tab (after **Start IR review**), defaults include **`Space`** / **`Enter`** for the next reading card, **`[`** for the **Previous** card in the current session (same as the button; first card disables it), **`L`** / **`D`** for later today / dismiss, **`1`–`4`** on revealed clozes, **`Alt+X`** / **`Alt+Z`** for extract / cloze when the card allows children, and **`Ctrl+Enter`** (**`Cmd+Enter`** on macOS) for next while the reading editor is focused.
 
+On **mobile portrait**, the review dock shows primary actions only (**Extract**, **Cloze**, **Next** / grade buttons); tap **⋯** for Edit, Previous, Later today, Dismiss, and Undo. **Priority** and **A-Factor** collapse to a **P … · A …** chip — tap to edit. Swipe the card for the same navigation and grading gestures; a one-time notice explains the directions when review starts.
+
+## Mobile toolbar
+
+Obsidian’s mobile editor toolbar is user-configured (**Settings → Mobile → Configure mobile toolbar**). The plugin cannot reorder it, but these commands are the most useful to pin near the front (left side of the toolbar, before formatting icons):
+
+1. **Extract to IR child note** (scissors) — selection-based extract while editing.
+2. **Cloze to IR item** (brackets) — cloze from selection.
+3. **Start IR review** (brain) — open the review queue.
+4. **IR quick actions (radial wheel)** (layout-list) — contextual bulk extract / split / fork.
+5. **Mark note as IR topic** (book-open) — promote the open note to a reading source.
+
+Outside the editor, use the **workspace FAB** (purple list icon, bottom-right on markdown notes) for quick actions, or the note **⋯ file menu** for the full IR command set.
+
 ## Cloze markup
 
 - Deletions use **Anki-compatible** syntax: `{{c1::hidden text}}`.
