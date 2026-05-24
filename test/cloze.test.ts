@@ -10,6 +10,7 @@ import {
   listClozeGroupNumbers,
   nextClozeNumber,
   parseClozeInner,
+  spliceClozeIntoText,
   transformClozes,
   wrapCloze,
 } from "../src/cloze";
@@ -128,6 +129,30 @@ test("nextClozeNumber returns max existing + 1, ignoring order", () => {
   // Out-of-order or non-contiguous numbers still pick the next free slot
   // strictly above the max so an Anki import keeps each card distinct.
   assert.equal(nextClozeNumber("a {{c5::x}} {{c2::y}} b"), 6);
+});
+
+test("buildClozeFromText honors groupN", () => {
+  const raw = "The quick brown fox";
+  const r = buildClozeFromText(raw, 4, 9, undefined, 3);
+  assert.equal(r.body, "The {{c3::quick}} brown fox");
+});
+
+test("spliceClozeIntoText preserves surrounding text", () => {
+  const raw = "**{{c1::Autoscaling}}** adjusts capacity based on **signals**.";
+  const sel = raw.indexOf("signals");
+  const r = spliceClozeIntoText(raw, sel, sel + "signals".length, undefined, 2);
+  assert.equal(r.answer, "signals");
+  assert.equal(
+    r.body,
+    "**{{c1::Autoscaling}}** adjusts capacity based on **{{c2::signals}}**.",
+  );
+});
+
+test("spliceClozeIntoText returns empty answer on empty selection", () => {
+  const raw = "hello world";
+  const r = spliceClozeIntoText(raw, 5, 5);
+  assert.equal(r.answer, "");
+  assert.equal(r.body, raw);
 });
 
 /* ------------------------------------------------------------------ */

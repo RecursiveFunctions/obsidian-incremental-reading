@@ -25,6 +25,8 @@ import {
 import {
   escapeClozeHtmlFragment,
   hasCloze,
+  nextClozeNumber,
+  spliceClozeIntoText,
   transformClozes,
 } from "./cloze";
 import {
@@ -1243,13 +1245,14 @@ export class IrReviewView extends ItemView {
     sel: { text: string; start: number; end: number },
     hint: string,
   ): Promise<void> {
-    // For an item slot, the new cloze is a *sibling*, not a child: place it
-    // under the item's parent reading source (matches the editor-mode
-    // `newClozeCardFromSelection` path in main.ts).
-    const isItemSibling = slot.element.type === "item";
-    const placement = isItemSibling
-      ? this.resolvePlacementFile(slot)
-      : slot.file ?? this.resolvePlacementFile(slot);
+    // On a cloze item, growing the same note with the next cN group is what
+    // the user expects (Anki-style multi-cloze): the edit appears on the
+    // element being reviewed, and existing groups stay distinct cards.
+    if (slot.element.type === "item" && slot.file) {
+      await this.addClozeToCurrentItem(slot, slot.file, sel, hint);
+      return;
+    }
+    const placement = slot.file ?? this.resolvePlacementFile(slot);
     if (!placement) {
       new Notice(
         "Incremental Reading: could not find a vault-backed topic to place this cloze item.",
@@ -1276,6 +1279,38 @@ export class IrReviewView extends ItemView {
       }
     }
     await this.reloadCurrentRaw();
+    await this.renderCard();
+  }
+
+  /**
+   * Splice a new cloze deletion into the current item's body using the next
+   * free `cN` group (preserves existing clozes as distinct cards), persist
+   * the edit, and re-render the same slot so the new blank appears in place.
+   */
+  private async addClozeToCurrentItem(
+    _slot: ReviewSlot,
+    file: TFile,
+    sel: { text: string; start: number; end: number },
+    hint: string,
+  ): Promise<void> {
+    await this.flushEdits();
+    const groupN = nextClozeNumber(this.currentRaw);
+    const { body, answer } = spliceClozeIntoText(
+      this.currentRaw,
+      sel.start,
+      sel.end,
+      hint,
+      groupN,
+    );
+    if (!answer.trim()) {
+      new Notice("Incremental Reading: nothing selected.");
+      return;
+    }
+    await saveBody(this.app, file, body);
+    this.currentRaw = body;
+    this.rawOnDisk = body;
+    new Notice(`Cloze c${groupN} added: "${answer}".`);
+    this.onChange?.();
     await this.renderCard();
   }
 

@@ -144,6 +144,7 @@ export function buildClozeBody(
   fromCh: number,
   toCh: number,
   hint?: string,
+  groupN = 1,
 ): ClozeBuild {
   const block = spannedLines.join("\n");
   const last = spannedLines[spannedLines.length - 1] ?? "";
@@ -152,7 +153,7 @@ export function buildClozeBody(
     spannedLines.length === 1 ? toCh : block.length - last.length + toCh;
   const answer = block.slice(start, end);
   const body =
-    block.slice(0, start) + wrapCloze(answer, 1, hint) + block.slice(end);
+    block.slice(0, start) + wrapCloze(answer, groupN, hint) + block.slice(end);
   return { body, answer };
 }
 
@@ -167,6 +168,7 @@ export function buildClozeFromText(
   selStart: number,
   selEnd: number,
   hint?: string,
+  groupN = 1,
 ): ClozeBuild {
   const lines = raw.split("\n");
   let acc = 0;
@@ -199,7 +201,29 @@ export function buildClozeFromText(
     fromCh,
     toCh,
     hint,
+    groupN,
   );
+}
+
+/**
+ * Splice a cloze deletion into `raw` at `[selStart, selEnd)`, preserving the
+ * lines before/after the spanned region. Use this when the existing note
+ * should grow into a multi-cloze (Anki-style): the caller picks `groupN`
+ * (typically {@link nextClozeNumber}(raw)) so each blank stays a distinct
+ * card.
+ */
+export function spliceClozeIntoText(
+  raw: string,
+  selStart: number,
+  selEnd: number,
+  hint?: string,
+  groupN = 1,
+): ClozeBuild {
+  if (selEnd <= selStart) return { body: raw, answer: "" };
+  const answer = raw.slice(selStart, selEnd);
+  const body =
+    raw.slice(0, selStart) + wrapCloze(answer, groupN, hint) + raw.slice(selEnd);
+  return { body, answer };
 }
 
 /**
