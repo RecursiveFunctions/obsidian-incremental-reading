@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.24] — 2026-05-24
+
+### Changed
+
+- **IR quick actions:** Replaced the list modal with a **radial wheel** (ring of buttons around a center help card). The wheel **always opens** from the ribbon, **Alt+Shift+U**, menus, or review **Quick actions** so the gesture is predictable; when nothing applies, the center explains which context unlocks each action. The ring is **centered on the active workspace pane** (not the cursor). Command palette name is **IR quick actions (radial wheel)**; ribbon and menus use clearer copy.
+
+### Notes for testers (BRAT)
+
+- Installs use **GitHub Releases** assets (`main.js`, `manifest.json`, `styles.css`) built by `.github/workflows/release.yml` when a semver tag is pushed — not the bare git tree.
+
 ## [0.0.23] — 2026-05-23
 
 ### Added

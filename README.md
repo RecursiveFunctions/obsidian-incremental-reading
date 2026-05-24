@@ -56,6 +56,7 @@ Every IR command ships with a default `Alt+letter` binding. The full set:
 - `Alt+D`: dismiss or restore the current element.
 - `Alt+E`: export IR items to Anki TSV.
 - `Alt+B`: import clipboard text as an IR topic (bulk import).
+- `Alt+Shift+U`: **IR quick actions** — opens a **radial wheel** (contextual: new sibling cloze when you have a selection, split multi-cloze items, fork promoted extracts). Same as the ribbon **layout-list** icon and review **Quick actions**. The wheel always opens centered on the active pane; if no action applies, the center explains why.
 
 Rebind or clear any of them under Settings, Hotkeys.
 
@@ -122,13 +123,16 @@ Per the [UI commitments contract](docs/UI-COMMITMENTS.md), the modal-removal pas
 
 ## Installation
 
-**Beta (BRAT):** install the current pre-release via [BRAT](https://github.com/TfTHacker/obsidian42-brat); the installable version string is always `manifest.json` → `version` (bumped on every commit that ships plugin changes so updates reach testers).
+**Beta (BRAT):** This plugin is distributed for testers via **[GitHub Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases)**. Each semver tag (e.g. `0.0.24`) triggers `.github/workflows/release.yml`, which runs tests, runs `npm run build`, and attaches **`main.js`**, **`manifest.json`**, and **`styles.css`** to that release. BRAT downloads those files — **`main.js` is not committed to git**, so installing from a random branch ZIP in Obsidian will not work.
 
-1. Install BRAT from Community Plugins and enable it.
-2. *Settings -> BRAT -> Add Beta plugin*, paste `RecursiveFunctions/obsidian-incremental-reading`.
-3. Enable *Incremental Reading* under Community Plugins.
+1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from Community Plugins and enable it.
+2. *Settings → BRAT → Add Beta plugin* (or *Obsidian42 - BRAT* depending on build) → repository: **`RecursiveFunctions/obsidian-incremental-reading`**.
+3. Let BRAT install the **latest matching release** (version string = `manifest.json` → `version` on that release). If you just pushed a new tag, wait until the **Release** workflow finishes (green check on GitHub Actions), then use BRAT’s update / re-install.
+4. Enable **Incremental Reading** under Community Plugins.
 
-Treat the beta as alpha-quality: I am dogfooding it in my own vault, mobile support is improved but not complete, and the store format may still change between releases. Back up before adding to a vault you care about.
+Treat the beta as alpha-quality: dogfooded in a real vault, mobile support is improved but not complete, and the store format may still change between releases. Back up before adding to a vault you care about.
+
+If BRAT reports a missing **`main.js`**, open the [Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases) page: the version you picked must list those three files as release assets.
 
 **Stable:** From the Obsidian Community Plugins directory after the plugin meets submission requirements.
 

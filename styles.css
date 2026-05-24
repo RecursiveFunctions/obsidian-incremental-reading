@@ -730,29 +730,136 @@
   font-size: var(--font-ui-small);
 }
 
-/* IR actions hub (command + ribbon) */
-.ir-actions-hub-modal .ir-hub-lede {
+/* IR quick actions — radial overlay */
+.ir-radial-root {
+  position: fixed;
+  inset: 0;
+  z-index: 100050;
+  pointer-events: auto;
+}
+
+.ir-radial-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.ir-radial-disk {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.ir-radial-orbit {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ir-radial-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+  width: 176px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--background-primary);
+  border: 2px solid var(--background-modifier-border);
+  box-shadow: var(--shadow-s);
+  text-align: center;
+  pointer-events: auto;
+}
+
+.ir-radial-center--wide {
+  width: min(300px, 92vw);
+  max-height: min(320px, 58vh);
+  text-align: left;
+}
+
+.ir-radial-center-title {
+  font-weight: 600;
+  font-size: var(--font-ui-small);
+  margin-bottom: 4px;
+  text-align: center;
+}
+
+.ir-radial-center-hint {
+  font-size: 10px;
+  line-height: 1.35;
   color: var(--text-muted);
-  font-size: 0.9em;
-  margin-top: 0;
+  text-align: left;
 }
 
-.ir-actions-hub-modal .ir-hub-row {
-  margin: 0.75em 0;
+.ir-radial-center-hint--empty p {
+  margin: 0.25em 0;
+  font-size: 10px;
 }
 
-.ir-actions-hub-modal .ir-hub-action {
-  display: inline-flex;
+.ir-radial-close {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.ir-radial-petal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.35em;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px;
+  pointer-events: auto;
 }
 
-.ir-actions-hub-modal .ir-hub-action-icon {
-  display: inline-flex;
+.ir-radial-petal:hover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
 }
 
-.ir-actions-hub-modal .ir-hub-desc {
+.ir-radial-petal-key {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 9px;
+  font-weight: 700;
   color: var(--text-muted);
-  font-size: 0.85em;
-  margin: 0.25em 0 0 0.1em;
+}
+
+.ir-radial-petal-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ir-radial-petal-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ir-radial-petal-label {
+  font-size: 8px;
+  line-height: 1.1;
+  text-align: center;
+  color: var(--text-muted);
+  max-width: 52px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }

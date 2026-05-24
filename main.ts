@@ -68,9 +68,9 @@ import {
   stripFrontmatter,
 } from "./src/ir/frontmatter-body";
 import {
-  IrActionsHubModal,
+  openIrRadialQuickMenu,
   type IrHubEntry,
-} from "./src/ir-actions-hub-modal";
+} from "./src/ir-actions-radial";
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -137,9 +137,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       void this.startReview();
     });
 
-    this.addRibbonIcon("layout-list", "Open IR actions hub", () => {
-      void this.openIrActionsHub();
-    });
+    this.addRibbonIcon(
+      "layout-list",
+      "IR quick actions (radial, Alt+Shift+U) — new cloze / split / fork when this note matches",
+      () => {
+        void this.openIrActionsHub();
+      },
+    );
 
     this.addCommand({
       id: "start-review",
@@ -364,7 +368,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.addCommand({
       id: "ir-actions-hub",
-      name: "Open IR actions hub",
+      name: "IR quick actions (radial wheel)",
       icon: "layout-list",
       /** Alt+Shift+U: avoids single-modifier Alt+letter core bindings. */
       hotkeys: [{ modifiers: ["Alt", "Shift"], key: "u" }],
@@ -413,7 +417,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           if (!view.file) return;
           menu.addItem((item) =>
             item
-              .setTitle("Open IR actions hub")
+              .setTitle("IR quick actions (radial wheel)…")
               .setIcon("layout-list")
               .onClick(() => void this.openIrActionsHub()),
           );
@@ -473,7 +477,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
         menu.addItem((item) =>
           item
-            .setTitle("Open IR actions hub")
+            .setTitle("IR quick actions (radial wheel)…")
             .setIcon("layout-list")
             .onClick(() => void this.openIrActionsHub()),
         );
@@ -513,7 +517,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     menu.addSeparator();
     menu.addItem((item) =>
       item
-        .setTitle("Open IR actions hub")
+        .setTitle("IR quick actions (radial wheel)…")
         .setIcon("layout-list")
         .onClick(() => void this.openIrActionsHub()),
     );
@@ -1364,14 +1368,27 @@ export default class IncrementalReadingPlugin extends Plugin {
     void this.refreshStatusBar();
   }
 
-  /** Command palette / ribbon / tree: contextual IR actions in one modal. */
+  /** Radial wheel: contextual IR actions; always opens so placement stays predictable. */
+  private irRadialAnchor(): { cx: number; cy: number } {
+    const leaf = this.app.workspace.activeLeaf;
+    const el = leaf?.view?.containerEl;
+    if (el) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 40 && r.height > 40) {
+        return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+      }
+    }
+    return { cx: window.innerWidth / 2, cy: window.innerHeight / 2 };
+  }
+
+  /** Command palette / ribbon / review: contextual IR actions as a radial wheel. */
   private async openIrActionsHub(): Promise<void> {
     if (!this.store) {
       new Notice("Incremental Reading: store is not ready.");
       return;
     }
     const entries = await this.buildIrHubEntries();
-    new IrActionsHubModal(this.app, entries).open();
+    openIrRadialQuickMenu(this.app, entries, this.irRadialAnchor());
   }
 
   private async buildIrHubEntries(): Promise<IrHubEntry[]> {

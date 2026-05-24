@@ -118,7 +118,7 @@ export class IrReviewView extends ItemView {
      * load indicator without this module knowing about it.
      */
     private onChange?: () => void,
-    /** Opens the host plugin's contextual IR actions modal (ribbon parity). */
+    /** Opens the host plugin's IR quick-actions radial (Alt+Shift+U). */
     private readonly openIrHub?: () => void,
   ) {
     super(leaf);
@@ -775,9 +775,15 @@ export class IrReviewView extends ItemView {
     if (this.openIrHub) {
       const hubRow = controls.createDiv({ cls: "ir-review-hub-row" });
       const hubBtn = hubRow.createEl("button", {
-        text: "IR actions…",
+        text: "Quick actions",
         cls: "ir-review-hub-btn",
         type: "button",
+        attr: {
+          "aria-label":
+            "IR quick actions radial (same as Alt+Shift+U). Shows cloze, split, or fork when your card matches.",
+          title:
+            "IR radial: new cloze / split / fork when this context supports it (Alt+Shift+U)",
+        },
       });
       hubBtn.addEventListener("click", () => this.openIrHub?.());
     }
