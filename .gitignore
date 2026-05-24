@@ -13,6 +13,7 @@ data.json
 # Editor
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 
