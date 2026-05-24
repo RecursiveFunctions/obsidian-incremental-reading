@@ -80,6 +80,25 @@ export class FakeApp {
     },
     cachedRead: async (file: FakeFile): Promise<string> =>
       this.files.get(file.path)?.body ?? "",
+    read: async (file: FakeFile): Promise<string> => {
+      const s = this.files.get(file.path);
+      if (!s) throw new Error(`no file: ${file.path}`);
+      const keys = Object.keys(s.frontmatter);
+      if (keys.length === 0) return s.body;
+      const yaml = keys
+        .map((k) => {
+          const v = s.frontmatter[k];
+          return typeof v === "string" ? `${k}: ${v}` : `${k}: ${JSON.stringify(v)}`;
+        })
+        .join("\n");
+      return `---\n${yaml}\n---\n${s.body}`;
+    },
+    modify: async (file: FakeFile, content: string): Promise<void> => {
+      const s = this.files.get(file.path);
+      if (!s) throw new Error(`no file: ${file.path}`);
+      const m = content.match(/^---\n[\s\S]*?\n---\n?/);
+      s.body = m ? content.slice(m[0].length) : content;
+    },
   };
 
   metadataCache = {

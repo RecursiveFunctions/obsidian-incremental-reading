@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  addClozeMarkerToSourceFile,
   createCloze,
   createExtract,
   getIrType,
@@ -159,6 +160,63 @@ test("createCloze keeps multi-line context", async () => {
   const r = await createCloze(app.asApp(), src as any, editor, SETTINGS);
   assert.ok(r.file, r.error);
   assert.equal(app.bodyOf(r.file!.path), "alpha {{c1::beta\ngamma}} delta\n");
+});
+
+test("addClozeMarkerToSourceFile: 'A is defined as B and C' + cloze on A splices {{c1::A}} into the source file in place", async () => {
+  const app = new FakeApp();
+  const src = app.seed(
+    "Topic.md",
+    { [IR_KEYS.type]: "topic" },
+    "A is defined as B and C",
+  );
+
+  const r = await addClozeMarkerToSourceFile(app.asApp(), src as any, 0, 1);
+
+  assert.equal(r.answer, "A");
+  assert.equal(r.groupN, 1);
+  assert.equal(r.newBody, "{{c1::A}} is defined as B and C");
+  // The on-disk body was actually rewritten — not just the in-memory return value.
+  assert.equal(app.bodyOf("Topic.md"), "{{c1::A}} is defined as B and C\n");
+});
+
+test("addClozeMarkerToSourceFile: a second cloze on the same source bumps to c2 (no duplicate c1)", async () => {
+  const app = new FakeApp();
+  const src = app.seed(
+    "Topic.md",
+    { [IR_KEYS.type]: "topic" },
+    "{{c1::A}} is defined as B and C",
+  );
+
+  const before = app.bodyOf("Topic.md")!;
+  const bStart = before.indexOf("B");
+  const r = await addClozeMarkerToSourceFile(
+    app.asApp(),
+    src as any,
+    bStart,
+    bStart + 1,
+  );
+
+  assert.equal(r.answer, "B");
+  assert.equal(r.groupN, 2);
+  assert.equal(r.newBody, "{{c1::A}} is defined as {{c2::B}} and C");
+  assert.equal(
+    app.bodyOf("Topic.md"),
+    "{{c1::A}} is defined as {{c2::B}} and C\n",
+  );
+});
+
+test("addClozeMarkerToSourceFile: empty selection writes nothing", async () => {
+  const app = new FakeApp();
+  const src = app.seed(
+    "Topic.md",
+    { [IR_KEYS.type]: "topic" },
+    "A is defined as B and C",
+  );
+
+  const r = await addClozeMarkerToSourceFile(app.asApp(), src as any, 5, 5);
+
+  assert.equal(r.answer, "");
+  assert.equal(app.bodyOf("Topic.md"), "A is defined as B and C");
 });
 
 test("dismiss is reversible and lossless; non-IR is refused", async () => {

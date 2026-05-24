@@ -16,6 +16,7 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 import {
+  addClozeMarkerToSourceFile,
   createClozeFromText,
   getIrType,
   setDismissed,
@@ -1278,15 +1279,45 @@ export class IrReviewView extends ItemView {
         this.elementsById.set(id, { ...el, parentId: slot.id });
       }
     }
-    // Persist a visible highlight on the source so the user sees that this
-    // span was clozed — matches Extract behavior. Without this the source
-    // looks unchanged after the action and the only feedback is a notice.
+    // Splice the literal `{{cN::answer}}` syntax into the source so the
+    // change shows up in the textarea/render of the slot being reviewed —
+    // not just in a child note the user cannot see. `nextClozeNumber`
+    // increments past existing c1, c2, … so repeated clozes never collide.
     if (slot.file) {
-      await this.applyExtractHighlight(slot.file, sel.start, sel.end, sel.text);
+      const res = await addClozeMarkerToSourceFile(
+        this.app,
+        slot.file,
+        sel.start,
+        sel.end,
+        hint,
+      );
+      this.currentRaw = res.newBody;
+      this.rawOnDisk = res.newBody;
     } else if (slot.element.text) {
-      await this.applyExtractHighlightInStore(slot, sel.start, sel.end);
+      const groupN = nextClozeNumber(this.currentRaw);
+      const { body } = spliceClozeIntoText(
+        this.currentRaw,
+        sel.start,
+        sel.end,
+        hint,
+        groupN,
+      );
+      const now = Date.now();
+      const ev = buildTextEditedEvent({
+        elementId: slot.id,
+        text: body,
+        eventId: newEventId(),
+        device: await this.store.getDeviceId(),
+        lamport: now,
+        now,
+      });
+      await this.store.appendEvent(ev);
+      const updated = { ...slot.element, text: body };
+      slot.element = updated;
+      this.elementsById.set(slot.id, updated);
+      this.currentRaw = body;
+      this.rawOnDisk = body;
     }
-    await this.reloadCurrentRaw();
     await this.renderCard();
   }
 

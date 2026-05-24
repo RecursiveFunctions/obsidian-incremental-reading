@@ -18,7 +18,12 @@ import {
   newTopicState,
   writeTopicToFrontmatter,
 } from "./topic";
-import { buildClozeBody, buildClozeFromText } from "./cloze";
+import {
+  buildClozeBody,
+  buildClozeFromText,
+  nextClozeNumber,
+  spliceClozeIntoText,
+} from "./cloze";
 import {
   sanitizeExtractSelection,
   saveBody,
@@ -329,6 +334,39 @@ export async function createClozeFromText(
   const trimmed = answer.trim();
   if (!trimmed) return { error: "Nothing selected." };
   return createChildNote(app, source, "item", body, trimmed, settings);
+}
+
+/**
+ * Splice a literal `{{cN::answer}}` cloze marker into a source note's body
+ * (file-backed) so the user gets immediate visible feedback in the review
+ * pane when clozing from a topic / extract. `N` is picked by
+ * {@link nextClozeNumber} on the existing body, so subsequent clozes bump
+ * to c2, c3, … instead of stacking duplicate c1 groups.
+ *
+ * Returns the updated body plus the group number written and the captured
+ * answer text. If the selection is empty, no write happens and `answer` is
+ * the empty string.
+ */
+export async function addClozeMarkerToSourceFile(
+  app: App,
+  file: TFile,
+  selStart: number,
+  selEnd: number,
+  hint?: string,
+): Promise<{ groupN: number; answer: string; newBody: string }> {
+  const raw = stripFrontmatter(await app.vault.read(file));
+  if (selEnd <= selStart) return { groupN: 1, answer: "", newBody: raw };
+  const groupN = nextClozeNumber(raw);
+  const { body, answer } = spliceClozeIntoText(
+    raw,
+    selStart,
+    selEnd,
+    hint,
+    groupN,
+  );
+  if (!answer.trim()) return { groupN, answer: "", newBody: raw };
+  await saveBody(app, file, body);
+  return { groupN, answer, newBody: body };
 }
 
 /**
