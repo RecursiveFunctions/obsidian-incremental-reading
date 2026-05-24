@@ -12,6 +12,7 @@ import {
   Notice,
   Platform,
   Scope,
+  setIcon,
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
@@ -73,6 +74,11 @@ import {
 import { mapRenderedSelectionToRaw } from "./ir/selection-map";
 import { markExtractedSpan } from "./ir-note";
 import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
+import {
+  attachReviewSwipeGestures,
+  reviewSwipeMode,
+  type SwipeOutcome,
+} from "./ir/review-touch-gestures";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -89,6 +95,11 @@ export class IrReviewView extends ItemView {
 
   /** True when the body is shown as an editable textarea, not rendered. */
   private editing = false;
+  /** Per-card DOM host; `renderCard` empties this, not `contentEl`. */
+  private cardHostEl?: HTMLElement;
+  /** Mobile swipe hint overlay; sibling of `cardHostEl`, survives re-renders. */
+  private swipeHintEl?: HTMLElement;
+  private swipeGestureCleanup?: () => void;
   /** Working text for the current slot; updated live by the textarea. */
   private currentRaw = "";
   /** Last known on-disk body for the current slot (for dirty-check). */
@@ -162,8 +173,28 @@ export class IrReviewView extends ItemView {
     this.bookmarks = await this.store.loadBookmarks();
     this.contentEl.addClass("ir-review-modal");
     this.contentEl.addClass("ir-review-layout");
+    this.cardHostEl = this.contentEl.createDiv({ cls: "ir-review-card-host" });
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
+      this.swipeHintEl = this.contentEl.createDiv({
+        cls: "ir-review-swipe-hint",
+      });
+      this.swipeGestureCleanup = attachReviewSwipeGestures(
+        this.contentEl,
+        this.swipeHintEl,
+        {
+          getMode: () => {
+            const slot = this.current;
+            if (!slot) return "reading";
+            const reading = this.isReading(slot);
+            const isCloze = !reading && hasCloze(this.currentRaw);
+            return reviewSwipeMode(reading, isCloze, this.revealed);
+          },
+          isBlocked: () =>
+            !this.current || this.editing || this.isTypingInInput(),
+          onOutcome: (outcome) => this.handleSwipeOutcome(outcome),
+        },
+      );
     }
 
     // Escape needs to go through Obsidian's keymap (Scope), not DOM keydown:
@@ -297,6 +328,9 @@ export class IrReviewView extends ItemView {
 
   async onClose(): Promise<void> {
     this.captureBookmark();
+    this.swipeGestureCleanup?.();
+    this.swipeGestureCleanup = undefined;
+    this.swipeHintEl = undefined;
     this.contentEl.empty();
     this.onSlotChange?.(null);
     void this.persistBookmarks()
@@ -319,6 +353,27 @@ export class IrReviewView extends ItemView {
   /** A reading element (topic/extract) is read and advanced, never graded. */
   private isReading(slot: ReviewSlot): boolean {
     return isReadType(slot.element.type);
+  }
+
+  /**
+   * Mobile swipe on the card body (Option B). Pre-reveal: navigate / show
+   * answer. Post-reveal: grade cardinals. Reading: prev / next only.
+   */
+  private handleSwipeOutcome(outcome: SwipeOutcome): void {
+    if (outcome.kind === "nav") {
+      if (outcome.action === "previous") {
+        void this.previous();
+        return;
+      }
+      if (outcome.action === "next") {
+        void this.next();
+        return;
+      }
+      this.revealed = true;
+      void this.renderCard();
+      return;
+    }
+    void this.grade(outcome.grade);
   }
 
   /** Whether typing characters should go to a textarea, not to hotkeys. */
@@ -734,14 +789,14 @@ export class IrReviewView extends ItemView {
   }
 
   private async renderCard() {
-    const { contentEl } = this;
-    contentEl.empty();
+    const host = this.cardHostEl ?? this.contentEl;
+    host.empty();
 
     const slot = this.current;
     this.onSlotChange?.(slot ? slot.id : null);
     if (!slot) {
-      contentEl.removeClass("ir-review-has-context");
-      const scroll = contentEl.createDiv({ cls: "ir-review-scroll" });
+      this.contentEl.removeClass("ir-review-has-context");
+      const scroll = host.createDiv({ cls: "ir-review-scroll" });
       scroll.createEl("h3", { text: "No active review session" });
       scroll.createEl("p", {
         text:
@@ -759,10 +814,10 @@ export class IrReviewView extends ItemView {
     await this.ensureLoaded(slot);
 
     const sourceCtx = await this.loadSourceContext(slot);
-    if (sourceCtx) contentEl.addClass("ir-review-has-context");
-    else contentEl.removeClass("ir-review-has-context");
+    if (sourceCtx) this.contentEl.addClass("ir-review-has-context");
+    else this.contentEl.removeClass("ir-review-has-context");
 
-    const columns = contentEl.createDiv({ cls: "ir-review-columns" });
+    const columns = host.createDiv({ cls: "ir-review-columns" });
     const reading = this.isReading(slot);
     const isCloze = !reading && hasCloze(this.currentRaw);
     const maskClozeChrome = !reading && isCloze && !this.revealed;
@@ -824,7 +879,9 @@ export class IrReviewView extends ItemView {
     const fill = progressWrap.createDiv({ cls: "ir-review-progress-fill" });
     fill.style.width = `${pct}%`;
 
-    const scroll = mainCol.createDiv({ cls: "ir-review-scroll" });
+    const scroll = mainCol.createDiv({
+      cls: "ir-review-scroll ir-review-swipe-zone",
+    });
 
     const remaining = this.queue.length - this.index;
     const remainingByType = { topics: 0, extracts: 0, items: 0 };
@@ -868,8 +925,38 @@ export class IrReviewView extends ItemView {
       this.attachDocProgress(mainCol, scroll);
     }
 
-    const dock = contentEl.createDiv({ cls: "ir-review-dock" });
+    if (Platform.isMobile && this.openIrHub) {
+      const fab = host.createDiv({ cls: "ir-review-fab" });
+      fab.setAttr("role", "button");
+      fab.setAttr("aria-label", "IR quick actions");
+      fab.setAttr("title", "IR quick actions");
+      setIcon(fab, "layout-list");
+      fab.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this.openIrHub?.();
+      });
+    }
+
+    const dock = host.createDiv({ cls: "ir-review-dock" });
     const controls = dock.createEl("div", { cls: "ir-review-controls" });
+
+    if (Platform.isMobile) {
+      const slotForHint = this.current;
+      if (slotForHint) {
+        const readingHint = this.isReading(slotForHint);
+        const clozeHint =
+          !readingHint && hasCloze(this.currentRaw) && !this.revealed;
+        const hintText = readingHint
+          ? "Swipe card: ← previous · → or ↑ next"
+          : clozeHint
+            ? "Swipe card: ← previous · → next · ↑ show answer"
+            : "Swipe card: ← Again · ↓ Hard · → Good · ↑ Easy";
+        dock.createDiv({
+          cls: "ir-review-swipe-legend",
+          text: hintText,
+        });
+      }
+    }
 
     if (this.openIrHub) {
       const hubRow = controls.createDiv({ cls: "ir-review-hub-row" });
