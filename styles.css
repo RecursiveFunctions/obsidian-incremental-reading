@@ -220,7 +220,7 @@
 /* Workspace FAB: position is set in JS (mobile-viewport.ts) above Obsidian nav. */
 .ir-workspace-fab {
   position: fixed;
-  z-index: 200;
+  z-index: 1000;
   width: 52px;
   height: 52px;
   border-radius: 50%;
@@ -279,7 +279,7 @@
   z-index: 5;
   background: var(--background-primary);
   box-sizing: border-box;
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: var(--ir-safe-top, 0px);
   padding-left: env(safe-area-inset-left, 0);
   padding-right: env(safe-area-inset-right, 0);
 }
@@ -326,10 +326,16 @@
   display: flex;
   justify-content: flex-end;
   gap: 0.4em;
-  padding: max(0.5rem, env(safe-area-inset-top, 0px))
-    max(0.85rem, env(safe-area-inset-right, 0px)) 0.3rem
+  padding: 0.35rem max(0.85rem, env(safe-area-inset-right, 0px)) 0.3rem
     max(0.85rem, env(safe-area-inset-left, 0px));
   background: var(--background-primary);
+}
+
+/* Keyboard-open pinned edit: extra top inset from JS (--ir-safe-top). */
+.ir-review--mobile.ir-review--editing
+  .ir-review-card-host--pinned
+  .ir-review-edit-topbar {
+  padding-top: 0.35rem;
 }
 
 .ir-review-edit-topbar .ir-review-edit-toggle {
@@ -450,6 +456,22 @@
 .ir-reading-doc-progress-label {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* Mobile: label on the left so "% read" is not covered by Android edge nav. */
+.ir-review--mobile .ir-reading-doc-progress {
+  padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
+  padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+}
+
+.ir-review--mobile .ir-reading-doc-progress-label {
+  order: -1;
+  flex: 0 0 auto;
+  min-width: 4.75em;
+}
+
+.ir-review--mobile.ir-review--landscape .ir-reading-doc-progress {
+  padding-right: max(1rem, calc(env(safe-area-inset-right, 0px) + 2.5rem));
 }
 
 .ir-reading-doc-progress--fits .ir-reading-doc-progress-track {
@@ -775,7 +797,7 @@
  * Every pixel of topbar chrome steals a line of textarea, so shrink the
  * pill and its padding here. */
 .ir-review--mobile.ir-review--landscape .ir-review-edit-topbar {
-  padding-top: max(0.25rem, env(safe-area-inset-top, 0px));
+  padding-top: 0.25rem;
   padding-bottom: 0.15rem;
 }
 

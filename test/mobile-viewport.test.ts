@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   clampRadialOrigin,
   keyboardShrinkLikelyOpen,
+  mobileTopInsetPx,
   radialAnchorCenterBottom,
   type MobileViewportInsets,
 } from "../src/ir/mobile-viewport";
@@ -61,4 +62,20 @@ test("keyboardShrinkLikelyOpen: large shrink means keyboard", () => {
 test("keyboardShrinkLikelyOpen: innerHeight-style false positive avoided", () => {
   // innerHeight 800, vv.height 650 — old code hid FAB; baseline approach does not.
   assert.equal(keyboardShrinkLikelyOpen(650, 650), false);
+});
+
+test("mobileTopInsetPx uses fallback when WebView reports zero insets", () => {
+  const insets: MobileViewportInsets = {
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    layoutWidth: 400,
+    layoutHeight: 800,
+    visibleTop: 0,
+    visibleLeft: 0,
+    visibleWidth: 400,
+    visibleHeight: 800,
+  };
+  assert.equal(mobileTopInsetPx(insets), 32);
 });
