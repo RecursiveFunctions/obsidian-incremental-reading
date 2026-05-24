@@ -100,6 +100,9 @@ export class IrReviewView extends ItemView {
   /** Mobile swipe hint overlay; sibling of `cardHostEl`, survives re-renders. */
   private swipeHintEl?: HTMLElement;
   private swipeGestureCleanup?: () => void;
+  /** Fixed quick-actions button; sibling of `cardHostEl` (not inside it). */
+  private fabEl?: HTMLElement;
+  private mobileKeyboardCleanup?: () => void;
   /** Working text for the current slot; updated live by the textarea. */
   private currentRaw = "";
   /** Last known on-disk body for the current slot (for dirty-check). */
@@ -195,6 +198,8 @@ export class IrReviewView extends ItemView {
           onOutcome: (outcome) => this.handleSwipeOutcome(outcome),
         },
       );
+      this.setupMobileFab();
+      this.mobileKeyboardCleanup = this.attachMobileKeyboardGuard();
     }
 
     // Escape needs to go through Obsidian's keymap (Scope), not DOM keydown:
@@ -330,7 +335,11 @@ export class IrReviewView extends ItemView {
     this.captureBookmark();
     this.swipeGestureCleanup?.();
     this.swipeGestureCleanup = undefined;
+    this.mobileKeyboardCleanup?.();
+    this.mobileKeyboardCleanup = undefined;
     this.swipeHintEl = undefined;
+    this.fabEl = undefined;
+    this.cardHostEl = undefined;
     this.contentEl.empty();
     this.onSlotChange?.(null);
     void this.persistBookmarks()
@@ -359,6 +368,91 @@ export class IrReviewView extends ItemView {
    * Mobile swipe on the card body (Option B). Pre-reveal: navigate / show
    * answer. Post-reveal: grade cardinals. Reading: prev / next only.
    */
+  /** Persistent fixed FAB on `contentEl` (not inside the per-card host). */
+  private setupMobileFab(): void {
+    if (!Platform.isMobile || !this.openIrHub || this.fabEl) return;
+    const fab = this.contentEl.createDiv({ cls: "ir-review-fab" });
+    fab.setAttr("role", "button");
+    fab.setAttr("aria-label", "IR quick actions");
+    fab.setAttr("title", "IR quick actions");
+    setIcon(fab, "layout-list");
+    fab.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.openIrHub?.();
+    });
+    this.fabEl = fab;
+  }
+
+  /**
+   * Keep the edit textarea above the on-screen keyboard. Uses
+   * `visualViewport` when available (iOS/Android WebView) and scrolls the
+   * card column so the caret stays visible while selecting text.
+   */
+  private attachMobileKeyboardGuard(): () => void {
+    const vv = window.visualViewport;
+    const adjust = () => this.adjustReviewPaneForKeyboard();
+    if (vv) {
+      vv.addEventListener("resize", adjust);
+      vv.addEventListener("scroll", adjust);
+    }
+    return () => {
+      if (vv) {
+        vv.removeEventListener("resize", adjust);
+        vv.removeEventListener("scroll", adjust);
+      }
+      this.cardHostEl?.style.removeProperty("padding-bottom");
+    };
+  }
+
+  private syncMobileEditChrome(): void {
+    if (!Platform.isMobile) return;
+    if (this.editing) {
+      this.contentEl.addClass("ir-review--editing");
+      requestAnimationFrame(() => this.adjustReviewPaneForKeyboard());
+    } else {
+      this.contentEl.removeClass("ir-review--editing");
+      this.cardHostEl?.style.removeProperty("padding-bottom");
+    }
+  }
+
+  private adjustReviewPaneForKeyboard(): void {
+    if (!Platform.isMobile || !this.editing) return;
+    const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(
+      ".ir-review-textarea",
+    );
+    const scroll = this.cardHostEl?.querySelector<HTMLElement>(
+      ".ir-review-scroll",
+    );
+    if (!ta || !scroll) return;
+
+    const vv = window.visualViewport;
+    if (vv && this.cardHostEl) {
+      const keyboardInset = Math.max(
+        0,
+        window.innerHeight - vv.height - vv.offsetTop,
+      );
+      if (keyboardInset > 24) {
+        this.cardHostEl.style.paddingBottom = `${keyboardInset}px`;
+      } else {
+        this.cardHostEl.style.removeProperty("padding-bottom");
+      }
+    }
+
+    const visibleTop = vv?.offsetTop ?? 0;
+    const visibleBottom = vv
+      ? vv.offsetTop + vv.height
+      : window.innerHeight;
+    const taRect = ta.getBoundingClientRect();
+    const margin = 20;
+
+    if (taRect.bottom > visibleBottom - margin) {
+      scroll.scrollTop += taRect.bottom - visibleBottom + margin + 8;
+    }
+    if (taRect.top < visibleTop + margin) {
+      scroll.scrollTop -= visibleTop + margin - taRect.top;
+    }
+  }
+
   private handleSwipeOutcome(outcome: SwipeOutcome): void {
     if (outcome.kind === "nav") {
       if (outcome.action === "previous") {
@@ -791,6 +885,7 @@ export class IrReviewView extends ItemView {
   private async renderCard() {
     const host = this.cardHostEl ?? this.contentEl;
     host.empty();
+    this.syncMobileEditChrome();
 
     const slot = this.current;
     this.onSlotChange?.(slot ? slot.id : null);
@@ -923,18 +1018,6 @@ export class IrReviewView extends ItemView {
 
     if (reading) {
       this.attachDocProgress(mainCol, scroll);
-    }
-
-    if (Platform.isMobile && this.openIrHub) {
-      const fab = host.createDiv({ cls: "ir-review-fab" });
-      fab.setAttr("role", "button");
-      fab.setAttr("aria-label", "IR quick actions");
-      fab.setAttr("title", "IR quick actions");
-      setIcon(fab, "layout-list");
-      fab.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        this.openIrHub?.();
-      });
     }
 
     const dock = host.createDiv({ cls: "ir-review-dock" });
@@ -1206,15 +1289,19 @@ export class IrReviewView extends ItemView {
         else void this.handleCloze();
       }
     });
-    requestAnimationFrame(() => {
-      // On mobile, programmatic focus opens the IME and shrinks the viewport,
-      // hiding the note until the user dismisses the keyboard. Only autofocus
-      // on desktop where there is no soft keyboard.
-      if (!Platform.isMobile) {
+    if (Platform.isMobile) {
+      ta.addEventListener("focus", () => {
+        requestAnimationFrame(() => {
+          setTimeout(() => this.adjustReviewPaneForKeyboard(), 80);
+          setTimeout(() => this.adjustReviewPaneForKeyboard(), 320);
+        });
+      });
+    } else {
+      requestAnimationFrame(() => {
         ta.focus();
         ta.setSelectionRange(ta.value.length, ta.value.length);
-      }
-    });
+      });
+    }
   }
 
   private renderEditToggle(parent: HTMLElement) {
@@ -1227,7 +1314,10 @@ export class IrReviewView extends ItemView {
         : "Done editing"
       : "Edit";
     parent
-      .createEl("button", { text: label })
+      .createEl("button", {
+        text: label,
+        cls: "ir-review-edit-toggle",
+      })
       .addEventListener("click", () => {
         this.editing = !this.editing;
         void this.renderCard();

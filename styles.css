@@ -143,32 +143,92 @@
   flex-direction: column;
 }
 
-.ir-review-layout.ir-review--mobile {
-  position: relative;
-}
-
-/* Floating quick-actions entry (replaces Alt+Shift+U on mobile). */
-.ir-review-fab {
-  position: absolute;
-  right: max(0.75em, env(safe-area-inset-right, 0px));
-  bottom: calc(
-    max(0.75em, env(safe-area-inset-bottom, 0px)) + 5.75rem
+/* Floating quick-actions entry (replaces Alt+Shift+U on mobile). Fixed to the
+ * viewport so it is not clipped by flex children or lost inside cardHost. */
+.ir-review--mobile .ir-review-fab {
+  position: fixed;
+  right: max(0.85em, env(safe-area-inset-right, 0px));
+  bottom: max(
+    6.5rem,
+    calc(env(safe-area-inset-bottom, 0px) + 6rem)
   );
-  z-index: 20;
-  width: 48px;
-  height: 48px;
+  z-index: 200;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--interactive-accent);
   color: var(--text-on-accent);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
   cursor: pointer;
+  pointer-events: auto;
 }
 
-.ir-review-fab:active {
+.ir-review--mobile .ir-review-fab:active {
   transform: scale(0.96);
+}
+
+.ir-review--mobile .ir-review-fab svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Hide FAB while editing so it does not cover the textarea / keyboard area. */
+.ir-review--mobile.ir-review--editing .ir-review-fab {
+  display: none;
+}
+
+/* Edit mode: drop the source column and bulky dock chrome so the textarea
+ * and keyboard share the visible viewport. */
+.ir-review--mobile.ir-review--editing .ir-review-context-col {
+  display: none;
+}
+
+.ir-review--mobile.ir-review--editing .ir-review-swipe-legend,
+.ir-review--mobile.ir-review--editing .ir-review-hub-row,
+.ir-review--mobile.ir-review--editing .ir-review-priority-row {
+  display: none;
+}
+
+.ir-review--mobile.ir-review--editing .ir-review-buttons button:not(
+    .ir-review-edit-toggle
+  ) {
+  display: none;
+}
+
+.ir-review--mobile.ir-review--editing .ir-review-columns {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.ir-review--mobile.ir-review--editing .ir-review-main-col {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.ir-review--mobile.ir-review--editing .ir-review-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ir-review--mobile.ir-review--editing .ir-review-textarea {
+  min-height: 10em;
+  margin-bottom: 0.35em;
+  resize: none;
+  box-sizing: border-box;
+}
+
+.ir-review--mobile.ir-review--editing .ir-review-dock {
+  flex-shrink: 0;
+  padding-bottom: max(0.5em, env(safe-area-inset-bottom, 0px));
+}
+
+.ir-review--mobile.ir-review--editing .ir-review-edit-toggle {
+  width: 100%;
+  min-height: 44px;
 }
 
 /* Live label while the finger is dragging (e.g. "Good →"). */
