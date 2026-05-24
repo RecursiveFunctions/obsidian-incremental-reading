@@ -128,7 +128,7 @@ test("treeRowLabel: topic uses note title", () => {
   );
 });
 
-test("treeRowLabel: item is neutral + tag", () => {
+test("treeRowLabel: item shows real title by default", () => {
   assert.equal(
     treeRowLabel(
       el({
@@ -136,6 +136,20 @@ test("treeRowLabel: item is neutral + tag", () => {
         type: "item",
         notePath: "continuous delivery spoiler.md",
       }),
+    ),
+    "continuous delivery spoiler",
+  );
+});
+
+test("treeRowLabel: item is neutral + tag when spoilers masked", () => {
+  assert.equal(
+    treeRowLabel(
+      el({
+        id: "item-uuid-99",
+        type: "item",
+        notePath: "continuous delivery spoiler.md",
+      }),
+      true,
     ),
     "Cloze item (itemuu)",
   );

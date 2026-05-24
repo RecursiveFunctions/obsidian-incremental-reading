@@ -120,6 +120,12 @@ export class IrReviewView extends ItemView {
     private onChange?: () => void,
     /** Opens the host plugin's IR quick-actions radial (Alt+Shift+U). */
     private readonly openIrHub?: () => void,
+    /**
+     * Fired whenever the visible slot changes. The host plugin forwards
+     * the id to the IR tree view so it can highlight the user's current
+     * position. `null` means the review pane closed.
+     */
+    private readonly onSlotChange?: (id: ElementId | null) => void,
   ) {
     super(leaf);
   }
@@ -175,10 +181,12 @@ export class IrReviewView extends ItemView {
         !evt.metaKey &&
         (evt.code === "KeyX" || evt.code === "KeyZ")
       ) {
-        if (this.canMakeChild()) {
+        if (evt.code === "KeyX" && this.canMakeChild()) {
           evt.preventDefault();
-          if (evt.code === "KeyX") void this.handleExtract();
-          else void this.handleCloze();
+          void this.handleExtract();
+        } else if (evt.code === "KeyZ" && this.canMakeClozeChild()) {
+          evt.preventDefault();
+          void this.handleCloze();
         }
         return;
       }
@@ -274,6 +282,7 @@ export class IrReviewView extends ItemView {
   async onClose(): Promise<void> {
     this.captureBookmark();
     this.contentEl.empty();
+    this.onSlotChange?.(null);
     void this.persistBookmarks()
       .then(() => this.store.reconcile())
       .catch((e) => {
@@ -284,6 +293,11 @@ export class IrReviewView extends ItemView {
 
   private get current(): ReviewSlot | undefined {
     return this.queue[this.index];
+  }
+
+  /** Element id under review right now, or null if the queue is empty. */
+  getCurrentElementId(): ElementId | null {
+    return this.current?.id ?? null;
   }
 
   /** A reading element (topic/extract) is read and advanced, never graded. */
@@ -335,6 +349,21 @@ export class IrReviewView extends ItemView {
       this.resolveProvenanceSourcePath(slot) !== null &&
       this.resolvePlacementFile(slot) !== null
     );
+  }
+
+  /**
+   * Like {@link canMakeChild} but also allows creating a *sibling* cloze
+   * from a revealed cloze item: the new note is placed under the item's
+   * ir-parent reading source, mirroring the editor-mode "new cloze from
+   * item" path. Gated on `revealed` so the answer is not still hidden when
+   * the user picks a span.
+   */
+  private canMakeClozeChild(): boolean {
+    if (this.canMakeChild()) return true;
+    const slot = this.current;
+    if (!slot || this.bodyMissing) return false;
+    if (slot.element.type !== "item" || !this.revealed) return false;
+    return this.resolvePlacementFile(slot) !== null;
   }
 
   /** First vault path on the ancestor chain (for anchor provenance). */
@@ -644,6 +673,7 @@ export class IrReviewView extends ItemView {
     contentEl.empty();
 
     const slot = this.current;
+    this.onSlotChange?.(slot ? slot.id : null);
     if (!slot) {
       contentEl.removeClass("ir-review-has-context");
       const scroll = contentEl.createDiv({ cls: "ir-review-scroll" });
@@ -1004,17 +1034,23 @@ export class IrReviewView extends ItemView {
   }
 
   private renderChildButtons(parent: HTMLElement) {
-    if (!this.canMakeChild()) return;
-    const extractBtn = parent.createEl("button", {
-      text: this.labelWithHotkey("Extract", "Alt+X"),
-    });
-    this.preventClickStealingFocus(extractBtn);
-    extractBtn.addEventListener("click", () => void this.handleExtract());
-    const clozeBtn = parent.createEl("button", {
-      text: this.labelWithHotkey("Cloze", "Alt+Z"),
-    });
-    this.preventClickStealingFocus(clozeBtn);
-    clozeBtn.addEventListener("click", () => void this.handleCloze());
+    const canExtract = this.canMakeChild();
+    const canCloze = this.canMakeClozeChild();
+    if (!canExtract && !canCloze) return;
+    if (canExtract) {
+      const extractBtn = parent.createEl("button", {
+        text: this.labelWithHotkey("Extract", "Alt+X"),
+      });
+      this.preventClickStealingFocus(extractBtn);
+      extractBtn.addEventListener("click", () => void this.handleExtract());
+    }
+    if (canCloze) {
+      const clozeBtn = parent.createEl("button", {
+        text: this.labelWithHotkey("Cloze", "Alt+Z"),
+      });
+      this.preventClickStealingFocus(clozeBtn);
+      clozeBtn.addEventListener("click", () => void this.handleCloze());
+    }
   }
 
   private resolveSelection():
@@ -1124,7 +1160,7 @@ export class IrReviewView extends ItemView {
 
   public async handleCloze() {
     const slot = this.current;
-    if (!slot || !this.canMakeChild()) return;
+    if (!slot || !this.canMakeClozeChild()) return;
     const sel = this.resolveSelection();
     if (!sel.ok) {
       new Notice(`Incremental Reading: ${sel.reason}`);
@@ -1207,7 +1243,13 @@ export class IrReviewView extends ItemView {
     sel: { text: string; start: number; end: number },
     hint: string,
   ): Promise<void> {
-    const placement = slot.file ?? this.resolvePlacementFile(slot);
+    // For an item slot, the new cloze is a *sibling*, not a child: place it
+    // under the item's parent reading source (matches the editor-mode
+    // `newClozeCardFromSelection` path in main.ts).
+    const isItemSibling = slot.element.type === "item";
+    const placement = isItemSibling
+      ? this.resolvePlacementFile(slot)
+      : slot.file ?? this.resolvePlacementFile(slot);
     if (!placement) {
       new Notice(
         "Incremental Reading: could not find a vault-backed topic to place this cloze item.",

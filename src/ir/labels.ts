@@ -42,13 +42,17 @@ export function neutralTypeLabel(type: IrType): string {
 }
 
 /**
- * Tree / session-log row title. Topics keep real names; extracts and items
- * use generated paths from quoted text (often the answer), so we show a
- * neutral label plus a short id for disambiguation.
+ * Tree / session-log row title. Topics keep real names. Extracts and items
+ * use generated paths from quoted text (often the cloze answer); we only
+ * mask them when `maskSpoilers` is true (active review surface), so users
+ * can identify rows in the tree at all other times.
  */
-export function treeRowLabel(el: IrElement): string {
+export function treeRowLabel(el: IrElement, maskSpoilers = false): string {
   if (el.type === "topic") return labelFor(el);
-  return `${neutralTypeLabel(el.type)} (${shortElementTag(el.id)})`;
+  if (maskSpoilers) {
+    return `${neutralTypeLabel(el.type)} (${shortElementTag(el.id)})`;
+  }
+  return labelFor(el);
 }
 
 /**

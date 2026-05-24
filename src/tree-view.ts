@@ -91,6 +91,13 @@ export class IrTreeView extends ItemView {
   /** Element id currently being dragged (session-only). */
   private dragSourceId: string | null = null;
 
+  /**
+   * Element id under review right now (set by the review pane). When set,
+   * the matching row gets highlighted and scrolled into view so the user
+   * can see their position in the tree while reviewing.
+   */
+  private currentElementId: ElementId | null = null;
+
   constructor(
     leaf: WorkspaceLeaf,
     store: IrStore,
@@ -124,6 +131,36 @@ export class IrTreeView extends ItemView {
   }
 
   async onClose(): Promise<void> {}
+
+  /**
+   * Called by the review pane when the current slot changes. We expand
+   * ancestors so the row is visible, then re-render to apply the highlight.
+   * Pass `null` when review closes.
+   */
+  async setCurrentElementId(id: ElementId | null): Promise<void> {
+    this.currentElementId = id;
+    if (id) {
+      try {
+        const state = await this.store.load();
+        let cur = state.elements.get(id);
+        while (cur?.parentId) {
+          this.collapsed.delete(cur.parentId);
+          cur = state.elements.get(cur.parentId);
+        }
+      } catch (e) {
+        console.error("Incremental Reading: tree current-id expand failed", e);
+      }
+    }
+    await this.render();
+    if (id) this.scrollCurrentIntoView();
+  }
+
+  private scrollCurrentIntoView(): void {
+    const row = this.contentEl.querySelector<HTMLElement>(
+      ".ir-tree-row--current",
+    );
+    if (row) row.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
 
   /**
    * Expand every ancestor so the row is visible, re-render, then swap the
@@ -281,6 +318,8 @@ export class IrTreeView extends ItemView {
       return;
     }
 
+    this.maskSpoilers = this.currentElementId !== null;
+
     let roots = buildTree(elements);
     if (this.filterText.trim()) {
       roots = this.filterTree(roots, this.filterText.trim().toLowerCase());
@@ -338,12 +377,19 @@ export class IrTreeView extends ItemView {
   private lastRenderedRoots: TreeNode[] = [];
 
   /**
+   * Whether the current render should hide cloze answers / extract source
+   * text behind a neutral label. Refreshed at the top of each render based
+   * on whether an IR review pane is open.
+   */
+  private maskSpoilers = false;
+
+  /**
    * Return a pruned copy of the tree keeping only nodes whose label matches
    * the query (case-insensitive) plus all ancestors needed to reach them.
    */
   private filterTree(roots: TreeNode[], query: string): TreeNode[] {
     const filter = (node: TreeNode): TreeNode | null => {
-      const label = treeRowLabel(node.element).toLowerCase();
+      const label = treeRowLabel(node.element, this.maskSpoilers).toLowerCase();
       const selfMatch = label.includes(query);
       const filteredChildren = node.children
         .map(filter)
@@ -372,6 +418,9 @@ export class IrTreeView extends ItemView {
     const li = parent.createEl("li", { cls: "ir-tree-node" });
 
     const row = li.createDiv({ cls: "ir-tree-row" });
+    if (this.currentElementId && node.id === this.currentElementId) {
+      row.addClass("ir-tree-row--current");
+    }
     const hasChildren = node.children.length > 0;
     const isCollapsed = this.collapsed.has(node.id);
 
@@ -396,7 +445,7 @@ export class IrTreeView extends ItemView {
     const iconSpan = row.createSpan({ cls: "ir-tree-icon" });
     setIcon(iconSpan, ICONS[node.type] ?? "circle");
 
-    const label = treeRowLabel(node.element);
+    const label = treeRowLabel(node.element, this.maskSpoilers);
     const titleEl = row.createSpan({
       cls: "ir-tree-title",
       text: label,
@@ -718,9 +767,10 @@ export class IrTreeView extends ItemView {
           .setIcon("trash-2")
           .onClick(() => {
             const childCount = node.children.length;
+            const deleteLabel = treeRowLabel(node.element, this.maskSpoilers);
             const msg = childCount > 0
-              ? `Delete "${treeRowLabel(node.element)}"? Its ${childCount} child${childCount !== 1 ? "ren" : ""} will be reparented to its parent.`
-              : `Delete "${treeRowLabel(node.element)}"?`;
+              ? `Delete "${deleteLabel}"? Its ${childCount} child${childCount !== 1 ? "ren" : ""} will be reparented to its parent.`
+              : `Delete "${deleteLabel}"?`;
             if (!confirm(msg)) return;
             void (async () => {
               try {

@@ -227,6 +227,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           elementsById,
           () => void this.refreshStatusBar(),
           () => void this.openIrActionsHub(),
+          (id) => void this.notifyTreeOfReviewSlot(id),
         );
       },
     );
@@ -570,6 +571,21 @@ export default class IncrementalReadingPlugin extends Plugin {
     return leaf ?? null;
   }
 
+  /**
+   * Forward the review pane's current slot to any open IR tree view, so the
+   * tree highlights and scrolls to the row the user is reviewing. No-op when
+   * the tree is not open.
+   */
+  private async notifyTreeOfReviewSlot(
+    id: ElementId | null,
+  ): Promise<void> {
+    const leaf = this.app.workspace.getLeavesOfType(IR_TREE_VIEW_TYPE)[0];
+    const view = leaf?.view;
+    if (view instanceof IrTreeView) {
+      await view.setCurrentElementId(id);
+    }
+  }
+
   onunload() {
     this.irReviewSession = null;
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
@@ -795,11 +811,26 @@ export default class IncrementalReadingPlugin extends Plugin {
     const existing = this.app.workspace.getLeavesOfType(IR_TREE_VIEW_TYPE);
     if (existing.length > 0) {
       this.app.workspace.revealLeaf(existing[0]);
+      await this.syncTreeToActiveReview();
       return;
     }
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: IR_TREE_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
+    await this.syncTreeToActiveReview();
+  }
+
+  /**
+   * If a review pane is open, push its current slot id to the tree so the
+   * highlight is in sync the moment the tree appears.
+   */
+  private async syncTreeToActiveReview(): Promise<void> {
+    const reviewLeaf =
+      this.app.workspace.getLeavesOfType(IR_REVIEW_VIEW_TYPE)[0];
+    const review = reviewLeaf?.view;
+    if (review instanceof IrReviewView) {
+      await this.notifyTreeOfReviewSlot(review.getCurrentElementId());
+    }
   }
 
   /**

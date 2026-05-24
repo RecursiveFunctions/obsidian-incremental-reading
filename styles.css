@@ -497,6 +497,14 @@
   padding: 8px;
 }
 
+/* Row representing the slot the user is reviewing right now. Makes
+ * position-in-tree obvious while the review pane is open. */
+.ir-tree-row--current {
+  background-color: var(--background-modifier-active-hover);
+  border-radius: var(--radius-s);
+  box-shadow: inset 2px 0 0 var(--text-accent);
+}
+
 .ir-tree-row--dragging {
   opacity: 0.4;
 }
