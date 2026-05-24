@@ -307,37 +307,44 @@
   min-height: 0;
   width: 100%;
   margin: 0;
+  /* Top padding clears the floating Preview pill at top-right (~38px tall
+   * plus 0.4rem of top offset and a small gap). The textarea scrolls its
+   * own content, so this just shifts the first visible line down. */
+  padding-top: 3rem;
   resize: none;
   box-sizing: border-box;
 }
 
-/* Edit mode, keyboard NOT open: the Preview button needs to clear
- * Obsidian's floating bottom nav pill and the device's gesture zone,
- * otherwise it sits right where back/home swipes start. Match the
- * regular portrait dock's 4rem nav clearance. */
-.ir-review--mobile.ir-review--editing .ir-review-dock {
-  flex-shrink: 0;
-  padding-bottom: max(
-    0.75em,
-    calc(env(safe-area-inset-bottom, 0px) + 4rem)
-  );
+/* Mobile edit mode: positioning context for the floating top-right Preview
+ * pill (replaces the old bottom edit dock that sat in the gesture zone). */
+.ir-review--mobile.ir-review--editing .ir-review-card-host {
+  position: relative;
 }
 
-/* Edit mode WITH keyboard open: the card host is pinned to the visible
- * viewport, the keyboard covers the bottom of the screen, and Obsidian's
- * nav pill is hidden. Drop the padding so the textarea gets max visible
- * space and the Preview button sits right above the keyboard. */
-.ir-review--mobile.ir-review--editing .ir-review-card-host--pinned .ir-review-dock {
-  padding-bottom: max(0.5em, env(safe-area-inset-bottom, 0px));
+.ir-review-edit-topbar {
+  position: absolute;
+  top: 0.4rem;
+  right: max(0.5rem, env(safe-area-inset-right, 0px));
+  z-index: 10;
+  display: flex;
+  gap: 0.4em;
 }
 
-.ir-review--mobile.ir-review--editing .ir-review-dock--edit {
-  padding-top: 0.35em;
+.ir-review-edit-topbar .ir-review-edit-toggle {
+  width: auto;
+  min-height: 38px;
+  padding: 0.3em 1.1em;
+  border-radius: 999px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  border: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
 
-.ir-review--mobile.ir-review--editing .ir-review-edit-toggle {
-  width: 100%;
-  min-height: 44px;
+.ir-review-edit-topbar .ir-review-edit-toggle:active {
+  transform: scale(0.97);
 }
 
 /* Live label while the finger is dragging (e.g. "Good →"). */
@@ -376,8 +383,13 @@
   margin-bottom: 0;
 }
 
+/* Session progress: queue completion (cards reviewed / total). Authoritative
+ * indicator at the top of the pane, solid accent, slightly thicker so it
+ * visually reads as the primary progress bar. The doc progress bar inside
+ * the reading body is muted on purpose to distinguish position-in-card
+ * from position-in-queue at a glance. */
 .ir-review-progress-bar {
-  height: 3px;
+  height: 4px;
   background: var(--background-modifier-border);
   border-radius: 2px;
   overflow: hidden;
@@ -410,18 +422,36 @@
   flex-shrink: 0;
 }
 
-.ir-reading-doc-progress-fill {
-  height: 4px;
-  background: var(--text-accent);
-  border-radius: 2px;
-  transition: width 0.15s linear;
+/* Track holds the flex-grow so it spans the row; the fill inside takes
+ * the actual progress width. Keeping flex-grow on the fill itself would
+ * make `width: N%` a no-op and the bar would always look 100% full. */
+.ir-reading-doc-progress-track {
   flex: 1 1 auto;
   min-width: 60px;
+  height: 3px;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ir-reading-doc-progress-fill {
+  height: 100%;
+  width: 0%;
+  /* Muted/dimmed accent: position-in-card is informational, distinct from
+   * the brighter solid session bar at the top of the pane (queue progress). */
+  background: var(--text-accent);
+  opacity: 0.5;
+  border-radius: 2px;
+  transition: width 0.15s linear;
 }
 
 .ir-reading-doc-progress-label {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.ir-reading-doc-progress--fits .ir-reading-doc-progress-track {
+  background: transparent;
 }
 
 .ir-reading-doc-progress--fits .ir-reading-doc-progress-fill {

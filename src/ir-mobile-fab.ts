@@ -2,9 +2,11 @@
  * Workspace-level IR quick-actions FAB for Obsidian mobile.
  *
  * The review-only FAB was easy to miss because it lived inside a flex child
- * with absolute positioning. This button is fixed to the viewport whenever
- * the user is in a markdown note or the IR review pane, so extract/cloze and
- * the radial wheel are one tap away while reading source material.
+ * with absolute positioning. This button is fixed to the viewport when the
+ * user is reading a source markdown note, so extract/cloze and the radial
+ * wheel are one tap away. It is suppressed inside the IR review pane (the
+ * dock already has a "Quick actions" button there) and when text input is
+ * focused (the keyboard is up, the FAB would float over it).
  */
 
 import type { App, Plugin } from "obsidian";
@@ -58,20 +60,24 @@ export function registerWorkspaceIrFab(
     hooks.openHub();
   });
 
-  // When the soft keyboard opens, visualViewport.height shrinks well below the
-  // layout viewport (window.innerHeight). The FAB would otherwise float over
-  // the keyboard and obscure typing on iOS/Android. Threshold: layout viewport
-  // shrunk by more than 150px is the IME, not just URL bar collapse.
+  // When the soft keyboard opens, visualViewport.height shrinks below the
+  // layout viewport. On some devices that signal is unreliable (the WebView
+  // does not always shrink the visual viewport on IME open), so we also
+  // check whether a text input has focus.
   const isKeyboardOpen = (): boolean => {
     const vv = window.visualViewport;
-    if (!vv) return false;
-    return window.innerHeight - vv.height > 150;
+    if (vv && window.innerHeight - vv.height > 150) return true;
+    return isEditingTextInput();
   };
 
   const sync = () => {
     const show = shouldShowWorkspaceFab(plugin.app) && !isKeyboardOpen();
     fab.toggleClass("is-hidden", !show);
   };
+
+  const focusHandler = () => sync();
+  document.addEventListener("focusin", focusHandler, true);
+  document.addEventListener("focusout", focusHandler, true);
 
   plugin.registerEvent(plugin.app.workspace.on("active-leaf-change", sync));
   plugin.registerEvent(plugin.app.workspace.on("layout-change", sync));
@@ -90,19 +96,30 @@ export function registerWorkspaceIrFab(
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
     }
+    document.removeEventListener("focusin", focusHandler, true);
+    document.removeEventListener("focusout", focusHandler, true);
     fab.remove();
   };
+}
+
+function isEditingTextInput(): boolean {
+  const el = document.activeElement;
+  if (!el) return false;
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    return true;
+  }
+  if (el instanceof HTMLElement && el.isContentEditable) return true;
+  return false;
 }
 
 function shouldShowWorkspaceFab(app: App): boolean {
   if (!Platform.isMobile) return false;
 
+  // The review pane already has a "Quick actions" button in the dock, so the
+  // FAB would be redundant there and competes with grade/edit buttons for
+  // the bottom-right corner.
   const reviewLeaf = app.workspace.activeLeaf;
-  if (reviewLeaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE) {
-    const reviewEl = reviewLeaf.view.containerEl;
-    if (reviewEl.hasClass("ir-review--editing")) return false;
-    return true;
-  }
+  if (reviewLeaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE) return false;
 
   const mv = app.workspace.getActiveViewOfType(MarkdownView);
   return !!(mv?.file && mv.file.extension === "md");

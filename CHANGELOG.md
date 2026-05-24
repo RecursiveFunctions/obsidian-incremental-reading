@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] — 2026-05-24
+
+### Changed
+
+- **Doc progress bar now actually scales with the percentage.** The fill
+  element had `flex: 1 1 auto` inside a flex container, so flex-grow
+  overrode the inline `width: N%` and the bar always rendered full-width
+  regardless of how far the user had scrolled. Wrapped the fill in a
+  track element so the track does the flex-grow and the fill inside
+  takes the real width. The fill is also dimmed (accent at 50% opacity,
+  3px tall) so it reads as a secondary scroll indicator versus the
+  solid 4px accent session bar at the top of the pane.
+- **Preview button in mobile edit mode moved to a floating top-right
+  pill.** The bottom-anchored dock toggle sat in the device gesture zone
+  and behind Obsidian's floating nav pill. Native edit-confirm controls
+  (iOS Done, Android checkmark) live in the top app bar, so the pill
+  now floats over the top-right of the textarea. The textarea gets
+  3rem of top padding so the first line clears the pill.
+- **Workspace FAB suppressed inside the IR review pane.** The dock
+  already has a "Quick actions" button, so the FAB in the corner was
+  redundant and competed with the grade/edit buttons for the bottom-
+  right of the pane. Also added a `document.activeElement` check
+  (input/textarea/contenteditable) so the FAB hides while typing on
+  devices where the WebView does not shrink `visualViewport.height`
+  on IME open.
+
 ## [0.3.7] — 2026-05-24
 
 ### Fixed

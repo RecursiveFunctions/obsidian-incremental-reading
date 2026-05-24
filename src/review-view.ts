@@ -499,10 +499,18 @@ export class IrReviewView extends ItemView {
     }
   }
 
+  /**
+   * Mobile edit mode: the old design put the Preview toggle in a bottom
+   * dock, which on portrait phones sat right in the gesture zone and got
+   * clipped by Obsidian's floating nav pill. Native edit-confirm controls
+   * (iOS "Done", Android checkmark) live in the top app bar, so we follow
+   * the same convention here: a compact pill at top-right of the pane,
+   * absolutely positioned over the textarea. The bottom of the pane is
+   * left free for the keyboard and gesture nav.
+   */
   private renderMobileEditDock(host: HTMLElement): void {
-    const dock = host.createDiv({ cls: "ir-review-dock ir-review-dock--edit" });
-    const bar = dock.createDiv({ cls: "ir-review-buttons" });
-    this.renderEditToggle(bar);
+    const topbar = host.createDiv({ cls: "ir-review-edit-topbar" });
+    this.renderEditToggle(topbar);
   }
 
   private handleSwipeOutcome(outcome: SwipeOutcome): void {
@@ -871,7 +879,12 @@ export class IrReviewView extends ItemView {
    */
   private attachDocProgress(mainCol: HTMLElement, scroll: HTMLElement): void {
     const wrap = mainCol.createDiv({ cls: "ir-reading-doc-progress" });
-    const fill = wrap.createDiv({ cls: "ir-reading-doc-progress-fill" });
+    // Track is the flex-grow column; the fill inside takes the actual %.
+    // Without this split the fill itself was the flex-grow child, so the
+    // inline `width: N%` was overridden by flex-grow and the bar always
+    // visually filled the row regardless of progress.
+    const track = wrap.createDiv({ cls: "ir-reading-doc-progress-track" });
+    const fill = track.createDiv({ cls: "ir-reading-doc-progress-fill" });
     const label = wrap.createSpan({ cls: "ir-reading-doc-progress-label" });
 
     const update = () => {
