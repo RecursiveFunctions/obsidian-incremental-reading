@@ -59,3 +59,35 @@ export function clearBookmark(state: BookmarkMap, id: ElementId | string): Bookm
   const { [id as string]: _, ...rest } = state;
   return rest;
 }
+
+/**
+ * Return the `n` most-recently-updated bookmarks, newest first.
+ *
+ * Ties on `updatedAt` are broken by elementId in ascending order so the
+ * output is deterministic for tests and stable across re-renders. Pass
+ * `n = Infinity` (or omit) to get the full sorted list; pass a positive
+ * integer to truncate.
+ *
+ * Pure: callers (the tree-view recent-reading section, the
+ * resume-last-read command) supply the map they already loaded.
+ */
+export function recentBookmarks(state: BookmarkMap, n = Infinity): Bookmark[] {
+  const list = Object.values(state);
+  list.sort((a, b) => {
+    if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
+    return a.elementId < b.elementId ? -1 : a.elementId > b.elementId ? 1 : 0;
+  });
+  // Distinguish "give me everything" (Infinity or omitted) from "zero or
+  // negative" (the caller asked for an empty slice). Returning `list` on
+  // both paths quietly hides UI bugs where a count of 0 should still
+  // render the empty state.
+  if (n <= 0) return [];
+  if (!Number.isFinite(n)) return list;
+  return list.slice(0, Math.floor(n));
+}
+
+/** Most recently-updated bookmark, or `null` if the map is empty. */
+export function mostRecentBookmark(state: BookmarkMap): Bookmark | null {
+  const [first] = recentBookmarks(state, 1);
+  return first ?? null;
+}

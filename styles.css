@@ -146,6 +146,43 @@
   margin-bottom: 0.25em;
 }
 
+/* Document-scoped reading progress: how far through the current topic's
+ * body the user has scrolled. Sits between the body and the dock so it
+ * stays visible regardless of body scroll position. */
+.ir-reading-doc-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ir-reading-doc-progress-fill {
+  height: 4px;
+  background: var(--text-accent);
+  border-radius: 2px;
+  transition: width 0.15s linear;
+  flex: 1 1 auto;
+  min-width: 60px;
+}
+
+.ir-reading-doc-progress-label {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-reading-doc-progress--fits .ir-reading-doc-progress-fill {
+  background: var(--background-modifier-border);
+}
+
+.ir-reading-doc-progress--fits .ir-reading-doc-progress-label {
+  font-style: italic;
+}
+
 /* Ancestor breadcrumb in the review pane (commitment #5). Smaller than the
  * progress line, faint, separated from the body with a small gap. */
 .ir-review-breadcrumb {
@@ -534,6 +571,82 @@
 .ir-tree-empty-filter {
   color: var(--text-muted);
   font-style: italic;
+  padding: 8px;
+}
+
+/* "Resume reading" section at the top of the tree body: surfaces topics
+ * that have a saved scroll-position bookmark so the user can jump back
+ * into a long read without hunting through the tree. Collapsible. */
+.ir-tree-recent-reading {
+  margin: 0 0 8px 0;
+  padding: 6px 8px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+
+.ir-tree-recent-reading-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ir-tree-recent-reading-toggle {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.ir-tree-recent-reading-title {
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.ir-tree-recent-reading-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.ir-tree-recent-reading-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.ir-tree-recent-reading-row:hover,
+.ir-tree-recent-reading-row:focus-visible {
+  background: var(--background-modifier-hover);
+  outline: none;
+}
+
+.ir-tree-recent-reading-row-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ir-tree-recent-reading-row-meta {
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-tree--mobile .ir-tree-recent-reading-row {
+  min-height: 36px;
   padding: 8px;
 }
 

@@ -113,3 +113,66 @@ test("clear then set the same id is equivalent to set on the original", async (t
   const viaClear = m.setBookmark(m.clearBookmark(m.setBookmark({}, b1), "el_a"), b2);
   assert.equal(JSON.stringify(direct), JSON.stringify(viaClear));
 });
+
+/* ------------------------------------------------------------------ */
+/* recentBookmarks / mostRecentBookmark                               */
+/* ------------------------------------------------------------------ */
+
+test("recentBookmarks: sorts newest-first by updatedAt", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/bookmark.ts not implemented yet");
+  const a = mkBookmark("el_a", 0, 0, 0, T0);
+  const b = mkBookmark("el_b", 0, 0, 0, T1);
+  const s = m.setBookmark(m.setBookmark({}, a), b);
+  const sorted = m.recentBookmarks(s);
+  assert.deepEqual(sorted.map((bm: { elementId: string }) => bm.elementId), [
+    "el_b",
+    "el_a",
+  ]);
+});
+
+test("recentBookmarks: tiebreaks on elementId for determinism", async (t) => {
+  // Two bookmarks at the same updatedAt must come out in a deterministic
+  // order so the tree-view "Recent reading" list doesn't flicker between
+  // renders and snapshot tests stay stable.
+  const m = await load();
+  if (!m) return t.skip("src/ir/bookmark.ts not implemented yet");
+  const a = mkBookmark("el_a", 0, 0, 0, T0);
+  const b = mkBookmark("el_b", 0, 0, 0, T0);
+  const c = mkBookmark("el_c", 0, 0, 0, T0);
+  let s = {};
+  s = m.setBookmark(s, b);
+  s = m.setBookmark(s, c);
+  s = m.setBookmark(s, a);
+  const sorted = m.recentBookmarks(s);
+  assert.deepEqual(sorted.map((bm: { elementId: string }) => bm.elementId), [
+    "el_a",
+    "el_b",
+    "el_c",
+  ]);
+});
+
+test("recentBookmarks: respects the n cap and treats non-finite as 'all'", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/bookmark.ts not implemented yet");
+  const xs = [];
+  for (let i = 0; i < 5; i += 1) {
+    xs.push(mkBookmark(`el_${i}`, 0, 0, 0, T0 + i));
+  }
+  let s = {};
+  for (const x of xs) s = m.setBookmark(s, x);
+  assert.equal(m.recentBookmarks(s, 2).length, 2);
+  assert.equal(m.recentBookmarks(s, 100).length, 5);
+  assert.equal(m.recentBookmarks(s).length, 5);
+  assert.equal(m.recentBookmarks(s, 0).length, 0);
+});
+
+test("mostRecentBookmark: returns null on empty, top entry otherwise", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/bookmark.ts not implemented yet");
+  assert.equal(m.mostRecentBookmark({}), null);
+  const a = mkBookmark("el_a", 0, 0, 0, T0);
+  const b = mkBookmark("el_b", 0, 0, 0, T1);
+  const s = m.setBookmark(m.setBookmark({}, a), b);
+  assert.equal(m.mostRecentBookmark(s)?.elementId, "el_b");
+});

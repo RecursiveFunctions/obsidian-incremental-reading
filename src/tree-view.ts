@@ -9,6 +9,8 @@ import {
 } from "obsidian";
 
 import type { LogState } from "./ir/log";
+import { recentBookmarks, type Bookmark } from "./ir/bookmark";
+import { labelFor } from "./ir/labels";
 import { IrStore } from "./ir/store";
 import {
   buildTree,
@@ -121,6 +123,9 @@ export class IrTreeView extends ItemView {
   private selectedIds: Set<string> = new Set();
   private selectionAnchorId: string | null = null;
 
+  /** True when the user collapsed the "Resume reading" header. Session-only. */
+  private recentReadingCollapsed = false;
+
   /** Element id currently being dragged (session-only). */
   private dragSourceId: string | null = null;
 
@@ -142,6 +147,12 @@ export class IrTreeView extends ItemView {
     private readonly commitPromote?: CommitIrPromoteFn,
     private readonly commitReanchor?: CommitIrReanchorFn,
     private readonly forkExtract?: CommitIrForkFn,
+    /**
+     * Open the review pane on the given (or most-recent-by-default)
+     * reading bookmark. Wired in by the host plugin; absent in the tests
+     * that construct the view without the resume integration.
+     */
+    private readonly resumeReading?: (id: ElementId) => Promise<boolean>,
   ) {
     super(leaf);
     this.store = store;
@@ -363,6 +374,10 @@ export class IrTreeView extends ItemView {
 
     const body = container.createDiv({ cls: "ir-tree-body" });
 
+    if (this.resumeReading) {
+      await this.renderRecentReadingSection(body);
+    }
+
     let state;
     try {
       state = await this.store.load();
@@ -527,6 +542,116 @@ export class IrTreeView extends ItemView {
 
   private rowLabel(el: IrElement): string {
     return treeRowLabel(el, this.maskSpoilers, this.itemBodies.get(el.id));
+  }
+
+  /**
+   * Compact "5m ago" / "2h ago" / "3d ago" style. Returns "just now" for
+   * deltas under a minute, falls through to weeks/months for the long
+   * tail. We never reach for full datetime libraries here — the strings
+   * only show up in the recent-reading list, where roughness is fine and
+   * an extra dependency would be overkill.
+   */
+  private relativeTime(updatedAt: number, now: number): string {
+    const dt = Math.max(0, now - updatedAt);
+    const min = 60_000;
+    const hr = 60 * min;
+    const day = 24 * hr;
+    if (dt < min) return "just now";
+    if (dt < hr) return `${Math.floor(dt / min)}m ago`;
+    if (dt < day) return `${Math.floor(dt / hr)}h ago`;
+    if (dt < 7 * day) return `${Math.floor(dt / day)}d ago`;
+    if (dt < 30 * day) return `${Math.floor(dt / day / 7)}w ago`;
+    return `${Math.floor(dt / day / 30)}mo ago`;
+  }
+
+  /**
+   * Render the "Resume reading" header + a row per recent bookmark above
+   * the main tree contents. Only surfaces bookmarks whose target element
+   * still exists in the store AND is still a reading element — a stale
+   * bookmark for a deleted topic, or one for a now-converted cloze item,
+   * is silently dropped (and never offered as a click target) rather
+   * than confronting the user with a broken row.
+   *
+   * Caps at 5 rows: the list is for "did I have something open" recall,
+   * not for browsing every bookmark ever set. A future "Show all" affordance
+   * is the right escape hatch if the cap becomes limiting.
+   *
+   * Falls through silently when there are no usable bookmarks; we'd
+   * rather collapse the area than show "Resume reading (0)" on first
+   * launch.
+   */
+  private async renderRecentReadingSection(parent: HTMLElement): Promise<void> {
+    let bookmarks;
+    let state;
+    try {
+      [bookmarks, state] = await Promise.all([
+        this.store.loadBookmarks(),
+        this.store.load(),
+      ]);
+    } catch (err) {
+      console.error("Incremental Reading: recent-reading load failed", err);
+      return;
+    }
+
+    type Resumable = { bookmark: Bookmark; element: IrElement };
+    const resumable: Resumable[] = [];
+    for (const bm of recentBookmarks(bookmarks)) {
+      const el = state.elements.get(bm.elementId as ElementId);
+      if (!el) continue;
+      if (el.type !== "topic" && el.type !== "extract") continue;
+      if (el.dismissed) continue;
+      resumable.push({ bookmark: bm, element: el });
+      if (resumable.length >= 5) break;
+    }
+    if (resumable.length === 0) return;
+
+    const section = parent.createDiv({ cls: "ir-tree-recent-reading" });
+    const header = section.createDiv({ cls: "ir-tree-recent-reading-header" });
+    const toggle = header.createSpan({
+      cls: "ir-tree-recent-reading-toggle",
+    });
+    setIcon(
+      toggle,
+      this.recentReadingCollapsed ? "chevron-right" : "chevron-down",
+    );
+    header.createSpan({
+      cls: "ir-tree-recent-reading-title",
+      text: `Resume reading (${resumable.length})`,
+    });
+    header.addEventListener("click", () => {
+      this.recentReadingCollapsed = !this.recentReadingCollapsed;
+      void this.render();
+    });
+
+    if (this.recentReadingCollapsed) return;
+
+    const list = section.createDiv({ cls: "ir-tree-recent-reading-list" });
+    const now = Date.now();
+    for (const { bookmark, element } of resumable) {
+      const row = list.createDiv({ cls: "ir-tree-recent-reading-row" });
+      row.setAttribute("role", "button");
+      row.setAttribute("tabindex", "0");
+      const titleEl = row.createSpan({
+        cls: "ir-tree-recent-reading-row-title",
+        text: labelFor(element),
+      });
+      titleEl.setAttribute("title", labelFor(element));
+      row.createSpan({
+        cls: "ir-tree-recent-reading-row-meta",
+        text: this.relativeTime(bookmark.updatedAt, now),
+      });
+      const onClick = (): void => {
+        if (!this.resumeReading) return;
+        void this.resumeReading(element.id);
+      };
+      row.addEventListener("click", onClick);
+      row.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      });
+    }
   }
 
   /**
