@@ -23,10 +23,26 @@ export function labelFor(el: IrElement): string {
   return text.length > 80 ? text.slice(0, 77) + "..." : text;
 }
 
-/** Short disambiguator from a store element id (filename-safe-ish). */
+/**
+ * Short disambiguator drawn from an element id, used as the visible tag in
+ * spoiler-masked rows like `Cloze item (kqwhz5)`.
+ *
+ * Implementation note: the previous version stripped `_` and took the first
+ * 6 alnum chars. That reads fine for random UUIDs (`el_<uuid>`) but collapses
+ * every migrated id to a near-identical tag, because migration ids share a
+ * literal `el_mig_` prefix and their suffix is the path encoded as hex —
+ * many notes that live under the same folder produce the same first six
+ * alnum chars (e.g. every note starting with `K` becomes `elmig4` because
+ * `K` is `0x4b`). Hashing the id with djb2 spreads the values uniformly so
+ * distinct migrated ids get distinct, stable tags. djb2 is plenty for a
+ * 6-char UI label — no security or strict-uniqueness guarantees needed.
+ */
 export function shortElementTag(id: string): string {
-  const alnum = id.replace(/[^a-zA-Z0-9]/g, "");
-  return (alnum.slice(0, 6) || id.slice(0, 6)).toLowerCase();
+  let h = 5381 >>> 0;
+  for (let i = 0; i < id.length; i++) {
+    h = (((h << 5) + h) ^ id.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(36).padStart(6, "0").slice(-6);
 }
 
 /** Non-spoilery type word for cloze/extract rows where titles leak answers. */

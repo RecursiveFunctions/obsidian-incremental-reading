@@ -115,8 +115,37 @@ test("ancestorChain: cycle terminates", () => {
   );
 });
 
-test("shortElementTag: strips non-alphanumeric", () => {
-  assert.equal(shortElementTag("abc-def-012"), "abcdef");
+test("shortElementTag: produces a 6-char alphanumeric tag", () => {
+  assert.match(shortElementTag("abc-def-012"), /^[0-9a-z]{6}$/);
+});
+
+test("shortElementTag: deterministic for the same id", () => {
+  const id = "el_a1b2c3d4-e5f6-7890";
+  assert.equal(shortElementTag(id), shortElementTag(id));
+});
+
+test("shortElementTag: distinct ids get distinct tags", () => {
+  const a = shortElementTag("el_a1b2c3");
+  const b = shortElementTag("el_z9y8x7");
+  assert.notEqual(a, b);
+});
+
+test("shortElementTag: migrated ids that share a folder prefix don't collide", () => {
+  // Regression: under the old implementation every cloze whose source note
+  // lived under (e.g.) `Kubernetes/` rendered as the same `elmig4` because
+  // the first 6 alnum chars of a migrated id are dominated by the literal
+  // `el_mig_` prefix plus the hex of the shared folder name. Two migrated
+  // ids that differ only in the path's tail must now produce different
+  // tags. Both sample ids decode to "Kubernetes/foo.md" / "Kubernetes/bar.md".
+  const foo = shortElementTag(
+    "el_mig_4b756265726e657465732f666f6f2e6d64",
+  );
+  const bar = shortElementTag(
+    "el_mig_4b756265726e657465732f6261722e6d64",
+  );
+  assert.match(foo, /^[0-9a-z]{6}$/);
+  assert.match(bar, /^[0-9a-z]{6}$/);
+  assert.notEqual(foo, bar);
 });
 
 test("treeRowLabel: topic uses note title", () => {
@@ -142,17 +171,15 @@ test("treeRowLabel: item shows real title by default", () => {
 });
 
 test("treeRowLabel: item is neutral + tag when spoilers masked", () => {
-  assert.equal(
-    treeRowLabel(
-      el({
-        id: "item-uuid-99",
-        type: "item",
-        notePath: "continuous delivery spoiler.md",
-      }),
-      true,
-    ),
-    "Cloze item (itemuu)",
+  const label = treeRowLabel(
+    el({
+      id: "item-uuid-99",
+      type: "item",
+      notePath: "continuous delivery spoiler.md",
+    }),
+    true,
   );
+  assert.match(label, /^Cloze item \([0-9a-z]{6}\)$/);
 });
 
 test("treeRowLabel: extracts stay readable even when masking is on", () => {
@@ -178,7 +205,7 @@ test("reviewHeadlineLabel: masks item until caller says reveal", () => {
     type: "item",
     notePath: "Secret Title.md",
   });
-  assert.equal(reviewHeadlineLabel(item, true), "Cloze item (abc)");
+  assert.match(reviewHeadlineLabel(item, true), /^Cloze item \([0-9a-z]{6}\)$/);
   assert.equal(reviewHeadlineLabel(item, false), "Secret Title");
 });
 
