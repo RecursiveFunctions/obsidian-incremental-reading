@@ -2149,6 +2149,100 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     }
 
+    // Fast extract-authoring entries: only surface ones that would actually
+    // do something from the current cursor/selection so the wheel stays a
+    // contextual launcher, not a static menu. Editor + IR-source-typed file
+    // is the gate — items don't extract from themselves, plain notes get
+    // the mark-as-topic prompt elsewhere.
+    if (editor && file?.extension === "md") {
+      const irType = getIrType(this.app, file);
+      if (irType === "topic" || irType === "extract") {
+        out.push(...this.bulkExtractRadialEntries(editor, file, sel));
+      }
+    }
+
+    return out;
+  }
+
+  /**
+   * Compute which of the 5 fast-extract commands are applicable to the
+   * current cursor/selection state, with counts in the description so the
+   * user knows what a bulk action will mint before clicking. Entries are
+   * built in priority order: cursor-driven (paragraph, heading section)
+   * first, then selection-bounded bulk extracts.
+   */
+  private bulkExtractRadialEntries(
+    editor: Editor,
+    file: TFile,
+    selection: string,
+  ): IrHubEntry[] {
+    const out: IrHubEntry[] = [];
+    const fullText = editor.getValue();
+    const body = stripFrontmatter(fullText);
+    const cursor = editor.posToOffset(editor.getCursor());
+    const cursorInBody = this.bodyOffsetOfFullCursor(fullText, body, cursor);
+    const range = selection
+      ? this.editorSelectionAsBodyRange(editor, fullText, body)
+      : null;
+
+    if (findParagraphAtOffset(body, cursorInBody)) {
+      out.push({
+        title: "Extract paragraph at cursor",
+        description:
+          "Anchored extract of the paragraph the cursor sits in. No selection needed.",
+        icon: "pilcrow",
+        run: () => this.extractParagraphAtCursor(editor, file),
+      });
+    }
+
+    if (findHeadingSectionAtOffset(body, cursorInBody)) {
+      out.push({
+        title: "Extract heading section at cursor",
+        description:
+          "Anchored extract from the nearest preceding heading down to the next same-or-higher heading.",
+        icon: "heading",
+        run: () => this.extractHeadingSectionAtCursor(editor, file),
+      });
+    }
+
+    // Blockquotes: scope to selection when present, else whole note. Surface
+    // when there are at least 2 (or 1 with an explicit selection — then the
+    // user clearly meant "extract this quote"). A 1-quote whole-note hit is
+    // redundant with the regular Extract command.
+    const bqs = findAllBlockquotes(body, range ?? undefined);
+    if (bqs.length >= 2 || (bqs.length === 1 && range !== null)) {
+      out.push({
+        title: `Extract every blockquote (${bqs.length})`,
+        description: range
+          ? `Anchored extract per contiguous blockquote in your selection (${bqs.length} found).`
+          : `Anchored extract per contiguous blockquote in this note (${bqs.length} found).`,
+        icon: "quote",
+        run: () => this.extractEveryBlockquote(editor, file),
+      });
+    }
+
+    if (range) {
+      const items = findAllListItems(body, range);
+      if (items.length >= 2) {
+        out.push({
+          title: `Extract every list item (${items.length})`,
+          description: `One anchored extract per bullet/numbered item in the selection (${items.length} found). Indent-aware: nested items split into their own extracts.`,
+          icon: "list",
+          run: () => this.extractEveryListItemInSelection(editor, file),
+        });
+      }
+
+      const paras = findAllParagraphs(body, range);
+      if (paras.length >= 2) {
+        out.push({
+          title: `Extract every paragraph (${paras.length})`,
+          description: `One anchored extract per blank-line-separated block in the selection (${paras.length} found).`,
+          icon: "align-left",
+          run: () => this.extractEveryParagraphInSelection(editor, file),
+        });
+      }
+    }
+
     return out;
   }
 
