@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-05-24
+
+### Fixed
+
+- **Mobile portrait: card body invisible behind a tall dock.** In reading
+  mode the dock was ~460px tall (Quick actions + Priority + "0 = most
+  important" hint + A-Factor + "interval multiplier" hint + 4 rows of
+  buttons + 5.25rem of bottom-nav padding), which on a 750px portrait
+  viewport left no room for the card body once the source column took its
+  40vh. Three coordinated changes:
+  - Inline the hub button, priority editor, and A-Factor editor on a
+    single row above the buttons grid.
+  - Hide the priority/A-Factor hint copy on mobile in both orientations.
+  - Trim portrait bottom-nav padding from 5.25rem to 4rem (still clears
+    Obsidian's nav strip; saves ~20px of card height).
+- **Mobile review, source column starves the card body.** The portrait
+  context column had `flex: 0 0 40vh`, meaning it could not shrink to
+  make room for the main column. Switched to `flex: 0 1 30vh` (basis
+  30vh, can shrink) and dropped the expanded basis from 75vh to 55vh.
+  Added `min-height: 18vh` to the main column so the card body always
+  shows at least a few lines regardless of dock or source size.
+
 ## [0.3.5] — 2026-05-24
 
 ### Fixed

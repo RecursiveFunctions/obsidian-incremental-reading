@@ -97,13 +97,21 @@
 
 .ir-review--mobile .ir-review-context-col {
   /* Explicit basis (not auto): the scroll child has flex:1 1 0 / overflow:auto,
-   * so without a real basis the column collapses to header height in portrait. */
-  flex: 0 0 40vh;
+   * so without a real basis the column collapses to header height in portrait.
+   * flex-shrink: 1 (the middle digit) so the column gives way when the dock
+   * is tall, instead of stealing all of main-col's height. */
+  flex: 0 1 30vh;
   max-width: none;
   max-height: 40vh;
   border-right: none;
   border-bottom: 1px solid var(--background-modifier-border);
   transition: flex-basis 0.18s ease, max-height 0.18s ease;
+}
+
+/* Keep at least a usable slice of the card body visible no matter how tall
+ * the dock + source column want to be. 18vh is roughly 4 lines of text. */
+.ir-review--mobile .ir-review-main-col {
+  min-height: 18vh;
 }
 
 /* Mobile header is a button: lay out label + chevron, keep the chrome from
@@ -153,11 +161,13 @@
   height: 18px;
 }
 
-/* Expanded: portrait jumps from 40vh basis to ~75vh; landscape's flex is
- * overridden by .ir-review--landscape rules below so the rule stays scoped. */
+/* Expanded portrait: jumps from 30vh to 55vh basis, max 65vh. Keeps the
+ * card body and dock visible while showing roughly twice the source.
+ * Landscape's flex is overridden by .ir-review--landscape rules below so
+ * the rule stays scoped per orientation. */
 .ir-review--mobile .ir-review-context-col--expanded {
-  flex: 0 0 75vh;
-  max-height: 75vh;
+  flex: 0 1 55vh;
+  max-height: 65vh;
 }
 
 .ir-review-scroll {
@@ -179,11 +189,12 @@
 
 /* Obsidian mobile draws a floating bottom nav above page content. Safe-area
  * only covers the OS gesture bar, so without extra inset the dock sits under
- * the app chrome and taps miss IR controls. */
+ * the app chrome and taps miss IR controls. 4rem is enough to clear the nav
+ * strip; the earlier 5.25rem was wasting card-body height. */
 .ir-review--mobile .ir-review-dock {
   padding-bottom: max(
     0.75em,
-    calc(env(safe-area-inset-bottom, 0px) + 5.25rem)
+    calc(env(safe-area-inset-bottom, 0px) + 4rem)
   );
 }
 
@@ -523,15 +534,36 @@
   font-size: var(--font-ui-medium);
 }
 
+/* Hide the priority/A-Factor hint copy on mobile in both orientations.
+ * The labels and inputs are self-explanatory on a touch device and the
+ * hint adds a wrap-line per row, eating dock height that should belong
+ * to the card body. */
 .ir-review--mobile .ir-priority-hint {
-  flex-basis: 100%;
-  margin-top: 0.15em;
+  display: none;
 }
 
-/* Portrait mobile dock breathing room: keep controls stacked, just tighten
- * vertical padding so a short card is not pushed offscreen by the dock. */
+/* Portrait mobile dock: inline hub button + priority + A-Factor on one row
+ * above the buttons grid. Tap targets stay at 44px via the existing rules. */
 .ir-review--mobile .ir-review-controls {
-  gap: 0.5em;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.5em 0.6em;
+  align-items: center;
+}
+
+.ir-review--mobile .ir-review-controls .ir-review-hub-row {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.ir-review--mobile .ir-review-controls .ir-priority-row {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 0.4em;
+}
+
+.ir-review--mobile .ir-review-controls .ir-review-buttons {
+  flex-basis: 100%;
 }
 
 .ir-review--mobile .ir-review-dock {
