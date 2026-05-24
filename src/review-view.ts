@@ -1278,6 +1278,14 @@ export class IrReviewView extends ItemView {
         this.elementsById.set(id, { ...el, parentId: slot.id });
       }
     }
+    // Persist a visible highlight on the source so the user sees that this
+    // span was clozed — matches Extract behavior. Without this the source
+    // looks unchanged after the action and the only feedback is a notice.
+    if (slot.file) {
+      await this.applyExtractHighlight(slot.file, sel.start, sel.end, sel.text);
+    } else if (slot.element.text) {
+      await this.applyExtractHighlightInStore(slot, sel.start, sel.end);
+    }
     await this.reloadCurrentRaw();
     await this.renderCard();
   }
