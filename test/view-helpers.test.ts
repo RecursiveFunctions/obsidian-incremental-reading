@@ -119,6 +119,36 @@ test("findExtractRange: falls back to indexOf when anchor fails entirely", () =>
   assert.equal(SOURCE.slice(r.start, r.end), "brown fox");
 });
 
+test("findExtractRange: cloze item locates itself inside plain parent source", () => {
+  // Split-cloze item: body carries `{{cN::…}}` syntax for the active blank
+  // (other groups inlined). The parent source is plain prose. Direct
+  // substring search misses; the cloze-stripped fallback must find it so the
+  // review pane and tree-view can scroll the source to this position.
+  const source =
+    "Intro paragraph.\n\nRefactor/re-architect targets cloud-native patterns (e.g., microservices, containers) and is usually the highest effort migration path.\n\nFollow-up.";
+  const el = makeElement({
+    type: "item",
+    text: "Refactor/re-architect targets cloud-native patterns (e.g., {{c1::microservices}}, containers) and is usually the highest effort migration path.",
+  });
+  const r = findExtractRange(el, source);
+  assert.ok(r);
+  assert.equal(
+    source.slice(r.start, r.end),
+    "Refactor/re-architect targets cloud-native patterns (e.g., microservices, containers) and is usually the highest effort migration path.",
+  );
+});
+
+test("findExtractRange: cloze fallback respects ambiguity guard", () => {
+  // Two identical plain occurrences in the source → the fallback must refuse
+  // to pick one (same contract as the direct-text path).
+  const source = "alpha beta gamma. ... later alpha beta gamma.";
+  const el = makeElement({
+    type: "item",
+    text: "alpha {{c1::beta}} gamma",
+  });
+  assert.equal(findExtractRange(el, source), undefined);
+});
+
 /* ------------------------------------------------------------------ */
 /* findExtractEditorPosition                                           */
 /* ------------------------------------------------------------------ */
