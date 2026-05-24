@@ -2,6 +2,7 @@ import {
   Editor,
   MarkdownView,
   Menu,
+  Modal,
   Notice,
   Platform,
   Plugin,
@@ -68,12 +69,33 @@ import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
 import {
   bodyOffsetsFromFullOffsets,
+  saveBody,
+  stripExtractMarks,
   stripFrontmatter,
+  wrapExtractHighlight,
 } from "./src/ir/frontmatter-body";
+import { locateTextInBody } from "./src/ir/selection-map";
+import {
+  findAllBlockquotes,
+  findAllListItems,
+  findAllParagraphs,
+  findHeadingSectionAtOffset,
+  findParagraphAtOffset,
+  spanIsInsideExtractMark,
+  type Span,
+} from "./src/ir/extract-spans";
 import {
   openIrRadialQuickMenu,
   type IrHubEntry,
 } from "./src/ir-actions-radial";
+
+/**
+ * The bulk-extract commands ask for confirmation above this many candidate
+ * spans. Picked to be permissive for typical fact-list notes (40 bullets is
+ * fine without a prompt) while still catching the "I accidentally selected
+ * a 300-paragraph book chapter" mistake before it explodes the queue.
+ */
+const BULK_EXTRACT_CONFIRM_THRESHOLD = 50;
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -437,6 +459,72 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
+    // Fast extract-authoring commands: paragraph/heading-section at cursor
+    // skip the "select first" ceremony for the most common single-shot case,
+    // and the three bulk commands turn list-style notes (e.g. an imported
+    // glossary or fact list) into N anchored extracts in one keystroke.
+    this.addCommand({
+      id: "ir-extract-paragraph-at-cursor",
+      name: "Extract paragraph at cursor",
+      icon: "pilcrow",
+      editorCheckCallback: (checking, editor, view) => {
+        const file = view.file;
+        if (!file || file.extension !== "md") return false;
+        if (!checking) void this.extractParagraphAtCursor(editor, file);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "ir-extract-heading-section-at-cursor",
+      name: "Extract heading section at cursor",
+      icon: "heading",
+      editorCheckCallback: (checking, editor, view) => {
+        const file = view.file;
+        if (!file || file.extension !== "md") return false;
+        if (!checking) void this.extractHeadingSectionAtCursor(editor, file);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "ir-extract-every-blockquote",
+      name: "Extract every blockquote (in selection or note)",
+      icon: "quote",
+      editorCheckCallback: (checking, editor, view) => {
+        const file = view.file;
+        if (!file || file.extension !== "md") return false;
+        if (!checking) void this.extractEveryBlockquote(editor, file);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "ir-extract-every-list-item-in-selection",
+      name: "Extract every list item in selection",
+      icon: "list",
+      editorCheckCallback: (checking, editor, view) => {
+        const file = view.file;
+        if (!file || file.extension !== "md") return false;
+        if (!editor.getSelection().trim()) return false;
+        if (!checking) void this.extractEveryListItemInSelection(editor, file);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "ir-extract-every-paragraph-in-selection",
+      name: "Extract every paragraph in selection",
+      icon: "align-left",
+      editorCheckCallback: (checking, editor, view) => {
+        const file = view.file;
+        if (!file || file.extension !== "md") return false;
+        if (!editor.getSelection().trim()) return false;
+        if (!checking) void this.extractEveryParagraphInSelection(editor, file);
+        return true;
+      },
+    });
+
     this.addCommand({
       id: "bulk-import",
       name: "Import clipboard as IR topic",
@@ -456,8 +544,30 @@ export default class IncrementalReadingPlugin extends Plugin {
               .setIcon("layout-list")
               .onClick(() => void this.openIrActionsHub()),
           );
-          if (!editor.getSelection().trim()) return;
           const file = view.file;
+          const hasSel = editor.getSelection().trim().length > 0;
+          if (!hasSel) {
+            // No selection: surface the cursor-driven extracts so the user
+            // never has to select anything for the common "extract this
+            // paragraph / heading" case.
+            menu.addItem((item) =>
+              item
+                .setTitle("Extract paragraph at cursor")
+                .setIcon("pilcrow")
+                .onClick(() =>
+                  void this.extractParagraphAtCursor(editor, file),
+                ),
+            );
+            menu.addItem((item) =>
+              item
+                .setTitle("Extract heading section at cursor")
+                .setIcon("heading")
+                .onClick(() =>
+                  void this.extractHeadingSectionAtCursor(editor, file),
+                ),
+            );
+            return;
+          }
           menu.addItem((item) =>
             item
               .setTitle("Extract to IR child note")
@@ -475,6 +585,28 @@ export default class IncrementalReadingPlugin extends Plugin {
               .setTitle("New cloze card (separate item)")
               .setIcon("copy-plus")
               .onClick(() => void this.newClozeCardFromSelection(editor, file)),
+          );
+          menu.addItem((item) =>
+            item
+              .setTitle("Extract every list item in selection")
+              .setIcon("list")
+              .onClick(() =>
+                void this.extractEveryListItemInSelection(editor, file),
+              ),
+          );
+          menu.addItem((item) =>
+            item
+              .setTitle("Extract every paragraph in selection")
+              .setIcon("align-left")
+              .onClick(() =>
+                void this.extractEveryParagraphInSelection(editor, file),
+              ),
+          );
+          menu.addItem((item) =>
+            item
+              .setTitle("Extract every blockquote in selection")
+              .setIcon("quote")
+              .onClick(() => void this.extractEveryBlockquote(editor, file)),
           );
         },
       ),
@@ -729,6 +861,318 @@ export default class IncrementalReadingPlugin extends Plugin {
         "Incremental Reading: could not record the extract in the store. See the developer console.",
       );
     }
+  }
+
+  /* ----------------------------------------------------------------- */
+  /* Fast extract-authoring (paragraph / heading section / bulk)        */
+  /* ----------------------------------------------------------------- */
+
+  /** Cursor-driven: no selection needed. Grabs the paragraph the cursor sits in. */
+  private async extractParagraphAtCursor(
+    editor: Editor,
+    source: TFile,
+  ): Promise<void> {
+    const cursor = editor.posToOffset(editor.getCursor());
+    const fullText = editor.getValue();
+    const body = stripFrontmatter(fullText);
+    const cursorInBody = this.bodyOffsetOfFullCursor(fullText, body, cursor);
+    const span = findParagraphAtOffset(body, cursorInBody);
+    if (!span) {
+      new Notice(
+        "Incremental Reading: cursor isn't inside a paragraph.",
+      );
+      return;
+    }
+    await this.bulkExtractAnchored(source, [span], "Paragraph extracted");
+  }
+
+  /** Cursor-driven: extracts the heading section the cursor sits inside. */
+  private async extractHeadingSectionAtCursor(
+    editor: Editor,
+    source: TFile,
+  ): Promise<void> {
+    const cursor = editor.posToOffset(editor.getCursor());
+    const fullText = editor.getValue();
+    const body = stripFrontmatter(fullText);
+    const cursorInBody = this.bodyOffsetOfFullCursor(fullText, body, cursor);
+    const span = findHeadingSectionAtOffset(body, cursorInBody);
+    if (!span) {
+      new Notice(
+        "Incremental Reading: no heading above the cursor to extract.",
+      );
+      return;
+    }
+    await this.bulkExtractAnchored(
+      source,
+      [span],
+      "Heading section extracted",
+    );
+  }
+
+  /**
+   * Translate a full-file cursor offset to its body-relative offset. The
+   * body the span-finders work on excludes the YAML block AND any blank
+   * lines between the frontmatter and the first prose line, so a naive
+   * `cursor - (fullText.length - body.length)` over-corrects whenever the
+   * note has trailing whitespace (which `stripFrontmatter` also trims).
+   */
+  private bodyOffsetOfFullCursor(
+    fullText: string,
+    body: string,
+    cursor: number,
+  ): number {
+    const fm = fullText.match(/^---\n[\s\S]*?\n---\n?/);
+    const fmLen = fm ? fm[0].length : 0;
+    const afterFm = fullText.slice(fmLen);
+    const leadingWs = afterFm.length - afterFm.trimStart().length;
+    const bodyStartInFull = fmLen + leadingWs;
+    if (cursor <= bodyStartInFull) return 0;
+    const offset = cursor - bodyStartInFull;
+    return Math.min(body.length, Math.max(0, offset));
+  }
+
+  /**
+   * Bulk: every contiguous blockquote in the selection (or whole note when
+   * there is no selection). Skips quotes that already sit inside an extract
+   * mark so it's safe to re-run on a partially extracted note.
+   */
+  private async extractEveryBlockquote(
+    editor: Editor,
+    source: TFile,
+  ): Promise<void> {
+    const fullText = editor.getValue();
+    const body = stripFrontmatter(fullText);
+    const range = this.editorSelectionAsBodyRange(editor, fullText, body);
+    const spans = findAllBlockquotes(body, range ?? undefined);
+    await this.bulkExtractAnchored(source, spans, "Blockquotes extracted");
+  }
+
+  /** Bulk: every top-level list item whose marker line is inside the selection. */
+  private async extractEveryListItemInSelection(
+    editor: Editor,
+    source: TFile,
+  ): Promise<void> {
+    const fullText = editor.getValue();
+    const body = stripFrontmatter(fullText);
+    const range = this.editorSelectionAsBodyRange(editor, fullText, body);
+    if (!range) {
+      new Notice("Incremental Reading: select a range first.");
+      return;
+    }
+    const spans = findAllListItems(body, range);
+    await this.bulkExtractAnchored(source, spans, "List items extracted");
+  }
+
+  /** Bulk: every paragraph (blank-line block) intersecting the selection. */
+  private async extractEveryParagraphInSelection(
+    editor: Editor,
+    source: TFile,
+  ): Promise<void> {
+    const fullText = editor.getValue();
+    const body = stripFrontmatter(fullText);
+    const range = this.editorSelectionAsBodyRange(editor, fullText, body);
+    if (!range) {
+      new Notice("Incremental Reading: select a range first.");
+      return;
+    }
+    const spans = findAllParagraphs(body, range);
+    await this.bulkExtractAnchored(source, spans, "Paragraphs extracted");
+  }
+
+  /** Translate the editor's selection to body-relative offsets, or null. */
+  private editorSelectionAsBodyRange(
+    editor: Editor,
+    fullText: string,
+    body: string,
+  ): Span | null {
+    const from = editor.posToOffset(editor.getCursor("from"));
+    const to = editor.posToOffset(editor.getCursor("to"));
+    if (to <= from) return null;
+    const offsets = bodyOffsetsFromFullOffsets(fullText, from, to);
+    if (!offsets) return null;
+    const start = Math.max(0, Math.min(body.length, offsets.start));
+    const end = Math.max(start, Math.min(body.length, offsets.end));
+    if (end <= start) return null;
+    return { start, end };
+  }
+
+  /**
+   * Engine for the bulk-extract commands. Spans are processed last-to-first
+   * so each `<mark>` insertion never invalidates the offsets of remaining
+   * spans, the source body is rewritten exactly once, and ancestors are
+   * located by text-match so multi-level reading chains stay in sync.
+   *
+   * Already-marked spans are silently skipped — running the command twice
+   * on the same note doesn't duplicate extracts on the same passage.
+   */
+  private async bulkExtractAnchored(
+    source: TFile,
+    rawSpans: Span[],
+    headlineLabel: string,
+  ): Promise<void> {
+    if (!(await this.ensureIrSource(source))) return;
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+
+    const initialBody = stripFrontmatter(await this.app.vault.read(source));
+    const candidates: Span[] = [];
+    for (const s of rawSpans) {
+      if (s.end <= s.start) continue;
+      if (s.end > initialBody.length) continue;
+      if (spanIsInsideExtractMark(initialBody, s)) continue;
+      candidates.push(s);
+    }
+    if (candidates.length === 0) {
+      new Notice("Incremental Reading: nothing new to extract.");
+      return;
+    }
+    if (candidates.length > BULK_EXTRACT_CONFIRM_THRESHOLD) {
+      const ok = await this.confirmBulkExtract(candidates.length);
+      if (!ok) return;
+    }
+
+    // Desc by start: marking the last span never shifts the offsets of any
+    // earlier span, so the in-memory body and recorded offsets stay aligned.
+    candidates.sort((a, b) => b.start - a.start);
+
+    const parentId =
+      (await this.resolveElementIdForFile(source)) ??
+      elementIdForPath(source.path);
+    const priority = getPriority(
+      this.app,
+      source,
+      this.settings.defaultPriority,
+    );
+    const device = await this.store.getDeviceId();
+
+    let body = initialBody;
+    const acceptedTexts: string[] = [];
+    let created = 0;
+    for (const span of candidates) {
+      const sourceTextBefore = body;
+      const now = Date.now();
+      try {
+        const ev = buildExtractEvent({
+          sourcePath: source.path,
+          sourceText: sourceTextBefore,
+          selStart: span.start,
+          selEnd: span.end,
+          parentId,
+          priority,
+          elementId: newElementId(),
+          eventId: newEventId(),
+          device,
+          lamport: now,
+          now,
+          schedule: topicStateToSchedule(
+            newTopicState(this.settings, new Date(now)),
+          ),
+          persistedExtractMark: true,
+        });
+        await this.store.appendEvent(ev);
+        const txt = stripExtractMarks(
+          body.slice(span.start, span.end),
+        ).trim();
+        body = wrapExtractHighlight(body, span.start, span.end);
+        if (txt) acceptedTexts.push(txt);
+        created += 1;
+      } catch (e) {
+        console.error(
+          "Incremental Reading: bulk extract failed for span",
+          span,
+          e,
+        );
+      }
+    }
+
+    if (created === 0) {
+      new Notice("Incremental Reading: no extracts were created.");
+      return;
+    }
+
+    if (body !== initialBody) {
+      await saveBody(this.app, source, body);
+    }
+    await this.markTextsInAncestors(source, acceptedTexts);
+
+    await this.store.reconcile();
+    void this.refreshStatusBar();
+    new Notice(
+      `${headlineLabel}: ${created} extract${created === 1 ? "" : "s"} created.`,
+    );
+  }
+
+  /**
+   * Walk the parent chain of `source` and wrap each text in `texts` once
+   * per ancestor, in-memory, writing each ancestor exactly once. Skips
+   * ambiguous matches (the uniqueness guard in `locateTextInBody`) so a
+   * common phrase doesn't get mis-marked on an upstream note.
+   */
+  private async markTextsInAncestors(
+    source: TFile,
+    texts: string[],
+  ): Promise<void> {
+    if (texts.length === 0) return;
+    let parentPath = this.app.metadataCache.getFileCache(source)?.frontmatter?.[
+      IR_KEYS.parent
+    ];
+    while (typeof parentPath === "string" && parentPath.length > 0) {
+      const parent = this.app.vault.getAbstractFileByPath(parentPath);
+      if (!(parent instanceof TFile)) break;
+      let parentBody = stripFrontmatter(await this.app.vault.read(parent));
+      let changed = false;
+      for (const text of texts) {
+        const located = locateTextInBody(parentBody, text);
+        if (!located) continue;
+        const wrapped = wrapExtractHighlight(
+          parentBody,
+          located.start,
+          located.end,
+        );
+        if (wrapped !== parentBody) {
+          parentBody = wrapped;
+          changed = true;
+        }
+      }
+      if (changed) await saveBody(this.app, parent, parentBody);
+      parentPath = this.app.metadataCache.getFileCache(parent)?.frontmatter?.[
+        IR_KEYS.parent
+      ];
+    }
+  }
+
+  /** Above this many spans the bulk commands prompt before writing. */
+  private async confirmBulkExtract(count: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const modal = new Modal(this.app);
+      modal.titleEl.setText(`Create ${count} extracts?`);
+      modal.contentEl.createEl("p", {
+        text:
+          `This will mint ${count} anchored extracts in the source note, ` +
+          "wrap each span with a highlight, and propagate the marks to any " +
+          "ancestor topics. The action is reversible per-extract from the " +
+          "element tree.",
+      });
+      const btns = modal.contentEl.createDiv({ cls: "modal-button-container" });
+      const cancel = btns.createEl("button", { text: "Cancel" });
+      const ok = btns.createEl("button", {
+        text: `Create ${count}`,
+        cls: "mod-cta",
+      });
+      let resolved = false;
+      const done = (v: boolean) => {
+        if (resolved) return;
+        resolved = true;
+        modal.close();
+        resolve(v);
+      };
+      cancel.addEventListener("click", () => done(false));
+      ok.addEventListener("click", () => done(true));
+      modal.onClose = () => done(false);
+      modal.open();
+    });
   }
 
   private async clozeSelection(editor: Editor, source: TFile) {
