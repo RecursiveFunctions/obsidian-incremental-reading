@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] — 2026-05-24
+
+### Fixed
+
+- **Landscape edit mode: textarea content invisible when the keyboard
+  opens.** The Preview pill was `position: absolute` over the textarea,
+  with a 3rem padding-top on the textarea to compensate. In landscape
+  with the keyboard up, the visible viewport above the keyboard is
+  ~140px, so the 3rem padding plus the cursor at position 0 pushed
+  content below the visible area and the user saw a black void. Moved
+  the topbar into normal flex flow (`order: -1` puts it visually first
+  in the already-column host) so it consumes layout space and the
+  textarea starts naturally below it. Removed the padding-top hack.
+
+### Changed
+
+- **Edit topbar pill nudged in from the right edge** (0.85rem of inset
+  instead of 0.5rem) so it no longer crowds Obsidian's three-dot view
+  menu.
+- **Compact edit topbar in landscape:** pill height 38→32px and smaller
+  vertical padding, since every line of textarea visibility counts when
+  the keyboard is open in landscape.
+- **Dock buttons nudged clear of Android's nav area:** portrait dock
+  bottom padding 4rem → 5rem, landscape 3.5rem → 4rem. Added a 0.25rem
+  margin-bottom on the buttons grid for a visible floor.
+
 ## [0.3.8] — 2026-05-24
 
 ### Changed

@@ -189,13 +189,19 @@
 
 /* Obsidian mobile draws a floating bottom nav above page content. Safe-area
  * only covers the OS gesture bar, so without extra inset the dock sits under
- * the app chrome and taps miss IR controls. 4rem is enough to clear the nav
- * strip; the earlier 5.25rem was wasting card-body height. */
+ * the app chrome and taps miss IR controls. 5rem clears the nav and gives a
+ * visible breathing gap from Android's 3-button nav / gesture indicator. */
 .ir-review--mobile .ir-review-dock {
   padding-bottom: max(
     0.75em,
-    calc(env(safe-area-inset-bottom, 0px) + 4rem)
+    calc(env(safe-area-inset-bottom, 0px) + 5rem)
   );
+}
+
+/* Visible "floor" between the buttons grid and the bottom-nav padding,
+ * so the last row of buttons reads as separate from the system area. */
+.ir-review--mobile .ir-review-buttons {
+  margin-bottom: 0.25rem;
 }
 
 /* Card body: allow vertical scroll; horizontal swipes are captured once
@@ -307,27 +313,26 @@
   min-height: 0;
   width: 100%;
   margin: 0;
-  /* Top padding clears the floating Preview pill at top-right (~38px tall
-   * plus 0.4rem of top offset and a small gap). The textarea scrolls its
-   * own content, so this just shifts the first visible line down. */
-  padding-top: 3rem;
   resize: none;
   box-sizing: border-box;
 }
 
-/* Mobile edit mode: positioning context for the floating top-right Preview
- * pill (replaces the old bottom edit dock that sat in the gesture zone). */
-.ir-review--mobile.ir-review--editing .ir-review-card-host {
-  position: relative;
-}
-
+/* Mobile edit mode: top-right Preview pill in normal flex flow so it
+ * consumes real layout space (the previous absolute-positioned version
+ * required `padding-top: 3rem` on the textarea, which combined with a
+ * landscape+keyboard visible viewport of ~140px pushed the cursor below
+ * the visible area and produced a blank screen). The host is already
+ * flex-direction column; `order: -1` puts the topbar visually first
+ * without forcing renderCard to construct DOM in a special order. */
 .ir-review-edit-topbar {
-  position: absolute;
-  top: 0.4rem;
-  right: max(0.5rem, env(safe-area-inset-right, 0px));
-  z-index: 10;
+  order: -1;
+  flex-shrink: 0;
   display: flex;
+  justify-content: flex-end;
   gap: 0.4em;
+  padding: 0.5rem max(0.85rem, env(safe-area-inset-right, 0px)) 0.3rem
+    max(0.85rem, env(safe-area-inset-left, 0px));
+  background: var(--background-primary);
 }
 
 .ir-review-edit-topbar .ir-review-edit-toggle {
@@ -648,16 +653,16 @@
 }
 
 /* Dock: free-flowing height (no internal scroll) so all buttons are
- * reachable. Bottom padding clears Obsidian's mobile nav bar (which is
- * still visible in landscape on most devices); kept slightly shorter than
- * the portrait 5.25rem since the landscape nav strip is itself shorter. */
+ * reachable. Bottom padding clears Obsidian's mobile nav bar (still
+ * visible in landscape on most devices); 4rem matches the portrait
+ * step-up and keeps Dismiss/Later today clear of Android's nav strip. */
 .ir-review--mobile.ir-review--landscape .ir-review-dock {
   max-height: none;
   overflow: visible;
   padding-top: 0.3em;
   padding-bottom: max(
     0.5em,
-    calc(env(safe-area-inset-bottom, 0px) + 3.5rem)
+    calc(env(safe-area-inset-bottom, 0px) + 4rem)
   );
 }
 
@@ -768,6 +773,20 @@
 
 .ir-review--mobile.ir-review--landscape.ir-review--editing .ir-review-dock {
   max-height: min(28vh, 4.5rem);
+}
+
+/* Landscape edit + keyboard: visible viewport above the keyboard is ~140px.
+ * Every pixel of topbar chrome steals a line of textarea, so shrink the
+ * pill and its padding here. */
+.ir-review--mobile.ir-review--landscape .ir-review-edit-topbar {
+  padding-top: 0.25rem;
+  padding-bottom: 0.15rem;
+}
+
+.ir-review--mobile.ir-review--landscape .ir-review-edit-topbar .ir-review-edit-toggle {
+  min-height: 32px;
+  padding: 0.2em 0.9em;
+  font-size: var(--font-ui-smaller);
 }
 
 .ir-priority-row {
