@@ -1502,6 +1502,80 @@
   font-size: var(--font-ui-small);
 }
 
+/* Phase A mobile compact dock: priority chip, overflow, primary row. */
+.ir-priority-chip {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0.25em 0.75em;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.ir-priority-chip:active {
+  background: var(--background-modifier-hover);
+}
+
+.ir-priority-meta {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+}
+
+.ir-priority-collapse {
+  align-self: flex-end;
+  font-size: var(--font-ui-smaller);
+  padding: 0.2em 0.65em;
+  min-height: 32px;
+}
+
+.ir-review-overflow-btn {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35em;
+  flex: 0 0 44px;
+}
+
+.ir-review-overflow-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ir-review-dock--portrait-compact .ir-review-primary-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.5em;
+  align-items: stretch;
+}
+
+.ir-review-dock--portrait-compact .ir-review-primary-row .mod-cta {
+  flex: 1 1 auto;
+  min-height: 44px;
+  grid-column: unset;
+  width: auto;
+}
+
+.ir-review-dock--portrait-compact .ir-review-buttons {
+  grid-template-columns: 1fr 1fr auto;
+}
+
+.ir-review-dock--portrait-compact
+  .ir-review-buttons
+  > .ir-review-overflow-btn {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  align-self: stretch;
+  height: auto;
+}
+
 /* IR quick actions — radial overlay */
 .ir-radial-root {
   position: fixed;

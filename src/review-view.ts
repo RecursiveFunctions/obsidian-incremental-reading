@@ -9,6 +9,7 @@ import {
   Component,
   ItemView,
   MarkdownRenderer,
+  Menu,
   Notice,
   Platform,
   Scope,
@@ -126,9 +127,15 @@ export class IrReviewView extends ItemView {
    * column over the card; per-session, not persisted. */
   private mobileSourceExpanded = false;
 
-  /** Mobile-only: dismiss the swipe legend once the user has actually swiped.
-   * Persisted in localStorage so the dock stays compact across sessions. */
+  /** Mobile-only: dismiss swipe coaching once the user has actually swiped.
+   * Persisted in localStorage so the one-time Notice does not repeat. */
   private swipeLegendDismissed = false;
+
+  /** Avoid showing the swipe coach Notice on every `renderCard` re-render. */
+  private swipeCoachShownThisSession = false;
+
+  /** Mobile: priority / A-Factor editors collapsed behind a chip until tapped. */
+  private priorityMetaExpanded = false;
 
   /** Reading-position bookmarks loaded once on open, saved incrementally. */
   private bookmarks: BookmarkMap = {};
@@ -521,10 +528,6 @@ export class IrReviewView extends ItemView {
       } catch {
         // Best-effort: in-memory dismissal still applies for the session.
       }
-      // Compact the dock on the next render.
-      this.contentEl
-        .querySelector(".ir-review-swipe-legend")
-        ?.remove();
     }
     if (outcome.kind === "nav") {
       if (outcome.action === "previous") {
@@ -667,8 +670,193 @@ export class IrReviewView extends ItemView {
     return Platform.isMobile ? base : `${base} (${hint})`;
   }
 
+  /** Portrait mobile: primary actions only; secondary actions live in ⋯. */
+  private isMobilePortraitCompactDock(): boolean {
+    return (
+      Platform.isMobile && !this.contentEl.hasClass("ir-review--landscape")
+    );
+  }
+
+  /** Hide hub when Extract/Cloze already sit in the dock. */
+  private shouldShowHubInDock(): boolean {
+    if (!this.openIrHub) return false;
+    const slot = this.current;
+    if (
+      slot &&
+      this.isReading(slot) &&
+      (this.canMakeChild() || this.canMakeClozeChild())
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  private maybeShowSwipeCoachMark(slot: ReviewSlot): void {
+    if (
+      !Platform.isMobile ||
+      this.swipeLegendDismissed ||
+      this.swipeCoachShownThisSession
+    ) {
+      return;
+    }
+    this.swipeCoachShownThisSession = true;
+    const reading = this.isReading(slot);
+    const clozeHint =
+      !reading && hasCloze(this.currentRaw) && !this.revealed;
+    const text = reading
+      ? "Swipe the card: ← previous · → or ↑ next"
+      : clozeHint
+        ? "Swipe the card: ← previous · → next · ↑ show answer"
+        : "Swipe the card: ← Again · ↓ Hard · → Good · ↑ Easy";
+    new Notice(`Incremental Reading: ${text}`, 8000);
+  }
+
+  private renderHubButton(parent: HTMLElement): void {
+    if (!this.shouldShowHubInDock()) return;
+    const hubRow = parent.createDiv({ cls: "ir-review-hub-row" });
+    const hubBtn = hubRow.createEl("button", {
+      text: "Quick actions",
+      cls: "ir-review-hub-btn",
+      type: "button",
+      attr: {
+        "aria-label":
+          "IR quick actions radial (same as Alt+Shift+U). Shows cloze, split, or fork when your card matches.",
+        title:
+          "IR radial: new cloze / split / fork when this context supports it (Alt+Shift+U)",
+      },
+    });
+    hubBtn.addEventListener("click", () => this.openIrHub?.());
+  }
+
+  private renderOverflowButton(
+    parent: HTMLElement,
+    items: { label: string; disabled?: boolean; run: () => void }[],
+  ): void {
+    if (items.length === 0) return;
+    const btn = parent.createEl("button", {
+      cls: "ir-review-overflow-btn",
+      type: "button",
+      attr: { "aria-label": "More review actions" },
+    });
+    setIcon(btn, "more-horizontal");
+    btn.addEventListener("click", (ev) => {
+      const menu = new Menu();
+      for (const item of items) {
+        menu.addItem((mi) =>
+          mi
+            .setTitle(item.label)
+            .setDisabled(!!item.disabled)
+            .onClick(() => item.run()),
+        );
+      }
+      menu.showAtMouseEvent(ev);
+    });
+  }
+
+  private readingOverflowItems(): {
+    label: string;
+    disabled?: boolean;
+    run: () => void;
+  }[] {
+    const items: { label: string; disabled?: boolean; run: () => void }[] =
+      [];
+    if (this.canEdit()) {
+      items.push({
+        label: this.editing ? "Preview" : "Edit",
+        run: () => {
+          this.editing = !this.editing;
+          void this.renderCard();
+        },
+      });
+    }
+    items.push({
+      label: this.labelWithHotkey("Previous", "["),
+      disabled: this.index === 0,
+      run: () => void this.previous(),
+    });
+    items.push({
+      label: this.labelWithHotkey("Later today", "L"),
+      run: () => void this.later(),
+    });
+    items.push({
+      label: this.labelWithHotkey("Dismiss", "D"),
+      run: () => void this.dismiss(),
+    });
+    return items;
+  }
+
+  private gradeOverflowItems(): {
+    label: string;
+    disabled?: boolean;
+    run: () => void;
+  }[] {
+    const items: { label: string; disabled?: boolean; run: () => void }[] =
+      [];
+    items.push({
+      label: this.labelWithHotkey("Previous", "["),
+      disabled: this.index === 0,
+      run: () => void this.previous(),
+    });
+    if (this.canEdit()) {
+      items.push({
+        label: this.editing ? "Done editing" : "Edit",
+        run: () => {
+          this.editing = !this.editing;
+          void this.renderCard();
+        },
+      });
+    }
+    items.push({
+      label: this.labelWithHotkey("Dismiss", "D"),
+      run: () => void this.dismiss(),
+    });
+    if (this.commitUndoLastGrade) {
+      items.push({
+        label: "Undo last grade",
+        run: () => void this.tryUndoLastGrade(),
+      });
+    }
+    return items;
+  }
+
   /** Compact priority editor; reordering is a first-class IR action. */
   private renderPriorityRow(parent: HTMLElement, slot: ReviewSlot) {
+    if (Platform.isMobile && !this.priorityMetaExpanded) {
+      const chip = parent.createEl("button", {
+        cls: "ir-priority-chip",
+        type: "button",
+      });
+      const parts = [`P ${slot.element.priority}`];
+      if (this.isReading(slot) && slot.element.schedule) {
+        const a = Math.round(slot.element.schedule.aFactor * 100) / 100;
+        parts.push(`A ${a}`);
+      }
+      chip.setText(parts.join(" · "));
+      chip.setAttr("aria-label", "Priority and A-Factor — tap to edit");
+      chip.addEventListener("click", () => {
+        this.priorityMetaExpanded = true;
+        void this.renderCard();
+      });
+      return;
+    }
+
+    const wrap = parent.createDiv({ cls: "ir-priority-meta" });
+    if (Platform.isMobile) {
+      wrap
+        .createEl("button", {
+          cls: "ir-priority-collapse",
+          type: "button",
+          text: "Done",
+        })
+        .addEventListener("click", () => {
+          this.priorityMetaExpanded = false;
+          void this.renderCard();
+        });
+    }
+    this.renderPriorityInputs(wrap, slot);
+  }
+
+  private renderPriorityInputs(parent: HTMLElement, slot: ReviewSlot) {
     const row = parent.createEl("div", { cls: "ir-priority-row" });
     row.createEl("span", { text: "Priority" });
     const input = row.createEl("input", { cls: "ir-priority-input" });
@@ -732,6 +920,7 @@ export class IrReviewView extends ItemView {
    */
   private async ensureLoaded(slot: ReviewSlot): Promise<void> {
     if (this.loadedSlotId === slot.id) return;
+    this.priorityMetaExpanded = false;
     if (slot.file) {
       this.rawOnDisk = stripFrontmatter(
         await this.app.vault.cachedRead(slot.file),
@@ -1177,71 +1366,57 @@ export class IrReviewView extends ItemView {
     }
 
     const dock = host.createDiv({ cls: "ir-review-dock" });
+    if (this.isMobilePortraitCompactDock()) {
+      dock.addClass("ir-review-dock--portrait-compact");
+    }
     const controls = dock.createEl("div", { cls: "ir-review-controls" });
 
-    if (Platform.isMobile && !this.swipeLegendDismissed) {
-      const slotForHint = this.current;
-      if (slotForHint) {
-        const readingHint = this.isReading(slotForHint);
-        const clozeHint =
-          !readingHint && hasCloze(this.currentRaw) && !this.revealed;
-        const hintText = readingHint
-          ? "Swipe card: ← previous · → or ↑ next"
-          : clozeHint
-            ? "Swipe card: ← previous · → next · ↑ show answer"
-            : "Swipe card: ← Again · ↓ Hard · → Good · ↑ Easy";
-        dock.createDiv({
-          cls: "ir-review-swipe-legend",
-          text: hintText,
-        });
-      }
-    }
+    this.maybeShowSwipeCoachMark(slot);
 
-    if (this.openIrHub) {
-      const hubRow = controls.createDiv({ cls: "ir-review-hub-row" });
-      const hubBtn = hubRow.createEl("button", {
-        text: "Quick actions",
-        cls: "ir-review-hub-btn",
-        type: "button",
-        attr: {
-          "aria-label":
-            "IR quick actions radial (same as Alt+Shift+U). Shows cloze, split, or fork when your card matches.",
-          title:
-            "IR radial: new cloze / split / fork when this context supports it (Alt+Shift+U)",
-        },
-      });
-      hubBtn.addEventListener("click", () => this.openIrHub?.());
-    }
+    this.renderHubButton(controls);
+
+    const portraitCompact = this.isMobilePortraitCompactDock();
 
     if (reading) {
       this.renderPriorityRow(controls, slot);
       const bar = controls.createEl("div", { cls: "ir-review-buttons" });
       this.renderChildButtons(bar);
-      this.renderEditToggle(bar);
-      const prevRead = bar.createEl("button", {
-        text: this.labelWithHotkey("Previous", "["),
-        cls: "ir-review-util-btn",
-      });
-      if (this.index === 0) prevRead.disabled = true;
-      prevRead.addEventListener("click", () => void this.previous());
-      bar
-        .createEl("button", {
-          text: this.labelWithHotkey("Next", "Space"),
-          cls: "mod-cta ir-review-grade-btn",
-        })
-        .addEventListener("click", () => void this.next());
-      bar
-        .createEl("button", {
-          text: this.labelWithHotkey("Later today", "L"),
+      if (portraitCompact) {
+        const nextRow = bar.createEl("div", { cls: "ir-review-primary-row" });
+        nextRow
+          .createEl("button", {
+            text: this.labelWithHotkey("Next", "Space"),
+            cls: "mod-cta ir-review-grade-btn",
+          })
+          .addEventListener("click", () => void this.next());
+        this.renderOverflowButton(nextRow, this.readingOverflowItems());
+      } else {
+        this.renderEditToggle(bar);
+        const prevRead = bar.createEl("button", {
+          text: this.labelWithHotkey("Previous", "["),
           cls: "ir-review-util-btn",
-        })
-        .addEventListener("click", () => void this.later());
-      bar
-        .createEl("button", {
-          text: this.labelWithHotkey("Dismiss", "D"),
-          cls: "ir-review-util-btn",
-        })
-        .addEventListener("click", () => void this.dismiss());
+        });
+        if (this.index === 0) prevRead.disabled = true;
+        prevRead.addEventListener("click", () => void this.previous());
+        bar
+          .createEl("button", {
+            text: this.labelWithHotkey("Next", "Space"),
+            cls: "mod-cta ir-review-grade-btn",
+          })
+          .addEventListener("click", () => void this.next());
+        bar
+          .createEl("button", {
+            text: this.labelWithHotkey("Later today", "L"),
+            cls: "ir-review-util-btn",
+          })
+          .addEventListener("click", () => void this.later());
+        bar
+          .createEl("button", {
+            text: this.labelWithHotkey("Dismiss", "D"),
+            cls: "ir-review-util-btn",
+          })
+          .addEventListener("click", () => void this.dismiss());
+      }
       this.restoreBookmark(slot);
       this.ensureFocus();
       return;
@@ -1249,56 +1424,90 @@ export class IrReviewView extends ItemView {
 
     if (isCloze && !this.revealed) {
       const preBar = controls.createEl("div", { cls: "ir-review-buttons" });
-      const prevPre = preBar.createEl("button", {
-        text: this.labelWithHotkey("Previous", "["),
-        cls: "ir-review-util-btn",
-      });
-      if (this.index === 0) prevPre.disabled = true;
-      prevPre.addEventListener("click", () => void this.previous());
-      preBar
-        .createEl("button", {
-          text: this.labelWithHotkey("Show answer", "Space"),
-          cls: "mod-cta ir-review-grade-btn",
-        })
-        .addEventListener("click", () => {
-          this.revealed = true;
-          void this.renderCard();
+      if (portraitCompact) {
+        const primaryRow = preBar.createEl("div", {
+          cls: "ir-review-primary-row",
         });
+        primaryRow
+          .createEl("button", {
+            text: this.labelWithHotkey("Show answer", "Space"),
+            cls: "mod-cta ir-review-grade-btn",
+          })
+          .addEventListener("click", () => {
+            this.revealed = true;
+            void this.renderCard();
+          });
+        this.renderOverflowButton(primaryRow, [
+          {
+            label: this.labelWithHotkey("Previous", "["),
+            disabled: this.index === 0,
+            run: () => void this.previous(),
+          },
+        ]);
+      } else {
+        const prevPre = preBar.createEl("button", {
+          text: this.labelWithHotkey("Previous", "["),
+          cls: "ir-review-util-btn",
+        });
+        if (this.index === 0) prevPre.disabled = true;
+        prevPre.addEventListener("click", () => void this.previous());
+        preBar
+          .createEl("button", {
+            text: this.labelWithHotkey("Show answer", "Space"),
+            cls: "mod-cta ir-review-grade-btn",
+          })
+          .addEventListener("click", () => {
+            this.revealed = true;
+            void this.renderCard();
+          });
+      }
       this.ensureFocus();
       return;
     }
 
     this.renderPriorityRow(controls, slot);
     const bar = controls.createEl("div", { cls: "ir-review-buttons" });
-    const prevGrade = bar.createEl("button", {
-      text: this.labelWithHotkey("Previous", "["),
-      cls: "ir-review-util-btn",
-    });
-    if (this.index === 0) prevGrade.disabled = true;
-    prevGrade.addEventListener("click", () => void this.previous());
-    this.renderEditToggle(bar);
-    for (const { grade, label: gLabel, key } of GRADES) {
-      const text = Platform.isMobile ? gLabel : `${gLabel} (${key})`;
-      bar
-        .createEl("button", { text, cls: `ir-review-grade-btn ir-review-grade-btn--${grade}` })
-        .addEventListener("click", () => void this.grade(grade));
-    }
-    bar
-      .createEl("button", {
-        text: this.labelWithHotkey("Dismiss", "D"),
+    if (portraitCompact) {
+      for (const { grade, label: gLabel } of GRADES) {
+        bar
+          .createEl("button", {
+            text: gLabel,
+            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
+          })
+          .addEventListener("click", () => void this.grade(grade));
+      }
+      this.renderOverflowButton(bar, this.gradeOverflowItems());
+    } else {
+      const prevGrade = bar.createEl("button", {
+        text: this.labelWithHotkey("Previous", "["),
         cls: "ir-review-util-btn",
-      })
-      .addEventListener("click", () => void this.dismiss());
-    if (this.commitUndoLastGrade) {
-      // No hotkey hint here: the command palette entry intentionally ships
-      // without a default hotkey (see main.ts), so the user picks one if
-      // they want one.
+      });
+      if (this.index === 0) prevGrade.disabled = true;
+      prevGrade.addEventListener("click", () => void this.previous());
+      this.renderEditToggle(bar);
+      for (const { grade, label: gLabel, key } of GRADES) {
+        const text = Platform.isMobile ? gLabel : `${gLabel} (${key})`;
+        bar
+          .createEl("button", {
+            text,
+            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
+          })
+          .addEventListener("click", () => void this.grade(grade));
+      }
       bar
         .createEl("button", {
-          cls: "ir-review-undo ir-review-util-btn",
-          text: "Undo last grade",
+          text: this.labelWithHotkey("Dismiss", "D"),
+          cls: "ir-review-util-btn",
         })
-        .addEventListener("click", () => void this.tryUndoLastGrade());
+        .addEventListener("click", () => void this.dismiss());
+      if (this.commitUndoLastGrade) {
+        bar
+          .createEl("button", {
+            cls: "ir-review-undo ir-review-util-btn",
+            text: "Undo last grade",
+          })
+          .addEventListener("click", () => void this.tryUndoLastGrade());
+      }
     }
     this.ensureFocus();
   }
