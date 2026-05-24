@@ -10,6 +10,7 @@ import {
   listClozeGroupNumbers,
   nextClozeNumber,
   parseClozeInner,
+  redactClozeAnswers,
   spliceClozeIntoText,
   transformClozes,
   wrapCloze,
@@ -245,4 +246,53 @@ test("bodyWithSingleClozeGroup preserves hint on focused group", () => {
     bodyWithSingleClozeGroup("x {{c3::ans::hint}} y", 3),
     "x {{c1::ans::hint}} y",
   );
+});
+
+test("redactClozeAnswers: replaces a single cloze with underscores", () => {
+  assert.equal(
+    redactClozeAnswers("A is defined as {{c1::B}}"),
+    "A is defined as ____",
+  );
+});
+
+test("redactClozeAnswers: redacts hinted clozes the same as plain ones", () => {
+  // The hint is part of the answer envelope and could leak too, so the entire
+  // {{cN::answer::hint}} span collapses to the marker.
+  assert.equal(
+    redactClozeAnswers("Q: {{c1::Paris::capital}} is the answer."),
+    "Q: ____ is the answer.",
+  );
+});
+
+test("redactClozeAnswers: handles multiple clozes in one string", () => {
+  assert.equal(
+    redactClozeAnswers("first {{c1::A}} then {{c2::B}} done"),
+    "first ____ then ____ done",
+  );
+});
+
+test("redactClozeAnswers: consumes wrapping backticks for inline-code clozes", () => {
+  // transformClozes already eats the surrounding backticks for inline-code
+  // clozes; the redactor must inherit that behavior so the label doesn't show
+  // dangling backticks.
+  assert.equal(
+    redactClozeAnswers("call `{{c1::pip}}` then publish"),
+    "call ____ then publish",
+  );
+});
+
+test("redactClozeAnswers: leaves text without clozes unchanged", () => {
+  assert.equal(redactClozeAnswers("no clozes here"), "no clozes here");
+});
+
+test("redactClozeAnswers: fixed marker length doesn't telegraph answer length", () => {
+  // Two answers of different sizes must produce the same redaction so the
+  // mark width can't be used to guess the answer.
+  const a = redactClozeAnswers("x {{c1::tiny}} y");
+  const b = redactClozeAnswers("x {{c1::a much much longer answer}} y");
+  assert.equal(a, b);
+});
+
+test("redactClozeAnswers: honors a custom marker", () => {
+  assert.equal(redactClozeAnswers("a {{c1::b}} c", "[?]"), "a [?] c");
 });

@@ -6,6 +6,7 @@
 
 import type { IrElement, IrType } from "./model";
 import { stripExtractMarks } from "./frontmatter-body";
+import { hasCloze, redactClozeAnswers } from "../cloze";
 
 /** Human label for an element. Prefer the note basename; fall back to the
  *  first ~80 chars of stored text; fall back to a "(type)" tag.
@@ -62,12 +63,37 @@ export function neutralTypeLabel(type: IrType): string {
  * names — only cloze items risk leaking their hidden answer through the
  * label (the basename / first chars of text often *are* the answer), so
  * those are the only rows masked when `maskSpoilers` is on.
+ *
+ * When `body` is supplied (the tree view loads it via `cachedRead` before
+ * rendering) and contains cloze syntax, the masked label becomes the cloze
+ * question with each `{{cN::…}}` answer replaced by `____`. That lets the
+ * user identify a card by its prompt while still hiding the answer:
+ *
+ *     "A is defined as {{c1::B}}"  →  "A is defined as ____"
+ *
+ * Falls back to the neutral `Cloze item (xxxxxx)` form when no body is
+ * available or the body has no cloze syntax (basenames are still
+ * answer-shaped, so we never trust them for masked rows).
  */
-export function treeRowLabel(el: IrElement, maskSpoilers = false): string {
+export function treeRowLabel(
+  el: IrElement,
+  maskSpoilers = false,
+  body?: string,
+): string {
   if (maskSpoilers && el.type === "item") {
-    return `${neutralTypeLabel(el.type)} (${shortElementTag(el.id)})`;
+    return maskedItemLabel(el, body);
   }
   return labelFor(el);
+}
+
+function maskedItemLabel(el: IrElement, body: string | undefined): string {
+  if (body && hasCloze(body)) {
+    const redacted = redactClozeAnswers(body).trim().replace(/\s+/g, " ");
+    if (redacted.length > 0) {
+      return redacted.length > 80 ? redacted.slice(0, 77) + "..." : redacted;
+    }
+  }
+  return `${neutralTypeLabel(el.type)} (${shortElementTag(el.id)})`;
 }
 
 /**

@@ -170,7 +170,7 @@ test("treeRowLabel: item shows real title by default", () => {
   );
 });
 
-test("treeRowLabel: item is neutral + tag when spoilers masked", () => {
+test("treeRowLabel: item is neutral + tag when spoilers masked and no body", () => {
   const label = treeRowLabel(
     el({
       id: "item-uuid-99",
@@ -180,6 +180,81 @@ test("treeRowLabel: item is neutral + tag when spoilers masked", () => {
     true,
   );
   assert.match(label, /^Cloze item \([0-9a-z]{6}\)$/);
+});
+
+test("treeRowLabel: masked item shows the cloze question with answer redacted", () => {
+  // The user wants to identify a cloze in the tree without seeing its
+  // answer. Given the body, the label is the question text with each
+  // {{cN::…}} replaced by underscores.
+  const label = treeRowLabel(
+    el({
+      id: "item-uuid-99",
+      type: "item",
+      notePath: "continuous delivery spoiler.md",
+    }),
+    true,
+    "A is defined as {{c1::B}}",
+  );
+  assert.equal(label, "A is defined as ____");
+});
+
+test("treeRowLabel: masked item with hinted cloze still hides the hint", () => {
+  const label = treeRowLabel(
+    el({ id: "x", type: "item", notePath: "n.md" }),
+    true,
+    "Capital of France: {{c1::Paris::capital}}.",
+  );
+  assert.equal(label, "Capital of France: ____.");
+});
+
+test("treeRowLabel: masked item with no cloze syntax falls back to tag", () => {
+  // If the body has no {{cN::…}} markers we can't redact safely — the body
+  // could be the answer in plain text. Fall back to the neutral tag form.
+  const label = treeRowLabel(
+    el({ id: "x", type: "item", notePath: "n.md" }),
+    true,
+    "Just plain prose with no cloze deletions.",
+  );
+  assert.match(label, /^Cloze item \([0-9a-z]{6}\)$/);
+});
+
+test("treeRowLabel: masked item collapses whitespace and truncates at 80 chars", () => {
+  // Multi-line bodies and runs of whitespace get normalized to single spaces
+  // so the row stays a single readable line, then truncate the long ones.
+  const long = "X".repeat(100);
+  const label = treeRowLabel(
+    el({ id: "x", type: "item", notePath: "n.md" }),
+    true,
+    `${long} {{c1::ans}}\n\nmore`,
+  );
+  assert.equal(label.length, 80);
+  assert.ok(label.endsWith("..."));
+  assert.ok(!label.includes("ans"));
+});
+
+test("treeRowLabel: body is ignored for unmasked items (real title wins)", () => {
+  const label = treeRowLabel(
+    el({
+      id: "x",
+      type: "item",
+      notePath: "MyItem.md",
+    }),
+    false,
+    "A is defined as {{c1::B}}",
+  );
+  assert.equal(label, "MyItem");
+});
+
+test("treeRowLabel: body is ignored for non-item types even when masking", () => {
+  // Belt-and-suspenders: a topic happens to contain cloze syntax in its
+  // body, but the row should still show its real title. Spoiler masking is
+  // only ever a concern for cloze items.
+  const label = treeRowLabel(
+    el({ id: "x", type: "topic", notePath: "Topic.md" }),
+    true,
+    "{{c1::not the topic title}}",
+  );
+  assert.equal(label, "Topic");
 });
 
 test("treeRowLabel: extracts stay readable even when masking is on", () => {
