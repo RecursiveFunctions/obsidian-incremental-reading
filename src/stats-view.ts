@@ -53,9 +53,22 @@ export class IrStatsView extends ItemView {
     const events = await this.store.loadEvents();
     const state = await this.store.load();
     const now = Date.now();
+    // Skip grade events the user retracted via "Undo last grade". The fold
+    // already excludes them from element state; counting them in the
+    // review-history window would let the stats panel disagree with the
+    // queue ("3 reviews / 50 due / 0 retention" when only 2 actually
+    // counted).
+    const undoneEventIds = new Set<string>();
+    for (const ev of events) {
+      if (ev.kind === "grade-undone") {
+        const id = (ev.payload as { eventId?: unknown }).eventId;
+        if (typeof id === "string") undoneEventIds.add(id);
+      }
+    }
     const grades: GradeEvent[] = [];
     for (const ev of events) {
       if (ev.kind !== "graded") continue;
+      if (undoneEventIds.has(ev.id)) continue;
       const g = (ev.payload as { grade?: unknown }).grade;
       if (typeof g === "number") grades.push({ ts: ev.ts, grade: g });
     }

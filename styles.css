@@ -537,6 +537,16 @@
   padding: 8px;
 }
 
+.ir-review-undo {
+  margin-left: auto;
+  font-size: var(--font-ui-smaller);
+  opacity: 0.85;
+}
+
+.ir-review-undo:hover {
+  opacity: 1;
+}
+
 .ir-tree-row--selected {
   background-color: var(--background-modifier-hover);
   box-shadow: inset 3px 0 0 var(--interactive-accent);

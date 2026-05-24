@@ -41,7 +41,9 @@ import {
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
 import { toAnkiTsv } from "./src/ir/anki-export";
 import { planSourceDeletion } from "./src/ir/deletion";
-import { nextLamport } from "./src/ir/log";
+import { findLastUndoableGrade, nextLamport } from "./src/ir/log";
+import { newCard, storedToCard, writeCardToFrontmatter } from "./src/fsrs";
+import { labelFor } from "./src/ir/labels";
 import { newElementId, newEventId } from "./src/ir/ids";
 import {
   clampPriority,
@@ -228,6 +230,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           () => void this.refreshStatusBar(),
           () => void this.openIrActionsHub(),
           (id) => void this.notifyTreeOfReviewSlot(id),
+          () => this.undoLastGrade(),
         );
       },
     );
@@ -291,6 +294,28 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "clock",
       hotkeys: [{ modifiers: ["Alt"], key: "m" }],
       callback: () => void this.runMercy(),
+    });
+
+    this.addCommand({
+      id: "undo-last-grade",
+      name: "Undo last grade",
+      icon: "undo-2",
+      // No default hotkey: Cmd/Ctrl+Z is a platform expectation we can't
+      // safely steal (Obsidian uses it for editor undo), and the obvious
+      // Alt+Z slot is already bound to "Cloze selection". Users who want
+      // a binding can pick one in Settings → Hotkeys.
+      callback: () => {
+        void (async () => {
+          const result = await this.undoLastGrade();
+          if (!result) {
+            new Notice("Incremental Reading: nothing to undo.");
+            return;
+          }
+          new Notice(
+            `Incremental Reading: undid grade for "${result.targetLabel}".`,
+          );
+        })();
+      },
     });
 
     this.addCommand({
@@ -1090,6 +1115,83 @@ export default class IncrementalReadingPlugin extends Plugin {
       console.error("Incremental Reading: reconcile after postpone failed", e);
     });
     void this.refreshStatusBar();
+  }
+
+  /**
+   * Retract the most recently-recorded grade event. Appends a
+   * `grade-undone` event referencing the target grade by id; the fold
+   * skips both events on next load, so the affected element's `card`
+   * reverts to its pre-grade value (or `undefined` if the undone grade
+   * was the first ever for that card). The note's frontmatter is
+   * rewritten in lockstep so YAML and the store agree.
+   *
+   * Returns the affected element's id and a human label for the toast,
+   * or `null` when the log holds no un-undone grade events. Callers (the
+   * command palette and the review pane button) decide whether to
+   * surface a "nothing to undo" notice or stay quiet.
+   *
+   * Out of scope (v1): undoing `topic-advanced` events. Reading-element
+   * advances ship their own UX path, and rewinding a ReadSchedule has
+   * different semantics than rewinding an FSRS card. Tracked for a later
+   * pass.
+   */
+  async undoLastGrade(): Promise<
+    | {
+        targetId: ElementId;
+        targetLabel: string;
+      }
+    | null
+  > {
+    if (!this.store) return null;
+    const events = await this.store.loadEvents();
+    const target = findLastUndoableGrade(events);
+    if (!target) return null;
+
+    const now = Date.now();
+    await this.store.appendEvent({
+      id: newEventId(),
+      ts: now,
+      // Live single-device events sort after migration lamports and among
+      // themselves by wall clock; ties break on the unique event id. Same
+      // policy as `IrReviewView.emit`.
+      lamport: now,
+      device: await this.store.getDeviceId(),
+      kind: "grade-undone",
+      target: target.target,
+      payload: { eventId: target.id },
+    });
+
+    // Re-fold the log so we can read the rolled-back card state and push
+    // it into the note's frontmatter. If the undone grade was the only
+    // grade for this card, `el.card` is now undefined — write a freshly
+    // constructed card so the YAML reflects "ungraded" rather than
+    // leaving the prior post-grade values in place.
+    const state = await this.store.load();
+    const el = state.elements.get(target.target);
+    if (el?.notePath) {
+      const file = this.app.vault.getAbstractFileByPath(el.notePath);
+      if (file instanceof TFile) {
+        try {
+          await this.app.fileManager.processFrontMatter(file, (fm) => {
+            const card = el.card ? storedToCard(el.card) : newCard();
+            writeCardToFrontmatter(fm, card);
+          });
+        } catch (err) {
+          console.error(
+            "Incremental Reading: rewriting frontmatter after undo failed",
+            err,
+          );
+        }
+      }
+    }
+
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after undo failed", e);
+    });
+    void this.refreshStatusBar();
+
+    const targetLabel = el ? labelFor(el) : "card";
+    return { targetId: target.target, targetLabel };
   }
 
   private promptPriority(file: TFile, current: number): void {
