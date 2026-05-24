@@ -11,7 +11,7 @@ export type IrHubEntry = {
 const EMPTY_HELP_LINES: string[] = [
   "This ring only shows actions that fit your current context.",
   "",
-  "New cloze (separate card): open a Markdown note, select text, then open the wheel. On an IR item, the new card is filed under that item’s ir-parent.",
+  "New cloze (separate card): select text in a Markdown note, then tap the IR FAB or open the wheel. On an IR item, the new card is filed under that item’s ir-parent.",
   "",
   "Split clozes: open an IR item note whose body has two or more {{cN::…}} groups.",
   "",

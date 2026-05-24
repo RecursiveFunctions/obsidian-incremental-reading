@@ -22,7 +22,11 @@ export function notifyWorkspaceFabSync(): void {
 
 export function registerWorkspaceIrFab(
   plugin: Plugin,
-  onOpenHub: () => void,
+  hooks: {
+    /** Run before focus leaves the editor (pointerdown / touchstart). */
+    prepareOpenHub: () => void;
+    openHub: () => void;
+  },
 ): () => void {
   if (!Platform.isMobile) return () => {};
 
@@ -32,9 +36,26 @@ export function registerWorkspaceIrFab(
   fab.setAttr("aria-label", "IR quick actions");
   fab.setAttr("title", "IR quick actions");
   setIcon(fab, "layout-list");
+  const prepare = () => hooks.prepareOpenHub();
+  fab.addEventListener(
+    "pointerdown",
+    (ev) => {
+      if (ev.pointerType === "mouse" && ev.button !== 0) return;
+      prepare();
+      ev.preventDefault();
+    },
+    { capture: true },
+  );
+  fab.addEventListener(
+    "touchstart",
+    () => {
+      prepare();
+    },
+    { capture: true, passive: true },
+  );
   fab.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    onOpenHub();
+    hooks.openHub();
   });
 
   const sync = () => {
