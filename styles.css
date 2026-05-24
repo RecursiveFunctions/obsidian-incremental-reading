@@ -311,8 +311,23 @@
   box-sizing: border-box;
 }
 
+/* Edit mode, keyboard NOT open: the Preview button needs to clear
+ * Obsidian's floating bottom nav pill and the device's gesture zone,
+ * otherwise it sits right where back/home swipes start. Match the
+ * regular portrait dock's 4rem nav clearance. */
 .ir-review--mobile.ir-review--editing .ir-review-dock {
   flex-shrink: 0;
+  padding-bottom: max(
+    0.75em,
+    calc(env(safe-area-inset-bottom, 0px) + 4rem)
+  );
+}
+
+/* Edit mode WITH keyboard open: the card host is pinned to the visible
+ * viewport, the keyboard covers the bottom of the screen, and Obsidian's
+ * nav pill is hidden. Drop the padding so the textarea gets max visible
+ * space and the Preview button sits right above the keyboard. */
+.ir-review--mobile.ir-review--editing .ir-review-card-host--pinned .ir-review-dock {
   padding-bottom: max(0.5em, env(safe-area-inset-bottom, 0px));
 }
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] — 2026-05-24
+
+### Fixed
+
+- **Mobile review, edit-mode Preview button overlaps Obsidian's nav pill
+  and sits in the gesture zone.** The edit-mode dock had only ~8px of
+  bottom padding, so when the keyboard was closed the Preview button
+  ended up under Obsidian's floating nav strip and right where the
+  device's back/home gestures originate. Added 4rem of clearance when
+  the card host is not pinned (keyboard closed) and kept the minimal
+  padding only while the card host is pinned to the visible viewport
+  (keyboard open), so the textarea still gets max space while typing.
+
 ## [0.3.6] — 2026-05-24
 
 ### Fixed
