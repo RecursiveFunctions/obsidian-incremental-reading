@@ -739,6 +739,11 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const hintR = await promptClozeHint(this.app);
     if (!hintR.ok) return;
+    // Snapshot the selection BEFORE createCloze: that call doesn't mutate
+    // the editor here, but read offsets while the cursor state is known
+    // so we can mark the source span as soon as the child note exists.
+    const sourceMarkSpan = this.bodyOffsetsForEditorSelection(editor);
+    const selectedText = editor.getSelection();
     const result = await createCloze(
       this.app,
       source,
@@ -746,7 +751,46 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.settings,
       hintR.hint,
     );
+    if (result.file && sourceMarkSpan && selectedText.trim().length > 0) {
+      await this.markSourceClozeSpan(
+        source,
+        sourceMarkSpan.start,
+        sourceMarkSpan.end,
+        selectedText,
+      );
+    }
     await this.openResult(result, "Cloze item created:");
+  }
+
+  /** Body-offset span of the editor's current selection, or null. */
+  private bodyOffsetsForEditorSelection(
+    editor: Editor,
+  ): { start: number; end: number } | null {
+    const from = editor.posToOffset(editor.getCursor("from"));
+    const to = editor.posToOffset(editor.getCursor("to"));
+    return bodyOffsetsFromFullOffsets(editor.getValue(), from, to);
+  }
+
+  /**
+   * Wrap the clozed span in the source body (and propagate up the parent
+   * chain) so the user sees which passages have already been clozed —
+   * mirrors the Extract creation behavior. Best-effort; logs but does not
+   * surface failures to the user since the child note is already saved.
+   */
+  private async markSourceClozeSpan(
+    source: TFile,
+    start: number,
+    end: number,
+    selectedText: string,
+  ): Promise<void> {
+    try {
+      await markExtractedSpan(this.app, source, start, end, selectedText);
+    } catch (e) {
+      console.error(
+        "Incremental Reading: marking clozed span in source failed",
+        e,
+      );
+    }
   }
 
   /**
@@ -1694,6 +1738,11 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (!(await this.ensureIrSource(parentFile))) return;
     const hintR = await promptClozeHint(this.app);
     if (!hintR.ok) return;
+    // Editor is on the item note, not the parent — its offsets only mark the
+    // item itself (which is harmless but redundant). Skip source marking here
+    // because the parent's matching span needs text-based lookup, not editor
+    // offsets, and the user can re-cloze inside the parent if they want a
+    // visible mark on the source.
     const result = await createCloze(
       this.app,
       parentFile,

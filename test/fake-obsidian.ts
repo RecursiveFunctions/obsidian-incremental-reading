@@ -80,6 +80,20 @@ export class FakeApp {
     },
     cachedRead: async (file: FakeFile): Promise<string> =>
       this.files.get(file.path)?.body ?? "",
+    // `saveBody` calls `read` to recover the frontmatter prefix before
+    // writing the new body, so the fake must return the body untouched
+    // here too — there is no separate frontmatter prefix in the fake's
+    // body buffer (frontmatter is stored as a parsed object instead).
+    read: async (file: FakeFile): Promise<string> =>
+      this.files.get(file.path)?.body ?? "",
+    // `saveBody` ends with `modify(file, prefix + body + "\n")`; since the
+    // fake's `read` returns body-only, `prefix` is empty and `content` is
+    // just the new body. Persist it verbatim.
+    modify: async (file: FakeFile, content: string): Promise<void> => {
+      const s = this.files.get(file.path);
+      if (!s) throw new Error(`no file: ${file.path}`);
+      s.body = content;
+    },
   };
 
   metadataCache = {
