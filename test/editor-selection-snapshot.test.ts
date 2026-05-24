@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Editor, TFile } from "obsidian";
+import type { Editor, EditorPosition, TFile } from "obsidian";
 import {
   captureEditorSelection,
   restoreEditorSelection,
@@ -30,7 +30,7 @@ function editorWithSelection(
       ].join("\n");
     },
     getCursor: (which: "from" | "to") => (which === "from" ? selFrom : selTo),
-    setSelection: (f, t) => {
+    setSelection: (f: EditorPosition, t: EditorPosition) => {
       selFrom = { ...f };
       selTo = { ...t };
     },
