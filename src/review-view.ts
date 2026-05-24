@@ -391,7 +391,7 @@ export class IrReviewView extends ItemView {
         vv.removeEventListener("resize", adjust);
         vv.removeEventListener("scroll", adjust);
       }
-      this.cardHostEl?.style.removeProperty("padding-bottom");
+      this.clearVisualViewportLayout();
     };
   }
 
@@ -399,50 +399,61 @@ export class IrReviewView extends ItemView {
     if (!Platform.isMobile) return;
     if (this.editing) {
       this.contentEl.addClass("ir-review--editing");
+      this.applyVisualViewportLayout();
       requestAnimationFrame(() => this.adjustReviewPaneForKeyboard());
     } else {
       this.contentEl.removeClass("ir-review--editing");
-      this.cardHostEl?.style.removeProperty("padding-bottom");
+      this.clearVisualViewportLayout();
     }
     this.onMobileChromeChange?.();
   }
 
+  /** Pin the card host to the visible viewport while the keyboard is open. */
+  private applyVisualViewportLayout(): void {
+    if (!Platform.isMobile || !this.editing) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    this.contentEl.style.setProperty("--ir-vv-height", `${vv.height}px`);
+    this.contentEl.style.setProperty("--ir-vv-offset-top", `${vv.offsetTop}px`);
+    this.cardHostEl?.addClass("ir-review-card-host--pinned");
+  }
+
+  private clearVisualViewportLayout(): void {
+    this.cardHostEl?.removeClass("ir-review-card-host--pinned");
+    this.cardHostEl?.style.removeProperty("padding-bottom");
+    this.contentEl.style.removeProperty("--ir-vv-height");
+    this.contentEl.style.removeProperty("--ir-vv-offset-top");
+  }
+
   private adjustReviewPaneForKeyboard(): void {
     if (!Platform.isMobile || !this.editing) return;
+    this.applyVisualViewportLayout();
+
     const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(
       ".ir-review-textarea",
     );
-    const scroll = this.cardHostEl?.querySelector<HTMLElement>(
-      ".ir-review-scroll",
-    );
-    if (!ta || !scroll) return;
+    if (!ta) return;
 
     const vv = window.visualViewport;
-    if (vv && this.cardHostEl) {
-      const keyboardInset = Math.max(
-        0,
-        window.innerHeight - vv.height - vv.offsetTop,
-      );
-      if (keyboardInset > 24) {
-        this.cardHostEl.style.paddingBottom = `${keyboardInset}px`;
-      } else {
-        this.cardHostEl.style.removeProperty("padding-bottom");
-      }
-    }
-
     const visibleTop = vv?.offsetTop ?? 0;
     const visibleBottom = vv
       ? vv.offsetTop + vv.height
       : window.innerHeight;
     const taRect = ta.getBoundingClientRect();
-    const margin = 20;
+    const margin = 16;
 
     if (taRect.bottom > visibleBottom - margin) {
-      scroll.scrollTop += taRect.bottom - visibleBottom + margin + 8;
+      ta.scrollTop += taRect.bottom - visibleBottom + margin;
     }
     if (taRect.top < visibleTop + margin) {
-      scroll.scrollTop -= visibleTop + margin - taRect.top;
+      ta.scrollTop -= visibleTop + margin - taRect.top;
     }
+  }
+
+  private renderMobileEditDock(host: HTMLElement): void {
+    const dock = host.createDiv({ cls: "ir-review-dock ir-review-dock--edit" });
+    const bar = dock.createDiv({ cls: "ir-review-buttons" });
+    this.renderEditToggle(bar);
   }
 
   private handleSwipeOutcome(outcome: SwipeOutcome): void {
@@ -908,6 +919,8 @@ export class IrReviewView extends ItemView {
     const reading = this.isReading(slot);
     const isCloze = !reading && hasCloze(this.currentRaw);
     const maskClozeChrome = !reading && isCloze && !this.revealed;
+    const mobileCompactEdit =
+      Platform.isMobile && this.editing && this.canEdit();
 
     if (sourceCtx) {
       const ctxCol = columns.createDiv({ cls: "ir-review-context-col" });
@@ -959,57 +972,85 @@ export class IrReviewView extends ItemView {
     }
 
     const mainCol = columns.createDiv({ cls: "ir-review-main-col" });
-    const pct = this.queue.length > 0
-      ? Math.round(((this.index) / this.queue.length) * 100)
-      : 0;
-    const progressWrap = mainCol.createDiv({ cls: "ir-review-progress-bar" });
-    const fill = progressWrap.createDiv({ cls: "ir-review-progress-fill" });
-    fill.style.width = `${pct}%`;
-
     const scroll = mainCol.createDiv({
       cls: "ir-review-scroll ir-review-swipe-zone",
     });
 
-    const remaining = this.queue.length - this.index;
-    const remainingByType = { topics: 0, extracts: 0, items: 0 };
-    for (let i = this.index; i < this.queue.length; i++) {
-      const t = this.queue[i]!.element.type;
-      if (t === "topic") remainingByType.topics++;
-      else if (t === "extract") remainingByType.extracts++;
-      else remainingByType.items++;
-    }
-    const parts: string[] = [];
-    if (remainingByType.topics > 0) parts.push(`${remainingByType.topics} topic${remainingByType.topics !== 1 ? "s" : ""}`);
-    if (remainingByType.extracts > 0) parts.push(`${remainingByType.extracts} extract${remainingByType.extracts !== 1 ? "s" : ""}`);
-    if (remainingByType.items > 0) parts.push(`${remainingByType.items} item${remainingByType.items !== 1 ? "s" : ""}`);
-
-    const label = reviewHeadlineLabel(slot.element, maskClozeChrome);
-    scroll.createEl("div", {
-      cls: "ir-review-progress",
-      text:
-        `${this.index + 1} of ${this.queue.length}  ·  ` +
-        `${reading ? "Reading" : "Review"}  ·  ${label}` +
-        (parts.length > 0 ? `  ·  ${parts.join(", ")} left` : ""),
-    });
-
-    const ancestors = ancestorChain(slot.element, this.elementsById);
-    if (ancestors.length > 0) {
-      scroll.createEl("div", {
-        cls: "ir-review-breadcrumb",
-        text: ancestors
-          .map((a) => ancestorBreadcrumbLabel(a, maskClozeChrome))
-          .join("  /  "),
-      });
-    }
-
-    if (this.editing && this.canEdit()) {
+    if (mobileCompactEdit) {
       this.renderEditor(scroll);
     } else {
-      await this.renderBody(scroll, this.currentRaw, isCloze);
+      const pct = this.queue.length > 0
+        ? Math.round(((this.index) / this.queue.length) * 100)
+        : 0;
+      const progressWrap = mainCol.createDiv({ cls: "ir-review-progress-bar" });
+      const fill = progressWrap.createDiv({ cls: "ir-review-progress-fill" });
+      fill.style.width = `${pct}%`;
+
+      const remaining = this.queue.length - this.index;
+      const remainingByType = { topics: 0, extracts: 0, items: 0 };
+      for (let i = this.index; i < this.queue.length; i++) {
+        const t = this.queue[i]!.element.type;
+        if (t === "topic") remainingByType.topics++;
+        else if (t === "extract") remainingByType.extracts++;
+        else remainingByType.items++;
+      }
+      const parts: string[] = [];
+      if (remainingByType.topics > 0) {
+        parts.push(
+          `${remainingByType.topics} topic${remainingByType.topics !== 1 ? "s" : ""}`,
+        );
+      }
+      if (remainingByType.extracts > 0) {
+        parts.push(
+          `${remainingByType.extracts} extract${remainingByType.extracts !== 1 ? "s" : ""}`,
+        );
+      }
+      if (remainingByType.items > 0) {
+        parts.push(
+          `${remainingByType.items} item${remainingByType.items !== 1 ? "s" : ""}`,
+        );
+      }
+
+      const label = reviewHeadlineLabel(slot.element, maskClozeChrome);
+      scroll.createEl("div", {
+        cls: "ir-review-progress",
+        text:
+          `${this.index + 1} of ${this.queue.length}  ·  ` +
+          `${reading ? "Reading" : "Review"}  ·  ${label}` +
+          (parts.length > 0 ? `  ·  ${parts.join(", ")} left` : ""),
+      });
+
+      const ancestors = ancestorChain(slot.element, this.elementsById);
+      if (ancestors.length > 0) {
+        scroll.createEl("div", {
+          cls: "ir-review-breadcrumb",
+          text: ancestors
+            .map((a) => ancestorBreadcrumbLabel(a, maskClozeChrome))
+            .join("  /  "),
+        });
+      }
+
+      if (this.editing && this.canEdit()) {
+        this.renderEditor(scroll);
+      } else {
+        await this.renderBody(scroll, this.currentRaw, isCloze);
+      }
+
+      if (reading) {
+        this.attachDocProgress(mainCol, scroll);
+      }
     }
 
-    if (reading) {
-      this.attachDocProgress(mainCol, scroll);
+    if (mobileCompactEdit) {
+      this.renderMobileEditDock(host);
+      if (reading) this.restoreBookmark(slot);
+      requestAnimationFrame(() => {
+        this.adjustReviewPaneForKeyboard();
+        scroll
+          .querySelector<HTMLTextAreaElement>(".ir-review-textarea")
+          ?.focus();
+      });
+      return;
     }
 
     const dock = host.createDiv({ cls: "ir-review-dock" });
@@ -1282,12 +1323,15 @@ export class IrReviewView extends ItemView {
       }
     });
     if (Platform.isMobile) {
+      const keepCaretVisible = () => this.adjustReviewPaneForKeyboard();
       ta.addEventListener("focus", () => {
         requestAnimationFrame(() => {
-          setTimeout(() => this.adjustReviewPaneForKeyboard(), 80);
-          setTimeout(() => this.adjustReviewPaneForKeyboard(), 320);
+          setTimeout(keepCaretVisible, 80);
+          setTimeout(keepCaretVisible, 320);
         });
       });
+      ta.addEventListener("click", keepCaretVisible);
+      ta.addEventListener("keyup", keepCaretVisible);
     } else {
       requestAnimationFrame(() => {
         ta.focus();
