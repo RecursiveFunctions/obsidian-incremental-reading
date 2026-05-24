@@ -14,6 +14,7 @@ import { treeRowLabel } from "./ir/labels";
 import { clampPriority, type IrElement, type IrType } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
+import { findExtractEditorPosition } from "./ir/extract-range";
 
 export const IR_TREE_VIEW_TYPE = "ir-tree-view";
 
@@ -459,7 +460,7 @@ export class IrTreeView extends ItemView {
       node.element.notePath ?? node.element.anchor?.sourcePath ?? null;
     if (titleTarget) {
       titleEl.addClass("ir-tree-link");
-      titleEl.onclick = () => void this.openNote(titleTarget);
+      titleEl.onclick = () => void this.openNote(titleTarget, node.element);
     }
 
     const notePath = node.element.notePath ?? "";
@@ -650,7 +651,7 @@ export class IrTreeView extends ItemView {
         item
           .setTitle(title)
           .setIcon("file-text")
-          .onClick(() => void this.openNote(openTarget)),
+          .onClick(() => void this.openNote(openTarget, node.element)),
       );
     }
 
@@ -864,12 +865,39 @@ export class IrTreeView extends ItemView {
     window.setTimeout(() => input.focus(), 0);
   }
 
-  private async openNote(path: string): Promise<void> {
+  private async openNote(
+    path: string,
+    element?: IrElement,
+  ): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) {
       new Notice(`Incremental Reading: note "${path}" not found.`);
       return;
     }
-    await this.app.workspace.getLeaf(false).openFile(file);
+
+    // When the row points at the extract's source body (i.e., we are opening
+    // the parent note that contains the highlighted span, not the extract's
+    // own promoted note), find the extract's line/ch and pass it via eState
+    // so Obsidian scrolls the viewport straight to the highlight instead of
+    // dropping the user at the top of the file.
+    let openState: { eState: Record<string, unknown> } | undefined;
+    if (element?.anchor && element.anchor.sourcePath === path) {
+      try {
+        const raw = await this.app.vault.cachedRead(file);
+        const pos = findExtractEditorPosition(element, raw);
+        if (pos) {
+          openState = {
+            eState: { line: pos.line, ch: pos.ch, scroll: pos.line },
+          };
+        }
+      } catch (e) {
+        console.error(
+          "Incremental Reading: tree open-at-extract position failed",
+          e,
+        );
+      }
+    }
+
+    await this.app.workspace.getLeaf(false).openFile(file, openState);
   }
 }

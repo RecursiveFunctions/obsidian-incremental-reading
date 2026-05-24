@@ -7,7 +7,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findExtractRange } from "../src/ir/extract-range";
+import {
+  findExtractRange,
+  findExtractEditorPosition,
+} from "../src/ir/extract-range";
 import { formatDueLabel } from "../src/ir/due-label";
 import {
   bodyOffsetsFromFullOffsets,
@@ -114,6 +117,96 @@ test("findExtractRange: falls back to indexOf when anchor fails entirely", () =>
   const r = findExtractRange(el, SOURCE);
   assert.ok(r);
   assert.equal(SOURCE.slice(r.start, r.end), "brown fox");
+});
+
+/* ------------------------------------------------------------------ */
+/* findExtractEditorPosition                                           */
+/* ------------------------------------------------------------------ */
+
+test("findExtractEditorPosition: simple body, single line", () => {
+  const full = "The quick brown fox";
+  const el = makeElement({ text: "brown fox" });
+  const p = findExtractEditorPosition(el, full);
+  assert.deepEqual(p, { line: 0, ch: 10 });
+});
+
+test("findExtractEditorPosition: multi-line body counts newlines", () => {
+  const full = "line one\nline two has the target here\nline three";
+  const el = makeElement({ text: "the target" });
+  const p = findExtractEditorPosition(el, full);
+  assert.ok(p);
+  assert.equal(p.line, 1);
+  assert.equal(full.split("\n")[p.line]!.slice(p.ch, p.ch + 10), "the target");
+});
+
+test("findExtractEditorPosition: skips frontmatter when computing line", () => {
+  const full =
+    "---\ntitle: Hello\nauthor: Me\n---\nfirst body line\nbrown fox here\n";
+  const el = makeElement({ text: "brown fox" });
+  const p = findExtractEditorPosition(el, full);
+  assert.ok(p);
+  // Frontmatter occupies lines 0..3; "first body line" is line 4; the target
+  // is on line 5 starting at column 0.
+  assert.equal(p.line, 5);
+  assert.equal(p.ch, 0);
+  assert.equal(
+    full.split("\n")[p.line]!.slice(p.ch, p.ch + 9),
+    "brown fox",
+  );
+});
+
+test("findExtractEditorPosition: handles leading blank lines after frontmatter", () => {
+  const full = "---\nk: v\n---\n\n\nbrown fox starts here\n";
+  const el = makeElement({ text: "brown fox" });
+  const p = findExtractEditorPosition(el, full);
+  assert.ok(p);
+  assert.equal(full.split("\n")[p.line]!.slice(p.ch, p.ch + 9), "brown fox");
+});
+
+test("findExtractEditorPosition: returns undefined when text is missing", () => {
+  const full = "no match here";
+  const el = makeElement({ text: "brown fox" });
+  assert.equal(findExtractEditorPosition(el, full), undefined);
+});
+
+test("findExtractEditorPosition: uses anchor over text when both differ", () => {
+  // Body has two occurrences of "abc"; anchor's position hint points at the
+  // second one, which the helper must honor over indexOf's first hit.
+  const full = "---\nk: v\n---\nabc xx abc yy";
+  const el = makeElement({
+    text: "abc",
+    anchor: {
+      sourcePath: "Note.md",
+      quote: { exact: "abc", prefix: "xx ", suffix: " yy" },
+      position: { start: 7, end: 10 },
+    },
+  });
+  const p = findExtractEditorPosition(el, full);
+  assert.ok(p);
+  // The body line is "abc xx abc yy"; the second "abc" is at column 7.
+  assert.equal(p.line, 3);
+  assert.equal(p.ch, 7);
+});
+
+test("findExtractEditorPosition: locates extract wrapped in <mark> chrome", () => {
+  // After wrapExtractHighlight runs, the source body contains the extract
+  // wrapped in IR's mark. The anchor's quote.exact stores the wrapped text,
+  // so the helper must still resolve it correctly to the wrap's start.
+  const full =
+    'first line\n<mark class="ir-extract-source">brown fox</mark> jumps\n';
+  const wrapped = '<mark class="ir-extract-source">brown fox</mark>';
+  const el = makeElement({
+    text: "brown fox",
+    anchor: {
+      sourcePath: "Note.md",
+      quote: { exact: wrapped, prefix: "", suffix: " jumps" },
+      position: { start: 11, end: 11 + wrapped.length },
+    },
+  });
+  const p = findExtractEditorPosition(el, full);
+  assert.ok(p);
+  assert.equal(p.line, 1);
+  assert.equal(p.ch, 0);
 });
 
 /* ------------------------------------------------------------------ */
