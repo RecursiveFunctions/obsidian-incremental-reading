@@ -217,14 +217,9 @@
   flex-direction: column;
 }
 
-/* Workspace FAB: markdown notes + IR review (replaces Alt+Shift+U on mobile). */
+/* Workspace FAB: position is set in JS (mobile-viewport.ts) above Obsidian nav. */
 .ir-workspace-fab {
   position: fixed;
-  right: max(0.85em, env(safe-area-inset-right, 0px));
-  bottom: max(
-    6.5rem,
-    calc(env(safe-area-inset-bottom, 0px) + 6rem)
-  );
   z-index: 200;
   width: 52px;
   height: 52px;
@@ -284,6 +279,7 @@
   z-index: 5;
   background: var(--background-primary);
   box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
   padding-left: env(safe-area-inset-left, 0);
   padding-right: env(safe-area-inset-right, 0);
 }
@@ -330,7 +326,8 @@
   display: flex;
   justify-content: flex-end;
   gap: 0.4em;
-  padding: 0.5rem max(0.85rem, env(safe-area-inset-right, 0px)) 0.3rem
+  padding: max(0.5rem, env(safe-area-inset-top, 0px))
+    max(0.85rem, env(safe-area-inset-right, 0px)) 0.3rem
     max(0.85rem, env(safe-area-inset-left, 0px));
   background: var(--background-primary);
 }
@@ -660,6 +657,10 @@
   max-height: none;
   overflow: visible;
   padding-top: 0.3em;
+  padding-right: max(
+    0.5em,
+    calc(env(safe-area-inset-right, 0px) + 2.5rem)
+  );
   padding-bottom: max(
     0.5em,
     calc(env(safe-area-inset-bottom, 0px) + 4rem)
@@ -766,11 +767,6 @@
   font-size: var(--font-ui-smaller);
 }
 
-.ir-review--mobile.ir-review--landscape .ir-workspace-fab,
-.ir-review--mobile.ir-review--landscape ~ .ir-workspace-fab {
-  bottom: max(0.65em, calc(env(safe-area-inset-bottom, 0px) + 0.35rem));
-}
-
 .ir-review--mobile.ir-review--landscape.ir-review--editing .ir-review-dock {
   max-height: min(28vh, 4.5rem);
 }
@@ -779,7 +775,7 @@
  * Every pixel of topbar chrome steals a line of textarea, so shrink the
  * pill and its padding here. */
 .ir-review--mobile.ir-review--landscape .ir-review-edit-topbar {
-  padding-top: 0.25rem;
+  padding-top: max(0.25rem, env(safe-area-inset-top, 0px));
   padding-bottom: 0.15rem;
 }
 

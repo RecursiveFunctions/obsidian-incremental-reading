@@ -12,6 +12,10 @@
 import type { App, Plugin } from "obsidian";
 import { MarkdownView, Platform, setIcon } from "obsidian";
 import { IR_REVIEW_VIEW_TYPE } from "./review-view";
+import {
+  isMobileKeyboardLikelyOpen,
+  layoutWorkspaceFab,
+} from "./ir/mobile-viewport";
 
 const FAB_CLASS = "ir-workspace-fab";
 
@@ -60,19 +64,14 @@ export function registerWorkspaceIrFab(
     hooks.openHub();
   });
 
-  // When the soft keyboard opens, visualViewport.height shrinks below the
-  // layout viewport. On some devices that signal is unreliable (the WebView
-  // does not always shrink the visual viewport on IME open), so we also
-  // check whether a text input has focus.
-  const isKeyboardOpen = (): boolean => {
-    const vv = window.visualViewport;
-    if (vv && window.innerHeight - vv.height > 150) return true;
-    return isEditingTextInput();
-  };
-
+  // Hide when the soft keyboard is up (visualViewport shrink or real text
+  // fields). Do not hide on contenteditable focus — selecting text in the
+  // markdown editor would otherwise make the FAB vanish mid-extract.
   const sync = () => {
-    const show = shouldShowWorkspaceFab(plugin.app) && !isKeyboardOpen();
+    const show =
+      shouldShowWorkspaceFab(plugin.app) && !isMobileKeyboardLikelyOpen();
     fab.toggleClass("is-hidden", !show);
+    if (show) layoutWorkspaceFab(fab);
   };
 
   const focusHandler = () => sync();
@@ -87,6 +86,8 @@ export function registerWorkspaceIrFab(
     vv.addEventListener("resize", sync);
     vv.addEventListener("scroll", sync);
   }
+  window.addEventListener("orientationchange", sync);
+  window.addEventListener("resize", sync);
   workspaceFabSync = sync;
   sync();
 
@@ -96,20 +97,12 @@ export function registerWorkspaceIrFab(
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
     }
+    window.removeEventListener("orientationchange", sync);
+    window.removeEventListener("resize", sync);
     document.removeEventListener("focusin", focusHandler, true);
     document.removeEventListener("focusout", focusHandler, true);
     fab.remove();
   };
-}
-
-function isEditingTextInput(): boolean {
-  const el = document.activeElement;
-  if (!el) return false;
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    return true;
-  }
-  if (el instanceof HTMLElement && el.isContentEditable) return true;
-  return false;
 }
 
 function shouldShowWorkspaceFab(app: App): boolean {

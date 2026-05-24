@@ -98,6 +98,7 @@ import {
   notifyWorkspaceFabSync,
   registerWorkspaceIrFab,
 } from "./src/ir-mobile-fab";
+import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
 
 /**
  * The bulk-extract commands ask for confirmation above this many candidate
@@ -2115,16 +2116,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   /** Radial wheel: contextual IR actions; always opens so placement stays predictable. */
   private irRadialAnchor(): { cx: number; cy: number } {
     if (Platform.isMobile) {
-      const vv = window.visualViewport;
-      const w = vv?.width ?? window.innerWidth;
-      const h = vv?.height ?? window.innerHeight;
-      const left = vv?.offsetLeft ?? 0;
-      const top = vv?.offsetTop ?? 0;
-      // Center-bottom keeps petals off the right margin and above Obsidian nav.
-      return {
-        cx: left + w / 2,
-        cy: top + h - Math.max(96, h * 0.22),
-      };
+      return radialAnchorCenterBottom();
     }
     const leaf = this.app.workspace.activeLeaf;
     const el = leaf?.view?.containerEl;
