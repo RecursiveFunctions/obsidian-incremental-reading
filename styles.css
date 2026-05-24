@@ -96,12 +96,14 @@
 }
 
 .ir-review--mobile .ir-review-context-col {
-  flex: 0 0 auto;
+  /* Explicit basis (not auto): the scroll child has flex:1 1 0 / overflow:auto,
+   * so without a real basis the column collapses to header height in portrait. */
+  flex: 0 0 40vh;
   max-width: none;
   max-height: 40vh;
   border-right: none;
   border-bottom: 1px solid var(--background-modifier-border);
-  transition: max-height 0.18s ease;
+  transition: flex-basis 0.18s ease, max-height 0.18s ease;
 }
 
 /* Mobile header is a button: lay out label + chevron, keep the chrome from
@@ -151,9 +153,10 @@
   height: 18px;
 }
 
-/* Expanded: portrait jumps from 40vh to ~75vh; landscape's flex is overridden
- * inside the landscape media query so the rule stays scoped. */
+/* Expanded: portrait jumps from 40vh basis to ~75vh; landscape's flex is
+ * overridden by .ir-review--landscape rules below so the rule stays scoped. */
 .ir-review--mobile .ir-review-context-col--expanded {
+  flex: 0 0 75vh;
   max-height: 75vh;
 }
 
@@ -568,15 +571,16 @@
 }
 
 /* Dock: free-flowing height (no internal scroll) so all buttons are
- * reachable; the bottom-nav padding from the portrait rule is trimmed
- * since Obsidian's mobile nav is small or absent in landscape. */
+ * reachable. Bottom padding clears Obsidian's mobile nav bar (which is
+ * still visible in landscape on most devices); kept slightly shorter than
+ * the portrait 5.25rem since the landscape nav strip is itself shorter. */
 .ir-review--mobile.ir-review--landscape .ir-review-dock {
   max-height: none;
   overflow: visible;
   padding-top: 0.3em;
   padding-bottom: max(
-    0.35em,
-    calc(env(safe-area-inset-bottom, 0px) + 0.5rem)
+    0.5em,
+    calc(env(safe-area-inset-bottom, 0px) + 3.5rem)
   );
 }
 

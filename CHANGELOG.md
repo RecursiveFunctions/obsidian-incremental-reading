@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-05-24
+
+### Fixed
+
+- **Mobile review, portrait source column collapsed to header height:**
+  The context column had `flex: 0 0 auto`, but its scroll child has
+  `flex: 1 1 0` + `overflow: auto` so the column basis collapsed to just
+  the header. Switched to an explicit `flex: 0 0 40vh` (and `0 0 75vh`
+  when the user taps the header to expand). The source body now actually
+  shows alongside the card again.
+- **Mobile review, landscape dock clipped by Obsidian's bottom nav bar:**
+  The landscape rule had dropped the dock's bottom-nav padding to
+  ~0.5rem, on the assumption that Obsidian hides its nav strip in
+  landscape. It does not (the strip with back/forward/search/etc. still
+  sits over the dock). Bumped to ~3.5rem so Previous, Later today, and
+  Dismiss are no longer covered.
+
 ## [0.3.4] — 2026-05-24
 
 ### Changed
