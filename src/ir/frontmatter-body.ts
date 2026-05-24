@@ -65,18 +65,61 @@ export function bodyOffsetsFromFullOffsets(
  * built from another extract's body, so the literal HTML never leaks into
  * the UI as escaped text.
  */
-const EXTRACT_MARK_PAIR_RE =
-  /<mark\s+class="ir-extract-source">([\s\S]*?)<\/mark>/gi;
+const IR_OPEN_TAG_RE = /^<mark\s+class="ir-extract-source">/i;
+const ANY_OPEN_TAG_RE = /^<mark\b[^>]*>/i;
+const CLOSE_TAG_RE = /^<\/mark\s*>/i;
 
+/**
+ * Single-pass walker that removes IR's `<mark class="ir-extract-source">`
+ * chrome (including orphans from selections that started or ended mid-mark)
+ * while leaving any user-authored `<mark>…</mark>` pair intact.
+ *
+ * The stack records the kind of each open tag (IR vs. anything else): an
+ * IR opener emits nothing and its matching closer drops; any other opener
+ * is emitted verbatim and its matching closer comes through. Closers with
+ * no opener on the stack are orphans and dropped.
+ */
 export function stripExtractMarks(s: string): string {
-  if (!s.includes(EXTRACT_MARK_OPEN)) return s;
-  let result = s;
-  let prev: string;
-  do {
-    prev = result;
-    result = result.replace(EXTRACT_MARK_PAIR_RE, "$1");
-  } while (result !== prev);
-  return result;
+  if (!s.includes(EXTRACT_MARK_OPEN) && !s.toLowerCase().includes("</mark>")) {
+    return s;
+  }
+  let out = "";
+  let i = 0;
+  const stack: ("ir" | "other")[] = [];
+  while (i < s.length) {
+    if (s[i] === "<") {
+      const tail = s.slice(i);
+      const irOpen = tail.match(IR_OPEN_TAG_RE);
+      if (irOpen) {
+        stack.push("ir");
+        i += irOpen[0].length;
+        continue;
+      }
+      const otherOpen = tail.match(ANY_OPEN_TAG_RE);
+      if (otherOpen) {
+        stack.push("other");
+        out += otherOpen[0];
+        i += otherOpen[0].length;
+        continue;
+      }
+      const close = tail.match(CLOSE_TAG_RE);
+      if (close) {
+        if (stack.length === 0) {
+          // Orphan closer — drop.
+          i += close[0].length;
+          continue;
+        }
+        const top = stack.pop()!;
+        if (top === "other") out += close[0];
+        // IR closer: drop.
+        i += close[0].length;
+        continue;
+      }
+    }
+    out += s[i];
+    i += 1;
+  }
+  return out;
 }
 
 /**

@@ -309,3 +309,40 @@ test("stripExtractMarks: leaves unrelated mark classes alone", () => {
   const cloze = '<mark class="ir-cloze-elision">[ ... ]</mark>';
   assert.equal(stripExtractMarks(cloze), cloze);
 });
+
+test("stripExtractMarks: strips orphan IR-class opener (selection started mid-mark)", () => {
+  // Real-world case: the user selected a span that began inside an existing
+  // IR extract, so the captured text has the opener but the closer fell
+  // outside the selection. Without this strip the tree row leaks the long
+  // class attribute as literal text.
+  const orphanOpen =
+    '<mark class="ir-extract-source">Poetry lets you easily build and package projects.';
+  assert.equal(
+    stripExtractMarks(orphanOpen),
+    "Poetry lets you easily build and package projects.",
+  );
+});
+
+test("stripExtractMarks: strips orphan </mark> (selection ended mid-mark)", () => {
+  const orphanClose = "Poetry lets you build and package projects.</mark>";
+  assert.equal(
+    stripExtractMarks(orphanClose),
+    "Poetry lets you build and package projects.",
+  );
+});
+
+test("stripExtractMarks: preserves a user's own balanced <mark>…</mark> pair", () => {
+  // No IR class on this pair → must survive intact so we never silently
+  // damage user-authored HTML highlights.
+  const userMark = "before <mark>plain highlight</mark> after";
+  assert.equal(stripExtractMarks(userMark), userMark);
+});
+
+test("stripExtractMarks: mixed orphan opener + user-authored balanced pair", () => {
+  const mixed =
+    '<mark class="ir-extract-source">lead text <mark>plain</mark> rest of body';
+  assert.equal(
+    stripExtractMarks(mixed),
+    "lead text <mark>plain</mark> rest of body",
+  );
+});
