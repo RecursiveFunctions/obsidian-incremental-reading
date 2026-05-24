@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "chatops-bridge": {
+      "command": "/usr/bin/python3",
+      "args": [
+        "-m",
+        "bridge.mcp_server"
+      ],
+      "cwd": "/home/ray/docker/chatops",
+      "env": {
+        "BRIDGE_ROOT_ID": "fm5z9uqo8b8amm4gqk8dsiswpr",
+        "BRIDGE_CHANNEL_ID": "",
+        "BRIDGE_AGENT": "cursor"
+      }
+    }
+  }
+}

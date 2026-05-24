@@ -42,6 +42,7 @@ import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/m
 import { toAnkiTsv } from "./src/ir/anki-export";
 import { planSourceDeletion } from "./src/ir/deletion";
 import { findLastUndoableGrade, nextLamport } from "./src/ir/log";
+import { mostRecentBookmark } from "./src/ir/bookmark";
 import { newCard, storedToCard, writeCardToFrontmatter } from "./src/fsrs";
 import { labelFor } from "./src/ir/labels";
 import { newElementId, newEventId } from "./src/ir/ids";
@@ -181,6 +182,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           (elementId, element) =>
             this.applyIrReanchor(elementId, element),
           (elementId) => void this.forkStoreExtract(elementId),
+          (elementId) => this.resumeReadingBookmark(elementId),
         );
       },
     );
@@ -294,6 +296,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "clock",
       hotkeys: [{ modifiers: ["Alt"], key: "m" }],
       callback: () => void this.runMercy(),
+    });
+
+    this.addCommand({
+      id: "resume-last-read",
+      name: "Resume last read topic",
+      icon: "bookmark",
+      callback: () => void this.resumeReadingBookmark(),
     });
 
     this.addCommand({
@@ -825,6 +834,85 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice(
         "Incremental Reading: could not open the review view. See the developer console.",
       );
+    }
+  }
+
+  /**
+   * Open the review pane focused on the topic with the most recent reading
+   * bookmark, regardless of whether that topic is currently due. The
+   * existing review-pane bookmark-restore code scrolls the body to where
+   * the user left off.
+   *
+   * Returns false (with a notice) when there is no bookmark, when the
+   * bookmarked element has been deleted from the store, or when the
+   * element is no longer a reading element (e.g. the user converted it
+   * into a cloze item). The caller decides whether to surface a "nothing
+   * to resume" notice or stay quiet — the command palette entry shows
+   * one; tree-view click handlers don't need to (they only render rows
+   * for valid bookmarks).
+   *
+   * Single-element queue rather than splicing into the due queue: the
+   * user's gesture here is "I want to read THAT topic NOW", not "extend
+   * my current session." Reusing `dueQueue` would either skip the topic
+   * (not due) or rebuild a full queue the user didn't ask for. The cost
+   * is that the user has to start a normal review separately if they
+   * want to keep grading after resuming; that's a deliberate trade.
+   */
+  async resumeReadingBookmark(
+    elementId?: ElementId,
+  ): Promise<boolean> {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return false;
+    }
+    let targetId = elementId ?? null;
+    if (!targetId) {
+      const bookmarks = await this.store.loadBookmarks();
+      const most = mostRecentBookmark(bookmarks);
+      if (!most) {
+        new Notice("Incremental Reading: no reading bookmarks yet.");
+        return false;
+      }
+      targetId = most.elementId as ElementId;
+    }
+
+    const state = await this.store.load();
+    const el = state.elements.get(targetId);
+    if (!el) {
+      new Notice(
+        "Incremental Reading: that bookmark's element no longer exists.",
+      );
+      return false;
+    }
+    if (el.type !== "topic" && el.type !== "extract") {
+      new Notice(
+        "Incremental Reading: bookmarks only apply to reading elements.",
+      );
+      return false;
+    }
+
+    const file = el.notePath
+      ? (this.app.vault.getAbstractFileByPath(el.notePath) as TFile | null)
+      : null;
+    const slot: ReviewSlot = { id: targetId, element: el, file };
+
+    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
+    this.irReviewSession = {
+      queue: [slot],
+      elementsById: state.elements,
+    };
+    try {
+      const leaf = this.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
+      this.app.workspace.revealLeaf(leaf);
+      return true;
+    } catch (e) {
+      this.irReviewSession = null;
+      console.error("Incremental Reading: opening review for resume failed", e);
+      new Notice(
+        "Incremental Reading: could not open the review view. See the developer console.",
+      );
+      return false;
     }
   }
 

@@ -645,6 +645,55 @@ export class IrReviewView extends ItemView {
   }
 
   /**
+   * Attach the "X% read" widget that lives at the bottom of the reading
+   * pane. Hooks a scroll listener (rAF-throttled) to keep the fill in
+   * step with the body's `scrollTop`; on short documents that fit in the
+   * viewport, the widget flips to a "Fits in view" mode so the user
+   * doesn't see a stuck-at-0% bar.
+   *
+   * The listener lives for as long as `scroll` does. Because
+   * `renderCard()` rebuilds the contentEl on every transition, the
+   * element (and its listeners) gets garbage-collected automatically;
+   * no manual teardown needed.
+   */
+  private attachDocProgress(mainCol: HTMLElement, scroll: HTMLElement): void {
+    const wrap = mainCol.createDiv({ cls: "ir-reading-doc-progress" });
+    const fill = wrap.createDiv({ cls: "ir-reading-doc-progress-fill" });
+    const label = wrap.createSpan({ cls: "ir-reading-doc-progress-label" });
+
+    const update = () => {
+      const scrollable = scroll.scrollHeight - scroll.clientHeight;
+      if (scrollable <= 1) {
+        wrap.addClass("ir-reading-doc-progress--fits");
+        fill.style.width = "100%";
+        label.setText("Fits in view");
+        return;
+      }
+      wrap.removeClass("ir-reading-doc-progress--fits");
+      const pct = Math.max(
+        0,
+        Math.min(100, (scroll.scrollTop / scrollable) * 100),
+      );
+      fill.style.width = `${pct}%`;
+      label.setText(`${Math.round(pct)}% read`);
+    };
+
+    // Initial paint needs to wait for layout so scrollHeight is meaningful.
+    // restoreBookmark also fires after a frame, so a single rAF tick lines
+    // up the first measurement with the restored scrollTop.
+    requestAnimationFrame(update);
+
+    let raf = 0;
+    scroll.addEventListener("scroll", () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        update();
+      });
+    });
+  }
+
+  /**
    * Persist any pending edit before advancing or creating a child.
    * Idempotent: re-flushing is a no-op when the buffer matches the last
    * saved state. File-backed elements save the whole body via `saveBody`;
@@ -813,6 +862,10 @@ export class IrReviewView extends ItemView {
       this.renderEditor(scroll);
     } else {
       await this.renderBody(scroll, this.currentRaw, isCloze);
+    }
+
+    if (reading) {
+      this.attachDocProgress(mainCol, scroll);
     }
 
     const dock = contentEl.createDiv({ cls: "ir-review-dock" });
