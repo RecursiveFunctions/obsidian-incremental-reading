@@ -471,6 +471,96 @@
   margin-top: 0.15em;
 }
 
+/* Phone landscape: short viewport — stack source beside the card and keep the
+ * dock compact so grade/read controls do not eat the whole screen. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .ir-review--mobile .ir-review-columns {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .ir-review--mobile .ir-review-context-col {
+    flex: 0 0 min(40%, 13.5rem);
+    max-width: min(40%, 13.5rem);
+    max-height: none;
+    border-bottom: none;
+    border-right: 1px solid var(--background-modifier-border);
+  }
+
+  .ir-review--mobile .ir-review-main-col {
+    min-width: 0;
+  }
+
+  .ir-review--mobile .ir-review-dock {
+    max-height: min(36vh, 8.75rem);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-top: 0.35em;
+    padding-bottom: max(
+      0.35em,
+      calc(env(safe-area-inset-bottom, 0px) + 0.5rem)
+    );
+  }
+
+  .ir-review--mobile .ir-review-swipe-legend {
+    display: none;
+  }
+
+  .ir-review--mobile .ir-review-controls {
+    gap: 0.35em;
+  }
+
+  .ir-review--mobile .ir-review-buttons {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 0.35em;
+    justify-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+    padding-bottom: 0.1em;
+  }
+
+  .ir-review--mobile .ir-review-buttons button {
+    flex: 0 0 auto;
+    min-width: 4.25rem;
+    max-width: 7.5rem;
+    min-height: 2.25rem;
+    width: auto;
+    font-size: var(--font-ui-smaller);
+    padding: 0.3em 0.45em;
+    scroll-snap-align: start;
+  }
+
+  .ir-review--mobile .ir-review-buttons button.mod-cta {
+    grid-column: unset;
+  }
+
+  .ir-review--mobile .ir-priority-row {
+    font-size: var(--font-ui-smaller);
+    gap: 0.35em;
+  }
+
+  .ir-review--mobile .ir-priority-input {
+    min-height: 2.25rem;
+    font-size: var(--font-ui-smaller);
+  }
+
+  .ir-review--mobile .ir-review-hub-btn {
+    min-height: 2.25rem;
+    font-size: var(--font-ui-smaller);
+  }
+
+  .ir-workspace-fab {
+    bottom: max(0.65em, calc(env(safe-area-inset-bottom, 0px) + 0.35rem));
+  }
+
+  .ir-review--mobile.ir-review--editing .ir-review-dock {
+    max-height: min(28vh, 4.5rem);
+  }
+}
+
 .ir-priority-row {
   display: flex;
   align-items: center;
