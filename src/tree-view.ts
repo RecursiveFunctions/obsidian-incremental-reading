@@ -9,7 +9,7 @@ import {
 } from "obsidian";
 
 import { IrStore } from "./ir/store";
-import { buildTree, TreeNode } from "./ir/tree";
+import { buildTree, filterTreeByPredicate, TreeNode } from "./ir/tree";
 import { treeRowLabel } from "./ir/labels";
 import { clampPriority, type IrElement, type IrType } from "./ir/model";
 import type { ElementId } from "./ir/ids";
@@ -90,6 +90,17 @@ export class IrTreeView extends ItemView {
 
   /** Current search/filter text (case-insensitive substring match). */
   private filterText = "";
+
+  /**
+   * Element types currently visible. All three on means "no type filter".
+   * Persisted only for the lifetime of the view (session-only); rebuilt on
+   * each open. Click a chip in the header to toggle.
+   */
+  private visibleTypes: Set<IrType> = new Set([
+    "topic",
+    "extract",
+    "item",
+  ]);
 
   /** Element id currently being dragged (session-only). */
   private dragSourceId: string | null = null;
@@ -292,6 +303,45 @@ export class IrTreeView extends ItemView {
       });
     }
 
+    const typeRow = container.createDiv({ cls: "ir-tree-type-filter" });
+    typeRow.setAttribute("role", "group");
+    typeRow.setAttribute("aria-label", "Filter by element type");
+    const TYPE_LABELS: Record<IrType, string> = {
+      topic: "Topics",
+      extract: "Extracts",
+      item: "Cloze items",
+    };
+    for (const t of ["topic", "extract", "item"] as const) {
+      const active = this.visibleTypes.has(t);
+      const chip = typeRow.createEl("button", {
+        cls: active
+          ? "ir-tree-type-chip ir-tree-type-chip--active"
+          : "ir-tree-type-chip",
+        text: TYPE_LABELS[t],
+        attr: {
+          type: "button",
+          "aria-pressed": active ? "true" : "false",
+        },
+      });
+      chip.addEventListener("click", () => {
+        if (this.visibleTypes.has(t)) {
+          // Refuse to deselect the last remaining type — leaving zero means
+          // "show nothing", which is never what the user wants and is
+          // indistinguishable from an empty store. Clicking the only-active
+          // chip instead resets to all types on, matching the typical
+          // pill-group convention.
+          if (this.visibleTypes.size === 1) {
+            this.visibleTypes = new Set(["topic", "extract", "item"]);
+          } else {
+            this.visibleTypes.delete(t);
+          }
+        } else {
+          this.visibleTypes.add(t);
+        }
+        void this.render();
+      });
+    }
+
     const body = container.createDiv({ cls: "ir-tree-body" });
 
     let state;
@@ -327,12 +377,20 @@ export class IrTreeView extends ItemView {
       : new Map();
 
     let roots = buildTree(elements);
-    if (this.filterText.trim()) {
-      roots = this.filterTree(roots, this.filterText.trim().toLowerCase());
+    const queryRaw = this.filterText.trim();
+    const query = queryRaw.toLowerCase();
+    const hasTextFilter = queryRaw.length > 0;
+    const hasTypeFilter = this.visibleTypes.size < 3;
+    if (hasTextFilter || hasTypeFilter) {
+      roots = filterTreeByPredicate(roots, (node) => {
+        if (!this.visibleTypes.has(node.type)) return false;
+        if (!hasTextFilter) return true;
+        return this.rowLabel(node.element).toLowerCase().includes(query);
+      });
       if (roots.length === 0) {
         body.createEl("p", {
           cls: "ir-tree-empty-filter",
-          text: `No elements matching "${this.filterText.trim()}".`,
+          text: this.emptyFilterMessage(queryRaw, hasTypeFilter),
         });
         this.lastNodeIds = new Set();
         this.lastRenderedRoots = [];
@@ -438,24 +496,23 @@ export class IrTreeView extends ItemView {
   }
 
   /**
-   * Return a pruned copy of the tree keeping only nodes whose label matches
-   * the query (case-insensitive) plus all ancestors needed to reach them.
+   * Phrase the "no matches" placeholder so the user can tell which filter
+   * dimension is empty — text alone, type alone, or both combined. Cheap
+   * enough that we just rebuild it whenever the filter changes; called only
+   * on the empty-result path.
    */
-  private filterTree(roots: TreeNode[], query: string): TreeNode[] {
-    const filter = (node: TreeNode): TreeNode | null => {
-      const label = this.rowLabel(node.element).toLowerCase();
-      const selfMatch = label.includes(query);
-      const filteredChildren = node.children
-        .map(filter)
-        .filter((c): c is TreeNode => c !== null);
-      if (selfMatch || filteredChildren.length > 0) {
-        return { ...node, children: filteredChildren };
-      }
-      return null;
-    };
-    return roots
-      .map(filter)
-      .filter((r): r is TreeNode => r !== null);
+  private emptyFilterMessage(query: string, hasTypeFilter: boolean): string {
+    const types = Array.from(this.visibleTypes);
+    const typeNames = types
+      .map((t) => (t === "item" ? "cloze items" : `${t}s`))
+      .join(", ");
+    if (query && hasTypeFilter) {
+      return `No ${typeNames} matching "${query}".`;
+    }
+    if (query) {
+      return `No elements matching "${query}".`;
+    }
+    return `No ${typeNames} in the tree.`;
   }
 
   private collectNodeIds(nodes: TreeNode[]): Set<string> {

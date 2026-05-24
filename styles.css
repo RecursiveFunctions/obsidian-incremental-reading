@@ -491,6 +491,46 @@
   width: 100%;
 }
 
+.ir-tree-type-filter {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 8px 6px 8px;
+}
+
+.ir-tree-type-chip {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.ir-tree-type-chip:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ir-tree-type-chip--active {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ir-tree-type-chip--active:hover {
+  background: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
+}
+
+.ir-tree--mobile .ir-tree-type-chip {
+  font-size: var(--font-ui-small);
+  padding: 6px 14px;
+  min-height: 36px;
+}
+
 .ir-tree-empty-filter {
   color: var(--text-muted);
   font-style: italic;
