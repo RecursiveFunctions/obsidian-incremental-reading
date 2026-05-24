@@ -1,22 +1,16 @@
 /**
  * Workspace-level IR quick-actions FAB for Obsidian mobile.
  *
- * The review-only FAB was easy to miss because it lived inside a flex child
- * with absolute positioning. This button is fixed to the viewport when the
- * user is reading a source markdown note, so extract/cloze and the radial
- * wheel are one tap away. It is suppressed inside the IR review pane (the
- * dock already has a "Quick actions" button there) and when text input is
- * focused (the keyboard is up, the FAB would float over it).
+ * Fixed to the viewport on markdown source notes so extract/cloze and the
+ * radial wheel are one tap away. Hidden only inside the IR review pane
+ * (the dock already has extract/cloze there). Mounted on `document.body`
+ * so Obsidian workspace transforms do not clip it.
  */
 
 import type { App, Plugin } from "obsidian";
 import { MarkdownView, Platform, setIcon } from "obsidian";
 import { IR_REVIEW_VIEW_TYPE } from "./review-view";
-import {
-  isMobileKeyboardLikelyOpen,
-  layoutWorkspaceFab,
-  resetMobileKeyboardBaseline,
-} from "./ir/mobile-viewport";
+import { layoutWorkspaceFab } from "./ir/mobile-viewport";
 
 const FAB_CLASS = "ir-workspace-fab";
 
@@ -37,8 +31,7 @@ export function registerWorkspaceIrFab(
 ): () => void {
   if (!Platform.isMobile) return () => {};
 
-  const root = plugin.app.workspace.containerEl;
-  const fab = root.createDiv({ cls: FAB_CLASS });
+  const fab = document.body.createDiv({ cls: FAB_CLASS });
   fab.setAttr("role", "button");
   fab.setAttr("aria-label", "IR quick actions");
   fab.setAttr("title", "IR quick actions");
@@ -65,70 +58,38 @@ export function registerWorkspaceIrFab(
     hooks.openHub();
   });
 
-  // Hide when the soft keyboard is up (visualViewport shrinks vs baseline).
-  // Debounce hide so transient layout/focus glitches do not flash the FAB off.
-  let pendingHide: number | null = null;
-
   const sync = () => {
-    const show =
-      shouldShowWorkspaceFab(plugin.app) && !isMobileKeyboardLikelyOpen();
+    const show = shouldShowWorkspaceFab(plugin.app);
     if (show) {
-      if (pendingHide !== null) {
-        clearTimeout(pendingHide);
-        pendingHide = null;
-      }
       fab.removeClass("is-hidden");
       layoutWorkspaceFab(fab);
-      return;
-    }
-    if (pendingHide !== null) return;
-    pendingHide = window.setTimeout(() => {
-      pendingHide = null;
-      if (
-        shouldShowWorkspaceFab(plugin.app) &&
-        !isMobileKeyboardLikelyOpen()
-      ) {
-        fab.removeClass("is-hidden");
-        layoutWorkspaceFab(fab);
-        return;
-      }
+    } else {
       fab.addClass("is-hidden");
-    }, 280);
+    }
   };
-
-  const onOrientationChange = () => {
-    resetMobileKeyboardBaseline();
-    sync();
-  };
-
-  const focusHandler = () => sync();
-  document.addEventListener("focusin", focusHandler, true);
-  document.addEventListener("focusout", focusHandler, true);
 
   plugin.registerEvent(plugin.app.workspace.on("active-leaf-change", sync));
   plugin.registerEvent(plugin.app.workspace.on("layout-change", sync));
+  plugin.registerEvent(plugin.app.workspace.on("file-open", sync));
   plugin.registerInterval(window.setInterval(sync, 500));
   const vv = window.visualViewport;
   if (vv) {
     vv.addEventListener("resize", sync);
     vv.addEventListener("scroll", sync);
   }
-  window.addEventListener("orientationchange", onOrientationChange);
+  window.addEventListener("orientationchange", sync);
   window.addEventListener("resize", sync);
   workspaceFabSync = sync;
   sync();
 
   return () => {
     workspaceFabSync = null;
-    if (pendingHide !== null) clearTimeout(pendingHide);
     if (vv) {
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
     }
-    window.removeEventListener("orientationchange", onOrientationChange);
+    window.removeEventListener("orientationchange", sync);
     window.removeEventListener("resize", sync);
-    document.removeEventListener("focusin", focusHandler, true);
-    document.removeEventListener("focusout", focusHandler, true);
     fab.remove();
   };
 }
@@ -137,13 +98,14 @@ function shouldShowWorkspaceFab(app: App): boolean {
   if (!Platform.isMobile) return false;
 
   const leaf = app.workspace.activeLeaf;
-  if (!leaf) return false;
+  if (leaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE) return false;
 
-  const viewType = leaf.view.getViewType();
-  if (viewType === IR_REVIEW_VIEW_TYPE) return false;
+  const mv = app.workspace.getActiveViewOfType(MarkdownView);
+  if (mv?.file?.extension === "md") return true;
 
-  if (viewType !== "markdown") return false;
-
-  const mv = leaf.view as MarkdownView;
-  return !!(mv.file && mv.file.extension === "md");
+  if (leaf?.view.getViewType() === "markdown") {
+    const m = leaf.view as MarkdownView;
+    return !!(m.file && m.file.extension === "md");
+  }
+  return false;
 }

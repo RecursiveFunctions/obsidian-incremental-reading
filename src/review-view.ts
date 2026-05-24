@@ -89,6 +89,11 @@ import {
   type Span,
 } from "./ir/extract-spans";
 import type { IrHubEntry } from "./ir-actions-radial";
+import {
+  isMobileKeyboardLikelyOpen,
+  mobileTopInsetPx,
+  readMobileViewportInsets,
+} from "./ir/mobile-viewport";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -437,7 +442,12 @@ export class IrReviewView extends ItemView {
 
   private attachMobileKeyboardGuard(): () => void {
     const vv = window.visualViewport;
-    const adjust = () => this.adjustReviewPaneForKeyboard();
+    const adjust = () => {
+      this.syncMobileEditChrome();
+      if (this.editing && isMobileKeyboardLikelyOpen()) {
+        this.adjustReviewPaneForKeyboard();
+      }
+    };
     if (vv) {
       vv.addEventListener("resize", adjust);
       vv.addEventListener("scroll", adjust);
@@ -455,8 +465,11 @@ export class IrReviewView extends ItemView {
     if (!Platform.isMobile) return;
     if (this.editing) {
       this.contentEl.addClass("ir-review--editing");
-      this.applyVisualViewportLayout();
-      requestAnimationFrame(() => this.adjustReviewPaneForKeyboard());
+      if (isMobileKeyboardLikelyOpen()) {
+        this.applyVisualViewportLayout();
+      } else {
+        this.clearVisualViewportLayout();
+      }
     } else {
       this.contentEl.removeClass("ir-review--editing");
       this.clearVisualViewportLayout();
@@ -469,8 +482,14 @@ export class IrReviewView extends ItemView {
     if (!Platform.isMobile || !this.editing) return;
     const vv = window.visualViewport;
     if (!vv) return;
+    const insets = readMobileViewportInsets();
+    const top = Math.max(vv.offsetTop, mobileTopInsetPx(insets));
     this.contentEl.style.setProperty("--ir-vv-height", `${vv.height}px`);
-    this.contentEl.style.setProperty("--ir-vv-offset-top", `${vv.offsetTop}px`);
+    this.contentEl.style.setProperty("--ir-vv-offset-top", `${top}px`);
+    this.contentEl.style.setProperty(
+      "--ir-safe-top",
+      `${mobileTopInsetPx(insets)}px`,
+    );
     this.cardHostEl?.addClass("ir-review-card-host--pinned");
   }
 
@@ -479,10 +498,12 @@ export class IrReviewView extends ItemView {
     this.cardHostEl?.style.removeProperty("padding-bottom");
     this.contentEl.style.removeProperty("--ir-vv-height");
     this.contentEl.style.removeProperty("--ir-vv-offset-top");
+    this.contentEl.style.removeProperty("--ir-safe-top");
   }
 
   private adjustReviewPaneForKeyboard(): void {
     if (!Platform.isMobile || !this.editing) return;
+    if (!isMobileKeyboardLikelyOpen()) return;
     this.applyVisualViewportLayout();
 
     const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(

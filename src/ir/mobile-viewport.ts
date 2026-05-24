@@ -60,8 +60,17 @@ export function readMobileViewportInsets(): MobileViewportInsets {
   };
 }
 
+/** Fallback when `env(safe-area-inset-top)` is 0 in the Android WebView. */
+export const MOBILE_STATUS_BAR_FALLBACK_PX = 32;
+
 /** Tracks the tallest visualViewport seen (keyboard dismissed). */
 let keyboardBaselineHeight = 0;
+
+export function mobileTopInsetPx(
+  insets: MobileViewportInsets = readMobileViewportInsets(),
+): number {
+  return Math.max(insets.top, insets.visibleTop, MOBILE_STATUS_BAR_FALLBACK_PX);
+}
 
 export function resetMobileKeyboardBaseline(): void {
   keyboardBaselineHeight = 0;
@@ -106,15 +115,18 @@ export function layoutWorkspaceFab(fab: HTMLElement): void {
     ANDROID_SYS_NAV_PX +
     MOBILE_EDGE_MARGIN_PX;
 
-  fab.style.bottom = `${bottomGap}px`;
-  fab.style.top = "auto";
+  fab.style.setProperty("bottom", `${bottomGap}px`);
+  fab.style.setProperty("top", "auto");
 
   if (landscape) {
-    fab.style.left = `${insets.left + MOBILE_EDGE_MARGIN_PX}px`;
-    fab.style.right = "auto";
+    fab.style.setProperty("left", `${insets.left + MOBILE_EDGE_MARGIN_PX}px`);
+    fab.style.setProperty("right", "auto");
   } else {
-    fab.style.left = "auto";
-    fab.style.right = `${insets.right + MOBILE_EDGE_MARGIN_PX}px`;
+    fab.style.setProperty("left", "auto");
+    fab.style.setProperty(
+      "right",
+      `${insets.right + MOBILE_EDGE_MARGIN_PX}px`,
+    );
   }
 }
 
