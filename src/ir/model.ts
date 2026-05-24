@@ -141,6 +141,7 @@ export type IrEventKind =
   | "priority-set"
   | "dismiss-set"
   | "graded"
+  | "grade-undone"
   | "topic-advanced"
   | "mercy-postponed"
   | "anchor-repaired"
@@ -167,7 +168,13 @@ export interface IrEvent {
 
 /** True for the events the fold must never discard on compaction. */
 export function isReviewEvent(kind: IrEventKind): boolean {
-  return kind === "graded" || kind === "topic-advanced";
+  // grade-undone references a graded event by id. If we drop the graded
+  // event during compaction, the undone reference is harmless (the fold
+  // just doesn't find it). If we keep the graded but drop the undone, we'd
+  // resurrect a graded the user explicitly retracted — so keep both.
+  return (
+    kind === "graded" || kind === "grade-undone" || kind === "topic-advanced"
+  );
 }
 
 // --- Construction ---------------------------------------------------------

@@ -8,8 +8,14 @@ import {
   setIcon,
 } from "obsidian";
 
+import type { LogState } from "./ir/log";
 import { IrStore } from "./ir/store";
-import { buildTree, filterTreeByPredicate, TreeNode } from "./ir/tree";
+import {
+  buildTree,
+  filterTreeByPredicate,
+  rangeSelectIds,
+  TreeNode,
+} from "./ir/tree";
 import { treeRowLabel } from "./ir/labels";
 import { clampPriority, type IrElement, type IrType } from "./ir/model";
 import type { ElementId } from "./ir/ids";
@@ -101,6 +107,19 @@ export class IrTreeView extends ItemView {
     "extract",
     "item",
   ]);
+
+  /**
+   * Currently multi-selected row ids, session-only. Cmd/Ctrl+click toggles
+   * a row in/out; Shift+click sets the selection to the inclusive range
+   * from `selectionAnchorId` to the clicked row in visible-tree order. The
+   * selection toolbar appears whenever this is non-empty.
+   *
+   * Pruned at the top of every `render()` to drop ids whose elements were
+   * deleted between renders, so a stale id from a previous view of the
+   * tree never lingers.
+   */
+  private selectedIds: Set<string> = new Set();
+  private selectionAnchorId: string | null = null;
 
   /** Element id currently being dragged (session-only). */
   private dragSourceId: string | null = null;
@@ -374,6 +393,17 @@ export class IrTreeView extends ItemView {
     this.maskSpoilers = this.currentElementId !== null;
     this.itemBodies = await this.loadItemBodies(elements);
 
+    // Drop selection ids whose elements were deleted between renders. We
+    // walk all elements (not just visible/non-dismissed) so toggling
+    // showDismissed doesn't silently shrink the selection.
+    const validIds = new Set(allElements.map((e) => e.id));
+    for (const id of Array.from(this.selectedIds)) {
+      if (!validIds.has(id as ElementId)) {
+        this.selectedIds.delete(id);
+        if (this.selectionAnchorId === id) this.selectionAnchorId = null;
+      }
+    }
+
     let roots = buildTree(elements);
     const queryRaw = this.filterText.trim();
     const query = queryRaw.toLowerCase();
@@ -398,6 +428,10 @@ export class IrTreeView extends ItemView {
     }
     this.lastNodeIds = this.collectNodeIds(roots);
     this.lastRenderedRoots = roots;
+
+    if (this.selectedIds.size > 0) {
+      this.renderSelectionToolbar(body, state);
+    }
 
     if (this.commitReparent) {
       const dropRoot = body.createDiv({ cls: "ir-tree-drop-root" });
@@ -493,6 +527,239 @@ export class IrTreeView extends ItemView {
 
   private rowLabel(el: IrElement): string {
     return treeRowLabel(el, this.maskSpoilers, this.itemBodies.get(el.id));
+  }
+
+  /**
+   * Pre-order walk of the currently-rendered tree, collapsed-children
+   * excluded. Used by shift+click to define what "the range from anchor to
+   * here" means in the user's visual model.
+   */
+  private visibleNodeOrder(): string[] {
+    const out: string[] = [];
+    const walk = (n: TreeNode): void => {
+      out.push(n.id);
+      if (this.collapsed.has(n.id)) return;
+      for (const c of n.children) walk(c);
+    };
+    for (const r of this.lastRenderedRoots) walk(r);
+    return out;
+  }
+
+  private toggleRowSelection(id: string): void {
+    if (this.selectedIds.has(id)) {
+      this.selectedIds.delete(id);
+      // The anchor must always belong to the live selection so the next
+      // shift-click extends from a meaningful row. Pick any remaining
+      // selected id when the deleted one was the anchor; ordering doesn't
+      // matter here because the next shift-click resets it anyway.
+      if (this.selectionAnchorId === id) {
+        this.selectionAnchorId = this.selectedIds.values().next().value ?? null;
+      }
+    } else {
+      this.selectedIds.add(id);
+      this.selectionAnchorId = id;
+    }
+  }
+
+  private extendRowSelectionTo(id: string): void {
+    if (this.selectionAnchorId === null) {
+      // No anchor yet: shift+click as the first selection gesture is
+      // treated as a plain toggle so the user gets a sensible selection
+      // immediately rather than a no-op.
+      this.toggleRowSelection(id);
+      return;
+    }
+    const range = rangeSelectIds(
+      this.visibleNodeOrder(),
+      this.selectionAnchorId,
+      id,
+    );
+    // Replace (rather than union with) any prior selection: shift+click is
+    // "select range", not "add range". Cmd+click handles additive cases.
+    this.selectedIds = new Set(range);
+  }
+
+  /**
+   * Action bar that floats above the tree contents whenever the user has
+   * one or more rows multi-selected. We compute counts up front so we can
+   * decide which buttons make sense — e.g. only show "Restore" if at least
+   * one selected row is currently dismissed.
+   */
+  private renderSelectionToolbar(parent: HTMLElement, state: LogState): void {
+    const ids = Array.from(this.selectedIds) as ElementId[];
+    const els: IrElement[] = [];
+    for (const id of ids) {
+      const el = state.elements.get(id);
+      if (el) els.push(el);
+    }
+    if (els.length === 0) return;
+
+    const activeCount = els.filter((e) => !e.dismissed).length;
+    const dismissedCount = els.filter((e) => e.dismissed).length;
+
+    const bar = parent.createDiv({ cls: "ir-tree-selection-bar" });
+    bar.createSpan({
+      cls: "ir-tree-selection-bar-count",
+      text: `${els.length} selected`,
+    });
+    const actions = bar.createDiv({ cls: "ir-tree-selection-bar-actions" });
+
+    if (this.commitDismiss && activeCount > 0) {
+      const btn = actions.createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: activeCount === els.length
+          ? "Dismiss"
+          : `Dismiss ${activeCount}`,
+      });
+      btn.addEventListener("click", () => void this.bulkDismiss(true, ids));
+    }
+    if (this.commitDismiss && dismissedCount > 0) {
+      const btn = actions.createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: dismissedCount === els.length
+          ? "Restore"
+          : `Restore ${dismissedCount}`,
+      });
+      btn.addEventListener("click", () => void this.bulkDismiss(false, ids));
+    }
+    if (this.commitPostpone && activeCount > 0) {
+      const btn = actions.createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: "Postpone\u2026",
+      });
+      btn.addEventListener("click", (e) => {
+        // Reuse the per-row postpone increments so single-row and bulk
+        // mental models match. Anchor the popup to the click event so the
+        // dropdown lands under the button on every screen size.
+        const menu = new Menu();
+        for (const days of [1, 3, 7, 14, 30]) {
+          const label = days === 1 ? "1 day" : `${days} days`;
+          menu.addItem((item) =>
+            item
+              .setTitle(`Postpone ${label}`)
+              .setIcon("clock")
+              .onClick(() => void this.bulkPostpone(days, ids)),
+          );
+        }
+        menu.showAtMouseEvent(e);
+      });
+    }
+    if (this.commitDelete) {
+      const btn = actions.createEl("button", {
+        cls: "ir-tree-selection-bar-btn mod-warning",
+        text: "Delete",
+      });
+      btn.addEventListener("click", () => void this.bulkDelete(ids));
+    }
+    const clear = actions.createEl("button", {
+      cls: "ir-tree-selection-bar-btn",
+      text: "Clear",
+    });
+    clear.addEventListener("click", () => {
+      this.selectedIds.clear();
+      this.selectionAnchorId = null;
+      void this.render();
+    });
+  }
+
+  /**
+   * Resolve an element id back to its (TFile | null) for the commit hooks.
+   * Bulk methods must re-load state to read the current note paths because
+   * earlier iterations of the same loop may have moved/renamed things;
+   * `state` is a snapshot from the moment the bulk action started.
+   */
+  private fileForElement(state: LogState, id: ElementId): TFile | null {
+    const el = state.elements.get(id);
+    if (!el?.notePath) return null;
+    const abs = this.app.vault.getAbstractFileByPath(el.notePath);
+    return abs instanceof TFile ? abs : null;
+  }
+
+  private async bulkDismiss(
+    dismissed: boolean,
+    ids: ElementId[],
+  ): Promise<void> {
+    if (!this.commitDismiss) return;
+    const state = await this.store.load();
+    let ok = 0;
+    let fail = 0;
+    for (const id of ids) {
+      const el = state.elements.get(id);
+      if (!el) continue;
+      if (el.dismissed === dismissed) continue;
+      try {
+        await this.commitDismiss(id, this.fileForElement(state, id), dismissed);
+        ok += 1;
+      } catch (err) {
+        console.error("Incremental Reading: bulk dismiss failed", err);
+        fail += 1;
+      }
+    }
+    new Notice(this.bulkSummary(dismissed ? "Dismissed" : "Restored", ok, fail));
+    this.selectedIds.clear();
+    this.selectionAnchorId = null;
+    void this.render();
+  }
+
+  private async bulkPostpone(days: number, ids: ElementId[]): Promise<void> {
+    if (!this.commitPostpone) return;
+    const state = await this.store.load();
+    let ok = 0;
+    let fail = 0;
+    for (const id of ids) {
+      const el = state.elements.get(id);
+      if (!el || el.dismissed) continue;
+      try {
+        await this.commitPostpone(id, this.fileForElement(state, id), days);
+        ok += 1;
+      } catch (err) {
+        console.error("Incremental Reading: bulk postpone failed", err);
+        fail += 1;
+      }
+    }
+    new Notice(
+      this.bulkSummary(`Postponed ${days}d`, ok, fail),
+    );
+    this.selectedIds.clear();
+    this.selectionAnchorId = null;
+    void this.render();
+  }
+
+  private async bulkDelete(ids: ElementId[]): Promise<void> {
+    if (!this.commitDelete) return;
+    if (ids.length === 0) return;
+    if (
+      !confirm(
+        `Delete ${ids.length} selected element${ids.length !== 1 ? "s" : ""}? Their children will be reparented.`,
+      )
+    ) {
+      return;
+    }
+    const state = await this.store.load();
+    let ok = 0;
+    let fail = 0;
+    for (const id of ids) {
+      const el = state.elements.get(id);
+      if (!el) continue;
+      try {
+        await this.commitDelete(id, el.parentId);
+        ok += 1;
+      } catch (err) {
+        console.error("Incremental Reading: bulk delete failed", err);
+        fail += 1;
+      }
+    }
+    new Notice(this.bulkSummary("Deleted", ok, fail));
+    this.selectedIds.clear();
+    this.selectionAnchorId = null;
+    void this.render();
+  }
+
+  private bulkSummary(verb: string, ok: number, fail: number): string {
+    if (fail > 0) {
+      return `Incremental Reading: ${verb.toLowerCase()} ${ok}, ${fail} failed.`;
+    }
+    return `Incremental Reading: ${verb.toLowerCase()} ${ok}.`;
   }
 
   /**
@@ -695,6 +962,9 @@ export class IrTreeView extends ItemView {
     if (this.currentElementId && node.id === this.currentElementId) {
       row.addClass("ir-tree-row--current");
     }
+    if (this.selectedIds.has(node.id)) {
+      row.addClass("ir-tree-row--selected");
+    }
     const hasChildren = node.children.length > 0;
     const isCollapsed = this.collapsed.has(node.id);
 
@@ -733,8 +1003,31 @@ export class IrTreeView extends ItemView {
       node.element.notePath ?? node.element.anchor?.sourcePath ?? null;
     if (titleTarget) {
       titleEl.addClass("ir-tree-link");
-      titleEl.onclick = () => void this.openNote(titleTarget, node.element);
+      titleEl.addEventListener("click", (e) => {
+        // Modifier clicks belong to multi-select; suppress navigation so a
+        // shift-click that extends the selection doesn't also yank the
+        // user into a different note.
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        void this.openNote(titleTarget, node.element);
+      });
     }
+
+    row.addEventListener("click", (e) => {
+      // Click handlers further inside the row (the title link, priority
+      // controls, action buttons) call stopPropagation when they want to
+      // own the gesture. What lands here is "user clicked the row, but no
+      // inner control claimed it" — exactly the gesture we want to map to
+      // multi-select on modifier keys.
+      if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        this.toggleRowSelection(node.id);
+        void this.render();
+      } else if (e.shiftKey) {
+        e.preventDefault();
+        this.extendRowSelectionTo(node.id);
+        void this.render();
+      }
+    });
 
     const notePath = node.element.notePath ?? "";
     const abs = notePath ? this.app.vault.getAbstractFileByPath(notePath) : null;

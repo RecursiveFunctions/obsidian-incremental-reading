@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   fold,
   compact,
+  findLastUndoableGrade,
   nextLamport,
   type LogState,
 } from "../src/ir/log";
@@ -319,4 +320,167 @@ test("compaction snapshot equals folding the compacted-away events", () => {
   const keptIds = new Set(r.keep.map((e) => e.id));
   const compactedAway = shard.filter((e) => !keptIds.has(e.id));
   assert.deepEqual(r.snapshot, fold(compactedAway));
+});
+
+/* ------------------------------------------------------------------ */
+/* grade-undone: fold + findLastUndoableGrade                         */
+/* ------------------------------------------------------------------ */
+
+test("fold: grade-undone rolls a card back to its prior state", () => {
+  // Two grades on the same item; the user retracts the second. Fold
+  // should leave the card at the first grade's value (clock-order so
+  // either lamport ordering yields the same single surviving grade).
+  const id = newElementId();
+  const g1 = ev({ lamport: 1, kind: "element-created", target: id, payload: { element: topic(id) } });
+  const g2 = ev({ lamport: 2, kind: "graded", target: id, payload: { card: card(1000) } });
+  const g3 = ev({ lamport: 3, kind: "graded", target: id, payload: { card: card(9000) } });
+  const undo = ev({
+    lamport: 4,
+    kind: "grade-undone",
+    target: id,
+    payload: { eventId: g3.id },
+  });
+  const state = fold([g1, g2, g3, undo], { conflict: "clock-order" });
+  assert.equal(state.elements.get(id)?.card?.due, 1000);
+});
+
+test("fold: grade-undone on the only grade leaves the card unset", () => {
+  // First-ever grade was a mistake. After undo, the element should look
+  // brand-new again — no `card` attached.
+  const id = newElementId();
+  const created = ev({
+    lamport: 1,
+    kind: "element-created",
+    target: id,
+    payload: { element: topic(id) },
+  });
+  const graded = ev({
+    lamport: 2,
+    kind: "graded",
+    target: id,
+    payload: { card: card(1000) },
+  });
+  const undo = ev({
+    lamport: 3,
+    kind: "grade-undone",
+    target: id,
+    payload: { eventId: graded.id },
+  });
+  const state = fold([created, graded, undo]);
+  assert.equal(state.elements.get(id)?.card, undefined);
+});
+
+test("fold: grade-undone on a sibling grade does not touch unrelated grades", () => {
+  // Cross-device safety: an undo on device A's grade must not affect a
+  // separate, valid grade made on device B for the same element.
+  const id = newElementId();
+  const created = ev({
+    lamport: 1,
+    kind: "element-created",
+    target: id,
+    payload: { element: topic(id) },
+  });
+  const aGrade = ev({
+    lamport: 2,
+    kind: "graded",
+    target: id,
+    device: DEV_A,
+    payload: { card: card(1000) },
+  });
+  const bGrade = ev({
+    lamport: 3,
+    kind: "graded",
+    target: id,
+    device: DEV_B,
+    payload: { card: card(5000) },
+  });
+  const undoA = ev({
+    lamport: 4,
+    kind: "grade-undone",
+    target: id,
+    device: DEV_A,
+    payload: { eventId: aGrade.id },
+  });
+  const state = fold([created, aGrade, bGrade, undoA], {
+    conflict: "clock-order",
+  });
+  // Only A's grade was retracted; B's grade survives and dictates the
+  // final due.
+  assert.equal(state.elements.get(id)?.card?.due, 5000);
+});
+
+test("fold: grade-undone with a missing event id is a no-op (forward-compat)", () => {
+  // Hand-rolled / corrupt undo events shouldn't blow up the fold; they
+  // should simply have no observable effect.
+  const id = newElementId();
+  const created = ev({
+    lamport: 1,
+    kind: "element-created",
+    target: id,
+    payload: { element: topic(id) },
+  });
+  const graded = ev({
+    lamport: 2,
+    kind: "graded",
+    target: id,
+    payload: { card: card(1000) },
+  });
+  const badUndo = ev({
+    lamport: 3,
+    kind: "grade-undone",
+    target: id,
+    payload: {},
+  });
+  const state = fold([created, graded, badUndo]);
+  assert.equal(state.elements.get(id)?.card?.due, 1000);
+});
+
+test("findLastUndoableGrade: returns the highest-lamport un-undone grade", () => {
+  const id = newElementId();
+  const created = ev({ lamport: 1, kind: "element-created", target: id });
+  const g2 = ev({ lamport: 2, kind: "graded", target: id, payload: { card: card(1000) } });
+  const g3 = ev({ lamport: 3, kind: "graded", target: id, payload: { card: card(2000) } });
+  const g4 = ev({ lamport: 4, kind: "graded", target: id, payload: { card: card(3000) } });
+  const undoG4 = ev({
+    lamport: 5,
+    kind: "grade-undone",
+    target: id,
+    payload: { eventId: g4.id },
+  });
+  const out = findLastUndoableGrade([created, g2, g3, g4, undoG4]);
+  assert.equal(out?.id, g3.id);
+});
+
+test("findLastUndoableGrade: returns null when nothing left to undo", () => {
+  const id = newElementId();
+  const created = ev({ lamport: 1, kind: "element-created", target: id });
+  const graded = ev({ lamport: 2, kind: "graded", target: id, payload: { card: card(1000) } });
+  const undoIt = ev({
+    lamport: 3,
+    kind: "grade-undone",
+    target: id,
+    payload: { eventId: graded.id },
+  });
+  assert.equal(findLastUndoableGrade([created, graded, undoIt]), null);
+  assert.equal(findLastUndoableGrade([created]), null);
+});
+
+test("findLastUndoableGrade: ignores topic-advanced events (v1 scope)", () => {
+  // v1 scopes undo to cloze grades; topic-advanced events should not be
+  // surfaced as candidates so the UI stays predictable.
+  const id = newElementId();
+  const advanced = ev({
+    lamport: 1,
+    kind: "topic-advanced",
+    target: id,
+    payload: { schedule: { due: 0 } },
+  });
+  assert.equal(findLastUndoableGrade([advanced]), null);
+});
+
+test("isReviewEvent: grade-undone is preserved through compaction", () => {
+  // Compaction must not silently resurrect a grade by dropping its undo
+  // event. Both kinds must survive as review history.
+  assert.equal(isReviewEvent("graded"), true);
+  assert.equal(isReviewEvent("grade-undone"), true);
 });

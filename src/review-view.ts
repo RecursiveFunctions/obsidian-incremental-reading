@@ -128,6 +128,20 @@ export class IrReviewView extends ItemView {
      * position. `null` means the review pane closed.
      */
     private readonly onSlotChange?: (id: ElementId | null) => void,
+    /**
+     * Retract the most recent grade event in the log. Returns the affected
+     * element's id and a label for the toast, or `null` if there is
+     * nothing to undo. Wired in by the host plugin so the review pane
+     * doesn't need its own knowledge of `findLastUndoableGrade` /
+     * `processFrontMatter`.
+     */
+    private readonly commitUndoLastGrade?: () => Promise<
+      | {
+          targetId: ElementId;
+          targetLabel: string;
+        }
+      | null
+    >,
   ) {
     super(leaf);
   }
@@ -890,7 +904,64 @@ export class IrReviewView extends ItemView {
         text: this.labelWithHotkey("Dismiss", "D"),
       })
       .addEventListener("click", () => void this.dismiss());
+    if (this.commitUndoLastGrade) {
+      // No hotkey hint here: the command palette entry intentionally ships
+      // without a default hotkey (see main.ts), so the user picks one if
+      // they want one.
+      bar
+        .createEl("button", {
+          cls: "ir-review-undo",
+          text: "Undo last grade",
+        })
+        .addEventListener("click", () => void this.tryUndoLastGrade());
+    }
     this.ensureFocus();
+  }
+
+  /**
+   * Append a `grade-undone` event for the most recent grade in the log
+   * and, when that grade was the card we just left in this session, step
+   * the in-pane cursor back so the user can re-grade it immediately.
+   *
+   * Why we don't always step back: the user may have undone a grade made
+   * earlier (different card, different session). Forcing the cursor to
+   * leap to the rewound card mid-queue would lose their place in the
+   * current run. The "previous slot id matches the undone target" guard
+   * keeps the in-pane rewind tightly scoped to the obvious "I just got
+   * that one wrong" gesture; everything else gets a notice and a
+   * re-render in place.
+   */
+  private async tryUndoLastGrade(): Promise<void> {
+    if (!this.commitUndoLastGrade) return;
+    const result = await this.commitUndoLastGrade();
+    if (!result) {
+      new Notice("Incremental Reading: nothing to undo.");
+      return;
+    }
+    new Notice(
+      `Incremental Reading: undid grade for "${result.targetLabel}".`,
+    );
+    if (this.index > 0) {
+      const prev = this.queue[this.index - 1];
+      if (prev && prev.element.id === result.targetId) {
+        try {
+          const state = await this.store.load();
+          const updated = state.elements.get(result.targetId);
+          if (updated) {
+            prev.element = updated;
+            this.elementsById.set(result.targetId, updated);
+          }
+        } catch (err) {
+          console.error(
+            "Incremental Reading: refresh after undo failed",
+            err,
+          );
+        }
+        void this.previous();
+        return;
+      }
+    }
+    void this.renderCard();
   }
 
   /**

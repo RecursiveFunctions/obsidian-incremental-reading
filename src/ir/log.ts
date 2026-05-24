@@ -16,7 +16,7 @@ import {
   type ReadSchedule,
   type Anchor,
 } from "./model";
-import type { ElementId } from "./ids";
+import type { ElementId, EventId } from "./ids";
 
 export interface LogState {
   elements: Map<ElementId, IrElement>;
@@ -32,6 +32,21 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
   const tombstones = new Map<string, SourceTombstone>();
   const conflictPolicy = opts?.conflict ?? "conservative";
 
+  // First pass: collect ids of grade events the user retracted via
+  // `grade-undone`. We keep both event kinds in the log (see
+  // `isReviewEvent`) but skip them in the fold so the element's `card`
+  // returns to its pre-grade state. Scoping by event id (not by element)
+  // means an undo on device A doesn't accidentally roll back an unrelated
+  // grade made on device B with a higher lamport — only the targeted
+  // event is removed from consideration.
+  const undoneEventIds = new Set<EventId>();
+  for (const ev of events) {
+    if (ev.kind === "grade-undone") {
+      const targetId = ev.payload.eventId as EventId | undefined;
+      if (targetId) undoneEventIds.add(targetId);
+    }
+  }
+
   // Sort events by lamport, then by event id for deterministic ordering
   const sortedEvents = [...events].sort((a, b) => {
     if (a.lamport !== b.lamport) return a.lamport - b.lamport;
@@ -39,6 +54,8 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
   });
 
   for (const event of sortedEvents) {
+    if (event.kind === "grade-undone") continue;
+    if (undoneEventIds.has(event.id)) continue;
     const target = event.target;
     const element = elements.get(target);
 
@@ -205,4 +222,42 @@ export function compact(
 export function nextLamport(events: IrEvent[]): number {
   if (events.length === 0) return 1;
   return Math.max(...events.map((e) => e.lamport)) + 1;
+}
+
+/**
+ * Find the most recent `graded` event in `events` that has not already been
+ * retracted by a `grade-undone` event referencing it. Used by the review-
+ * pane Undo button to decide whether to render and what to undo.
+ *
+ * "Most recent" is by lamport (so cross-device ordering matches the fold),
+ * with event id as the tiebreaker. Returns `null` when there is nothing
+ * left to undo — every grade in the log has already been undone, or none
+ * has been recorded yet.
+ *
+ * Pure: no I/O, no Obsidian. Callers pass the full event stream from
+ * `IrStore.loadEvents()`.
+ */
+export function findLastUndoableGrade(events: IrEvent[]): IrEvent | null {
+  const undoneEventIds = new Set<EventId>();
+  for (const ev of events) {
+    if (ev.kind === "grade-undone") {
+      const targetId = ev.payload.eventId as EventId | undefined;
+      if (targetId) undoneEventIds.add(targetId);
+    }
+  }
+  let best: IrEvent | null = null;
+  for (const ev of events) {
+    if (ev.kind !== "graded") continue;
+    if (undoneEventIds.has(ev.id)) continue;
+    if (best === null) {
+      best = ev;
+      continue;
+    }
+    if (ev.lamport > best.lamport) {
+      best = ev;
+    } else if (ev.lamport === best.lamport && ev.id > best.id) {
+      best = ev;
+    }
+  }
+  return best;
 }
