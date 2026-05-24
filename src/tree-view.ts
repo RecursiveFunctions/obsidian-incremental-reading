@@ -15,6 +15,8 @@ import { clampPriority, type IrElement, type IrType } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
 import { findExtractEditorPosition } from "./ir/extract-range";
+import { stripFrontmatter } from "./ir/frontmatter-body";
+import { hasCloze } from "./cloze";
 
 export const IR_TREE_VIEW_TYPE = "ir-tree-view";
 
@@ -320,6 +322,9 @@ export class IrTreeView extends ItemView {
     }
 
     this.maskSpoilers = this.currentElementId !== null;
+    this.itemBodies = this.maskSpoilers
+      ? await this.loadItemBodies(elements)
+      : new Map();
 
     let roots = buildTree(elements);
     if (this.filterText.trim()) {
@@ -385,12 +390,60 @@ export class IrTreeView extends ItemView {
   private maskSpoilers = false;
 
   /**
+   * Cloze item note bodies (frontmatter stripped) keyed by element id, so
+   * masked rows can show the cloze question with its answer redacted to
+   * `____`. Populated lazily at the top of each render when masking is on,
+   * via `vault.cachedRead`, so the cost is bounded by the number of
+   * displayed cloze items and shared with Obsidian's read cache.
+   */
+  private itemBodies: Map<string, string> = new Map();
+
+  /**
+   * Read each cloze item's note body once per render so masked rows can show
+   * the question with its answer redacted (`A is defined as ____`) instead
+   * of the neutral `Cloze item (xxxxxx)` placeholder. Bodies are fetched in
+   * parallel via `cachedRead`, which is in-memory after the first hit, so
+   * this is essentially free on subsequent renders. Items whose note can't
+   * be resolved (deleted, store-only, missing) silently fall through to the
+   * placeholder via the helper in `labels.ts`.
+   */
+  private async loadItemBodies(
+    elements: IrElement[],
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const items = elements.filter(
+      (e) => e.type === "item" && !e.dismissed && e.notePath,
+    );
+    await Promise.all(
+      items.map(async (e) => {
+        try {
+          const file = this.app.vault.getAbstractFileByPath(e.notePath!);
+          if (!(file instanceof TFile)) return;
+          const raw = await this.app.vault.cachedRead(file);
+          const body = stripFrontmatter(raw);
+          if (hasCloze(body)) out.set(e.id, body);
+        } catch (err) {
+          console.error(
+            "Incremental Reading: tree masked-cloze body load failed",
+            err,
+          );
+        }
+      }),
+    );
+    return out;
+  }
+
+  private rowLabel(el: IrElement): string {
+    return treeRowLabel(el, this.maskSpoilers, this.itemBodies.get(el.id));
+  }
+
+  /**
    * Return a pruned copy of the tree keeping only nodes whose label matches
    * the query (case-insensitive) plus all ancestors needed to reach them.
    */
   private filterTree(roots: TreeNode[], query: string): TreeNode[] {
     const filter = (node: TreeNode): TreeNode | null => {
-      const label = treeRowLabel(node.element, this.maskSpoilers).toLowerCase();
+      const label = this.rowLabel(node.element).toLowerCase();
       const selfMatch = label.includes(query);
       const filteredChildren = node.children
         .map(filter)
@@ -446,7 +499,7 @@ export class IrTreeView extends ItemView {
     const iconSpan = row.createSpan({ cls: "ir-tree-icon" });
     setIcon(iconSpan, ICONS[node.type] ?? "circle");
 
-    const label = treeRowLabel(node.element, this.maskSpoilers);
+    const label = this.rowLabel(node.element);
     const titleEl = row.createSpan({
       cls: "ir-tree-title",
       text: label,
@@ -778,7 +831,7 @@ export class IrTreeView extends ItemView {
           .setIcon("trash-2")
           .onClick(() => {
             const childCount = node.children.length;
-            const deleteLabel = treeRowLabel(node.element, this.maskSpoilers);
+            const deleteLabel = this.rowLabel(node.element);
             const msg = childCount > 0
               ? `Delete "${deleteLabel}"? Its ${childCount} child${childCount !== 1 ? "ren" : ""} will be reparented to its parent.`
               : `Delete "${deleteLabel}"?`;

@@ -227,6 +227,22 @@ export function spliceClozeIntoText(
 }
 
 /**
+ * Replace every `{{cN::answer}}` (and `{{cN::answer::hint}}`) span with a
+ * neutral `marker` so the surrounding context can be shown in
+ * spoiler-sensitive UIs — like the IR element tree while a review pane is
+ * open — without leaking the hidden answer. Length is fixed (default four
+ * underscores) so the marker doesn't telegraph the answer's character count.
+ *
+ * Pure: no Obsidian imports. Composes `transformClozes` so backtick-wrapped
+ * inline-code clozes are also collapsed cleanly (the surrounding backticks
+ * are consumed) — without that, redacting a body like `` `{{c1::x}}` `` would
+ * leave dangling backticks in the label.
+ */
+export function redactClozeAnswers(text: string, marker = "____"): string {
+  return transformClozes(text, () => marker);
+}
+
+/**
  * Walk `raw` and rewrite each `{{cN::…}}` marker to whatever HTML `build`
  * returns. When a marker is immediately surrounded by a single backtick on
  * each side (i.e. the marker is the body of an inline-code span), the
