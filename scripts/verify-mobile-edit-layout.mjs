@@ -26,51 +26,70 @@ async function main() {
     await page.goto(`file://${fixturePath}`);
     await page.addStyleTag({ path: stylesPath });
 
-    const applyLayout = function applyLayout() {
+    const metrics = function metrics() {
       const cardHost = document.getElementById("card-host");
       const scroll = cardHost.querySelector(".ir-review-scroll");
       const ta = cardHost.querySelector(".ir-review-textarea");
-      const layoutRoot =
-        cardHost.closest(".ir-review-layout") || cardHost;
-      const vv = window.visualViewport;
-      const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-      const scrollTop = scroll.getBoundingClientRect().top;
-      const layoutBottom = layoutRoot.getBoundingClientRect().bottom;
-      const clipBottom = Math.min(visibleBottom, layoutBottom);
-      const height = Math.max(120, Math.round(clipBottom - scrollTop - 8));
-
-      scroll.style.flex = "none";
-      scroll.style.height = height + "px";
-      scroll.style.minHeight = height + "px";
-      scroll.style.maxHeight = height + "px";
-      ta.style.display = "block";
-      ta.style.width = "100%";
-      ta.style.boxSizing = "border-box";
-      ta.style.height = height + "px";
-      ta.style.minHeight = height + "px";
-      ta.style.maxHeight = height + "px";
-      ta.style.margin = "0";
-      ta.style.resize = "none";
-
-      const deadSpace = scroll.clientHeight - ta.offsetHeight;
+      const mainCol = cardHost.querySelector(".ir-review-main-col");
+      const columnDead = mainCol.clientHeight - scroll.offsetHeight;
+      const scrollFill = scroll.clientHeight - ta.offsetHeight;
       return {
-        computedHeight: height,
+        hostHeight: cardHost.offsetHeight,
         scrollHeight: scroll.clientHeight,
         textareaHeight: ta.offsetHeight,
-        deadSpace,
-        fills: deadSpace <= 2,
+        columnDead,
+        scrollFill,
+        fillsColumn: columnDead <= 4,
+        fillsScroll: scrollFill <= 4,
       };
     };
 
-    const before = await page.evaluate(applyLayout);
-    assert.equal(before.fills, true, "keyboard closed should fill");
+    const applyKeyboard = function applyKeyboard() {
+      const cardHost = document.getElementById("card-host");
+      const scroll = cardHost.querySelector(".ir-review-scroll");
+      const ta = cardHost.querySelector(".ir-review-textarea");
+      const mainCol = cardHost.querySelector(".ir-review-main-col");
+      const vv = window.visualViewport;
+      const top = cardHost.getBoundingClientRect().top;
+      const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      const h = Math.max(120, Math.round(bottom - top - 8));
+      cardHost.style.flex = "none";
+      cardHost.style.height = h + "px";
+      cardHost.style.maxHeight = h + "px";
+      cardHost.style.overflow = "hidden";
+      const columnDead = mainCol.clientHeight - scroll.offsetHeight;
+      const scrollFill = scroll.clientHeight - ta.offsetHeight;
+      return {
+        hostHeight: cardHost.offsetHeight,
+        scrollHeight: scroll.clientHeight,
+        textareaHeight: ta.offsetHeight,
+        columnDead,
+        scrollFill,
+        fillsColumn: columnDead <= 4,
+        fillsScroll: scrollFill <= 4,
+      };
+    };
 
-    await page.evaluate(function shrinkVv(visibleHeight) {
+    const closed = await page.evaluate(metrics);
+    assert.ok(
+      closed.fillsColumn,
+      `keyboard closed: column dead=${closed.columnDead}px scroll fill=${closed.scrollFill}px`,
+    );
+    assert.ok(
+      closed.fillsScroll,
+      `keyboard closed: textarea should fill scroll (gap=${closed.scrollFill}px)`,
+    );
+    assert.ok(
+      closed.textareaHeight >= 400,
+      `keyboard closed: textarea too short (${closed.textareaHeight}px)`,
+    );
+
+    await page.evaluate(function shrinkVv(h) {
       Object.defineProperty(window, "visualViewport", {
         configurable: true,
         value: {
           offsetTop: 0,
-          height: visibleHeight,
+          height: h,
           width: 412,
           addEventListener: function () {},
           removeEventListener: function () {},
@@ -78,30 +97,23 @@ async function main() {
       });
     }, 380);
 
-    const afterVv = await page.evaluate(applyLayout);
-    assert.equal(afterVv.fills, true, "vv shrink should fill");
-    assert.ok(afterVv.textareaHeight >= 200);
-
-    await page.evaluate(function shrinkLeaf() {
-      Object.defineProperty(window, "visualViewport", {
-        configurable: true,
-        value: {
-          offsetTop: 0,
-          height: 915,
-          width: 412,
-          addEventListener: function () {},
-          removeEventListener: function () {},
-        },
-      });
-      const root = document.getElementById("plugin-root");
-      root.style.height = "380px";
-      root.style.flex = "none";
-    });
-
-    const afterLeaf = await page.evaluate(applyLayout);
-    assert.equal(afterLeaf.fills, true, "leaf shrink without vv should fill");
-    assert.ok(afterLeaf.textareaHeight >= 200);
-    assert.ok(afterLeaf.deadSpace <= 2);
+    const open = await page.evaluate(applyKeyboard);
+    assert.ok(
+      open.fillsColumn,
+      `keyboard open: column dead=${open.columnDead}px (must not leave white band)`,
+    );
+    assert.ok(
+      open.fillsScroll,
+      `keyboard open: textarea should fill scroll (gap=${open.scrollFill}px)`,
+    );
+    assert.ok(
+      open.textareaHeight >= 200,
+      `keyboard open: textarea too short (${open.textareaHeight}px)`,
+    );
+    assert.ok(
+      open.hostHeight >= 200,
+      `keyboard open: host too short (${open.hostHeight}px)`,
+    );
 
     await page.screenshot({
       path: path.join(__dirname, "../.layout-verify-keyboard.png"),
