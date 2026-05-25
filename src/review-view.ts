@@ -93,6 +93,7 @@ import {
   isMobileKeyboardLikelyOpen,
   readMobileViewportInsets,
 } from "./ir/mobile-viewport";
+import { applyMobileEditLayout } from "./ir/mobile-edit-layout";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -460,7 +461,7 @@ export class IrReviewView extends ItemView {
         vv.removeEventListener("resize", adjust);
         vv.removeEventListener("scroll", adjust);
       }
-      this.clearVisualViewportLayout();
+      this.clearMobileEditPaneLayout();
     };
   }
 
@@ -468,39 +469,43 @@ export class IrReviewView extends ItemView {
     if (!Platform.isMobile) return;
     if (this.editing) {
       this.contentEl.addClass("ir-review--editing");
-      if (isMobileKeyboardLikelyOpen()) {
-        this.applyVisualViewportLayout();
-      } else {
-        this.clearVisualViewportLayout();
-      }
+      this.layoutMobileEditPane();
     } else {
       this.contentEl.removeClass("ir-review--editing");
-      this.clearVisualViewportLayout();
+      this.contentEl.removeClass("ir-review--keyboard-open");
+      this.clearMobileEditPaneLayout();
     }
     this.onMobileChromeChange?.();
   }
 
-  /**
-   * Reserve space for the soft keyboard without shrinking the edit pane to
-   * `visualViewport.height` (that pin left a band of dead space on Android).
-   */
-  private applyVisualViewportLayout(): void {
-    if (!Platform.isMobile || !this.editing) return;
-    if (!isMobileKeyboardLikelyOpen()) {
-      this.clearVisualViewportLayout();
-      return;
+  /** Size the edit card to the visible viewport and fill it with the textarea. */
+  private layoutMobileEditPane(): void {
+    if (!Platform.isMobile || !this.editing || !this.cardHostEl) return;
+
+    const vv = window.visualViewport;
+    const keyboardOpen = isMobileKeyboardLikelyOpen();
+    if (keyboardOpen) {
+      this.contentEl.addClass("ir-review--keyboard-open");
+    } else {
+      this.contentEl.removeClass("ir-review--keyboard-open");
     }
-    const insets = readMobileViewportInsets();
-    this.contentEl.addClass("ir-review--keyboard-open");
-    this.contentEl.style.setProperty(
-      "--ir-keyboard-inset",
-      `${Math.max(0, insets.bottom)}px`,
-    );
+
+    applyMobileEditLayout({
+      cardHost: this.cardHostEl,
+      keyboardOpen,
+      visibleTop: vv?.offsetTop ?? 0,
+      visibleHeight: vv?.height ?? readMobileViewportInsets().visibleHeight,
+    });
   }
 
-  private clearVisualViewportLayout(): void {
-    this.contentEl.removeClass("ir-review--keyboard-open");
-    this.contentEl.style.removeProperty("--ir-keyboard-inset");
+  private clearMobileEditPaneLayout(): void {
+    if (!this.cardHostEl) return;
+    applyMobileEditLayout({
+      cardHost: this.cardHostEl,
+      keyboardOpen: false,
+      visibleTop: 0,
+      visibleHeight: 0,
+    });
   }
 
   private scrollTextareaCaretIntoView(ta: HTMLTextAreaElement): void {
@@ -524,7 +529,7 @@ export class IrReviewView extends ItemView {
 
   private adjustReviewPaneForKeyboard(): void {
     if (!Platform.isMobile || !this.editing) return;
-    this.applyVisualViewportLayout();
+    this.layoutMobileEditPane();
     if (!isMobileKeyboardLikelyOpen()) return;
 
     const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(
@@ -1374,11 +1379,17 @@ export class IrReviewView extends ItemView {
           ".ir-review-textarea",
         );
         ta?.focus();
-        // Keyboard animates in after focus; re-measure on the next frames.
         requestAnimationFrame(() => {
+          this.layoutMobileEditPane();
           this.adjustReviewPaneForKeyboard();
-          setTimeout(() => this.adjustReviewPaneForKeyboard(), 120);
-          setTimeout(() => this.adjustReviewPaneForKeyboard(), 320);
+          setTimeout(() => {
+            this.layoutMobileEditPane();
+            this.adjustReviewPaneForKeyboard();
+          }, 120);
+          setTimeout(() => {
+            this.layoutMobileEditPane();
+            this.adjustReviewPaneForKeyboard();
+          }, 320);
         });
       });
       return;
