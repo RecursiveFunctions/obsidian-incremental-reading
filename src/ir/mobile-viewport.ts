@@ -106,7 +106,7 @@ export function isMobileKeyboardLikelyOpen(): boolean {
 }
 
 /** Extra lift when the IR review dock is visible above Obsidian nav. */
-export const REVIEW_DOCK_CLEARANCE_PORTRAIT_PX = 168;
+export const REVIEW_DOCK_CLEARANCE_PORTRAIT_PX = 120;
 export const REVIEW_DOCK_CLEARANCE_LANDSCAPE_PX = 96;
 
 export function workspaceFabBottomGapPx(
