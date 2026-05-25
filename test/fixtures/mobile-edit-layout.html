@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>IR mobile edit layout fixture</title>
+    <link rel="stylesheet" href="../../styles.css" />
+    <style>
+      body {
+        margin: 0;
+        background: #1e1e1e;
+        color: #dcddde;
+        font-family: system-ui, sans-serif;
+      }
+      .fixture-leaf {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        box-sizing: border-box;
+      }
+      .fixture-workspace-header {
+        flex-shrink: 0;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #262626;
+        border-bottom: 1px solid #333;
+        font-size: 14px;
+      }
+      .fixture-plugin-root {
+        flex: 1 1 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="fixture-leaf">
+      <div class="fixture-workspace-header">IR review</div>
+      <div
+        id="plugin-root"
+        class="fixture-plugin-root ir-review-modal ir-review-layout ir-review--mobile ir-review--editing"
+      >
+        <div id="card-host" class="ir-review-card-host">
+          <div class="ir-review-columns">
+            <div class="ir-review-main-col">
+              <div class="ir-review-scroll">
+                <textarea class="ir-review-textarea">## Serverless in Practice
+
+From earlier discussions, we explored serverless platforms.</textarea>
+              </div>
+            </div>
+          </div>
+          <div class="ir-review-edit-topbar">
+            <button type="button" class="ir-review-edit-toggle">Preview</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
