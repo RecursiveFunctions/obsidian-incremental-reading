@@ -96,16 +96,32 @@
 }
 
 .ir-review--mobile .ir-review-context-col {
-  /* Explicit basis (not auto): the scroll child has flex:1 1 0 / overflow:auto,
-   * so without a real basis the column collapses to header height in portrait.
-   * flex-shrink: 1 (the middle digit) so the column gives way when the dock
-   * is tall, instead of stealing all of main-col's height. */
-  flex: 0 1 30vh;
+  /* Only mounted when the user expands source; give it room without
+   * reserving space when collapsed (the column is not in the DOM). */
+  flex: 0 1 min(45vh, 50%);
   max-width: none;
-  max-height: 40vh;
+  max-height: min(55vh, 60%);
   border-right: none;
   border-bottom: 1px solid var(--background-modifier-border);
-  transition: flex-basis 0.18s ease, max-height 0.18s ease;
+}
+
+.ir-review-source-toggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4em 0.65em;
+  margin: 0 0 0.5em;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.ir-review-source-toggle:hover {
+  background: var(--background-modifier-hover);
 }
 
 /* Keep at least a usable slice of the card body visible no matter how tall
@@ -159,15 +175,6 @@
 .ir-review-context-header-chevron svg {
   width: 18px;
   height: 18px;
-}
-
-/* Expanded portrait: jumps from 30vh to 55vh basis, max 65vh. Keeps the
- * card body and dock visible while showing roughly twice the source.
- * Landscape's flex is overridden by .ir-review--landscape rules below so
- * the rule stays scoped per orientation. */
-.ir-review--mobile .ir-review-context-col--expanded {
-  flex: 0 1 55vh;
-  max-height: 65vh;
 }
 
 .ir-review-scroll {
@@ -590,6 +597,39 @@
   grid-column: 1 / -1;
 }
 
+/* Reading dock: Extract | Cloze | Next | ⋯ on one row (portrait + landscape). */
+.ir-review--mobile .ir-review-buttons--reading-primary {
+  grid-template-columns: 1fr 1fr 1.15fr auto;
+}
+
+.ir-review--mobile .ir-review-buttons--reading-primary button.mod-cta {
+  grid-column: auto;
+}
+
+.ir-review--mobile .ir-review-buttons--reading-primary .ir-review-overflow-btn {
+  width: 44px;
+  min-width: 44px;
+  padding: 0;
+}
+
+.ir-review--mobile .ir-review-buttons--cloze-reveal {
+  grid-template-columns: 1fr auto;
+}
+
+.ir-review--mobile .ir-review-buttons--cloze-reveal button.mod-cta {
+  grid-column: auto;
+}
+
+.ir-review--mobile .ir-review-buttons--grade .ir-review-overflow-btn {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+
+.ir-review--mobile .ir-review-action-btn:disabled {
+  opacity: 0.45;
+}
+
 .ir-review--mobile .ir-priority-row {
   flex-wrap: wrap;
   align-items: center;
@@ -658,13 +698,6 @@
   max-height: none;
   border-bottom: none;
   border-right: 1px solid var(--background-modifier-border);
-  transition: flex-basis 0.18s ease, max-width 0.18s ease;
-}
-
-.ir-review--mobile.ir-review--landscape .ir-review-context-col--expanded {
-  flex: 0 0 min(68%, 22rem);
-  max-width: min(68%, 22rem);
-  max-height: none;
 }
 
 .ir-review--mobile.ir-review--landscape .ir-review-main-col {
@@ -723,52 +756,17 @@
   flex-basis: 100%;
 }
 
-/* Two-row buttons: grade row first (Again/Hard/Good/Easy or Next/Show
- * answer), utility row second. Reorder with `order` so DOM order stays
- * desktop-friendly while landscape mobile shows grades first. */
-.ir-review--mobile.ir-review--landscape .ir-review-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  overflow: visible;
-  gap: 0.3em 0.35em;
-  justify-content: stretch;
-  padding-bottom: 0;
-}
-
+/* Landscape: slightly smaller tap targets; grid dock layouts unchanged. */
 .ir-review--mobile.ir-review--landscape .ir-review-buttons button {
-  flex: 1 1 0;
-  min-width: 0;
-  max-width: none;
-  min-height: 2.25rem;
-  width: auto;
+  min-height: 40px;
   font-size: var(--font-ui-smaller);
-  padding: 0.3em 0.45em;
+  padding: 0.35em 0.5em;
 }
 
-.ir-review--mobile.ir-review--landscape .ir-review-buttons .ir-review-grade-btn {
-  order: 1;
-  flex: 1 1 0;
-}
-
-/* Force the utility row to break onto a new line below the grade row. */
-.ir-review--mobile.ir-review--landscape .ir-review-buttons::after {
-  content: "";
-  flex-basis: 100%;
-  height: 0;
-  order: 2;
-}
-
-.ir-review--mobile.ir-review--landscape .ir-review-buttons .ir-review-util-btn,
-.ir-review--mobile.ir-review--landscape .ir-review-buttons .ir-review-edit-toggle {
-  order: 3;
-  flex: 1 1 0;
-  min-height: 2rem;
-  font-size: var(--font-ui-smaller);
-  padding: 0.25em 0.35em;
-}
-
-.ir-review--mobile.ir-review--landscape .ir-review-buttons button.mod-cta {
-  grid-column: unset;
+.ir-review--mobile.ir-review--landscape .ir-review-buttons .ir-review-overflow-btn {
+  min-height: 40px;
+  width: 40px;
+  min-width: 40px;
 }
 
 .ir-review--mobile.ir-review--landscape .ir-priority-row {
@@ -1565,33 +1563,6 @@
 .ir-review-overflow-btn svg {
   width: 18px;
   height: 18px;
-}
-
-.ir-review-dock--portrait-compact .ir-review-primary-row {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 0.5em;
-  align-items: stretch;
-}
-
-.ir-review-dock--portrait-compact .ir-review-primary-row .mod-cta {
-  flex: 1 1 auto;
-  min-height: 44px;
-  grid-column: unset;
-  width: auto;
-}
-
-.ir-review-dock--portrait-compact .ir-review-buttons {
-  grid-template-columns: 1fr 1fr auto;
-}
-
-.ir-review-dock--portrait-compact
-  .ir-review-buttons
-  > .ir-review-overflow-btn {
-  grid-row: 1 / span 2;
-  grid-column: 3;
-  align-self: stretch;
-  height: auto;
 }
 
 /* IR quick actions — radial overlay */

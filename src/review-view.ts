@@ -128,8 +128,7 @@ export class IrReviewView extends ItemView {
   /** True if the current slot's source note is missing from the vault. */
   private bodyMissing = false;
 
-  /** Mobile-only: user has tapped the source header to expand the parent
-   * column over the card; per-session, not persisted. */
+  /** Mobile-only: parent source panel is open (default collapsed = zero layout space). */
   private mobileSourceExpanded = false;
 
   /** Mobile-only: dismiss swipe coaching once the user has actually swiped.
@@ -696,16 +695,9 @@ export class IrReviewView extends ItemView {
     return Platform.isMobile ? base : `${base} (${hint})`;
   }
 
-  /** Portrait mobile: primary actions only; secondary actions live in ⋯. */
-  private isMobilePortraitCompactDock(): boolean {
-    return (
-      Platform.isMobile && !this.contentEl.hasClass("ir-review--landscape")
-    );
-  }
-
-  /** Hide hub when Extract/Cloze already sit in the dock. */
+  /** Hide hub when Extract/Cloze already sit in the dock, or on mobile (FAB). */
   private shouldShowHubInDock(): boolean {
-    if (!this.openIrHub) return false;
+    if (!this.openIrHub || Platform.isMobile) return false;
     const slot = this.current;
     if (
       slot &&
@@ -777,6 +769,26 @@ export class IrReviewView extends ItemView {
       }
       menu.showAtMouseEvent(ev);
     });
+  }
+
+  private renderMobileSourceToggle(
+    parent: HTMLElement,
+    title: string,
+    masked: boolean,
+  ): void {
+    const label = masked
+      ? "Show source (hidden until reveal)"
+      : `Show source · ${title}`;
+    parent
+      .createEl("button", {
+        cls: "ir-review-source-toggle",
+        text: label,
+        type: "button",
+      })
+      .addEventListener("click", () => {
+        this.mobileSourceExpanded = true;
+        void this.renderCard();
+      });
   }
 
   private readingOverflowItems(): {
@@ -1211,11 +1223,8 @@ export class IrReviewView extends ItemView {
     const mobileCompactEdit =
       Platform.isMobile && this.editing && this.canEdit();
 
-    if (sourceCtx) {
+    if (sourceCtx && (!Platform.isMobile || this.mobileSourceExpanded)) {
       const ctxCol = columns.createDiv({ cls: "ir-review-context-col" });
-      if (Platform.isMobile && this.mobileSourceExpanded) {
-        ctxCol.addClass("ir-review-context-col--expanded");
-      }
       const sourceHeaderText = maskClozeChrome
         ? "Source (hidden until reveal)"
         : `Source · ${sourceCtx.title}`;
@@ -1228,45 +1237,16 @@ export class IrReviewView extends ItemView {
       });
       if (Platform.isMobile) {
         header.setAttr("type", "button");
-        header.setAttr(
-          "aria-label",
-          this.mobileSourceExpanded
-            ? "Collapse source column"
-            : "Expand source column",
-        );
-        header.setAttr(
-          "aria-expanded",
-          this.mobileSourceExpanded ? "true" : "false",
-        );
+        header.setAttr("aria-label", "Hide source");
+        header.setAttr("aria-expanded", "true");
         const chevron = header.createSpan({
           cls: "ir-review-context-header-chevron",
         });
-        setIcon(
-          chevron,
-          this.mobileSourceExpanded ? "chevron-up" : "chevron-down",
-        );
+        setIcon(chevron, "chevron-up");
         header.addEventListener("click", (ev) => {
           ev.preventDefault();
-          this.mobileSourceExpanded = !this.mobileSourceExpanded;
-          ctxCol.toggleClass(
-            "ir-review-context-col--expanded",
-            this.mobileSourceExpanded,
-          );
-          header.setAttr(
-            "aria-expanded",
-            this.mobileSourceExpanded ? "true" : "false",
-          );
-          header.setAttr(
-            "aria-label",
-            this.mobileSourceExpanded
-              ? "Collapse source column"
-              : "Expand source column",
-          );
-          chevron.empty();
-          setIcon(
-            chevron,
-            this.mobileSourceExpanded ? "chevron-up" : "chevron-down",
-          );
+          this.mobileSourceExpanded = false;
+          void this.renderCard();
         });
       }
       const ctxScroll = ctxCol.createDiv({ cls: "ir-review-context-scroll" });
@@ -1313,6 +1293,15 @@ export class IrReviewView extends ItemView {
     const scroll = mainCol.createDiv({
       cls: "ir-review-scroll ir-review-swipe-zone",
     });
+
+    if (
+      sourceCtx &&
+      Platform.isMobile &&
+      !this.mobileSourceExpanded &&
+      !mobileCompactEdit
+    ) {
+      this.renderMobileSourceToggle(scroll, sourceCtx.title, maskClozeChrome);
+    }
 
     if (mobileCompactEdit) {
       this.renderEditor(scroll);
@@ -1392,30 +1381,28 @@ export class IrReviewView extends ItemView {
     }
 
     const dock = host.createDiv({ cls: "ir-review-dock" });
-    if (this.isMobilePortraitCompactDock()) {
-      dock.addClass("ir-review-dock--portrait-compact");
-    }
     const controls = dock.createEl("div", { cls: "ir-review-controls" });
 
     this.maybeShowSwipeCoachMark(slot);
 
     this.renderHubButton(controls);
 
-    const portraitCompact = this.isMobilePortraitCompactDock();
-
     if (reading) {
       this.renderPriorityRow(controls, slot);
-      const bar = controls.createEl("div", { cls: "ir-review-buttons" });
+      const bar = controls.createEl("div", {
+        cls: Platform.isMobile
+          ? "ir-review-buttons ir-review-buttons--reading-primary"
+          : "ir-review-buttons",
+      });
       this.renderChildButtons(bar);
-      if (portraitCompact) {
-        const nextRow = bar.createEl("div", { cls: "ir-review-primary-row" });
-        nextRow
+      if (Platform.isMobile) {
+        bar
           .createEl("button", {
-            text: this.labelWithHotkey("Next", "Space"),
+            text: "Next",
             cls: "mod-cta ir-review-grade-btn",
           })
           .addEventListener("click", () => void this.next());
-        this.renderOverflowButton(nextRow, this.readingOverflowItems());
+        this.renderOverflowButton(bar, this.readingOverflowItems());
       } else {
         this.renderEditToggle(bar);
         const prevRead = bar.createEl("button", {
@@ -1449,21 +1436,22 @@ export class IrReviewView extends ItemView {
     }
 
     if (isCloze && !this.revealed) {
-      const preBar = controls.createEl("div", { cls: "ir-review-buttons" });
-      if (portraitCompact) {
-        const primaryRow = preBar.createEl("div", {
-          cls: "ir-review-primary-row",
-        });
-        primaryRow
+      const preBar = controls.createEl("div", {
+        cls: Platform.isMobile
+          ? "ir-review-buttons ir-review-buttons--cloze-reveal"
+          : "ir-review-buttons",
+      });
+      if (Platform.isMobile) {
+        preBar
           .createEl("button", {
-            text: this.labelWithHotkey("Show answer", "Space"),
+            text: "Show answer",
             cls: "mod-cta ir-review-grade-btn",
           })
           .addEventListener("click", () => {
             this.revealed = true;
             void this.renderCard();
           });
-        this.renderOverflowButton(primaryRow, [
+        this.renderOverflowButton(preBar, [
           {
             label: this.labelWithHotkey("Previous", "["),
             disabled: this.index === 0,
@@ -1492,8 +1480,12 @@ export class IrReviewView extends ItemView {
     }
 
     this.renderPriorityRow(controls, slot);
-    const bar = controls.createEl("div", { cls: "ir-review-buttons" });
-    if (portraitCompact) {
+    const bar = controls.createEl("div", {
+      cls: Platform.isMobile
+        ? "ir-review-buttons ir-review-buttons--grade"
+        : "ir-review-buttons",
+    });
+    if (Platform.isMobile) {
       for (const { grade, label: gLabel } of GRADES) {
         bar
           .createEl("button", {
@@ -1737,20 +1729,28 @@ export class IrReviewView extends ItemView {
   }
 
   private renderChildButtons(parent: HTMLElement) {
+    const slot = this.current;
+    const reading = !!(slot && this.isReading(slot));
+    const alwaysShow = Platform.isMobile && reading;
     const canExtract = this.canMakeChild();
     const canCloze = this.canMakeClozeChild();
-    if (!canExtract && !canCloze) return;
-    if (canExtract) {
+    if (!alwaysShow && !canExtract && !canCloze) return;
+
+    if (alwaysShow || canExtract) {
       const extractBtn = parent.createEl("button", {
         text: this.labelWithHotkey("Extract", "Alt+X"),
+        cls: "ir-review-action-btn ir-review-action-btn--extract",
       });
+      if (!canExtract) extractBtn.disabled = true;
       this.preventClickStealingFocus(extractBtn);
       extractBtn.addEventListener("click", () => void this.handleExtract());
     }
-    if (canCloze) {
+    if (alwaysShow || canCloze) {
       const clozeBtn = parent.createEl("button", {
         text: this.labelWithHotkey("Cloze", "Alt+Z"),
+        cls: "ir-review-action-btn ir-review-action-btn--cloze",
       });
+      if (!canCloze) clozeBtn.disabled = true;
       this.preventClickStealingFocus(clozeBtn);
       clozeBtn.addEventListener("click", () => void this.handleCloze());
     }

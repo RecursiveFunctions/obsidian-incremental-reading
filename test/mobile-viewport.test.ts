@@ -83,5 +83,5 @@ test("mobileTopInsetPx uses fallback when WebView reports zero insets", () => {
 
 test("workspaceFabBottomGapPx adds review dock clearance in portrait", () => {
   const gap = workspaceFabBottomGapPx(phonePortrait, { reviewDock: true });
-  assert.equal(gap, 80 + 28 + 12 + 168);
+  assert.equal(gap, 80 + 28 + 12 + 120);
 });
