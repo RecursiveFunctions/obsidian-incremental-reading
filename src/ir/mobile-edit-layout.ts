@@ -1,139 +1,104 @@
 /**
- * Mobile IR review edit pane sizing. Obsidian's Android WebView often ignores
- * flex/absolute fill on `<textarea>`. Measure the scroll column top → visible
- * bottom and set explicit pixel heights on scroll + textarea.
+ * Mobile IR review edit layout. Do not set fixed heights on scroll/textarea —
+ * that leaves parent columns full-height with a white gap (0.3.19 regression).
+ * When the keyboard is open, size only the card host; inner flex fills it.
  */
 
 export const MOBILE_EDIT_MIN_HEIGHT_PX = 120;
 export const MOBILE_EDIT_EDGE_MARGIN_PX = 8;
 
-/** @deprecated card-top sizing mis-measures when the leaf scrolls; use scroll-top. */
-export function computeMobileEditCardHeightPx(
-  cardTopViewport: number,
-  visibleTop: number,
-  visibleHeight: number,
-  minHeightPx = MOBILE_EDIT_MIN_HEIGHT_PX,
-): number {
-  const visibleBottom = visibleTop + visibleHeight;
-  return Math.max(minHeightPx, Math.round(visibleBottom - cardTopViewport));
-}
-
-/** Height for the scroll/textarea column from viewport + layout clip rects. */
-export function computeMobileEditScrollHeightPx(
-  scrollTopViewport: number,
+/** Card-host height from its top edge to the bottom of the visible viewport. */
+export function computeMobileEditHostHeightPx(
+  hostTopViewport: number,
   visibleBottomViewport: number,
-  layoutBottomViewport: number,
   marginPx = MOBILE_EDIT_EDGE_MARGIN_PX,
   minHeightPx = MOBILE_EDIT_MIN_HEIGHT_PX,
 ): number {
-  const clipBottom = Math.min(visibleBottomViewport, layoutBottomViewport);
   return Math.max(
     minHeightPx,
-    Math.round(clipBottom - scrollTopViewport - marginPx),
+    Math.round(visibleBottomViewport - hostTopViewport - marginPx),
   );
 }
 
-export interface MobileEditLayoutResult {
-  applied: boolean;
-  computedHeight: number;
-  scrollHeight: number;
-  textareaHeight: number;
-  fills: boolean;
-}
-
-function readVisibleBottom(): number {
+export function readVisibleViewportBottom(): number {
   const vv = window.visualViewport;
   if (vv) return vv.offsetTop + vv.height;
   return window.innerHeight;
 }
 
-/** Apply measured heights; always run while mobile edit is active. */
-export function applyMobileEditLayout(
-  cardHost: HTMLElement,
-): MobileEditLayoutResult {
+export interface MobileEditLayoutMetrics {
+  hostHeight: number;
+  scrollHeight: number;
+  textareaHeight: number;
+  columnDeadSpacePx: number;
+  fillsColumn: boolean;
+}
+
+function measure(cardHost: HTMLElement): MobileEditLayoutMetrics {
   const scroll = cardHost.querySelector<HTMLElement>(".ir-review-scroll");
   const ta = cardHost.querySelector<HTMLTextAreaElement>(".ir-review-textarea");
-  if (!scroll || !ta) {
+  const mainCol = cardHost.querySelector<HTMLElement>(".ir-review-main-col");
+  if (!scroll || !ta || !mainCol) {
     return {
-      applied: false,
-      computedHeight: 0,
+      hostHeight: 0,
       scrollHeight: 0,
       textareaHeight: 0,
-      fills: false,
+      columnDeadSpacePx: 0,
+      fillsColumn: false,
     };
   }
-
-  const layoutRoot =
-    cardHost.closest<HTMLElement>(".ir-review-layout") ?? cardHost;
-  const scrollTop = scroll.getBoundingClientRect().top;
-  const layoutBottom = layoutRoot.getBoundingClientRect().bottom;
-  const height = computeMobileEditScrollHeightPx(
-    scrollTop,
-    readVisibleBottom(),
-    layoutBottom,
-  );
-
-  scroll.style.flex = "none";
-  scroll.style.height = `${height}px`;
-  scroll.style.minHeight = `${height}px`;
-  scroll.style.maxHeight = `${height}px`;
-
-  ta.style.display = "block";
-  ta.style.width = "100%";
-  ta.style.boxSizing = "border-box";
-  ta.style.height = `${height}px`;
-  ta.style.minHeight = `${height}px`;
-  ta.style.maxHeight = `${height}px`;
-  ta.style.margin = "0";
-  ta.style.resize = "none";
-
-  const fills = mobileEditTextareaFillsScroll(scroll, ta);
+  const columnDeadSpacePx = mainCol.clientHeight - scroll.offsetHeight;
   return {
-    applied: true,
-    computedHeight: height,
+    hostHeight: cardHost.offsetHeight,
     scrollHeight: scroll.clientHeight,
     textareaHeight: ta.offsetHeight,
-    fills,
+    columnDeadSpacePx,
+    fillsColumn: columnDeadSpacePx <= 4,
   };
 }
 
+/** Keyboard open: clamp card host to visible viewport; children use flex fill. */
+export function applyMobileEditKeyboardLayout(
+  cardHost: HTMLElement,
+): MobileEditLayoutMetrics {
+  const hostTop = cardHost.getBoundingClientRect().top;
+  const height = computeMobileEditHostHeightPx(
+    hostTop,
+    readVisibleViewportBottom(),
+  );
+  cardHost.style.flex = "none";
+  cardHost.style.height = `${height}px`;
+  cardHost.style.maxHeight = `${height}px`;
+  cardHost.style.overflow = "hidden";
+  return measure(cardHost);
+}
+
+/** Keyboard closed: remove all inline sizing so CSS flex layout owns the pane. */
 export function clearMobileEditLayout(cardHost: HTMLElement): void {
-  for (const el of Array.from(
-    cardHost.querySelectorAll<HTMLElement>(
-      ".ir-review-scroll, .ir-review-textarea",
-    ),
-  )) {
-    el.style.removeProperty("height");
-    el.style.removeProperty("min-height");
-    el.style.removeProperty("max-height");
-    el.style.removeProperty("flex");
-    el.style.removeProperty("display");
-    el.style.removeProperty("width");
-    el.style.removeProperty("margin");
-    el.style.removeProperty("resize");
-    el.style.removeProperty("box-sizing");
+  const selectors = [
+    ".ir-review-card-host",
+    ".ir-review-columns",
+    ".ir-review-main-col",
+    ".ir-review-scroll",
+    ".ir-review-textarea",
+  ];
+  for (const sel of selectors) {
+    for (const el of Array.from(cardHost.querySelectorAll<HTMLElement>(sel))) {
+      if (!el.style?.removeProperty) continue;
+      el.style.removeProperty("height");
+      el.style.removeProperty("min-height");
+      el.style.removeProperty("max-height");
+      el.style.removeProperty("flex");
+      el.style.removeProperty("display");
+      el.style.removeProperty("width");
+      el.style.removeProperty("margin");
+      el.style.removeProperty("resize");
+      el.style.removeProperty("box-sizing");
+      el.style.removeProperty("overflow");
+    }
   }
   cardHost.style.removeProperty("height");
   cardHost.style.removeProperty("max-height");
   cardHost.style.removeProperty("flex");
-}
-
-/** True when the textarea fills the scroll column (≤2px slack for rounding). */
-export function mobileEditTextareaFillsScroll(
-  scroll: HTMLElement,
-  textarea: HTMLElement,
-  slackPx = 2,
-): boolean {
-  if (scroll.clientHeight <= 0) return false;
-  return textarea.offsetHeight >= scroll.clientHeight - slackPx;
-}
-
-/** Whether the IME likely reduced usable height (for chrome class toggles). */
-export function mobileEditKeyboardLikelyOpen(
-  scrollHeightPx: number,
-  baselineScrollHeightPx: number,
-): boolean {
-  if (baselineScrollHeightPx <= 0) return false;
-  const shrink = baselineScrollHeightPx - scrollHeightPx;
-  return shrink >= 120 || shrink / baselineScrollHeightPx >= 0.18;
+  cardHost.style.removeProperty("overflow");
 }
