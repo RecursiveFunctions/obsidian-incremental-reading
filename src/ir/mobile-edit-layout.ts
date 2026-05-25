@@ -5,7 +5,10 @@
  * ignore flex growth on <textarea>; set explicit pixel heights on the chain.
  */
 
-import { readMobileViewportInsets } from "./mobile-viewport";
+import {
+  readEffectiveVisibleBottom,
+  readMobileViewportInsets,
+} from "./mobile-viewport";
 
 export const MOBILE_EDIT_MIN_HEIGHT_PX = 120;
 export const MOBILE_EDIT_EDGE_MARGIN_PX = 8;
@@ -30,13 +33,7 @@ export function computeMobileEditHostHeightPx(
   );
 }
 
-/** Bottom of the area the plugin may use (min of vv and layout root). */
-export function readEffectiveVisibleBottom(layoutRoot: HTMLElement): number {
-  const insets = readMobileViewportInsets();
-  const vvBottom = insets.visibleTop + insets.visibleHeight;
-  const layoutBottom = layoutRoot.getBoundingClientRect().bottom;
-  return Math.min(vvBottom, layoutBottom);
-}
+export { readEffectiveVisibleBottom } from "./mobile-viewport";
 
 /**
  * True when the usable edit viewport shrank vs baseline — vv shrink, leaf
@@ -143,10 +140,14 @@ export function applyMobileEditLayout(
   cardHost.style.overflow = "hidden";
 
   const topbar = cardHost.querySelector<HTMLElement>(".ir-review-edit-topbar");
+  const editDock = cardHost.querySelector<HTMLElement>(
+    ".ir-review-dock--edit-mobile",
+  );
   const scroll = cardHost.querySelector<HTMLElement>(".ir-review-scroll");
   const ta = cardHost.querySelector<HTMLTextAreaElement>(".ir-review-textarea");
   const topbarH = topbar?.offsetHeight ?? 0;
-  const scrollH = Math.max(0, height - topbarH);
+  const dockH = editDock?.offsetHeight ?? 0;
+  const scrollH = Math.max(0, height - topbarH - dockH);
 
   if (scroll && ta) {
     scroll.style.flex = "none";

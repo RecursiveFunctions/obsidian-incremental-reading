@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   clampRadialOrigin,
+  keyboardCoverInsetPx,
   keyboardShrinkLikelyOpen,
   mobileTopInsetPx,
   radialAnchorCenterBottom,
+  readEffectiveVisibleBottom,
   workspaceFabBottomGapPx,
   type MobileViewportInsets,
 } from "../src/ir/mobile-viewport";
@@ -84,4 +86,37 @@ test("mobileTopInsetPx uses fallback when WebView reports zero insets", () => {
 test("workspaceFabBottomGapPx adds review dock clearance in portrait", () => {
   const gap = workspaceFabBottomGapPx(phonePortrait, { reviewDock: true });
   assert.equal(gap, 80 + 28 + 12 + 120);
+});
+
+test("readEffectiveVisibleBottom: min of vv and layout root", () => {
+  const prevWindow = globalThis.window;
+  const layoutRoot = {
+    getBoundingClientRect: () => ({ bottom: 420 }),
+  } as HTMLElement;
+
+  globalThis.window = {
+    visualViewport: { offsetTop: 0, height: 480, width: 412 },
+    innerHeight: 915,
+    innerWidth: 412,
+  } as Window & typeof globalThis;
+
+  assert.equal(readEffectiveVisibleBottom(layoutRoot), 420);
+
+  globalThis.window = prevWindow;
+});
+
+test("keyboardCoverInsetPx: leaf shrink without vv shrink", () => {
+  const prevWindow = globalThis.window;
+  globalThis.window = {
+    visualViewport: { offsetTop: 0, height: 650, width: 412 },
+    innerHeight: 915,
+    innerWidth: 412,
+  } as Window & typeof globalThis;
+
+  const shrunkRoot = {
+    getBoundingClientRect: () => ({ bottom: 380 }),
+  } as HTMLElement;
+  assert.equal(keyboardCoverInsetPx(shrunkRoot), 535);
+
+  globalThis.window = prevWindow;
 });

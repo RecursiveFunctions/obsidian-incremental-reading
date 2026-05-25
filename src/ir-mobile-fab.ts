@@ -62,7 +62,10 @@ export function registerWorkspaceIrFab(
     if (ctx.show) {
       fab.removeClass("is-hidden");
       fab.toggleClass("ir-workspace-fab--review", ctx.review);
-      layoutWorkspaceFab(fab, { reviewDock: ctx.reviewDock });
+      layoutWorkspaceFab(fab, {
+        reviewDock: ctx.reviewDock,
+        layoutRoot: ctx.layoutRoot,
+      });
     } else {
       fab.addClass("is-hidden");
       fab.removeClass("ir-workspace-fab--review");
@@ -99,6 +102,7 @@ function fabLayoutContext(app: App): {
   show: boolean;
   review: boolean;
   reviewDock: boolean;
+  layoutRoot?: HTMLElement;
 } {
   if (!Platform.isMobile) {
     return { show: false, review: false, reviewDock: false };
@@ -114,6 +118,7 @@ function fabLayoutContext(app: App): {
       show: true,
       review: true,
       reviewDock: leaf.view.mobileFabAboveDock(),
+      layoutRoot: leaf.view.mobileFabLayoutRoot(),
     };
   }
 
