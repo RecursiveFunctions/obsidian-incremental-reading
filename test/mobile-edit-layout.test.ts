@@ -2,19 +2,25 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   applyMobileEditLayout,
-  computeMobileEditCardHeightPx,
+  clearMobileEditLayout,
+  computeMobileEditScrollHeightPx,
+  mobileEditKeyboardLikelyOpen,
   mobileEditTextareaFillsScroll,
   MOBILE_EDIT_MIN_HEIGHT_PX,
 } from "../src/ir/mobile-edit-layout";
 
-test("computeMobileEditCardHeightPx: card top to visible bottom", () => {
-  assert.equal(computeMobileEditCardHeightPx(120, 0, 480), 360);
-  assert.equal(computeMobileEditCardHeightPx(120, 0, 480, 200), 360);
+test("computeMobileEditScrollHeightPx: scroll top to visible bottom", () => {
+  assert.equal(computeMobileEditScrollHeightPx(140, 480, 900), 332);
 });
 
-test("computeMobileEditCardHeightPx: enforces minimum height", () => {
+test("computeMobileEditScrollHeightPx: clips to shrunk layout root (Obsidian leaf)", () => {
+  // Keyboard shrinks leaf to 380px bottom; vv still reports 915 — use layout clip.
+  assert.equal(computeMobileEditScrollHeightPx(140, 915, 380), 232);
+});
+
+test("computeMobileEditScrollHeightPx: enforces minimum height", () => {
   assert.equal(
-    computeMobileEditCardHeightPx(400, 0, 450, MOBILE_EDIT_MIN_HEIGHT_PX),
+    computeMobileEditScrollHeightPx(360, 400, 400, 8, MOBILE_EDIT_MIN_HEIGHT_PX),
     MOBILE_EDIT_MIN_HEIGHT_PX,
   );
 });
@@ -27,34 +33,75 @@ test("mobileEditTextareaFillsScroll: detects dead space", () => {
   assert.equal(mobileEditTextareaFillsScroll(scroll, short), false);
 });
 
-test("applyMobileEditLayout: sets explicit height when keyboard open", () => {
-  const cardHost = {
-    style: { height: "", maxHeight: "", flex: "" },
-    getBoundingClientRect: () => ({ top: 100, bottom: 500, height: 400 }),
-    querySelector: () => ({ clientHeight: 250 }),
-  } as unknown as HTMLElement;
+test("mobileEditKeyboardLikelyOpen: detects shrink vs baseline", () => {
+  assert.equal(mobileEditKeyboardLikelyOpen(280, 650), true);
+  assert.equal(mobileEditKeyboardLikelyOpen(620, 650), false);
+});
 
-  Object.defineProperty(cardHost, "style", {
-    value: {
-      height: "",
-      maxHeight: "",
-      flex: "",
-      setProperty(key: string, val: string) {
-        (this as Record<string, string>)[key] = val;
-      },
-      removeProperty(key: string) {
-        delete (this as Record<string, string>)[key];
-      },
+test("applyMobileEditLayout: sets matching scroll + textarea heights", () => {
+  const styleStore: Record<string, string> = {};
+  const makeStyle = (prefix: string) => ({
+    get height() {
+      return styleStore[`${prefix}.height`] ?? "";
     },
-    writable: true,
+    set height(v: string) {
+      styleStore[`${prefix}.height`] = v;
+    },
+    flex: "",
+    setProperty(k: string, v: string) {
+      styleStore[`${prefix}.${k}`] = v;
+    },
+    removeProperty(k: string) {
+      delete styleStore[`${prefix}.${k}`];
+    },
   });
 
-  const scrollHeight = applyMobileEditLayout({
-    cardHost,
-    keyboardOpen: true,
-    visibleTop: 0,
-    visibleHeight: 420,
-  });
-  assert.equal((cardHost.style as { height?: string }).height, "320px");
-  assert.equal(scrollHeight, 250);
+  const scroll = {
+    className: "ir-review-scroll",
+    offsetHeight: 222,
+    clientHeight: 222,
+    style: makeStyle("scroll"),
+    getBoundingClientRect: () => ({ top: 150, bottom: 372, height: 222 }),
+    closest: () => layoutRoot,
+  };
+  const ta = {
+    className: "ir-review-textarea",
+    offsetHeight: 222,
+    clientHeight: 222,
+    style: makeStyle("textarea"),
+    getBoundingClientRect: () => ({ top: 150, bottom: 372, height: 222 }),
+  };
+  const layoutRoot = {
+    getBoundingClientRect: () => ({ top: 48, bottom: 380, height: 332 }),
+  };
+  const cardHost = {
+    style: makeStyle("card"),
+    querySelector(sel: string) {
+      if (sel.includes("scroll")) return scroll;
+      if (sel.includes("textarea")) return ta;
+      return null;
+    },
+    querySelectorAll(sel: string) {
+      if (sel.includes("scroll")) return [scroll];
+      if (sel.includes("textarea")) return [ta];
+      return [];
+    },
+    closest: () => layoutRoot,
+  };
+
+  const prevWindow = globalThis.window;
+  globalThis.window = {
+    visualViewport: { offsetTop: 0, height: 915 },
+    innerHeight: 915,
+  } as Window & typeof globalThis;
+
+  const result = applyMobileEditLayout(cardHost as unknown as HTMLElement);
+  assert.equal(result.applied, true);
+  assert.equal(result.computedHeight, 222);
+  assert.equal(styleStore["scroll.height"], "222px");
+  assert.equal(styleStore["textarea.height"], "222px");
+  assert.equal(result.fills, true);
+
+  clearMobileEditLayout(cardHost as unknown as HTMLElement);
+  globalThis.window = prevWindow;
 });

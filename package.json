@@ -1,13 +1,13 @@
 {
   "name": "obsidian-incremental-reading",
-  "version": "0.3.18",
+  "version": "0.3.19",
   "description": "SuperMemo-style incremental reading and spaced repetition for Obsidian, built on FSRS.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test": "node --import tsx --test test/*.test.ts",
-    "test:layout": "node --import tsx --test test/mobile-edit-layout-visual.test.ts",
+    "test:layout": "node scripts/verify-mobile-edit-layout.mjs",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "postversion": "git push origin HEAD --follow-tags",
     "ship:patch": "npm test && npm run build && npm version patch -m '%s'",
