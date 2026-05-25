@@ -109,6 +109,21 @@ export function isMobileKeyboardLikelyOpen(): boolean {
 export const REVIEW_DOCK_CLEARANCE_PORTRAIT_PX = 120;
 export const REVIEW_DOCK_CLEARANCE_LANDSCAPE_PX = 96;
 
+/** Bottom of usable plugin area (min of visualViewport and layout root). */
+export function readEffectiveVisibleBottom(layoutRoot?: HTMLElement): number {
+  const insets = readMobileViewportInsets();
+  const vvBottom = insets.visibleTop + insets.visibleHeight;
+  if (!layoutRoot) return vvBottom;
+  return Math.min(vvBottom, layoutRoot.getBoundingClientRect().bottom);
+}
+
+/** Pixels covered from the layout bottom (keyboard overlay or leaf shrink). */
+export function keyboardCoverInsetPx(layoutRoot?: HTMLElement): number {
+  const insets = readMobileViewportInsets();
+  const visibleBottom = readEffectiveVisibleBottom(layoutRoot);
+  return Math.max(0, insets.layoutHeight - visibleBottom);
+}
+
 export function workspaceFabBottomGapPx(
   insets: MobileViewportInsets,
   opts?: { reviewDock?: boolean },
@@ -132,11 +147,15 @@ export function workspaceFabBottomGapPx(
 /** Pin the workspace FAB above Obsidian + system nav; left in landscape. */
 export function layoutWorkspaceFab(
   fab: HTMLElement,
-  opts?: { reviewDock?: boolean },
+  opts?: { reviewDock?: boolean; layoutRoot?: HTMLElement },
 ): void {
   const insets = readMobileViewportInsets();
   const landscape = insets.layoutWidth > insets.layoutHeight;
-  const bottomGap = workspaceFabBottomGapPx(insets, opts);
+  const keyboardInset = keyboardCoverInsetPx(opts?.layoutRoot);
+  const bottomGap =
+    keyboardInset >= 100
+      ? keyboardInset + MOBILE_EDGE_MARGIN_PX
+      : workspaceFabBottomGapPx(insets, opts);
 
   fab.style.setProperty("bottom", `${bottomGap}px`);
   fab.style.setProperty("top", "auto");

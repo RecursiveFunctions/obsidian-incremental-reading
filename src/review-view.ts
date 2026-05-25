@@ -200,6 +200,11 @@ export class IrReviewView extends ItemView {
     return !this.editing;
   }
 
+  /** Layout root for FAB keyboard inset (review leaf bounds). */
+  mobileFabLayoutRoot(): HTMLElement {
+    return this.contentEl;
+  }
+
   getViewType(): string {
     return IR_REVIEW_VIEW_TYPE;
   }
@@ -539,6 +544,7 @@ export class IrReviewView extends ItemView {
   private adjustReviewPaneForKeyboard(): void {
     if (!Platform.isMobile || !this.editing) return;
     this.layoutMobileEditPane();
+    this.onMobileChromeChange?.();
 
     const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(
       ".ir-review-textarea",
@@ -554,6 +560,14 @@ export class IrReviewView extends ItemView {
   private renderMobileEditDock(host: HTMLElement): void {
     const topbar = host.createDiv({ cls: "ir-review-edit-topbar" });
     this.renderEditToggle(topbar);
+
+    const dock = host.createDiv({
+      cls: "ir-review-dock ir-review-dock--edit-mobile",
+    });
+    const bar = dock.createEl("div", {
+      cls: "ir-review-buttons ir-review-buttons--edit-mobile",
+    });
+    this.renderChildButtons(bar);
   }
 
   private handleSwipeOutcome(outcome: SwipeOutcome): void {
