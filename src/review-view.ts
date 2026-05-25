@@ -91,7 +91,6 @@ import {
 import type { IrHubEntry } from "./ir-actions-radial";
 import {
   isMobileKeyboardLikelyOpen,
-  mobileTopInsetPx,
   readMobileViewportInsets,
 } from "./ir/mobile-viewport";
 
@@ -481,64 +480,63 @@ export class IrReviewView extends ItemView {
     this.onMobileChromeChange?.();
   }
 
-  /** Pin the card host to the visible viewport while the keyboard is open. */
+  /**
+   * Reserve space for the soft keyboard without shrinking the edit pane to
+   * `visualViewport.height` (that pin left a band of dead space on Android).
+   */
   private applyVisualViewportLayout(): void {
     if (!Platform.isMobile || !this.editing) return;
-    const vv = window.visualViewport;
-    if (!vv) return;
+    if (!isMobileKeyboardLikelyOpen()) {
+      this.clearVisualViewportLayout();
+      return;
+    }
     const insets = readMobileViewportInsets();
-    const top = Math.max(vv.offsetTop, mobileTopInsetPx(insets));
-    this.contentEl.style.setProperty("--ir-vv-height", `${vv.height}px`);
-    this.contentEl.style.setProperty("--ir-vv-offset-top", `${top}px`);
+    this.contentEl.addClass("ir-review--keyboard-open");
     this.contentEl.style.setProperty(
-      "--ir-safe-top",
-      `${mobileTopInsetPx(insets)}px`,
+      "--ir-keyboard-inset",
+      `${Math.max(0, insets.bottom)}px`,
     );
-    this.cardHostEl?.addClass("ir-review-card-host--pinned");
   }
 
   private clearVisualViewportLayout(): void {
-    this.cardHostEl?.removeClass("ir-review-card-host--pinned");
-    this.cardHostEl?.style.removeProperty("padding-bottom");
-    this.contentEl.style.removeProperty("--ir-vv-height");
-    this.contentEl.style.removeProperty("--ir-vv-offset-top");
-    this.contentEl.style.removeProperty("--ir-safe-top");
+    this.contentEl.removeClass("ir-review--keyboard-open");
+    this.contentEl.style.removeProperty("--ir-keyboard-inset");
+  }
+
+  private scrollTextareaCaretIntoView(ta: HTMLTextAreaElement): void {
+    const pos = ta.selectionStart ?? 0;
+    const lineHeight =
+      parseFloat(getComputedStyle(ta).lineHeight) ||
+      parseFloat(getComputedStyle(ta).fontSize) * 1.4 ||
+      22;
+    const lineIndex = ta.value.slice(0, pos).split("\n").length - 1;
+    const caretY = lineIndex * lineHeight;
+    const margin = lineHeight * 1.5;
+    const viewTop = ta.scrollTop;
+    const viewBottom = viewTop + ta.clientHeight;
+
+    if (caretY < viewTop + margin) {
+      ta.scrollTop = Math.max(0, caretY - margin);
+    } else if (caretY + lineHeight > viewBottom - margin) {
+      ta.scrollTop = caretY + lineHeight - ta.clientHeight + margin;
+    }
   }
 
   private adjustReviewPaneForKeyboard(): void {
     if (!Platform.isMobile || !this.editing) return;
-    if (!isMobileKeyboardLikelyOpen()) return;
     this.applyVisualViewportLayout();
+    if (!isMobileKeyboardLikelyOpen()) return;
 
     const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(
       ".ir-review-textarea",
     );
     if (!ta) return;
-
-    const vv = window.visualViewport;
-    const visibleTop = vv?.offsetTop ?? 0;
-    const visibleBottom = vv
-      ? vv.offsetTop + vv.height
-      : window.innerHeight;
-    const taRect = ta.getBoundingClientRect();
-    const margin = 16;
-
-    if (taRect.bottom > visibleBottom - margin) {
-      ta.scrollTop += taRect.bottom - visibleBottom + margin;
-    }
-    if (taRect.top < visibleTop + margin) {
-      ta.scrollTop -= visibleTop + margin - taRect.top;
-    }
+    this.scrollTextareaCaretIntoView(ta);
   }
 
   /**
-   * Mobile edit mode: the old design put the Preview toggle in a bottom
-   * dock, which on portrait phones sat right in the gesture zone and got
-   * clipped by Obsidian's floating nav pill. Native edit-confirm controls
-   * (iOS "Done", Android checkmark) live in the top app bar, so we follow
-   * the same convention here: a compact pill at top-right of the pane,
-   * absolutely positioned over the textarea. The bottom of the pane is
-   * left free for the keyboard and gesture nav.
+   * Mobile edit mode: Preview lives in a top bar (native Done/check pattern),
+   * not a bottom dock that fights the gesture nav and Obsidian's floating bar.
    */
   private renderMobileEditDock(host: HTMLElement): void {
     const topbar = host.createDiv({ cls: "ir-review-edit-topbar" });
@@ -1372,10 +1370,16 @@ export class IrReviewView extends ItemView {
       this.renderMobileEditDock(host);
       if (reading) this.restoreBookmark(slot);
       requestAnimationFrame(() => {
-        this.adjustReviewPaneForKeyboard();
-        scroll
-          .querySelector<HTMLTextAreaElement>(".ir-review-textarea")
-          ?.focus();
+        const ta = scroll.querySelector<HTMLTextAreaElement>(
+          ".ir-review-textarea",
+        );
+        ta?.focus();
+        // Keyboard animates in after focus; re-measure on the next frames.
+        requestAnimationFrame(() => {
+          this.adjustReviewPaneForKeyboard();
+          setTimeout(() => this.adjustReviewPaneForKeyboard(), 120);
+          setTimeout(() => this.adjustReviewPaneForKeyboard(), 320);
+        });
       });
       return;
     }
@@ -1682,12 +1686,14 @@ export class IrReviewView extends ItemView {
       const keepCaretVisible = () => this.adjustReviewPaneForKeyboard();
       ta.addEventListener("focus", () => {
         requestAnimationFrame(() => {
-          setTimeout(keepCaretVisible, 80);
+          keepCaretVisible();
+          setTimeout(keepCaretVisible, 120);
           setTimeout(keepCaretVisible, 320);
         });
       });
       ta.addEventListener("click", keepCaretVisible);
       ta.addEventListener("keyup", keepCaretVisible);
+      ta.addEventListener("select", keepCaretVisible);
     } else {
       requestAnimationFrame(() => {
         ta.focus();
