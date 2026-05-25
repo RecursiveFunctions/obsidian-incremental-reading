@@ -89,13 +89,12 @@ import {
   type Span,
 } from "./ir/extract-spans";
 import type { IrHubEntry } from "./ir-actions-radial";
+import { resetMobileKeyboardBaseline } from "./ir/mobile-viewport";
 import {
-  isMobileKeyboardLikelyOpen,
-  resetMobileKeyboardBaseline,
-} from "./ir/mobile-viewport";
-import {
-  applyMobileEditKeyboardLayout,
+  applyMobileEditLayout,
   clearMobileEditLayout,
+  isMobileEditViewportCompressed,
+  resetMobileEditLayoutBaseline,
 } from "./ir/mobile-edit-layout";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
@@ -480,6 +479,7 @@ export class IrReviewView extends ItemView {
     if (this.cardHostEl) {
       this.mobileEditResizeObserver.observe(this.cardHostEl);
     }
+    this.mobileEditResizeObserver.observe(this.contentEl);
   }
 
   private detachMobileEditResizeObserver(): void {
@@ -500,22 +500,21 @@ export class IrReviewView extends ItemView {
     this.onMobileChromeChange?.();
   }
 
-  /** Only touch layout when the IME is open; otherwise CSS flex fills the leaf. */
+  /** Size edit UI from layout-root bounds every frame — vv alone lies on Android. */
   private layoutMobileEditPane(): void {
     if (!Platform.isMobile || !this.editing || !this.cardHostEl) return;
 
-    if (isMobileKeyboardLikelyOpen()) {
-      this.contentEl.addClass("ir-review--keyboard-open");
-      applyMobileEditKeyboardLayout(this.cardHostEl);
-    } else {
-      this.contentEl.removeClass("ir-review--keyboard-open");
-      clearMobileEditLayout(this.cardHostEl);
-    }
+    applyMobileEditLayout(this.cardHostEl, this.contentEl);
+    this.contentEl.toggleClass(
+      "ir-review--keyboard-open",
+      isMobileEditViewportCompressed(this.contentEl),
+    );
   }
 
   private clearMobileEditPaneLayout(): void {
     if (this.cardHostEl) clearMobileEditLayout(this.cardHostEl);
     this.contentEl.removeClass("ir-review--keyboard-open");
+    resetMobileEditLayoutBaseline();
   }
 
   private scrollTextareaCaretIntoView(ta: HTMLTextAreaElement): void {
@@ -544,7 +543,7 @@ export class IrReviewView extends ItemView {
     const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(
       ".ir-review-textarea",
     );
-    if (!ta || !isMobileKeyboardLikelyOpen()) return;
+    if (!ta || !isMobileEditViewportCompressed(this.contentEl)) return;
     this.scrollTextareaCaretIntoView(ta);
   }
 
@@ -1130,11 +1129,13 @@ export class IrReviewView extends ItemView {
       const scrollable = scroll.scrollHeight - scroll.clientHeight;
       if (scrollable <= 1) {
         wrap.addClass("ir-reading-doc-progress--fits");
+        this.contentEl.addClass("ir-review--reading-fits");
         fill.style.width = "100%";
         label.setText("Fits in view");
         return;
       }
       wrap.removeClass("ir-reading-doc-progress--fits");
+      this.contentEl.removeClass("ir-review--reading-fits");
       const pct = Math.max(
         0,
         Math.min(100, (scroll.scrollTop / scrollable) * 100),
@@ -1382,6 +1383,7 @@ export class IrReviewView extends ItemView {
 
     if (mobileCompactEdit) {
       resetMobileKeyboardBaseline();
+      resetMobileEditLayoutBaseline();
       this.renderMobileEditDock(host);
       this.attachMobileEditResizeObserver();
       if (reading) this.restoreBookmark(slot);
@@ -1698,6 +1700,12 @@ export class IrReviewView extends ItemView {
       };
       ta.addEventListener("focus", onKeyboard);
       ta.addEventListener("click", onKeyboard);
+      ta.addEventListener("blur", () => {
+        resetMobileEditLayoutBaseline();
+        requestAnimationFrame(() => {
+          if (this.editing) this.layoutMobileEditPane();
+        });
+      });
     } else {
       requestAnimationFrame(() => {
         ta.focus();
