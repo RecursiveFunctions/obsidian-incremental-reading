@@ -20,6 +20,11 @@ async function loadPlaywright() {
 }
 
 test("mobile edit layout (browser): textarea fills scroll when keyboard open", async (t) => {
+  if (process.env.CI) {
+    t.skip("Playwright layout test runs locally: npm run test:layout");
+    return;
+  }
+
   const pw = await loadPlaywright();
   if (!pw) {
     t.skip("playwright not installed — run: npx playwright install chromium");
