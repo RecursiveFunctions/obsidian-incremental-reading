@@ -90,10 +90,9 @@ import {
 } from "./ir/extract-spans";
 import type { IrHubEntry } from "./ir-actions-radial";
 import {
-  isMobileKeyboardLikelyOpen,
-  readMobileViewportInsets,
-} from "./ir/mobile-viewport";
-import { applyMobileEditLayout } from "./ir/mobile-edit-layout";
+  applyMobileEditLayout,
+  clearMobileEditLayout,
+} from "./ir/mobile-edit-layout";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -119,6 +118,10 @@ export class IrReviewView extends ItemView {
   private swipeGestureCleanup?: () => void;
   private mobileKeyboardCleanup?: () => void;
   private mobileOrientationCleanup?: () => void;
+  /** Re-measures edit textarea height when the leaf or viewport changes size. */
+  private mobileEditResizeObserver?: ResizeObserver;
+  /** Tallest scroll height seen this edit session (keyboard-closed baseline). */
+  private mobileEditScrollBaselinePx = 0;
   /** Working text for the current slot; updated live by the textarea. */
   private currentRaw = "";
   /** Last known on-disk body for the current slot (for dirty-check). */
@@ -447,8 +450,8 @@ export class IrReviewView extends ItemView {
   private attachMobileKeyboardGuard(): () => void {
     const vv = window.visualViewport;
     const adjust = () => {
-      this.syncMobileEditChrome();
-      if (this.editing && isMobileKeyboardLikelyOpen()) {
+      if (this.editing) {
+        this.syncMobileEditChrome();
         this.adjustReviewPaneForKeyboard();
       }
     };
@@ -456,13 +459,33 @@ export class IrReviewView extends ItemView {
       vv.addEventListener("resize", adjust);
       vv.addEventListener("scroll", adjust);
     }
+    window.addEventListener("resize", adjust);
     return () => {
       if (vv) {
         vv.removeEventListener("resize", adjust);
         vv.removeEventListener("scroll", adjust);
       }
+      window.removeEventListener("resize", adjust);
+      this.detachMobileEditResizeObserver();
       this.clearMobileEditPaneLayout();
     };
+  }
+
+  private attachMobileEditResizeObserver(): void {
+    if (!Platform.isMobile || typeof ResizeObserver === "undefined") return;
+    this.detachMobileEditResizeObserver();
+    this.mobileEditResizeObserver = new ResizeObserver(() => {
+      if (this.editing) this.layoutMobileEditPane();
+    });
+    if (this.cardHostEl) {
+      this.mobileEditResizeObserver.observe(this.cardHostEl);
+    }
+    this.mobileEditResizeObserver.observe(this.contentEl);
+  }
+
+  private detachMobileEditResizeObserver(): void {
+    this.mobileEditResizeObserver?.disconnect();
+    this.mobileEditResizeObserver = undefined;
   }
 
   private syncMobileEditChrome(): void {
@@ -472,40 +495,36 @@ export class IrReviewView extends ItemView {
       this.layoutMobileEditPane();
     } else {
       this.contentEl.removeClass("ir-review--editing");
-      this.contentEl.removeClass("ir-review--keyboard-open");
+      this.detachMobileEditResizeObserver();
       this.clearMobileEditPaneLayout();
     }
     this.onMobileChromeChange?.();
   }
 
-  /** Size the edit card to the visible viewport and fill it with the textarea. */
+  /** Size the edit scroll column + textarea to the visible area above the IME. */
   private layoutMobileEditPane(): void {
     if (!Platform.isMobile || !this.editing || !this.cardHostEl) return;
 
-    const vv = window.visualViewport;
-    const keyboardOpen = isMobileKeyboardLikelyOpen();
-    if (keyboardOpen) {
-      this.contentEl.addClass("ir-review--keyboard-open");
-    } else {
-      this.contentEl.removeClass("ir-review--keyboard-open");
+    const result = applyMobileEditLayout(this.cardHostEl);
+    if (!result.applied) return;
+
+    if (
+      this.mobileEditScrollBaselinePx === 0 ||
+      result.computedHeight > this.mobileEditScrollBaselinePx
+    ) {
+      this.mobileEditScrollBaselinePx = result.computedHeight;
     }
 
-    applyMobileEditLayout({
-      cardHost: this.cardHostEl,
-      keyboardOpen,
-      visibleTop: vv?.offsetTop ?? 0,
-      visibleHeight: vv?.height ?? readMobileViewportInsets().visibleHeight,
-    });
+    const keyboardLikely =
+      this.mobileEditScrollBaselinePx > 0 &&
+      result.computedHeight < this.mobileEditScrollBaselinePx - 80;
+    this.contentEl.toggleClass("ir-review--keyboard-open", keyboardLikely);
   }
 
   private clearMobileEditPaneLayout(): void {
-    if (!this.cardHostEl) return;
-    applyMobileEditLayout({
-      cardHost: this.cardHostEl,
-      keyboardOpen: false,
-      visibleTop: 0,
-      visibleHeight: 0,
-    });
+    this.mobileEditScrollBaselinePx = 0;
+    if (this.cardHostEl) clearMobileEditLayout(this.cardHostEl);
+    this.contentEl.removeClass("ir-review--keyboard-open");
   }
 
   private scrollTextareaCaretIntoView(ta: HTMLTextAreaElement): void {
@@ -530,7 +549,6 @@ export class IrReviewView extends ItemView {
   private adjustReviewPaneForKeyboard(): void {
     if (!Platform.isMobile || !this.editing) return;
     this.layoutMobileEditPane();
-    if (!isMobileKeyboardLikelyOpen()) return;
 
     const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(
       ".ir-review-textarea",
@@ -1372,24 +1390,25 @@ export class IrReviewView extends ItemView {
     }
 
     if (mobileCompactEdit) {
+      this.mobileEditScrollBaselinePx = 0;
       this.renderMobileEditDock(host);
+      this.attachMobileEditResizeObserver();
       if (reading) this.restoreBookmark(slot);
       requestAnimationFrame(() => {
         const ta = scroll.querySelector<HTMLTextAreaElement>(
           ".ir-review-textarea",
         );
         ta?.focus();
-        requestAnimationFrame(() => {
+        const relayout = () => {
           this.layoutMobileEditPane();
           this.adjustReviewPaneForKeyboard();
-          setTimeout(() => {
-            this.layoutMobileEditPane();
-            this.adjustReviewPaneForKeyboard();
-          }, 120);
-          setTimeout(() => {
-            this.layoutMobileEditPane();
-            this.adjustReviewPaneForKeyboard();
-          }, 320);
+        };
+        requestAnimationFrame(() => {
+          relayout();
+          setTimeout(relayout, 50);
+          setTimeout(relayout, 150);
+          setTimeout(relayout, 350);
+          setTimeout(relayout, 600);
         });
       });
       return;
@@ -1694,17 +1713,21 @@ export class IrReviewView extends ItemView {
       }
     });
     if (Platform.isMobile) {
-      const keepCaretVisible = () => this.adjustReviewPaneForKeyboard();
+      const relayout = () => {
+        this.layoutMobileEditPane();
+        this.adjustReviewPaneForKeyboard();
+      };
       ta.addEventListener("focus", () => {
         requestAnimationFrame(() => {
-          keepCaretVisible();
-          setTimeout(keepCaretVisible, 120);
-          setTimeout(keepCaretVisible, 320);
+          relayout();
+          setTimeout(relayout, 50);
+          setTimeout(relayout, 150);
+          setTimeout(relayout, 350);
         });
       });
-      ta.addEventListener("click", keepCaretVisible);
-      ta.addEventListener("keyup", keepCaretVisible);
-      ta.addEventListener("select", keepCaretVisible);
+      ta.addEventListener("click", relayout);
+      ta.addEventListener("keyup", relayout);
+      ta.addEventListener("select", relayout);
     } else {
       requestAnimationFrame(() => {
         ta.focus();
