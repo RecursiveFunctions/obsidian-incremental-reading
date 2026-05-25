@@ -26,37 +26,39 @@ async function main() {
     await page.goto(`file://${fixturePath}`);
     await page.addStyleTag({ path: stylesPath });
 
-    const metrics = function metrics() {
+    const applyLayout = function applyLayout() {
+      const layoutRoot = document.getElementById("plugin-root");
       const cardHost = document.getElementById("card-host");
       const scroll = cardHost.querySelector(".ir-review-scroll");
       const ta = cardHost.querySelector(".ir-review-textarea");
       const mainCol = cardHost.querySelector(".ir-review-main-col");
-      const columnDead = mainCol.clientHeight - scroll.offsetHeight;
-      const scrollFill = scroll.clientHeight - ta.offsetHeight;
-      return {
-        hostHeight: cardHost.offsetHeight,
-        scrollHeight: scroll.clientHeight,
-        textareaHeight: ta.offsetHeight,
-        columnDead,
-        scrollFill,
-        fillsColumn: columnDead <= 4,
-        fillsScroll: scrollFill <= 4,
-      };
-    };
-
-    const applyKeyboard = function applyKeyboard() {
-      const cardHost = document.getElementById("card-host");
-      const scroll = cardHost.querySelector(".ir-review-scroll");
-      const ta = cardHost.querySelector(".ir-review-textarea");
-      const mainCol = cardHost.querySelector(".ir-review-main-col");
+      const layoutRect = layoutRoot.getBoundingClientRect();
       const vv = window.visualViewport;
-      const top = cardHost.getBoundingClientRect().top;
-      const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-      const h = Math.max(120, Math.round(bottom - top - 8));
-      cardHost.style.flex = "none";
+      const vvBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      const visibleBottom = Math.min(vvBottom, layoutRect.bottom);
+      const top = Math.round(layoutRect.top);
+      const h = Math.max(120, Math.round(visibleBottom - top - 8));
+      const width = Math.round(layoutRect.width);
+      cardHost.style.position = "fixed";
+      cardHost.style.top = top + "px";
+      cardHost.style.left = Math.round(layoutRect.left) + "px";
+      cardHost.style.width = width + "px";
       cardHost.style.height = h + "px";
       cardHost.style.maxHeight = h + "px";
+      cardHost.style.flex = "none";
       cardHost.style.overflow = "hidden";
+      scroll.style.flex = "none";
+      scroll.style.height = h + "px";
+      scroll.style.maxHeight = h + "px";
+      scroll.style.display = "flex";
+      scroll.style.flexDirection = "column";
+      scroll.style.overflow = "hidden";
+      ta.style.flex = "none";
+      ta.style.height = h + "px";
+      ta.style.maxHeight = h + "px";
+      ta.style.minHeight = "0";
+      ta.style.margin = "0";
+      ta.style.overflowY = "auto";
       const columnDead = mainCol.clientHeight - scroll.offsetHeight;
       const scrollFill = scroll.clientHeight - ta.offsetHeight;
       return {
@@ -70,7 +72,25 @@ async function main() {
       };
     };
 
-    const closed = await page.evaluate(metrics);
+  const metrics = function metrics() {
+      const cardHost = document.getElementById("card-host");
+      const scroll = cardHost.querySelector(".ir-review-scroll");
+      const ta = cardHost.querySelector(".ir-review-textarea");
+      const mainCol = cardHost.querySelector(".ir-review-main-col");
+      const columnDead = mainCol.clientHeight - scroll.offsetHeight;
+      const scrollFill = scroll.clientHeight - ta.offsetHeight;
+      return {
+        hostHeight: cardHost.offsetHeight,
+        scrollHeight: scroll.clientHeight,
+        textareaHeight: ta.offsetHeight,
+        columnDead,
+        scrollFill,
+        fillsColumn: columnDead <= 4,
+        fillsScroll: scrollFill <= 4,
+      };
+    };
+
+    const closed = await page.evaluate(applyLayout);
     assert.ok(
       closed.fillsColumn,
       `keyboard closed: column dead=${closed.columnDead}px scroll fill=${closed.scrollFill}px`,
@@ -82,6 +102,32 @@ async function main() {
     assert.ok(
       closed.textareaHeight >= 400,
       `keyboard closed: textarea too short (${closed.textareaHeight}px)`,
+    );
+
+    // Obsidian Android: leaf shrinks, visualViewport may not.
+    await page.evaluate(function shrinkLeaf() {
+      const root = document.getElementById("plugin-root");
+      root.style.height = "380px";
+      root.style.maxHeight = "380px";
+      root.style.overflow = "hidden";
+    });
+
+    const leafShrink = await page.evaluate(applyLayout);
+    assert.ok(
+      leafShrink.fillsColumn,
+      `leaf shrink: column dead=${leafShrink.columnDead}px (must not leave white band)`,
+    );
+    assert.ok(
+      leafShrink.fillsScroll,
+      `leaf shrink: textarea should fill scroll (gap=${leafShrink.scrollFill}px)`,
+    );
+    assert.ok(
+      leafShrink.textareaHeight >= 200,
+      `leaf shrink: textarea too short (${leafShrink.textareaHeight}px)`,
+    );
+    assert.ok(
+      leafShrink.hostHeight >= 200,
+      `leaf shrink: host too short (${leafShrink.hostHeight}px)`,
     );
 
     await page.evaluate(function shrinkVv(h) {
@@ -97,7 +143,7 @@ async function main() {
       });
     }, 380);
 
-    const open = await page.evaluate(applyKeyboard);
+    const open = await page.evaluate(applyLayout);
     assert.ok(
       open.fillsColumn,
       `keyboard open: column dead=${open.columnDead}px (must not leave white band)`,
