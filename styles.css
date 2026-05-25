@@ -270,25 +270,17 @@
   display: none;
 }
 
-.ir-review--mobile.ir-review--editing.ir-review-layout {
-  height: var(--ir-vv-height, 100%);
-  max-height: var(--ir-vv-height, 100%);
-  overflow: hidden;
+.ir-review--mobile.ir-review--editing .ir-review-card-host {
+  flex: 1 1 0;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
-.ir-review--mobile.ir-review--editing .ir-review-card-host--pinned {
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: var(--ir-vv-offset-top, 0);
-  height: var(--ir-vv-height, 100dvh);
-  max-height: var(--ir-vv-height, 100dvh);
-  z-index: 5;
-  background: var(--background-primary);
-  box-sizing: border-box;
-  padding-top: var(--ir-safe-top, 0px);
-  padding-left: env(safe-area-inset-left, 0);
-  padding-right: env(safe-area-inset-right, 0);
+/* Keyboard open: inset the flex column so the textarea stays above the IME
+ * without re-pinning the whole pane to visualViewport.height. */
+.ir-review--mobile.ir-review--editing.ir-review--keyboard-open
+  .ir-review-card-host {
+  padding-bottom: var(--ir-keyboard-inset, 0px);
 }
 
 .ir-review--mobile.ir-review--editing .ir-review-columns {
@@ -336,13 +328,6 @@
   padding: 0.35rem max(0.85rem, env(safe-area-inset-right, 0px)) 0.3rem
     max(0.85rem, env(safe-area-inset-left, 0px));
   background: var(--background-primary);
-}
-
-/* Keyboard-open pinned edit: extra top inset from JS (--ir-safe-top). */
-.ir-review--mobile.ir-review--editing
-  .ir-review-card-host--pinned
-  .ir-review-edit-topbar {
-  padding-top: 0.35rem;
 }
 
 .ir-review-edit-topbar .ir-review-edit-toggle {
