@@ -7,7 +7,6 @@ import {
   getPriority,
   isDismissed,
   markAsTopic,
-  markExtractedSpan,
   setDismissed,
 } from "../src/ir-note";
 import { IR_KEYS } from "../src/types";
@@ -162,79 +161,11 @@ test("createCloze keeps multi-line context", async () => {
   assert.equal(app.bodyOf(r.file!.path), "alpha {{c1::beta\ngamma}} delta\n");
 });
 
-test("markExtractedSpan wraps the clozed span in the source body", async () => {
-  // Reproduces the bug fix: Alt+Z used to leave the source body untouched
-  // so clozed passages had no visible mark on the parent topic/extract
-  // (asymmetric with Extract creation). The plugin now calls
-  // markExtractedSpan after createCloze; this asserts the resulting
-  // source body carries the chrome the review pane uses for highlights.
-  const app = new FakeApp();
-  app.seed("Topic.md", { [IR_KEYS.type]: "topic" }, "alpha beta gamma\n");
-  const src = app.vault.getAbstractFileByPath("Topic.md") as { path: string };
-  await markExtractedSpan(app.asApp(), src as any, 6, 10, "beta");
-  assert.equal(
-    app.bodyOf("Topic.md"),
-    'alpha <mark class="ir-extract-source">beta</mark> gamma\n',
-  );
-});
-
-test("markExtractedSpan propagates the mark to ancestor topics", async () => {
-  // Extracts inherit marks all the way up the parent chain so that any
-  // ancestor topic visually surfaces what's been clozed in a descendant
-  // (the screenshot in the bug report shows this asymmetry: topic was
-  // marked, the extract being reviewed wasn't).
-  const app = new FakeApp();
-  app.seed(
-    "Topic.md",
-    { [IR_KEYS.type]: "topic" },
-    "alpha beta gamma delta\n",
-  );
-  app.seed(
-    "Extract.md",
-    { [IR_KEYS.type]: "extract", [IR_KEYS.parent]: "Topic.md" },
-    "alpha beta gamma delta\n",
-  );
-  const extract = app.vault.getAbstractFileByPath("Extract.md") as {
-    path: string;
-  };
-  await markExtractedSpan(app.asApp(), extract as any, 6, 10, "beta");
-  assert.equal(
-    app.bodyOf("Extract.md"),
-    'alpha <mark class="ir-extract-source">beta</mark> gamma delta\n',
-  );
-  assert.equal(
-    app.bodyOf("Topic.md"),
-    'alpha <mark class="ir-extract-source">beta</mark> gamma delta\n',
-  );
-});
-
-test("markExtractedSpan: parent walk skips ambiguous text rather than mis-marking", async () => {
-  // When the clozed phrase appears multiple times in an ancestor, the
-  // parent walk must bail (uniqueness guard in locateTextInBody) instead
-  // of guessing — otherwise a cloze on one occurrence would silently mark
-  // a different one upstream.
-  const app = new FakeApp();
-  app.seed(
-    "Topic.md",
-    { [IR_KEYS.type]: "topic" },
-    "beta then later beta again\n",
-  );
-  app.seed(
-    "Extract.md",
-    { [IR_KEYS.type]: "extract", [IR_KEYS.parent]: "Topic.md" },
-    "the beta clause\n",
-  );
-  const extract = app.vault.getAbstractFileByPath("Extract.md") as {
-    path: string;
-  };
-  await markExtractedSpan(app.asApp(), extract as any, 4, 8, "beta");
-  assert.equal(
-    app.bodyOf("Extract.md"),
-    'the <mark class="ir-extract-source">beta</mark> clause\n',
-  );
-  // Ambiguous in the topic — must stay unchanged.
-  assert.equal(app.bodyOf("Topic.md"), "beta then later beta again\n");
-});
+// `markExtractedSpan` and its three tests deleted under DESIGN §Q3: extracts
+// and clozes no longer mutate the source body. Highlights now render as
+// decoration-only overlays painted from store anchors, so the contract these
+// tests defended (chrome present in the body, propagated to ancestors) is no
+// longer one the plugin promises.
 
 test("dismiss is reversible and lossless; non-IR is refused", async () => {
   const app = new FakeApp();

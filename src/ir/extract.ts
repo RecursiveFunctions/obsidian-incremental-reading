@@ -1,19 +1,15 @@
 import { newElement, clampPriority } from "./model";
 import type { IrElement, IrEvent, ReadSchedule } from "./model";
 import type { ElementId, EventId, DeviceId } from "./ids";
-import {
-  stripExtractMarks,
-  EXTRACT_MARK_OPEN,
-  EXTRACT_MARK_CLOSE,
-} from "./frontmatter-body";
+import { stripExtractMarks } from "./frontmatter-body";
 
 export interface ExtractInput {
   sourcePath: string;
   /**
-   * Note body used for `slice(selStart, selEnd)` and prefix/suffix windows.
-   * When {@link persistedExtractMark} is true, this must be the body **before**
-   * `wrapExtractHighlight` runs — offsets are pre-wrap, while `quote.exact`
-   * on disk includes the mark tags.
+   * Note body the offsets are taken against. Decoration-only highlights
+   * (DESIGN §Q3) mean the source body is no longer mutated on extract, so
+   * `slice(selStart, selEnd)` against this text is exactly what the user
+   * highlighted and exactly what the anchor's `quote.exact` records.
    */
   sourceText: string;
   selStart: number;
@@ -28,21 +24,14 @@ export interface ExtractInput {
   contextLen?: number;
   /** When set, the extract enters the reading queue (same as a migrated extract note). */
   schedule?: ReadSchedule;
-  /**
-   * Set when the caller has just applied (or is about to apply)
-   * `wrapExtractHighlight` at `[selStart, selEnd)` on `sourceText`. The
-   * anchor must store the wrapped span so it matches the file; using post-wrap
-   * `sourceText` with pre-wrap offsets would truncate `quote.exact`.
-   */
-  persistedExtractMark?: boolean;
 }
 
 export function buildExtractEvent(input: ExtractInput): IrEvent {
   const contextLen = input.contextLen ?? 64;
-  // `rawSlice` keeps any `<mark class="ir-extract-source">` chrome from prior
-  // sibling extracts because the anchor uses it to re-locate the span in the
-  // source. The element's stored `text`, by contrast, is what the user sees
-  // in the review pane and breadcrumb, so the chrome is stripped from there.
+  // Legacy notes can still hold `<mark class="ir-extract-source">` chrome
+  // from before §Q3, so the stored `text` strips it; `quote.exact` keeps
+  // the raw slice so the anchor resolver matches the on-disk body byte for
+  // byte (resolver does exact string compare, not normalize).
   const rawSlice = input.sourceText.slice(input.selStart, input.selEnd);
   const text = stripExtractMarks(rawSlice);
   const prefix = input.sourceText.slice(
@@ -54,23 +43,14 @@ export function buildExtractEvent(input: ExtractInput): IrEvent {
     input.selEnd + contextLen,
   );
 
-  const wrapped =
-    input.persistedExtractMark === true
-      ? EXTRACT_MARK_OPEN + rawSlice + EXTRACT_MARK_CLOSE
-      : rawSlice;
-  const positionEnd =
-    input.persistedExtractMark === true
-      ? input.selEnd + EXTRACT_MARK_OPEN.length + EXTRACT_MARK_CLOSE.length
-      : input.selEnd;
-
   const anchor = {
     sourcePath: input.sourcePath,
     quote: {
-      exact: wrapped,
+      exact: rawSlice,
       prefix,
       suffix,
     },
-    position: { start: input.selStart, end: positionEnd },
+    position: { start: input.selStart, end: input.selEnd },
   };
 
   const element: IrElement = {

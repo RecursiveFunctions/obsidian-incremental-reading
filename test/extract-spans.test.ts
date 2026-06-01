@@ -13,7 +13,6 @@ import {
   findAllParagraphs,
   findHeadingSectionAtOffset,
   findParagraphAtOffset,
-  spanIsInsideExtractMark,
   type Span,
 } from "../src/ir/extract-spans";
 
@@ -205,30 +204,7 @@ test("findAllParagraphs: empty range returns []", () => {
   assert.deepEqual(findAllParagraphs(body, { start: 0, end: 0 }), []);
 });
 
-/* ------------------------------------------------------------------ */
-/* spanIsInsideExtractMark                                             */
-/* ------------------------------------------------------------------ */
-
-test("spanIsInsideExtractMark: true when fully wrapped by an extract mark", () => {
-  const body =
-    'before <mark class="ir-extract-source">already extracted</mark> after';
-  const start = body.indexOf("already");
-  const end = start + "already extracted".length;
-  assert.equal(spanIsInsideExtractMark(body, { start, end }), true);
-});
-
-test("spanIsInsideExtractMark: false when the span is outside any mark", () => {
-  const body =
-    'before <mark class="ir-extract-source">x</mark> middle after';
-  const start = body.indexOf("middle");
-  const end = start + "middle".length;
-  assert.equal(spanIsInsideExtractMark(body, { start, end }), false);
-});
-
-test("spanIsInsideExtractMark: false when only partially overlapping a mark", () => {
-  const body =
-    'before <mark class="ir-extract-source">inside</mark> tail';
-  const start = body.indexOf("inside");
-  const end = body.indexOf("tail") + 4;
-  assert.equal(spanIsInsideExtractMark(body, { start, end }), false);
-});
+// `spanIsInsideExtractMark` and its tests deleted under DESIGN §Q3:
+// bulk-extract idempotency now reads the store for existing anchor ranges
+// (see main.ts `existingExtractRangesForSource`) instead of scanning the
+// body for inline `<mark>` chrome.

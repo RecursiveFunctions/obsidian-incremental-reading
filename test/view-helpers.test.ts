@@ -17,7 +17,6 @@ import {
   sanitizeExtractSelection,
   stripExtractMarks,
   stripFrontmatter,
-  wrapExtractHighlight,
 } from "../src/ir/frontmatter-body";
 import type { IrElement } from "../src/ir/model";
 
@@ -318,22 +317,11 @@ test("sanitizeExtractSelection: strips accidental YAML from a selection", () => 
   assert.equal(sanitizeExtractSelection(sel), "Actual quote");
 });
 
-test("wrapExtractHighlight: wraps a body span with ir-extract-source mark", () => {
-  const body = "The quick brown fox";
-  assert.equal(
-    wrapExtractHighlight(body, 4, 9),
-    'The <mark class="ir-extract-source">quick</mark> brown fox',
-  );
-});
-
-test("wrapExtractHighlight: does not double-wrap mark or legacy ==", () => {
-  const marked =
-    'The <mark class="ir-extract-source">quick</mark> brown fox';
-  const q = marked.indexOf("quick");
-  assert.equal(wrapExtractHighlight(marked, q, q + 5), marked);
-  const legacy = "The ==quick== brown fox";
-  assert.equal(wrapExtractHighlight(legacy, 6, 11), legacy);
-});
+// `wrapExtractHighlight` and its tests deleted under DESIGN §Q3: extracts no
+// longer mutate the source body, so there is no wrapper to round-trip. The
+// `findExtractEditorPosition: locates extract wrapped in <mark> chrome` test
+// above still covers anchor resolution against legacy notes that carry the
+// pre-§Q3 chrome on disk.
 
 /* ------------------------------------------------------------------ */
 /* bodyOffsetsFromFullOffsets                                          */

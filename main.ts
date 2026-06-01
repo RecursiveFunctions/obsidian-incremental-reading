@@ -17,7 +17,6 @@ import {
   IrNoteResult,
   createCloze,
   createIrItemChildNote,
-  markExtractedSpan,
   getIrType,
   getPriority,
   isDismissed,
@@ -68,11 +67,14 @@ import { planBulkImport } from "./src/ir/bulk-import";
 import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
 import {
+  IrDecorationCache,
+  irExtractDecorationsExtension,
+  pushIrDecorations,
+  refreshIrDecorationCache,
+} from "./src/ir/extract-decorations";
+import {
   bodyOffsetsFromFullOffsets,
-  saveBody,
-  stripExtractMarks,
   stripFrontmatter,
-  wrapExtractHighlight,
 } from "./src/ir/frontmatter-body";
 import {
   captureEditorSelection,
@@ -80,14 +82,12 @@ import {
   snapshotSelectionText,
   type EditorSelectionSnapshot,
 } from "./src/ir/editor-selection-snapshot";
-import { locateTextInBody } from "./src/ir/selection-map";
 import {
   findAllBlockquotes,
   findAllListItems,
   findAllParagraphs,
   findHeadingSectionAtOffset,
   findParagraphAtOffset,
-  spanIsInsideExtractMark,
   type Span,
 } from "./src/ir/extract-spans";
 import {
@@ -107,6 +107,17 @@ import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
  * a 300-paragraph book chapter" mistake before it explodes the queue.
  */
 const BULK_EXTRACT_CONFIRM_THRESHOLD = 50;
+
+/** True when `span` shares any byte with at least one range in `ranges`. */
+function rangesOverlapAny(
+  span: Span,
+  ranges: ReadonlyArray<Span>,
+): boolean {
+  for (const r of ranges) {
+    if (span.start < r.end && r.start < span.end) return true;
+  }
+  return false;
+}
 
 export default class IncrementalReadingPlugin extends Plugin {
   settings: IrSettings = DEFAULT_SETTINGS;
@@ -148,10 +159,35 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private sessionStartMs = Date.now();
 
+  /**
+   * Decoration cache that the CM6 extension reads from. Rebuilt by
+   * {@link refreshExtractDecorations} after every store reconcile so new
+   * extracts paint instantly without re-resolving anchors on each keystroke.
+   */
+  private decorationCache = new IrDecorationCache();
+
   async onload() {
     await this.loadSettings();
     await this.runMigrationIfOwed();
     this.addSettingTab(new IrSettingTab(this.app, this));
+
+    // Editor decoration extension (DESIGN §Q3). Registered before any extract
+    // command so the first highlight after onload paints into a wired editor.
+    this.registerEditorExtension(irExtractDecorationsExtension());
+    // Repaint when the workspace mounts a different file in a leaf — the new
+    // editor's decoration field starts empty until we push.
+    this.registerEvent(
+      this.app.workspace.on("file-open", () =>
+        pushIrDecorations(this.app, this.decorationCache),
+      ),
+    );
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () =>
+        pushIrDecorations(this.app, this.decorationCache),
+      ),
+    );
+    // Initial decoration paint runs once the store is ready, below.
+    void this.refreshExtractDecorations();
 
     // Glanceable queue-load indicator. Built before any other UI so it shows
     // up immediately, and refreshed once the store is ready below.
@@ -792,9 +828,14 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Re-render the status bar from the current store state. Safe to call
-   * before the store is ready (it leaves a zero-state placeholder); safe to
-   * call repeatedly (the render is idempotent).
+   * Re-render the status bar from the current store state and repaint the
+   * editor extract decorations from the same load. Safe to call before the
+   * store is ready (it leaves a zero-state placeholder); safe to call
+   * repeatedly (both renders are idempotent).
+   *
+   * Decorations piggyback here because they react to the same trigger the
+   * status bar does (store changed) and pushing them on every reconcile from
+   * its caller would require touching ~20 sites instead of one.
    */
   private async refreshStatusBar(): Promise<void> {
     if (!this.statusBarEl) return;
@@ -811,6 +852,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     } catch (e) {
       console.error("Incremental Reading: status bar refresh failed", e);
     }
+    void this.refreshExtractDecorations();
   }
 
   private async extractSelection(editor: Editor, source: TFile) {
@@ -847,13 +889,6 @@ export default class IncrementalReadingPlugin extends Plugin {
     const bodyBeforeExtract = stripFrontmatter(
       await this.app.vault.cachedRead(source),
     );
-    await markExtractedSpan(
-      this.app,
-      source,
-      offsets.start,
-      offsets.end,
-      selection,
-    );
     const parentId =
       (await this.resolveElementIdForFile(source)) ??
       elementIdForPath(source.path);
@@ -874,7 +909,6 @@ export default class IncrementalReadingPlugin extends Plugin {
         schedule: topicStateToSchedule(
           newTopicState(this.settings, new Date(now)),
         ),
-        persistedExtractMark: true,
       });
       await this.store.appendEvent(ev);
       await this.store.reconcile();
@@ -1053,11 +1087,20 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
 
     const initialBody = stripFrontmatter(await this.app.vault.read(source));
+    // Decoration-only highlights (DESIGN §Q3) mean the source body holds no
+    // `<mark>` chrome for new extracts, so the old "is this span inside a
+    // mark?" test would always say no. Idempotency now comes from the store:
+    // skip a span when its body offsets overlap any anchor we've already
+    // recorded for this source path.
+    const existingRanges = await this.existingExtractRangesForSource(
+      source.path,
+      initialBody,
+    );
     const candidates: Span[] = [];
     for (const s of rawSpans) {
       if (s.end <= s.start) continue;
       if (s.end > initialBody.length) continue;
-      if (spanIsInsideExtractMark(initialBody, s)) continue;
+      if (rangesOverlapAny(s, existingRanges)) continue;
       candidates.push(s);
     }
     if (candidates.length === 0) {
@@ -1069,8 +1112,9 @@ export default class IncrementalReadingPlugin extends Plugin {
       if (!ok) return;
     }
 
-    // Desc by start: marking the last span never shifts the offsets of any
-    // earlier span, so the in-memory body and recorded offsets stay aligned.
+    // Order doesn't matter for offsets any more (the body isn't mutated),
+    // but keep a stable descending sort so events written to the log have a
+    // predictable order if the user inspects the shard.
     candidates.sort((a, b) => b.start - a.start);
 
     const parentId =
@@ -1083,16 +1127,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
     const device = await this.store.getDeviceId();
 
-    let body = initialBody;
-    const acceptedTexts: string[] = [];
     let created = 0;
     for (const span of candidates) {
-      const sourceTextBefore = body;
       const now = Date.now();
       try {
         const ev = buildExtractEvent({
           sourcePath: source.path,
-          sourceText: sourceTextBefore,
+          sourceText: initialBody,
           selStart: span.start,
           selEnd: span.end,
           parentId,
@@ -1105,14 +1146,8 @@ export default class IncrementalReadingPlugin extends Plugin {
           schedule: topicStateToSchedule(
             newTopicState(this.settings, new Date(now)),
           ),
-          persistedExtractMark: true,
         });
         await this.store.appendEvent(ev);
-        const txt = stripExtractMarks(
-          body.slice(span.start, span.end),
-        ).trim();
-        body = wrapExtractHighlight(body, span.start, span.end);
-        if (txt) acceptedTexts.push(txt);
         created += 1;
       } catch (e) {
         console.error(
@@ -1128,11 +1163,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
-    if (body !== initialBody) {
-      await saveBody(this.app, source, body);
-    }
-    await this.markTextsInAncestors(source, acceptedTexts);
-
     await this.store.reconcile();
     void this.refreshStatusBar();
     new Notice(
@@ -1141,42 +1171,48 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Walk the parent chain of `source` and wrap each text in `texts` once
-   * per ancestor, in-memory, writing each ancestor exactly once. Skips
-   * ambiguous matches (the uniqueness guard in `locateTextInBody`) so a
-   * common phrase doesn't get mis-marked on an upstream note.
+   * Rebuild the editor decoration cache from the store, then push the result
+   * to every open MarkdownView. Called after every reconcile path that can
+   * change the set of resolved extract anchors (new extract, deletion,
+   * re-anchor, store load on startup).
    */
-  private async markTextsInAncestors(
-    source: TFile,
-    texts: string[],
-  ): Promise<void> {
-    if (texts.length === 0) return;
-    let parentPath = this.app.metadataCache.getFileCache(source)?.frontmatter?.[
-      IR_KEYS.parent
-    ];
-    while (typeof parentPath === "string" && parentPath.length > 0) {
-      const parent = this.app.vault.getAbstractFileByPath(parentPath);
-      if (!(parent instanceof TFile)) break;
-      let parentBody = stripFrontmatter(await this.app.vault.read(parent));
-      let changed = false;
-      for (const text of texts) {
-        const located = locateTextInBody(parentBody, text);
-        if (!located) continue;
-        const wrapped = wrapExtractHighlight(
-          parentBody,
-          located.start,
-          located.end,
-        );
-        if (wrapped !== parentBody) {
-          parentBody = wrapped;
-          changed = true;
-        }
-      }
-      if (changed) await saveBody(this.app, parent, parentBody);
-      parentPath = this.app.metadataCache.getFileCache(parent)?.frontmatter?.[
-        IR_KEYS.parent
-      ];
+  async refreshExtractDecorations(): Promise<void> {
+    if (!this.store) return;
+    try {
+      await refreshIrDecorationCache(this.app, this.store, this.decorationCache);
+      pushIrDecorations(this.app, this.decorationCache);
+    } catch (e) {
+      console.error("Incremental Reading: decoration refresh failed", e);
     }
+  }
+
+  /**
+   * Resolve every extract anchor in the store whose `sourcePath` matches this
+   * source against `body`, returning the in-body ranges the decoration would
+   * paint over. Used to make bulk-extract idempotent: re-running on the same
+   * note never duplicates an extract over a passage that already has one.
+   *
+   * Anchors that no longer resolve (needs-reanchor) are simply absent from
+   * the returned set, which is the right behavior: a needs-reanchor extract
+   * shouldn't block a re-extract of the same span.
+   */
+  private async existingExtractRangesForSource(
+    sourcePath: string,
+    body: string,
+  ): Promise<Span[]> {
+    if (!this.store) return [];
+    const state = await this.store.load();
+    const out: Span[] = [];
+    for (const [, element] of state.elements) {
+      if (element.type !== "extract") continue;
+      if (element.notePath !== undefined) continue; // promoted -> standalone
+      const a = element.anchor;
+      if (!a || a.sourcePath !== sourcePath) continue;
+      const r = resolveAnchor(a, body);
+      if (r.status !== "ok") continue;
+      out.push({ start: r.start, end: r.end });
+    }
+    return out;
   }
 
   /** Above this many spans the bulk commands prompt before writing. */
@@ -1186,10 +1222,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       modal.titleEl.setText(`Create ${count} extracts?`);
       modal.contentEl.createEl("p", {
         text:
-          `This will mint ${count} anchored extracts in the source note, ` +
-          "wrap each span with a highlight, and propagate the marks to any " +
-          "ancestor topics. The action is reversible per-extract from the " +
-          "element tree.",
+          `This will mint ${count} anchored extracts against the source note. ` +
+          "The note itself is not modified; highlights render as editor and " +
+          "reading-view decorations. Reversible per-extract from the element " +
+          "tree.",
       });
       const btns = modal.contentEl.createDiv({ cls: "modal-button-container" });
       const cancel = btns.createEl("button", { text: "Cancel" });
@@ -1219,11 +1255,6 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const hintR = await promptClozeHint(this.app);
     if (!hintR.ok) return;
-    // Snapshot the selection BEFORE createCloze: that call doesn't mutate
-    // the editor here, but read offsets while the cursor state is known
-    // so we can mark the source span as soon as the child note exists.
-    const sourceMarkSpan = this.bodyOffsetsForEditorSelection(editor);
-    const selectedText = editor.getSelection();
     const result = await createCloze(
       this.app,
       source,
@@ -1231,14 +1262,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.settings,
       hintR.hint,
     );
-    if (result.file && sourceMarkSpan && selectedText.trim().length > 0) {
-      await this.markSourceClozeSpan(
-        source,
-        sourceMarkSpan.start,
-        sourceMarkSpan.end,
-        selectedText,
-      );
-    }
     await this.openResult(result, "Cloze item created:");
   }
 
@@ -1249,28 +1272,6 @@ export default class IncrementalReadingPlugin extends Plugin {
     const from = editor.posToOffset(editor.getCursor("from"));
     const to = editor.posToOffset(editor.getCursor("to"));
     return bodyOffsetsFromFullOffsets(editor.getValue(), from, to);
-  }
-
-  /**
-   * Wrap the clozed span in the source body (and propagate up the parent
-   * chain) so the user sees which passages have already been clozed —
-   * mirrors the Extract creation behavior. Best-effort; logs but does not
-   * surface failures to the user since the child note is already saved.
-   */
-  private async markSourceClozeSpan(
-    source: TFile,
-    start: number,
-    end: number,
-    selectedText: string,
-  ): Promise<void> {
-    try {
-      await markExtractedSpan(this.app, source, start, end, selectedText);
-    } catch (e) {
-      console.error(
-        "Incremental Reading: marking clozed span in source failed",
-        e,
-      );
-    }
   }
 
   /**

@@ -167,6 +167,18 @@ Source deletion behavior:
   Preserves provenance and enables re-link.
 - Comes-back case (Sync/git/trash restore): offer conservative re-link when a
   matching note reappears. Never re-link silently.
+  **STATUS (2026-05-31): NOT IMPLEMENTED.** The delete side writes the
+  tombstone with `path` + `title` + `deletedAt`, but nothing reads it on
+  create/rename. A recreated note at the same path leaves the tombstone
+  unread and the promoted extracts stay as their own standalone notes. The
+  load-bearing guarantee (no content lost on delete) holds; the recovery
+  convenience does not exist yet. Spec for the missing piece: a
+  `vault.on("create")` and `vault.on("rename")` handler that looks up
+  `state.tombstones.get(newPath)` and, on hit, prompts the user with the
+  tombstone's title and the list of extracts/promoted-notes that came
+  from it. Re-link emits `anchor-repaired` for each extract (restoring
+  `sourcePath`) and removes the tombstone via a `source-restored` event
+  kind that needs to be added to the model.
 - Bulk UX: one source delete fires a single batched notification
   (promote-all / leave-detached / undo). Undo must also reverse the
   auto-created notes, not just the detach.
@@ -254,6 +266,67 @@ events. The controller is the only place that touches both worlds.
    (re-run is a no-op via the marker plus deterministic ids). Wiring the
    live queue and review flow to read the store instead of frontmatter
    follows after the controller lands.
+
+### Q3. Source-note pristine guarantee (decoration-only highlights)
+
+STATUS: RESOLVED 2026-05-31. Decoration-only, persisted marks dropped on
+new extracts. Legacy data left in place.
+
+Pre-§Q3, extract creation wrapped the selected span in
+`<mark class="ir-extract-source">…</mark>` HTML on disk and propagated that
+wrap up the `ir-parent` chain. The source note the user authored was
+mutated on every extract and every cloze. That violated the implicit
+contract Obsidian users expect: the plugin should observe their notes,
+not edit them.
+
+The persisted marks were doing three jobs. Only the first is real:
+
+1. **Visible feedback** in the source ("here's what I extracted").
+2. **Disambiguation** when a sibling extract overlapped an earlier span:
+   the anchor's `quote.exact` recorded the wrapped slice, which is
+   structurally unique because of the surrounding mark.
+3. **Survives outside the plugin** (mark renders on GitHub, mobile
+   preview, etc.).
+
+Job 1 is the only one that justifies mutating user content. Jobs 2 and 3
+are recoverable without persisted marks: Q1's prefix/suffix scoring plus
+nearest-to-last-known-position handles disambiguation, and the "survives
+outside the plugin" property is not a load-bearing IR feature.
+
+Resolution: source notes are never mutated by extract or cloze creation.
+Visible feedback is painted in the editor as a CodeMirror 6 decoration
+(`<mark class="ir-extract-source">` injected into the render tree only),
+driven by `src/ir/extract-decorations.ts` reading resolved anchor ranges
+from the store. Anchors store the raw selected slice in `quote.exact` and
+the byte-exact body offsets in `position`.
+
+Sub-decisions locked alongside it:
+
+- **Editor surface only in v1.** The CM6 extension covers Live Preview
+  and Source view. Reading view and the in-plugin review pane lose new
+  extract highlights until those surfaces get their own decoration pass
+  (deferred). Legacy notes with persisted marks continue to render
+  everywhere because the CSS class is unchanged.
+- **Legacy data is not migrated.** Notes that already carry
+  `<mark class="ir-extract-source">` chrome on disk keep it; their
+  anchors keep wrapping in `quote.exact`. The anchor resolver is
+  byte-exact, so both shapes work uniformly. A migration that strips
+  marks from notes and rewrites anchors is its own data-at-risk commit.
+- **Cloze parity.** Cloze creation also no longer wraps the source
+  passage. The cloze item carries the `{{cN::…}}` syntax in its own
+  note, so the source has no further obligation.
+- **Bulk-extract idempotency** moves from "skip spans inside a body
+  mark" to "skip spans that overlap any anchor already in the store
+  for this source." See `main.ts existingExtractRangesForSource`.
+
+What the future commit must handle:
+
+- Reading-view decoration via a `MarkdownPostProcessor` (best-effort
+  text-quote anchor against rendered HTML).
+- Review-pane decoration so an extract under review shows where its
+  children were extracted from.
+- Optional one-shot legacy-data migration: strip marks from notes,
+  rewrite anchors to use unwrapped `quote.exact`.
 
 ## Open items
 

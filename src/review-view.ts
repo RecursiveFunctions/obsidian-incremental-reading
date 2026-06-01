@@ -70,10 +70,8 @@ import {
   stripFrontmatter,
   saveBody,
   stripExtractMarks,
-  wrapExtractHighlight,
 } from "./ir/frontmatter-body";
 import { mapRenderedSelectionToRaw } from "./ir/selection-map";
-import { markExtractedSpan } from "./ir-note";
 import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
 import {
   attachReviewSwipeGestures,
@@ -1853,11 +1851,6 @@ export class IrReviewView extends ItemView {
     }
     await this.flushEdits();
     const bodyBeforeExtract = this.currentRaw;
-    if (slot.file) {
-      await this.applyExtractHighlight(slot.file, sel.start, sel.end, sel.text);
-    } else {
-      await this.applyExtractHighlightInStore(slot, sel.start, sel.end);
-    }
     try {
       const now = Date.now();
       const ev = buildExtractEvent({
@@ -1873,7 +1866,6 @@ export class IrReviewView extends ItemView {
         lamport: now,
         now,
         schedule: topicStateToSchedule(newTopicState(this.settings, new Date(now))),
-        persistedExtractMark: true,
       });
       await this.store.appendEvent(ev);
       const created = ev.payload.element as IrElement;
@@ -2045,16 +2037,6 @@ export class IrReviewView extends ItemView {
     }
     await this.flushEdits();
     const bodyBeforeExtract = this.currentRaw;
-    if (slot.file) {
-      await this.applyExtractHighlight(
-        slot.file,
-        span.start,
-        span.end,
-        text,
-      );
-    } else {
-      await this.applyExtractHighlightInStore(slot, span.start, span.end);
-    }
     const sourcePath =
       slot.file?.path ?? this.resolveProvenanceSourcePath(slot);
     if (!sourcePath) {
@@ -2080,7 +2062,6 @@ export class IrReviewView extends ItemView {
         schedule: topicStateToSchedule(
           newTopicState(this.settings, new Date(now)),
         ),
-        persistedExtractMark: true,
       });
       await this.store.appendEvent(ev);
       const created = ev.payload.element as IrElement;
@@ -2204,14 +2185,9 @@ export class IrReviewView extends ItemView {
         this.elementsById.set(id, { ...el, parentId: slot.id });
       }
     }
-    // Persist a visible highlight on the source so the user sees that this
-    // span was clozed — matches Extract behavior. Without this the source
-    // looks unchanged after the action and the only feedback is a notice.
-    if (slot.file) {
-      await this.applyExtractHighlight(slot.file, sel.start, sel.end, sel.text);
-    } else if (slot.element.text) {
-      await this.applyExtractHighlightInStore(slot, sel.start, sel.end);
-    }
+    // Source remains pristine under DESIGN §Q3: the cloze item carries the
+    // `{{cN::...}}` syntax in its own note and the queue records the new
+    // element, so there is no source-mutation step here any more.
     await this.reloadCurrentRaw();
     await this.renderCard();
   }
@@ -2246,64 +2222,6 @@ export class IrReviewView extends ItemView {
     new Notice(`Cloze c${groupN} added: "${answer}".`);
     this.onChange?.();
     await this.renderCard();
-  }
-
-  /**
-   * Highlight the extracted span in the source note (body offsets) and keep
-   * the in-memory review buffer aligned before creating the child.
-   */
-  private async applyExtractHighlight(
-    file: TFile,
-    start: number,
-    end: number,
-    selectedText: string,
-  ): Promise<void> {
-    try {
-      await markExtractedSpan(
-        this.app,
-        file,
-        start,
-        end,
-        selectedText,
-      );
-      this.currentRaw = stripFrontmatter(await this.app.vault.read(file));
-      this.rawOnDisk = this.currentRaw;
-    } catch (e) {
-      console.error("Incremental Reading: marking extract highlight failed", e);
-    }
-  }
-
-  /**
-   * Same as {@link applyExtractHighlight} for anchored extracts: wrap the
-   * span in the store-backed body and persist via `text-edited`.
-   */
-  private async applyExtractHighlightInStore(
-    slot: ReviewSlot,
-    start: number,
-    end: number,
-  ): Promise<void> {
-    try {
-      const wrapped = wrapExtractHighlight(this.currentRaw, start, end);
-      if (wrapped === this.currentRaw) return;
-      const now = Date.now();
-      const ev = buildTextEditedEvent({
-        elementId: slot.id,
-        text: wrapped,
-        eventId: newEventId(),
-        device: await this.store.getDeviceId(),
-        lamport: now,
-        now,
-      });
-      await this.store.appendEvent(ev);
-      const updated = { ...slot.element, text: wrapped };
-      slot.element = updated;
-      this.elementsById.set(slot.id, updated);
-      this.currentRaw = stripExtractMarks(wrapped);
-      this.rawOnDisk = this.currentRaw;
-      this.onChange?.();
-    } catch (e) {
-      console.error("Incremental Reading: marking extract highlight failed", e);
-    }
   }
 
   /** Re-read the current slot's note body after a child was created from it. */

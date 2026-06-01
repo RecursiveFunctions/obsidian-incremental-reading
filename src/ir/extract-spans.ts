@@ -3,15 +3,15 @@
  *
  * Each helper takes a body string (no frontmatter; the caller is responsible
  * for stripping it) and returns body-relative `{ start, end }` ranges. The
- * caller passes those into the bulk-extract engine, which mints anchored
- * extracts last-to-first so each `<mark>` insertion doesn't shift the
- * offsets of earlier spans.
+ * caller passes those into the bulk-extract engine, which records anchored
+ * extracts against the unchanged source body (DESIGN §Q3); idempotency is
+ * enforced by the caller checking the store's existing extract ranges, not
+ * by inspecting the body for marks.
  *
  * No Obsidian imports — keeps the segmentation logic unit-testable and
  * lets us iterate on edge cases (blank lines around fences, indented list
  * continuations, etc.) without spinning up a vault.
  */
-import { EXTRACT_MARK_OPEN, EXTRACT_MARK_CLOSE } from "./frontmatter-body";
 
 export interface Span {
   start: number;
@@ -97,20 +97,6 @@ function trimSpan(body: string, span: Span): Span | null {
   while (end > start && /\s/.test(body[end - 1]!)) end -= 1;
   if (end <= start) return null;
   return { start, end };
-}
-
-/**
- * True when the span is entirely contained in an existing
- * `<mark class="ir-extract-source">…</mark>` pair. Used to skip spans that
- * have already been extracted so the bulk command is idempotent: running
- * it twice on the same note doesn't double up cards on the same passage.
- */
-export function spanIsInsideExtractMark(body: string, span: Span): boolean {
-  const open = body.lastIndexOf(EXTRACT_MARK_OPEN, span.start);
-  if (open === -1) return false;
-  const close = body.indexOf(EXTRACT_MARK_CLOSE, open);
-  if (close === -1) return false;
-  return open < span.start && span.end <= close + EXTRACT_MARK_CLOSE.length;
 }
 
 /* ------------------------------------------------------------------ */

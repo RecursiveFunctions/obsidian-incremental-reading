@@ -14,7 +14,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fold } from "../src/ir/log";
 import { resolveAnchor } from "../src/ir/anchor";
-import { wrapExtractHighlight } from "../src/ir/frontmatter-body";
 import type { IrElement } from "../src/ir/model";
 import type { ElementId, EventId, DeviceId } from "../src/ir/ids";
 
@@ -171,32 +170,27 @@ test("buildExtractEvent: strips extract-mark chrome from stored text but keeps i
   );
 });
 
-test("buildExtractEvent: persistedExtractMark anchors the post-wrap span on disk", async (t) => {
+test("buildExtractEvent: source is left pristine; anchor stores the raw slice", async (t) => {
   const m = await load();
   if (!m) return t.skip("src/ir/extract.ts not implemented yet");
 
-  const wrappedSource = wrapExtractHighlight(SOURCE, 4, 9);
+  // DESIGN §Q3 replacement for the old "persistedExtractMark" contract:
+  // extract creation no longer mutates the source. The anchor's quote.exact
+  // is exactly `sourceText.slice(selStart, selEnd)` and the anchor's
+  // position is the same range, byte-for-byte.
   const el = m
-    .buildExtractEvent({ ...baseInput(), persistedExtractMark: true })
+    .buildExtractEvent(baseInput())
     .payload.element as IrElement;
 
   assert.equal(el.text, "quick");
-  assert.equal(
-    el.anchor!.quote.exact,
-    '<mark class="ir-extract-source">quick</mark>',
-  );
-  const markLen =
-    '<mark class="ir-extract-source">'.length + "</mark>".length;
-  assert.deepEqual(el.anchor!.position, { start: 4, end: 9 + markLen });
+  assert.equal(el.anchor!.quote.exact, "quick");
+  assert.deepEqual(el.anchor!.position, { start: 4, end: 9 });
 
-  const r = resolveAnchor(el.anchor!, wrappedSource);
-  assert.deepEqual(r, {
-    status: "ok",
-    start: 4,
-    end: 4 + '<mark class="ir-extract-source">quick</mark>'.length,
-    repaired: false,
-  });
+  // The source body is untouched: resolveAnchor lands on the original slice.
+  const r = resolveAnchor(el.anchor!, SOURCE);
+  assert.deepEqual(r, { status: "ok", start: 4, end: 9, repaired: false });
 });
+
 
 test("buildTextEditedEvent + fold updates element.text without touching the anchor", async (t) => {
   const m = await load();

@@ -84,6 +84,14 @@ export class IrStore {
   private fs: VaultFs;
   private opts: StoreOptions;
   private deviceId?: DeviceId;
+  /**
+   * Element ids whose state file we've already tried (and failed) to write
+   * this session. Reconcile retries every pass otherwise, which spams the
+   * console with the same ENAMETOOLONG warning on every extract / grade /
+   * status-bar refresh. Dedupe lets the first failure surface clearly and
+   * keeps subsequent passes quiet.
+   */
+  private writeFailureLogged = new Set<string>();
 
   constructor(fs: VaultFs, opts?: StoreOptions) {
     this.fs = fs;
@@ -260,16 +268,33 @@ export class IrStore {
 
     const state = await this.load();
 
+    // Per-element write failures are isolated. The most common cause in
+    // practice is `elementIdForPath` producing a hex-encoded filename that
+    // blows past the filesystem's 255-byte limit for deeply nested notes —
+    // crashing the loop would take every subsequent extract command down
+    // with it. State files are a derived cache, not the source of truth;
+    // the event log is. A missing state file is invisible to the running
+    // plugin (the fold reads events, not state), so logging + continuing
+    // is safe.
     for (const [, element] of state.elements) {
       const path = elementStatePath(element.id);
       const data = deterministicJsonStringify(element);
-      if (await this.fs.exists(path)) {
-        const cur = await this.fs.read(path);
-        if (cur === data) {
-          continue;
+      try {
+        if (await this.fs.exists(path)) {
+          const cur = await this.fs.read(path);
+          if (cur === data) {
+            continue;
+          }
+        }
+        await this.fs.write(path, data);
+      } catch (e) {
+        if (!this.writeFailureLogged.has(element.id)) {
+          this.writeFailureLogged.add(element.id);
+          console.warn(
+            `Incremental Reading: skipping state file write for ${element.id}: ${(e as Error)?.message ?? e}`,
+          );
         }
       }
-      await this.fs.write(path, data);
     }
 
     if (state.tombstones.size > 0) {

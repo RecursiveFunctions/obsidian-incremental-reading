@@ -18,7 +18,12 @@ export function sanitizeExtractSelection(text: string): string {
   return stripFrontmatter(text).trim();
 }
 
-/** Persisted highlight wrapper written around new extracts in source bodies. */
+/**
+ * Tags written by pre-§Q3 builds. New extracts no longer mutate the source
+ * (decoration-only highlights), but legacy notes still carry these and
+ * {@link stripExtractMarks} reads them when surfacing display text from the
+ * stored `quote.exact`.
+ */
 export const EXTRACT_MARK_OPEN = '<mark class="ir-extract-source">';
 export const EXTRACT_MARK_CLOSE = "</mark>";
 
@@ -28,11 +33,6 @@ export const EXTRACT_MARK_CLOSE = "</mark>";
  * returns (frontmatter stripped, body trimmed). Returns null only when the
  * selection lies entirely inside the frontmatter or the surrounding
  * whitespace — i.e., when there is no body text to anchor against.
- *
- * Anchoring by editor position (rather than by searching for the selection
- * text) means the extract works even when the selection is duplicated in
- * the body, when it crosses an existing `<mark class="ir-extract-source">`
- * span, or when it contains otherwise-non-unique text.
  */
 export function bodyOffsetsFromFullOffsets(
   fullFile: string,
@@ -56,14 +56,11 @@ export function bodyOffsetsFromFullOffsets(
 }
 
 /**
- * Strip the `<mark class="ir-extract-source">...</mark>` chrome that
- * `wrapExtractHighlight` injects, leaving only the visible text. Iteratively
- * removes pairs from the inside out so it handles nested marks (an extract
- * that itself contains a sibling extract span).
- *
- * Used when storing an extract's verbatim text and when rendering a label
- * built from another extract's body, so the literal HTML never leaks into
- * the UI as escaped text.
+ * Strip pre-§Q3 `<mark class="ir-extract-source">...</mark>` chrome, leaving
+ * only the visible text. Iteratively removes pairs from the inside out so it
+ * handles nested marks (an extract that itself contains a sibling extract
+ * span). Used when rendering display text from a legacy stored extract so the
+ * literal HTML never leaks into the UI as escaped text.
  */
 const IR_OPEN_TAG_RE = /^<mark\s+class="ir-extract-source">/i;
 const ANY_OPEN_TAG_RE = /^<mark\b[^>]*>/i;
@@ -120,48 +117,6 @@ export function stripExtractMarks(s: string): string {
     i += 1;
   }
   return out;
-}
-
-/**
- * Wrap a body span with a visible HTML mark so extracted passages stay
- * visible in the topic/extract in Reading view and in IR review.
- */
-function isInsideExtractMark(body: string, start: number, end: number): boolean {
-  const open = body.lastIndexOf(EXTRACT_MARK_OPEN, start);
-  if (open === -1) return false;
-  const close = body.indexOf(EXTRACT_MARK_CLOSE, open);
-  return close !== -1 && open < start && end <= close + EXTRACT_MARK_CLOSE.length;
-}
-
-export function wrapExtractHighlight(
-  body: string,
-  start: number,
-  end: number,
-): string {
-  if (end <= start || start < 0 || end > body.length) return body;
-  const inner = body.slice(start, end);
-  if (!inner.trim()) return body;
-  if (isInsideExtractMark(body, start, end)) return body;
-  if (
-    inner.startsWith(EXTRACT_MARK_OPEN) &&
-    inner.endsWith(EXTRACT_MARK_CLOSE)
-  ) {
-    return body;
-  }
-  if (
-    start >= 2 &&
-    body.slice(start - 2, start) === "==" &&
-    body.slice(end, end + 2) === "=="
-  ) {
-    return body;
-  }
-  return (
-    body.slice(0, start) +
-    EXTRACT_MARK_OPEN +
-    inner +
-    EXTRACT_MARK_CLOSE +
-    body.slice(end)
-  );
 }
 
 /**
