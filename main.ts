@@ -318,6 +318,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           (id) => void this.notifyTreeOfReviewSlot(id),
           notifyWorkspaceFabSync,
           () => this.undoLastGrade(),
+          (path) => this.decorationCache.rangesFor(path),
         );
       },
     );

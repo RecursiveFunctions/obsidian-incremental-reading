@@ -189,6 +189,16 @@ export class IrReviewView extends ItemView {
         }
       | null
     >,
+    /**
+     * Resolved body-relative ranges of every extract anchored to the given
+     * source path. Used by the review side panel (§Q3) to highlight every
+     * sibling extract in the source context, not just the focused one. The
+     * host plugin reads this from the decoration cache, which is rebuilt
+     * after every reconcile, so the callback is cheap.
+     */
+    private readonly getSourceExtractRanges?: (
+      path: string,
+    ) => ReadonlyArray<{ start: number; end: number }>,
   ) {
     super(leaf);
   }
@@ -1022,6 +1032,13 @@ export class IrReviewView extends ItemView {
     raw: string;
     path: string;
     highlightRange?: { start: number; end: number };
+    /**
+     * All OTHER extract anchor ranges in `raw` from the same source — i.e.
+     * siblings of the focused card. Each renders as `mark.ir-extract-source`
+     * so the user sees every passage they've extracted from this note while
+     * reviewing one of them.
+     */
+    siblingRanges: ReadonlyArray<{ start: number; end: number }>;
   } | null> {
     const pid = slot.element.parentId;
     if (!pid) return null;
@@ -1044,7 +1061,26 @@ export class IrReviewView extends ItemView {
     }
 
     const highlightRange = findExtractRange(slot.element, raw);
-    return { title: labelFor(parent), raw, path, highlightRange };
+    // Decoration cache stores body-relative resolved ranges; remove the
+    // focused card's own range so it isn't double-marked when we splice.
+    const allRanges = path
+      ? (this.getSourceExtractRanges?.(path) ?? [])
+      : [];
+    const siblingRanges = highlightRange
+      ? allRanges.filter(
+          (r) =>
+            !(
+              r.start === highlightRange.start && r.end === highlightRange.end
+            ),
+        )
+      : allRanges;
+    return {
+      title: labelFor(parent),
+      raw,
+      path,
+      highlightRange,
+      siblingRanges,
+    };
   }
 
 
@@ -1286,16 +1322,51 @@ export class IrReviewView extends ItemView {
         const ctxBody = ctxScroll.createDiv({
           cls: "ir-review-context-markdown ir-review-body",
         });
-        const ctxRaw = sourceCtx.highlightRange
-          ? sourceCtx.raw.slice(0, sourceCtx.highlightRange.start) +
-            '<mark class="ir-extract-highlight">' +
-            sourceCtx.raw.slice(
-              sourceCtx.highlightRange.start,
-              sourceCtx.highlightRange.end,
-            ) +
+        // §Q3 review-pane decorations: splice a `<mark>` for every extract
+        // anchored to this source. The focused card carries the legacy
+        // `ir-extract-highlight` class (preserves scroll-into-view CSS);
+        // siblings carry `ir-extract-source` (matches the editor decoration
+        // and the legacy persisted-mark CSS). Marks are spliced in descending
+        // start order so each splice never shifts a later one; siblings that
+        // overlap the focused range are skipped to avoid nested HTML.
+        const focused = sourceCtx.highlightRange;
+        const marks: Array<{
+          start: number;
+          end: number;
+          cls: "ir-extract-highlight" | "ir-extract-source";
+        }> = [];
+        if (focused) {
+          marks.push({ ...focused, cls: "ir-extract-highlight" });
+        }
+        // Sort siblings by start ascending so the overlap walk below visits
+        // them in document order. The focused range goes in last and wins
+        // any conflict with a sibling at the same position.
+        const sortedSiblings = [...sourceCtx.siblingRanges].sort(
+          (a, b) => a.start - b.start,
+        );
+        let lastEnd = -1;
+        for (const r of sortedSiblings) {
+          if (
+            focused &&
+            r.start < focused.end &&
+            focused.start < r.end
+          ) {
+            continue;
+          }
+          if (r.start < lastEnd) continue; // overlaps a prior accepted sibling
+          marks.push({ start: r.start, end: r.end, cls: "ir-extract-source" });
+          lastEnd = r.end;
+        }
+        marks.sort((a, b) => b.start - a.start);
+        let ctxRaw = sourceCtx.raw;
+        for (const m of marks) {
+          ctxRaw =
+            ctxRaw.slice(0, m.start) +
+            `<mark class="${m.cls}">` +
+            ctxRaw.slice(m.start, m.end) +
             "</mark>" +
-            sourceCtx.raw.slice(sourceCtx.highlightRange.end)
-          : sourceCtx.raw;
+            ctxRaw.slice(m.end);
+        }
         await MarkdownRenderer.render(
           this.app,
           ctxRaw,
