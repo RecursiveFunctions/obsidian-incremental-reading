@@ -108,6 +108,26 @@ import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
  */
 const BULK_EXTRACT_CONFIRM_THRESHOLD = 50;
 
+/**
+ * Machine-identifying string passed to `IrStore.init` so each physical
+ * Obsidian install gets its own device id (DESIGN §Q2 fix). Falls back to
+ * `"unknown"` on platforms where `os.hostname()` isn't reachable — a single
+ * "unknown" device is still an improvement over every device sharing the
+ * id baked into a synced `.ir/device.json`. Wrapped in try/catch because
+ * Obsidian Mobile sandboxes Node modules and may throw on `require`.
+ */
+function getMachineHostname(): string {
+  try {
+    const os = (window as unknown as { require?: (m: string) => unknown })
+      .require?.("os") as { hostname?: () => string } | undefined;
+    const h = os?.hostname?.();
+    if (typeof h === "string" && h.length > 0) return h;
+  } catch {
+    // fall through
+  }
+  return "unknown";
+}
+
 /** True when `span` shares any byte with at least one range in `ranges`. */
 function rangesOverlapAny(
   span: Span,
@@ -2677,17 +2697,23 @@ export default class IncrementalReadingPlugin extends Plugin {
     // log is designed around; the raw log is intact either way, so a
     // re-fold under another policy stays possible.
     const store = new IrStore(fs, { conflict: "clock-order" });
+    const hostname = getMachineHostname();
 
     try {
       // Detection happens before init(): init() is what writes the marker.
       if (await fs.exists(META)) {
+        // Still call init() so the per-host device.json resolution runs and
+        // this machine's device id is stable for the session. init() is a
+        // no-op for META in the already-initialized branch; it only touches
+        // .ir/device.json.
+        await store.init({ hostname });
         this.store = store;
         return;
       }
 
       // Marker + device id first, so the append below has a shard to write
       // to and a re-run sees the marker.
-      await store.init();
+      await store.init({ hostname });
 
       const notes = this.enumerateIrNotes();
       const events = migrateNotes(notes, Date.now());

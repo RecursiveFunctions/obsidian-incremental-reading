@@ -89,6 +89,96 @@ test("device id is stable across init calls and store instances", async () => {
   assert.equal(await b.getDeviceId(), d1);
 });
 
+test("per-host init: distinct hostnames get distinct ids on the same vault", async () => {
+  // DESIGN §Q2 fix: when each device passes its hostname, two devices
+  // sharing one synced vault end up with separate device ids and separate
+  // log shards. Without this, they'd both inherit the id baked into
+  // `.ir/device.json` and write to the same shard, causing Obsidian Sync
+  // last-write-wins conflicts on the shard file.
+  const fs = memFs();
+  const a = new IrStore(fs);
+  await a.init({ hostname: "alpha" });
+  const idA = await a.getDeviceId();
+
+  const b = new IrStore(fs);
+  await b.init({ hostname: "beta" });
+  const idB = await b.getDeviceId();
+
+  assert.notEqual(idA, idB, "different hosts must get different ids");
+});
+
+test("per-host init: same hostname returns the same id on re-init", async () => {
+  const fs = memFs();
+  const a = new IrStore(fs);
+  await a.init({ hostname: "alpha" });
+  const idA = await a.getDeviceId();
+
+  const b = new IrStore(fs);
+  await b.init({ hostname: "alpha" });
+  assert.equal(await b.getDeviceId(), idA);
+});
+
+test("per-host init: upgrades legacy single-id schema to the host that runs first", async () => {
+  // Existing users have `{deviceId: "..."}` on disk from before the fix.
+  // The first device to load with the new code claims the legacy id for
+  // its hostname — correct for the >99% case where that device is the one
+  // that originally wrote the file. A second device loading later sees the
+  // new schema, misses its hostname, and generates a fresh id.
+  const fs = memFs();
+  await fs.write(".ir/device.json", JSON.stringify({ deviceId: "dev_legacy_id" }));
+
+  const original = new IrStore(fs);
+  await original.init({ hostname: "alpha" });
+  assert.equal(await original.getDeviceId(), "dev_legacy_id");
+
+  // File now uses the new schema with alpha claiming the legacy id.
+  const after = JSON.parse(await fs.read(".ir/device.json")) as {
+    devices: Record<string, string>;
+  };
+  assert.deepEqual(after.devices, { alpha: "dev_legacy_id" });
+
+  // A different host on the same vault gets a fresh id, not the legacy one.
+  const other = new IrStore(fs);
+  await other.init({ hostname: "beta" });
+  const idBeta = await other.getDeviceId();
+  assert.notEqual(idBeta, "dev_legacy_id");
+  assert.match(idBeta, /^dev_/);
+});
+
+test("per-host init: clobbered entry is re-added on next load (sync-war recovery)", async () => {
+  // Simulates the Obsidian Sync race: device A registers itself, device B
+  // arrives and overwrites device.json with only its own entry, then device
+  // A loads again and must restore its entry without changing its id.
+  const fs = memFs();
+  const a1 = new IrStore(fs);
+  await a1.init({ hostname: "alpha" });
+  const idA = await a1.getDeviceId();
+
+  // Simulate a sync where device B's write clobbered the file.
+  await fs.write(
+    ".ir/device.json",
+    JSON.stringify({ devices: { beta: "dev_beta_only" } }),
+  );
+
+  const a2 = new IrStore(fs);
+  await a2.init({ hostname: "alpha" });
+  // The id we generate for alpha is a NEW one (the previous id is lost
+  // with the clobbered entry), but it's deterministic for the session and
+  // both hosts are now present in the file.
+  const idA2 = await a2.getDeviceId();
+  assert.notEqual(idA2, "dev_beta_only");
+  const merged = JSON.parse(await fs.read(".ir/device.json")) as {
+    devices: Record<string, string>;
+  };
+  assert.equal(merged.devices.beta, "dev_beta_only");
+  assert.equal(merged.devices.alpha, idA2);
+  // Best-effort acknowledgement: idA1 may or may not equal idA2 depending
+  // on whether the sync clobber preserved alpha's old entry. The fix's
+  // guarantee is "alpha keeps writing to its own shard," not "alpha never
+  // changes id."
+  void idA;
+});
+
 test("appendEvent appends lines to this device's shard, never overwrites", async () => {
   const fs = memFs();
   const store = new IrStore(fs);

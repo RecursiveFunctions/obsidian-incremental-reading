@@ -98,13 +98,25 @@ export class IrStore {
     this.opts = opts || {};
   }
 
-  async init(): Promise<void> {
-    // Initialize META if it doesn't exist
+  /**
+   * Initialize the store. Optional `hostname` opts in to the per-host device
+   * registry (DESIGN §Q2 fix): `.ir/device.json` becomes a `{devices:{host:id}}`
+   * map so each physical Obsidian install gets its own id and its own log
+   * shard, even though the file itself rides Obsidian Sync. Without a
+   * hostname the caller falls back to the legacy single-id schema for
+   * backward compat with tests / non-Obsidian harnesses.
+   */
+  async init(opts?: { hostname?: string }): Promise<void> {
     if (!(await this.fs.exists(META))) {
       await this.fs.write(META, JSON.stringify({ schemaVersion: 1 }));
     }
 
-    // Initialize DEVICE if it doesn't exist
+    if (opts?.hostname) {
+      this.deviceId = await this.resolvePerHostDeviceId(opts.hostname);
+      return;
+    }
+
+    // Legacy path (no hostname provided): single-id schema, generate-if-missing.
     if (!(await this.fs.exists(DEVICE))) {
       const id = newDeviceId();
       await this.fs.write(DEVICE, JSON.stringify({ deviceId: id }));
@@ -112,14 +124,71 @@ export class IrStore {
     }
   }
 
+  /**
+   * Read `.ir/device.json` as the per-host map (or upgrade a legacy
+   * `{deviceId}` file in place by treating the legacy id as belonging to
+   * *this* host — which is correct for the device that originally wrote
+   * it, the most likely first-upgrade scenario). Add or read this host's
+   * entry, write the file back, and return the id.
+   *
+   * The file format is intentionally additive: a sync from another device
+   * that clobbers our entry just means we'll re-add ourselves on the next
+   * load (and our cached `this.deviceId` keeps the in-memory invariant
+   * stable for the session). No sync-war data loss.
+   */
+  private async resolvePerHostDeviceId(hostname: string): Promise<DeviceId> {
+    let devices: Record<string, string> = {};
+    if (await this.fs.exists(DEVICE)) {
+      try {
+        const parsed = JSON.parse(await this.fs.read(DEVICE)) as {
+          devices?: Record<string, string>;
+          deviceId?: string;
+        };
+        if (parsed.devices && typeof parsed.devices === "object") {
+          devices = parsed.devices;
+        } else if (typeof parsed.deviceId === "string" && parsed.deviceId) {
+          // Legacy schema → claim the id for this host. The next load on a
+          // DIFFERENT host will see the new schema, miss its own hostname,
+          // and generate a fresh id, which is exactly what we want.
+          devices[hostname] = parsed.deviceId;
+        }
+      } catch {
+        devices = {};
+      }
+    }
+    let id = devices[hostname];
+    if (!id) {
+      id = newDeviceId();
+      devices[hostname] = id;
+    }
+    await this.fs.write(DEVICE, JSON.stringify({ devices }));
+    return id as DeviceId;
+  }
+
   async getDeviceId(): Promise<DeviceId> {
     if (this.deviceId) {
       return this.deviceId;
     }
 
+    // Fallback for callers that skipped init() (tests, ad-hoc tools). Reads
+    // either schema and picks the first id it finds, which is enough to
+    // keep the shard path stable in those one-off cases.
     const deviceContent = await this.fs.read(DEVICE);
-    const deviceData = JSON.parse(deviceContent);
-    this.deviceId = deviceData.deviceId as DeviceId;
+    const deviceData = JSON.parse(deviceContent) as {
+      deviceId?: string;
+      devices?: Record<string, string>;
+    };
+    if (deviceData.deviceId) {
+      this.deviceId = deviceData.deviceId as DeviceId;
+    } else if (deviceData.devices) {
+      const first = Object.values(deviceData.devices)[0];
+      if (first) this.deviceId = first as DeviceId;
+    }
+    if (!this.deviceId) {
+      throw new Error(
+        "IrStore.getDeviceId: device.json has no readable id; init() never ran.",
+      );
+    }
     return this.deviceId;
   }
 
