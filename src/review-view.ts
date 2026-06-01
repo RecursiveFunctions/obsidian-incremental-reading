@@ -1713,11 +1713,20 @@ export class IrReviewView extends ItemView {
       cls: "ir-review-body ir-review-main-body",
     });
     const slot = this.current;
+    // For store-only anchored extracts, `slot.file` is null. Falling back
+    // to the empty string strips the source path Obsidian uses to resolve
+    // contextual wikilinks (`[[sample]]`), so they render as unresolved.
+    // Use the extract's provenance — the parent source note's path — so
+    // wikilinks resolve from the right folder.
+    const renderSourcePath =
+      slot?.file?.path ??
+      (slot ? this.resolveProvenanceSourcePath(slot) : null) ??
+      "";
     await MarkdownRenderer.render(
       this.app,
       shown,
       body,
-      slot?.file?.path ?? "",
+      renderSourcePath,
       this,
     );
 
