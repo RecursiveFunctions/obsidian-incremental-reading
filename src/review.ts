@@ -56,6 +56,7 @@ export function dueQueue(
   reviewsPerReading: number,
   state: LogState,
   now: Date = new Date(),
+  interleaveSimilarPriority = true,
 ): ReviewSlot[] {
   const slots = new Map<string, ReviewSlot>();
   const entries: QueueEntry[] = [];
@@ -76,7 +77,9 @@ export function dueQueue(
     });
   }
 
-  return interleavedQueue(entries, reviewsPerReading, now.getTime())
+  return interleavedQueue(entries, reviewsPerReading, now.getTime(), {
+    interleaveSimilarPriority,
+  })
     .map((id) => slots.get(id))
     .filter((s): s is ReviewSlot => s !== undefined);
 }

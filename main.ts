@@ -1354,7 +1354,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     const state = await this.store.load();
-    const queue = dueQueue(this.app, this.settings.reviewsPerReading, state);
+    const queue = dueQueue(
+      this.app,
+      this.settings.reviewsPerReading,
+      state,
+      new Date(),
+      this.settings.interleaveSimilarPriority,
+    );
     if (queue.length === 0) {
       new Notice("Incremental Reading: nothing due for review.");
       return;

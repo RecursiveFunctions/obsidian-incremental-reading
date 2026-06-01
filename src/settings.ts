@@ -33,6 +33,14 @@ export interface IrSettings {
    * brings back the explicit "Mark as IR topic first" prompt.
    */
   autoMarkSourceAsTopic: boolean;
+  /**
+   * SuperMemo "interwoven learning": within a priority band, shuffle the
+   * order of due items so positional memory doesn't leak into recall. Seed
+   * is the calendar day, so resuming a session mid-day keeps the same
+   * order; a new day produces a fresh permutation. Off restores the
+   * pre-feature deterministic order (priority, then due time).
+   */
+  interleaveSimilarPriority: boolean;
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
@@ -46,6 +54,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   mercyCeiling: 40,
   mercyPriorityCutoff: 10,
   autoMarkSourceAsTopic: true,
+  interleaveSimilarPriority: true,
 };
 
 export class IrSettingTab extends PluginSettingTab {
@@ -122,6 +131,23 @@ export class IrSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.reviewsPerReading = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Interleave items of similar priority")
+      .setDesc(
+        "SuperMemo-style: within an equal-priority band, shuffle the order " +
+          "so positional memory doesn't help you recall. Seeded by the " +
+          "calendar day, so a paused session keeps its order when you " +
+          "resume the same day. Off restores priority + due-time order.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.interleaveSimilarPriority)
+          .onChange(async (value) => {
+            this.plugin.settings.interleaveSimilarPriority = value;
             await this.plugin.saveSettings();
           }),
       );
