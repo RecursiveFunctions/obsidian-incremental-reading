@@ -68,6 +68,7 @@ import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
 import {
   IrDecorationCache,
+  createIrExtractMarkdownPostProcessor,
   irExtractDecorationsExtension,
   pushIrDecorations,
   refreshIrDecorationCache,
@@ -194,6 +195,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     // Editor decoration extension (DESIGN §Q3). Registered before any extract
     // command so the first highlight after onload paints into a wired editor.
     this.registerEditorExtension(irExtractDecorationsExtension());
+    // Reading-view post-processor (DESIGN §Q3 follow-up). Best-effort
+    // text-quote search; see `createIrExtractMarkdownPostProcessor` for the
+    // limitations.
+    this.registerMarkdownPostProcessor(
+      createIrExtractMarkdownPostProcessor(this.decorationCache),
+    );
     // Repaint when the workspace mounts a different file in a leaf — the new
     // editor's decoration field starts empty until we push.
     this.registerEvent(

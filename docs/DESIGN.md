@@ -302,11 +302,13 @@ the byte-exact body offsets in `position`.
 
 Sub-decisions locked alongside it:
 
-- **Editor surface only in v1.** The CM6 extension covers Live Preview
-  and Source view. Reading view and the in-plugin review pane lose new
-  extract highlights until those surfaces get their own decoration pass
-  (deferred). Legacy notes with persisted marks continue to render
-  everywhere because the CSS class is unchanged.
+- **Surfaces covered:** CM6 extension for Live Preview and Source view
+  (0.4.0); review-pane side-panel splices marks for the focused card and
+  every sibling extract (0.4.1); reading-view post-processor walks the
+  rendered DOM and wraps text-quote matches (0.4.4). All three are
+  decoration-only — the source bytes stay pristine. Legacy notes with
+  persisted marks continue to render everywhere because the CSS class is
+  unchanged.
 - **Legacy data is not migrated.** Notes that already carry
   `<mark class="ir-extract-source">` chrome on disk keep it; their
   anchors keep wrapping in `quote.exact`. The anchor resolver is
@@ -319,14 +321,22 @@ Sub-decisions locked alongside it:
   mark" to "skip spans that overlap any anchor already in the store
   for this source." See `main.ts existingExtractRangesForSource`.
 
-What the future commit must handle:
+Remaining follow-up:
 
-- Reading-view decoration via a `MarkdownPostProcessor` (best-effort
-  text-quote anchor against rendered HTML).
-- Review-pane decoration so an extract under review shows where its
-  children were extracted from.
-- Optional one-shot legacy-data migration: strip marks from notes,
-  rewrite anchors to use unwrapped `quote.exact`.
+- Optional one-shot legacy-data migration: strip persisted `<mark>` chrome
+  from notes and rewrite the matching anchors' `quote.exact` to use the
+  unwrapped slice. Cosmetic — both shapes already work via the byte-exact
+  resolver, but the migration would tidy old notes that the user wants to
+  keep in pure markdown.
+
+Reading-view limitations (worth knowing about, not bugs):
+
+- Text-quote search runs per-section and finds matches only within a
+  single text node. Extracts spanning inline formatting boundaries
+  (`<strong>`, links, embedded blocks) won't be marked in reading view.
+  The editor surface marks them precisely via CM6 offsets.
+- Two extracts with identical text get deduped to one rendered mark in
+  reading view. The editor marks each occurrence.
 
 ## Open items
 

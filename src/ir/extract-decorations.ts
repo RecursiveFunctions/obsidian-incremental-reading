@@ -34,22 +34,32 @@ import { resolveAnchor } from "./anchor";
 const EXTRACT_CLASS = "ir-extract-source";
 const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
 
-interface BodyRange {
+/**
+ * Resolved anchor entry held in the decoration cache. CM6 needs `start`/`end`
+ * for the editor decoration; the reading-view post-processor needs `text`
+ * (the extract's stored, markdown-stripped body) as the text-quote needle to
+ * search the rendered DOM for. Storing both lets a single cache feed both
+ * surfaces without re-resolving anchors per render.
+ */
+interface CachedAnchor {
   start: number;
   end: number;
+  /** The extract element's `text` field: chrome stripped, ready to match. */
+  text: string;
 }
 
 /**
  * Workspace-singleton cache: vault path -> resolved anchor ranges in
  * body-relative offsets. Built by {@link refreshIrDecorationCache} after
  * every store reconcile. The CM6 extension reads from this through
- * {@link pushIrDecorations}.
+ * {@link pushIrDecorations}; the reading-view post-processor through
+ * {@link createIrExtractMarkdownPostProcessor}.
  */
 export class IrDecorationCache {
-  private byPath = new Map<string, BodyRange[]>();
+  private byPath = new Map<string, CachedAnchor[]>();
   private gen = 0;
 
-  rangesFor(path: string): BodyRange[] {
+  rangesFor(path: string): CachedAnchor[] {
     return this.byPath.get(path) ?? [];
   }
 
@@ -57,7 +67,7 @@ export class IrDecorationCache {
     return this.gen;
   }
 
-  set(next: Map<string, BodyRange[]>): void {
+  set(next: Map<string, CachedAnchor[]>): void {
     this.byPath = next;
     this.gen += 1;
   }
@@ -77,27 +87,32 @@ export async function refreshIrDecorationCache(
   cache: IrDecorationCache,
 ): Promise<void> {
   const state = await store.load();
-  const byPath = new Map<string, Anchor[]>();
+  // Group by sourcePath, carrying the element's stored text alongside the
+  // anchor so the reading-view processor can use it as the search needle.
+  const byPath = new Map<
+    string,
+    Array<{ anchor: Anchor; text: string }>
+  >();
   for (const [, el] of state.elements) {
     if (el.type !== "extract") continue;
     if (el.notePath !== undefined) continue; // promoted -> standalone note
     if (!el.anchor) continue;
     const bucket = byPath.get(el.anchor.sourcePath) ?? [];
-    bucket.push(el.anchor);
+    bucket.push({ anchor: el.anchor, text: el.text });
     byPath.set(el.anchor.sourcePath, bucket);
   }
 
-  const next = new Map<string, BodyRange[]>();
-  for (const [path, anchors] of byPath) {
+  const next = new Map<string, CachedAnchor[]>();
+  for (const [path, entries] of byPath) {
     const file = app.vault.getAbstractFileByPath(path);
     if (!file || !("extension" in file) || file.extension !== "md") continue;
     const full = await app.vault.cachedRead(file as TFile);
     const body = stripFrontmatterPlain(full);
-    const ranges: BodyRange[] = [];
-    for (const anchor of anchors) {
+    const ranges: CachedAnchor[] = [];
+    for (const { anchor, text } of entries) {
       const r = resolveAnchor(anchor, body);
       if (r.status === "ok") {
-        ranges.push({ start: r.start, end: r.end });
+        ranges.push({ start: r.start, end: r.end, text });
       }
     }
     if (ranges.length > 0) next.set(path, ranges);
@@ -173,7 +188,7 @@ export function irExtractDecorationsExtension(): Extension {
  */
 function decorationsForView(
   view: EditorView,
-  ranges: BodyRange[],
+  ranges: ReadonlyArray<{ start: number; end: number }>,
 ): DecorationSet {
   if (ranges.length === 0) return Decoration.none;
   const full = view.state.doc.toString();
@@ -212,4 +227,82 @@ export function pushIrDecorations(
       effects: setIrDecorations.of(decorationsForView(cm, ranges)),
     });
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Reading view post-processor                                          */
+/* ------------------------------------------------------------------ */
+
+/** Minimal post-processor context shape we depend on (avoids importing the type). */
+interface PostProcessorContext {
+  sourcePath?: string;
+}
+
+/**
+ * Build the `MarkdownPostProcessor` registered against Obsidian's reading
+ * view. For each section block rendered from a known IR source path, walks
+ * the rendered text nodes and wraps the first occurrence of each cached
+ * extract's text in `<mark class="ir-extract-source">`.
+ *
+ * Limitations (best-effort, §Q3 reading-view path):
+ * - Only matches within a single text node. An extract that spans inline
+ *   formatting boundaries (e.g. text crossing a `<strong>`) won't be found.
+ * - Two extracts with identical text are deduped before walking, so the
+ *   identical passage gets marked once. The editor surface marks every
+ *   occurrence; reading view collapses them.
+ * - Needles shorter than 4 characters are skipped to avoid noisy matches.
+ */
+export function createIrExtractMarkdownPostProcessor(
+  cache: IrDecorationCache,
+): (el: HTMLElement, ctx: PostProcessorContext) => void {
+  return (el, ctx) => {
+    const path = ctx?.sourcePath;
+    if (!path) return;
+    const ranges = cache.rangesFor(path);
+    if (ranges.length === 0) return;
+    const seen = new Set<string>();
+    for (const r of ranges) {
+      const needle = r.text.trim();
+      if (needle.length < 4) continue;
+      if (seen.has(needle)) continue;
+      seen.add(needle);
+      wrapFirstOccurrenceInTextNode(el, needle);
+    }
+  };
+}
+
+/**
+ * Walk text nodes under `root` in document order; on the first text node
+ * that contains `needle`, split the node and wrap the matched range in a
+ * `<mark class="ir-extract-source">`. Returns true on a hit, false if no
+ * text node contained the needle.
+ */
+function wrapFirstOccurrenceInTextNode(
+  root: HTMLElement,
+  needle: string,
+): boolean {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node: Node | null = walker.nextNode();
+  while (node) {
+    const t = node as Text;
+    const text = t.nodeValue ?? "";
+    const idx = text.indexOf(needle);
+    if (idx !== -1) {
+      const parent = t.parentNode;
+      if (!parent) return false;
+      const before = text.slice(0, idx);
+      const after = text.slice(idx + needle.length);
+      const mark = document.createElement("mark");
+      mark.className = EXTRACT_CLASS;
+      mark.textContent = needle;
+      // Insert in document order: before, mark, after, then drop original.
+      if (before) parent.insertBefore(document.createTextNode(before), t);
+      parent.insertBefore(mark, t);
+      if (after) parent.insertBefore(document.createTextNode(after), t);
+      parent.removeChild(t);
+      return true;
+    }
+    node = walker.nextNode();
+  }
+  return false;
 }
