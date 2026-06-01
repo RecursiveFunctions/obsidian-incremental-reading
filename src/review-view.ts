@@ -1374,6 +1374,7 @@ export class IrReviewView extends ItemView {
           sourceCtx.path,
           this,
         );
+        this.wireMarkdownLinks(ctxBody, sourceCtx.path);
         if (sourceCtx.highlightRange) {
           requestAnimationFrame(() => {
             const mark = ctxBody.querySelector(".ir-extract-highlight");
@@ -1689,6 +1690,39 @@ export class IrReviewView extends ItemView {
     });
   }
 
+  /**
+   * Make `[[wikilinks]]` clickable in a `MarkdownRenderer.render` output.
+   * The review pane is a custom `ItemView`, not a `MarkdownView`, so it
+   * doesn't get Obsidian's default link-click handler — left alone, the
+   * `<a class="internal-link">` Obsidian emits is a dead link.
+   *
+   * Listens in the capture phase so it fires before the body's edit-toggle
+   * click handler (which already returns early on `<a>` targets, but a
+   * capture-phase preventDefault is cheaper to reason about than relying
+   * on attach order). Internal links route through `openLinkText` with
+   * the current source path so relative resolution works; ctrl/cmd-click
+   * opens in a new pane to match Obsidian's editor convention. External
+   * links fall through to the browser's default.
+   */
+  private wireMarkdownLinks(root: HTMLElement, sourcePath: string): void {
+    root.addEventListener(
+      "click",
+      (evt: MouseEvent) => {
+        const target = evt.target as HTMLElement | null;
+        const a = target?.closest("a") as HTMLAnchorElement | null;
+        if (!a) return;
+        if (a.classList.contains("external-link")) return;
+        const href = a.dataset.href ?? a.getAttribute("href") ?? "";
+        if (!href) return;
+        evt.preventDefault();
+        evt.stopPropagation();
+        const newLeaf = evt.ctrlKey || evt.metaKey;
+        void this.app.workspace.openLinkText(href, sourcePath, newLeaf);
+      },
+      true,
+    );
+  }
+
   private async renderBody(
     parent: HTMLElement,
     raw: string,
@@ -1729,6 +1763,7 @@ export class IrReviewView extends ItemView {
       renderSourcePath,
       this,
     );
+    this.wireMarkdownLinks(body, renderSourcePath);
 
     // Click (not mousedown) so drag-to-select in preview still works for
     // extract/cloze; skip embedded controls so links and task checkboxes behave.
