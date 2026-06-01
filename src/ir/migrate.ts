@@ -26,9 +26,52 @@ export interface FrontmatterNote {
   frontmatter: Record<string, unknown>;
 }
 
+/**
+ * 64-bit FNV-1a hash returned as 16 hex chars. Not cryptographic; used only
+ * to bound element-id filenames for deeply nested notes. Collision space
+ * (2^64) is far past the hundreds-of-thousands-of-notes scale this plugin
+ * targets. JS numbers can't hold 64 bits losslessly, so the inner loop runs
+ * on BigInt.
+ */
+function fnv1a64Hex(s: string): string {
+  // Constructor form, not literals: tsconfig targets ES2018 (BigInt
+  // literals need ES2020). The runtime supports BigInt either way.
+  const FNV_OFFSET = BigInt("0xcbf29ce484222325");
+  const FNV_PRIME = BigInt("0x100000001b3");
+  const MASK = BigInt("0xffffffffffffffff");
+  let h = FNV_OFFSET;
+  const bytes = new TextEncoder().encode(s);
+  for (const b of bytes) {
+    h ^= BigInt(b);
+    h = (h * FNV_PRIME) & MASK;
+  }
+  return h.toString(16).padStart(16, "0");
+}
+
+/**
+ * Encode a vault path into the body of `el_mig_<...>` / `ev_mig_<...>`.
+ *
+ * - Short paths use the original hex-of-utf8 encoding so existing ids in
+ *   the event log stay byte-identical (backward compat for the >99% case).
+ * - Long paths collapse to `h_<16-hex-hash>` so the resulting state file
+ *   filename actually fits. Hash is deterministic, so a re-migration of
+ *   the same vault produces identical ids and `.ir/state` stays idempotent.
+ *
+ * Threshold math: state file is `.ir/state/<id>.json`. Linux/macOS cap the
+ * basename at 255 bytes (directory prefix is irrelevant). `<id>` must be
+ * ≤ 250 chars; after the 7-char `el_mig_`/`ev_mig_` prefix and a 3-char
+ * safety margin, the encoded body must be ≤ 240 hex chars (= 120 path
+ * bytes of source).
+ */
+const ENCODED_BODY_MAX = 240;
+
 function encodePathForMigrId(path: string): string {
   const bytes = new TextEncoder().encode(path);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  if (hex.length <= ENCODED_BODY_MAX) {
+    return hex;
+  }
+  return `h_${fnv1a64Hex(path)}`;
 }
 
 /**

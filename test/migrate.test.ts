@@ -28,7 +28,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { migrateNotes, type FrontmatterNote } from "../src/ir/migrate";
+import {
+  elementIdForPath,
+  migrateNotes,
+  type FrontmatterNote,
+} from "../src/ir/migrate";
 import { fold } from "../src/ir/log";
 import { IR_KEYS } from "../src/types";
 import {
@@ -168,6 +172,50 @@ test("migration is deterministic and idempotent (safe to re-run)", () => {
     [...a, ...b].map((e) => JSON.parse(JSON.stringify(e))),
   );
   assert.deepEqual(twice, once, "re-run folds to the same state");
+});
+
+test("elementIdForPath: short paths keep the hex-of-utf8 format (backward compat)", () => {
+  // Existing vaults have ids built with the original `el_mig_<hex>` scheme.
+  // For any path whose hex stays well under the filename limit, the new
+  // bounded encoder MUST return byte-identical output so the resolver still
+  // finds migrated elements by id.
+  const path = "Notes/Animals.md";
+  const id = elementIdForPath(path);
+  // Recompute the legacy form inline so this test fails if the encoding
+  // drifts, not because we re-read a moving target.
+  const bytes = new TextEncoder().encode(path);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(
+    "",
+  );
+  assert.equal(id, `el_mig_${hex}`);
+  assert.ok(id.length + ".json".length <= 255, "fits in basename budget");
+});
+
+test("elementIdForPath: long paths collapse to a bounded hash form", () => {
+  // ~165-byte deeply nested path. Pre-fix this would have produced a
+  // 340-char filename and crashed reconcile with ENAMETOOLONG. Post-fix
+  // the id is short enough to write.
+  const longPath =
+    "private/sailplatform-archive/F25_AI_Technicians_Cloud_Administrator/01_Introduction_to_Cloud_Computing_Paradigm/01_CONCEPT_Cloud_Overview.md";
+  const id = elementIdForPath(longPath);
+  assert.ok(id.startsWith("el_mig_h_"), `expected hashed prefix, got ${id}`);
+  // 7 (`el_mig_`) + 2 (`h_`) + 16 (hash) = 25 chars; plus `.json` = 30.
+  assert.equal(id.length, 25);
+  assert.ok(id.length + ".json".length <= 255, "fits in basename budget");
+});
+
+test("elementIdForPath: hashed form is deterministic per path", () => {
+  const longPath =
+    "very/deep/" + "x".repeat(200) + "/leaf.md";
+  assert.equal(elementIdForPath(longPath), elementIdForPath(longPath));
+});
+
+test("elementIdForPath: distinct long paths produce distinct ids", () => {
+  // Collision is astronomically unlikely (2^64), but a smoke test catches
+  // a future bug where someone accidentally drops the path from the hash.
+  const a = "very/deep/" + "a".repeat(200) + "/leaf.md";
+  const b = "very/deep/" + "b".repeat(200) + "/leaf.md";
+  assert.notEqual(elementIdForPath(a), elementIdForPath(b));
 });
 
 test("order of the input notes does not change the folded result", () => {
