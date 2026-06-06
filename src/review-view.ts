@@ -199,6 +199,13 @@ export class IrReviewView extends ItemView {
     private readonly getSourceExtractRanges?: (
       path: string,
     ) => ReadonlyArray<{ start: number; end: number }>,
+    /**
+     * Rebuild the host's decoration cache so a just-created extract is in
+     * `getSourceExtractRanges` before the next `renderCard`. Without this
+     * the cache refresh races the re-render and the new extract appears
+     * unhighlighted in the main body until the next reconcile.
+     */
+    private readonly refreshDecorations?: () => Promise<void>,
   ) {
     super(leaf);
   }
@@ -1728,9 +1735,20 @@ export class IrReviewView extends ItemView {
     raw: string,
     isCloze: boolean,
   ): Promise<void> {
+    const slot = this.current;
+    // §Q3 main-column decoration: paint extract anchors on the body the
+    // user is reviewing, so a topic-as-source shows where past extracts
+    // sit (the side column was already covered; the main column was
+    // missed in the §Q3 follow-up). Skip for cloze cards — the cloze
+    // transform produces HTML and offset math would corrupt it; cloze
+    // item bodies are not extract sources in practice either.
+    const decoratedRaw =
+      !isCloze && slot?.file
+        ? this.spliceMainColumnMarks(raw, slot.file.path)
+        : raw;
     const shown =
       isCloze && !this.revealed
-        ? transformClozes(raw, ({ hint }, inCodeSpan) => {
+        ? transformClozes(decoratedRaw, ({ hint }, inCodeSpan) => {
             const hintPart = hint
               ? ` <span class="ir-cloze-hint">(${escapeClozeHtmlFragment(hint)})</span>`
               : "";
@@ -1738,15 +1756,14 @@ export class IrReviewView extends ItemView {
             return inCodeSpan ? `<code>${html}</code>` : html;
           })
         : isCloze
-          ? transformClozes(raw, ({ answer }, inCodeSpan) => {
+          ? transformClozes(decoratedRaw, ({ answer }, inCodeSpan) => {
               const html = `<mark class="ir-cloze-answer">${escapeClozeHtmlFragment(answer)}</mark>`;
               return inCodeSpan ? `<code>${html}</code>` : html;
             })
-          : raw;
+          : decoratedRaw;
     const body = parent.createEl("div", {
       cls: "ir-review-body ir-review-main-body",
     });
-    const slot = this.current;
     // For store-only anchored extracts, `slot.file` is null. Falling back
     // to the empty string strips the source path Obsidian uses to resolve
     // contextual wikilinks (`[[sample]]`), so they render as unresolved.
@@ -1783,6 +1800,38 @@ export class IrReviewView extends ItemView {
         void this.renderCard();
       });
     }
+  }
+
+  /**
+   * Splice `<mark class="ir-extract-source">` around every extract anchored
+   * to `path`. Mirrors the side-column logic but without a "focused" range —
+   * in the main column the body itself IS the source, so every anchor is a
+   * sibling. Overlapping anchors are kept in left-to-right precedence so the
+   * splice never produces nested HTML; the splice walks descending so each
+   * insertion leaves earlier offsets untouched.
+   */
+  private spliceMainColumnMarks(raw: string, path: string): string {
+    const ranges = this.getSourceExtractRanges?.(path) ?? [];
+    if (ranges.length === 0) return raw;
+    const sorted = [...ranges].sort((a, b) => a.start - b.start);
+    const accepted: { start: number; end: number }[] = [];
+    let lastEnd = -1;
+    for (const r of sorted) {
+      if (r.start < lastEnd) continue;
+      accepted.push(r);
+      lastEnd = r.end;
+    }
+    accepted.sort((a, b) => b.start - a.start);
+    let out = raw;
+    for (const r of accepted) {
+      out =
+        out.slice(0, r.start) +
+        `<mark class="ir-extract-source">` +
+        out.slice(r.start, r.end) +
+        "</mark>" +
+        out.slice(r.end);
+    }
+    return out;
   }
 
   private renderEditor(parent: HTMLElement) {
@@ -1997,6 +2046,10 @@ export class IrReviewView extends ItemView {
       );
     }
     await this.reloadCurrentRaw();
+    // Await the cache rebuild so the just-created extract's range is in
+    // `getSourceExtractRanges` before the re-render reads from it; without
+    // this the new highlight only appears after the next unrelated reconcile.
+    await this.refreshDecorations?.();
     await this.renderCard();
   }
 
@@ -2190,6 +2243,7 @@ export class IrReviewView extends ItemView {
       );
     }
     await this.reloadCurrentRaw();
+    await this.refreshDecorations?.();
     await this.renderCard();
   }
 

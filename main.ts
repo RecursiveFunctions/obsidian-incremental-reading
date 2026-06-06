@@ -346,6 +346,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           notifyWorkspaceFabSync,
           () => this.undoLastGrade(),
           (path) => this.decorationCache.rangesFor(path),
+          () => this.refreshExtractDecorations(),
         );
       },
     );
