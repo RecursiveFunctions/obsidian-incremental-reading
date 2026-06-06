@@ -63,6 +63,7 @@ import {
   wrapCloze,
 } from "./src/cloze";
 import { promptClozeHint } from "./src/cloze-hint-modal";
+import { promptNukeConfirm } from "./src/nuke-confirm-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
 import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
@@ -179,6 +180,14 @@ export default class IncrementalReadingPlugin extends Plugin {
    * the store event log to events newer than this.
    */
   private sessionStartMs = Date.now();
+
+  /**
+   * Set true while {@link nukeAllIrData} is trashing notes so the vault
+   * delete listener skips its auto-promote / tombstone work — otherwise the
+   * handler would spawn replacement "orphan-…" notes for every extract whose
+   * parent we just trashed, defeating the whole point of a reset.
+   */
+  private nuking = false;
 
   /**
    * Decoration cache that the CM6 extension reads from. Rebuilt by
@@ -2087,6 +2096,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * untouched.
    */
   private async handleSourceDeletion(deleted: TFile): Promise<void> {
+    if (this.nuking) return;
     if (!this.store) return;
     try {
       const events = await this.store.loadEvents();
@@ -2784,5 +2794,106 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  /**
+   * Settings-tab entry point for the Danger zone nuke button. Counts current
+   * IR notes by type for the confirmation modal, runs the destructive sweep
+   * if the user types the confirm phrase, and surfaces a single notice with
+   * the outcome.
+   */
+  async runNuke(): Promise<void> {
+    const summary = { topics: 0, extracts: 0, items: 0 };
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const t = getIrType(this.app, file);
+      if (t === "topic") summary.topics++;
+      else if (t === "extract") summary.extracts++;
+      else if (t === "item") summary.items++;
+    }
+    const ok = await promptNukeConfirm(this.app, summary);
+    if (!ok) return;
+
+    try {
+      const result = await this.nukeAllIrData();
+      const trashed = result.notesTrashed;
+      const noteWord = trashed === 1 ? "note" : "notes";
+      const stateMsg = result.stateRemoved
+        ? ", .ir/ state removed"
+        : ", .ir/ state could not be fully removed (check console)";
+      new Notice(
+        `Incremental Reading: nuke complete — ${trashed} ${noteWord} trashed${stateMsg}.`,
+      );
+    } catch (e) {
+      console.error("Incremental Reading: nuke failed", e);
+      new Notice(
+        "Incremental Reading: nuke failed; see developer console for details.",
+      );
+    }
+  }
+
+  /**
+   * Trash every IR-marked note via Obsidian's trash (so the user can recover
+   * from their system/vault trash) and wipe the `.ir/` state directory. The
+   * vault delete handler is suppressed for the duration so no auto-promote
+   * notes spawn. The in-memory store is dropped and re-initialised empty so
+   * subsequent commands work against a clean slate without a plugin reload.
+   */
+  private async nukeAllIrData(): Promise<{
+    notesTrashed: number;
+    stateRemoved: boolean;
+  }> {
+    this.nuking = true;
+    try {
+      const irFiles: TFile[] = [];
+      for (const file of this.app.vault.getMarkdownFiles()) {
+        if (getIrType(this.app, file)) irFiles.push(file);
+      }
+
+      let trashed = 0;
+      for (const file of irFiles) {
+        try {
+          await this.app.fileManager.trashFile(file);
+          trashed++;
+        } catch (e) {
+          console.error(
+            "Incremental Reading: nuke could not trash",
+            file.path,
+            e,
+          );
+        }
+      }
+
+      const adapter = this.app.vault.adapter as unknown as ObsidianDataAdapter;
+      let stateRemoved = true;
+      try {
+        if (await adapter.exists(".ir")) {
+          await adapter.rmdir(".ir", true);
+        }
+      } catch (e) {
+        console.error("Incremental Reading: nuke could not remove .ir/", e);
+        stateRemoved = false;
+      }
+
+      this.store = undefined;
+      this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
+      this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
+      this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
+      this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
+
+      try {
+        await this.runMigrationIfOwed();
+      } catch (e) {
+        console.error(
+          "Incremental Reading: post-nuke store re-init failed",
+          e,
+        );
+      }
+
+      void this.refreshStatusBar();
+
+      return { notesTrashed: trashed, stateRemoved };
+    } finally {
+      this.nuking = false;
+    }
   }
 }

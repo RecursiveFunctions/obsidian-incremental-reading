@@ -92,6 +92,21 @@ function fakeAdapter(): ObsidianDataAdapter & {
       calls.push(`mkdir ${p}`);
       folders.add(p);
     },
+    async rmdir(p: string, recursive: boolean) {
+      calls.push(`rmdir ${p} ${recursive}`);
+      if (!folders.has(p)) throw new Error(`ENOENT dir ${p}`);
+      if (recursive) {
+        const pre = p + "/";
+        for (const k of [...files.keys()]) {
+          if (k === p || k.startsWith(pre)) files.delete(k);
+        }
+        for (const k of [...folders]) {
+          if (k === p || k.startsWith(pre)) folders.delete(k);
+        }
+      } else {
+        folders.delete(p);
+      }
+    },
   };
 }
 

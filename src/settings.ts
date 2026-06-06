@@ -260,5 +260,24 @@ export class IrSettingTab extends PluginSettingTab {
             }
           }),
       );
+
+    containerEl.createEl("h3", { text: "Danger zone" });
+
+    new Setting(containerEl)
+      .setName("Nuke all IR data")
+      .setDesc(
+        "Send every note marked as an IR topic, extract, or cloze item to " +
+          "your vault trash, and delete the hidden .ir/ state folder " +
+          "(event log, schedule, bookmarks, tombstones). The per-note " +
+          "auto-promote handler is suppressed during the sweep so it " +
+          'does not spawn replacement "orphan-…" notes. Use this when ' +
+          "you want a clean slate; confirmation is required.",
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Nuke everything")
+          .setWarning()
+          .onClick(() => void this.plugin.runNuke()),
+      );
   }
 }

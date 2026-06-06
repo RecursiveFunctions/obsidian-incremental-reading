@@ -8,6 +8,7 @@ export interface ObsidianDataAdapter {
   list(path: string): Promise<{ files: string[]; folders: string[] }>;
   remove(path: string): Promise<void>;
   mkdir(path: string): Promise<void>;
+  rmdir(path: string, recursive: boolean): Promise<void>;
 }
 
 function ancestorFolders(filePath: string): string[] {
