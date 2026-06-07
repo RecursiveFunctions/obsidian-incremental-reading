@@ -264,14 +264,30 @@ export class IrSettingTab extends PluginSettingTab {
     containerEl.createEl("h3", { text: "Danger zone" });
 
     new Setting(containerEl)
-      .setName("Nuke all IR data")
+      .setName("Reset IR state (keep notes)")
       .setDesc(
-        "Send every note marked as an IR topic, extract, or cloze item to " +
-          "your vault trash, and delete the hidden .ir/ state folder " +
-          "(event log, schedule, bookmarks, tombstones). The per-note " +
-          "auto-promote handler is suppressed during the sweep so it " +
-          'does not spawn replacement "orphan-…" notes. Use this when ' +
-          "you want a clean slate; confirmation is required.",
+        "Delete the hidden .ir/ folder (event log, schedule, bookmarks, " +
+          "tombstones) without touching any notes. Your IR notes keep " +
+          "their ir-type: frontmatter but become inert until you re-import " +
+          "or strip the keys. Use this when you want a fresh schedule but " +
+          "want to keep your notes.",
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Reset state")
+          .setWarning()
+          .onClick(() => void this.plugin.runResetState()),
+      );
+
+    new Setting(containerEl)
+      .setName("Nuke everything (delete notes too)")
+      .setDesc(
+        "Send every markdown note in your vault with ir-type: frontmatter " +
+          "to your vault trash — including notes you marked as topics by " +
+          "hand, not just plugin-generated ones — and delete the .ir/ " +
+          "folder. The confirmation modal shows the full list of paths " +
+          "before you commit. Notes are recoverable from your vault " +
+          "trash; .ir/ state is not.",
       )
       .addButton((b) =>
         b

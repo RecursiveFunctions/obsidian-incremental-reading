@@ -63,7 +63,10 @@ import {
   wrapCloze,
 } from "./src/cloze";
 import { promptClozeHint } from "./src/cloze-hint-modal";
-import { promptNukeConfirm } from "./src/nuke-confirm-modal";
+import {
+  promptNukeConfirm,
+  promptStateResetConfirm,
+} from "./src/nuke-confirm-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
 import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
@@ -2797,19 +2800,29 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Settings-tab entry point for the Danger zone nuke button. Counts current
-   * IR notes by type for the confirmation modal, runs the destructive sweep
-   * if the user types the confirm phrase, and surfaces a single notice with
+   * Settings-tab entry point for the Danger zone "Nuke everything" button.
+   * Enumerates every IR-marked note in the vault by reading `ir-type:`
+   * frontmatter — including notes the user marked as topics by hand, which
+   * is the footgun the path list in the modal exists to surface. Runs the
+   * destructive sweep if the user types the confirm phrase, then notices
    * the outcome.
    */
   async runNuke(): Promise<void> {
-    const summary = { topics: 0, extracts: 0, items: 0 };
+    const summary = {
+      topics: 0,
+      extracts: 0,
+      items: 0,
+      paths: [] as string[],
+    };
     for (const file of this.app.vault.getMarkdownFiles()) {
       const t = getIrType(this.app, file);
       if (t === "topic") summary.topics++;
       else if (t === "extract") summary.extracts++;
       else if (t === "item") summary.items++;
+      if (t) summary.paths.push(file.path);
     }
+    summary.paths.sort();
+
     const ok = await promptNukeConfirm(this.app, summary);
     if (!ok) return;
 
@@ -2832,11 +2845,36 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
+   * Settings-tab entry point for the gentler "Reset state" button. Wipes
+   * `.ir/` (event log, schedule, bookmarks, tombstones) but leaves every
+   * vault note in place — IR notes keep their `ir-type:` frontmatter and
+   * become inert until the user re-imports or strips the keys. Useful when
+   * you want a fresh schedule without throwing away your notes.
+   */
+  async runResetState(): Promise<void> {
+    const ok = await promptStateResetConfirm(this.app);
+    if (!ok) return;
+
+    try {
+      const removed = await this.wipeIrState();
+      new Notice(
+        removed
+          ? "Incremental Reading: .ir/ state removed."
+          : "Incremental Reading: .ir/ state could not be fully removed (check console).",
+      );
+    } catch (e) {
+      console.error("Incremental Reading: reset state failed", e);
+      new Notice(
+        "Incremental Reading: reset state failed; see developer console for details.",
+      );
+    }
+  }
+
+  /**
    * Trash every IR-marked note via Obsidian's trash (so the user can recover
-   * from their system/vault trash) and wipe the `.ir/` state directory. The
-   * vault delete handler is suppressed for the duration so no auto-promote
-   * notes spawn. The in-memory store is dropped and re-initialised empty so
-   * subsequent commands work against a clean slate without a plugin reload.
+   * from their system/vault trash) and then wipe `.ir/` via the shared
+   * state-cleanup helper. The vault delete handler is suppressed for the
+   * duration so no auto-promote notes spawn.
    */
   private async nukeAllIrData(): Promise<{
     notesTrashed: number;
@@ -2863,37 +2901,44 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
       }
 
-      const adapter = this.app.vault.adapter as unknown as ObsidianDataAdapter;
-      let stateRemoved = true;
-      try {
-        if (await adapter.exists(".ir")) {
-          await adapter.rmdir(".ir", true);
-        }
-      } catch (e) {
-        console.error("Incremental Reading: nuke could not remove .ir/", e);
-        stateRemoved = false;
-      }
-
-      this.store = undefined;
-      this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
-      this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
-      this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
-      this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
-
-      try {
-        await this.runMigrationIfOwed();
-      } catch (e) {
-        console.error(
-          "Incremental Reading: post-nuke store re-init failed",
-          e,
-        );
-      }
-
-      void this.refreshStatusBar();
-
+      const stateRemoved = await this.wipeIrState();
       return { notesTrashed: trashed, stateRemoved };
     } finally {
       this.nuking = false;
     }
+  }
+
+  /**
+   * Remove the `.ir/` state folder, drop the in-memory store, detach IR
+   * leaves so they do not render against the now-empty store, then
+   * re-initialise so subsequent commands work without a plugin reload.
+   * Shared by the full nuke flow and the state-only reset flow.
+   */
+  private async wipeIrState(): Promise<boolean> {
+    const adapter = this.app.vault.adapter as unknown as ObsidianDataAdapter;
+    let stateRemoved = true;
+    try {
+      if (await adapter.exists(".ir")) {
+        await adapter.rmdir(".ir", true);
+      }
+    } catch (e) {
+      console.error("Incremental Reading: could not remove .ir/", e);
+      stateRemoved = false;
+    }
+
+    this.store = undefined;
+    this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
+
+    try {
+      await this.runMigrationIfOwed();
+    } catch (e) {
+      console.error("Incremental Reading: post-wipe store re-init failed", e);
+    }
+
+    void this.refreshStatusBar();
+    return stateRemoved;
   }
 }
