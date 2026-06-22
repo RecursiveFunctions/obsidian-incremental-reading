@@ -154,6 +154,20 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
         break;
       }
 
+      case "source-renamed": {
+        if (element) {
+          const oldPath = event.payload.oldPath as string;
+          const newPath = event.payload.newPath as string;
+          if (element.notePath === oldPath) {
+            element.notePath = newPath;
+          }
+          if (element.anchor?.sourcePath === oldPath) {
+            element.anchor = { ...element.anchor, sourcePath: newPath };
+          }
+        }
+        break;
+      }
+
       case "element-deleted": {
         elements.delete(target);
         break;

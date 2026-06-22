@@ -67,6 +67,13 @@ export function dueQueue(
       const af = app.vault.getAbstractFileByPath(el.notePath);
       file = af instanceof TFile ? af : null;
     }
+    // Drop elements with no reviewable body: their `notePath` no longer
+    // resolves (deleted/renamed/synced away) AND no `text` snapshot was
+    // captured. Without this filter the review surface shows "the source
+    // note for this element is no longer in the vault" with no way to act
+    // on it. The element stays in the store, so if the file ever reappears
+    // at its old path (Sync, trash restore) the next build picks it up.
+    if (!file && !el.text) continue;
     slots.set(el.id, { id: el.id, element: el, file });
     entries.push({
       id: el.id,

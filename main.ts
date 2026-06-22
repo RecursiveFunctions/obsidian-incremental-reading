@@ -732,6 +732,17 @@ export default class IncrementalReadingPlugin extends Plugin {
       }),
     );
 
+    // Vault rename handler: keep stored `notePath` / anchor `sourcePath` in
+    // sync when the user moves or renames a source note in Obsidian. Without
+    // this, the review surface treats the rename as a deletion and shows the
+    // "source no longer in the vault" banner.
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (!(file instanceof TFile)) return;
+        void this.handleSourceRename(file, oldPath);
+      }),
+    );
+
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu: Menu, file) => {
         if (!(file instanceof TFile) || file.extension !== "md") return;
@@ -2150,6 +2161,50 @@ export default class IncrementalReadingPlugin extends Plugin {
       );
     } catch (e) {
       console.error("Incremental Reading: deletion handling failed", e);
+    }
+  }
+
+  /**
+   * Vault-rename handler. Without this, renaming a source note leaves the
+   * stored `notePath` (and any anchor `sourcePath`) pointing at the old path,
+   * so review surfaces show "the source note for this element is no longer
+   * in the vault" even though the file still exists.
+   */
+  private async handleSourceRename(
+    file: TFile,
+    oldPath: string,
+  ): Promise<void> {
+    if (this.nuking) return;
+    if (!this.store) return;
+    if (file.extension !== "md") return;
+    if (oldPath === file.path) return;
+    try {
+      const events = await this.store.loadEvents();
+      const state = await this.store.load();
+      const affected = Array.from(state.elements.values()).filter(
+        (e) =>
+          e.notePath === oldPath || e.anchor?.sourcePath === oldPath,
+      );
+      if (affected.length === 0) return;
+
+      const device = await this.store.getDeviceId();
+      let lamport = nextLamport(events);
+      const now = Date.now();
+      for (const el of affected) {
+        await this.store.appendEvent({
+          id: newEventId(),
+          ts: now,
+          lamport,
+          device,
+          kind: "source-renamed",
+          target: el.id,
+          payload: { oldPath, newPath: file.path },
+        });
+        lamport += 1;
+      }
+      await this.store.reconcile();
+    } catch (e) {
+      console.error("Incremental Reading: rename handling failed", e);
     }
   }
 
