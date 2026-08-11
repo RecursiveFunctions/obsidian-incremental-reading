@@ -13,6 +13,11 @@ export interface IrSettings {
   defaultPriority: number;
   /** Folder new extracts go in. Empty means beside their source note. */
   extractFolder: string;
+  /**
+   * When true, Extract creates a standalone child note (GitHub #1).
+   * Default false keeps DESIGN §2: extracts stay anchored in the source.
+   */
+  extractCreatesStandaloneNote: boolean;
   /** Review items between each reading element in a session. 0 disables. */
   reviewsPerReading: number;
   /** Days until a topic's first scheduled reread (SM first interval). */
@@ -46,6 +51,7 @@ export interface IrSettings {
 export const DEFAULT_SETTINGS: IrSettings = {
   defaultPriority: 33,
   extractFolder: "",
+  extractCreatesStandaloneNote: false,
   reviewsPerReading: 3,
   topicFirstInterval: 1,
   topicAFactor: 2,
@@ -82,6 +88,23 @@ export class IrSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.defaultPriority = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Extract to standalone note")
+      .setDesc(
+        "Off (default): extracts stay anchored in the source and do not " +
+          "create a file. On: each extract becomes a child markdown note " +
+          "(in the folder below) and inherits the parent's tags, aliases, " +
+          "and source/url. Cloze items already create notes either way.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.extractCreatesStandaloneNote)
+          .onChange(async (value) => {
+            this.plugin.settings.extractCreatesStandaloneNote = value;
             await this.plugin.saveSettings();
           }),
       );

@@ -1,10 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyInheritedFrontmatter,
   createCloze,
   createExtract,
   getIrType,
   getPriority,
+  inheritableFrontmatter,
   isDismissed,
   markAsTopic,
   setDismissed,
@@ -66,6 +68,42 @@ test("getIrType and getPriority read and clamp frontmatter", () => {
   );
 });
 
+test("inheritableFrontmatter copies tags/aliases/source and skips ir-* keys", () => {
+  const got = inheritableFrontmatter({
+    tags: ["exam", "cloud"],
+    aliases: ["DP-900"],
+    source: "https://learn.microsoft.com/dp-900",
+    url: "https://example.com/notes",
+    "ir-type": "topic",
+    "ir-priority": 20,
+    title: "should not copy",
+  });
+  assert.deepEqual(got, {
+    tags: ["exam", "cloud"],
+    aliases: ["DP-900"],
+    source: "https://learn.microsoft.com/dp-900",
+    url: "https://example.com/notes",
+  });
+  // Arrays are copied, not aliased.
+  (got.tags as string[]).push("mutated");
+  assert.deepEqual(
+    inheritableFrontmatter({ tags: ["exam", "cloud"] }).tags,
+    ["exam", "cloud"],
+  );
+});
+
+test("inheritableFrontmatter is empty for missing parent", () => {
+  assert.deepEqual(inheritableFrontmatter(undefined), {});
+  assert.deepEqual(inheritableFrontmatter(null), {});
+});
+
+test("applyInheritedFrontmatter does not clobber keys already set", () => {
+  const fm: Record<string, unknown> = { tags: ["keep"] };
+  applyInheritedFrontmatter(fm, { tags: ["from-parent"], aliases: ["A"] });
+  assert.deepEqual(fm.tags, ["keep"]);
+  assert.deepEqual(fm.aliases, ["A"]);
+});
+
 test("createExtract makes a child beside the source, inheriting priority", async () => {
   const app = new FakeApp();
   const src = app.seed("src/Topic.md", {
@@ -86,6 +124,43 @@ test("createExtract makes a child beside the source, inheriting priority", async
   // An extract is a reading element: topic schedule, not an FSRS card.
   assert.equal(fm[IR_KEYS.interval], 0);
   assert.equal(IR_KEYS.state in fm, false);
+});
+
+test("createExtract copies parent tags and source url onto the child", async () => {
+  const app = new FakeApp();
+  const src = app.seed("src/Topic.md", {
+    [IR_KEYS.type]: "topic",
+    [IR_KEYS.priority]: 20,
+    tags: ["exam", "azure"],
+    source: "https://learn.microsoft.com/dp-900",
+  });
+
+  const r = await createExtract(app.asApp(), src as any, "Hello world", SETTINGS);
+  assert.ok(r.file, r.error);
+  const fm = app.frontmatterOf(r.file!.path)!;
+  assert.deepEqual(fm.tags, ["exam", "azure"]);
+  assert.equal(fm.source, "https://learn.microsoft.com/dp-900");
+  assert.equal(fm[IR_KEYS.type], "extract");
+  assert.equal(fm[IR_KEYS.parent], "src/Topic.md");
+});
+
+test("createCloze copies parent tags onto the item note", async () => {
+  const app = new FakeApp();
+  const src = app.seed("src/Topic.md", {
+    [IR_KEYS.type]: "topic",
+    tags: ["cloud"],
+  });
+  const editor = fakeEditor(
+    ["The quick brown fox"],
+    { line: 0, ch: 4 },
+    { line: 0, ch: 9 },
+  );
+
+  const r = await createCloze(app.asApp(), src as any, editor, SETTINGS);
+  assert.ok(r.file, r.error);
+  const fm = app.frontmatterOf(r.file!.path)!;
+  assert.deepEqual(fm.tags, ["cloud"]);
+  assert.equal(fm[IR_KEYS.type], "item");
 });
 
 test("createExtract refuses a non-IR source and creates nothing", async () => {

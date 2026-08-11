@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Settings → Extract to standalone note** (off by default). Off keeps
+  today's anchored extracts (DESIGN §2). On is GitHub #1: each extract
+  becomes a child markdown note and inherits the parent's tags, aliases,
+  and source/url.
+- **One-shot promote** when the setting is off: `Alt+Shift+X` extracts to
+  a note once; `Alt+Shift+P` promotes the current anchored extract
+  (review card or tree selection). The tree context-menu action was
+  already there.
+- **Parent metadata on new IR notes:** promoted extracts and cloze item
+  notes copy `tags` / `aliases` / `cssclasses` and `source` / `url` from
+  the parent, and promoted extracts now set `ir-parent`.
+
 ## [0.3.9] — 2026-05-24
 
 ### Fixed

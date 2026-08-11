@@ -44,7 +44,9 @@ State lives in a local store inside your vault, designed to survive multi-device
 
 Every IR command ships with a default `Alt+letter` binding. The full set:
 
-- `Alt+X`: extract selection into a child note.
+- `Alt+X`: extract selection. Default: anchored in the source (no new note). If Settings → **Extract to standalone note** is on, this creates a child note instead.
+- `Alt+Shift+X`: one-shot extract to a standalone note (does not change the setting).
+- `Alt+Shift+P`: promote the current anchored extract to a standalone note (review card, or the IR tree selection).
 - `Alt+Z`: cloze selection into a review item (optional SuperMemo-style hint; stored as `{{cN::answer::hint}}`, Anki-compatible).
 - `Alt+R`: start a review session.
 - `Alt+T`: mark current note as an IR topic.
@@ -68,7 +70,7 @@ On **mobile portrait**, the review dock shows primary actions only (**Extract**,
 
 Obsidian’s mobile editor toolbar is user-configured (**Settings → Mobile → Configure mobile toolbar**). The plugin cannot reorder it, but these commands are the most useful to pin near the front (left side of the toolbar, before formatting icons):
 
-1. **Extract to IR child note** (scissors) — selection-based extract while editing.
+1. **Extract selection** (scissors) — selection-based extract while editing. Behavior follows Settings → Extract to standalone note.
 2. **Cloze to IR item** (brackets) — cloze from selection.
 3. **Start IR review** (brain) — open the review queue.
 4. **IR quick actions (radial wheel)** (layout-list) — contextual bulk extract / split / fork.

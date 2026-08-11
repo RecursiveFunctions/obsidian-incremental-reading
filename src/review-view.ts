@@ -206,6 +206,15 @@ export class IrReviewView extends ItemView {
      * unhighlighted in the main body until the next reconcile.
      */
     private readonly refreshDecorations?: () => Promise<void>,
+    /**
+     * Promote an anchored extract to a standalone note. Used when Settings
+     * → Extract to standalone note is on, or when the caller passes
+     * `{ promote: true }`.
+     */
+    private readonly commitPromoteExtract?: (
+      id: ElementId,
+      element: IrElement,
+    ) => Promise<void>,
   ) {
     super(leaf);
   }
@@ -301,6 +310,7 @@ export class IrReviewView extends ItemView {
       // Use `code` so Alt+X / Alt+Z work across layouts (Alt often changes `key`).
       if (
         evt.altKey &&
+        !evt.shiftKey &&
         !evt.ctrlKey &&
         !evt.metaKey &&
         (evt.code === "KeyX" || evt.code === "KeyZ")
@@ -430,6 +440,20 @@ export class IrReviewView extends ItemView {
   /** Element id under review right now, or null if the queue is empty. */
   getCurrentElementId(): ElementId | null {
     return this.current?.id ?? null;
+  }
+
+  /**
+   * Anchored extract currently under review, if it has not been promoted
+   * to a standalone note yet. Used by the Promote command.
+   */
+  getCurrentExtractForPromote(): {
+    id: ElementId;
+    element: IrElement;
+  } | null {
+    const slot = this.current;
+    if (!slot) return null;
+    if (slot.element.type !== "extract" || slot.element.notePath) return null;
+    return { id: slot.id, element: slot.element };
   }
 
   /** A reading element (topic/extract) is read and advanced, never graded. */
@@ -1860,6 +1884,7 @@ export class IrReviewView extends ItemView {
       }
       if (
         evt.altKey &&
+        !evt.shiftKey &&
         !evt.ctrlKey &&
         !evt.metaKey &&
         (evt.code === "KeyX" || evt.code === "KeyZ") &&
@@ -1997,7 +2022,10 @@ export class IrReviewView extends ItemView {
     };
   }
 
-  public async handleExtract() {
+  public async handleExtract(opts?: {
+    silent?: boolean;
+    promote?: boolean;
+  }): Promise<IrElement | undefined> {
     const slot = this.current;
     if (!slot || !this.canMakeChild()) return;
     const sel = this.resolveSelection();
@@ -2015,6 +2043,7 @@ export class IrReviewView extends ItemView {
     }
     await this.flushEdits();
     const bodyBeforeExtract = this.currentRaw;
+    let created: IrElement | undefined;
     try {
       const now = Date.now();
       const ev = buildExtractEvent({
@@ -2032,12 +2061,18 @@ export class IrReviewView extends ItemView {
         schedule: topicStateToSchedule(newTopicState(this.settings, new Date(now))),
       });
       await this.store.appendEvent(ev);
-      const created = ev.payload.element as IrElement;
+      created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
-      const label = sourcePath.split("/").pop() ?? sourcePath;
-      new Notice(
-        `Extracted (anchored in "${label}", not a separate note).`,
-      );
+      const promote =
+        opts?.promote ?? this.settings.extractCreatesStandaloneNote;
+      if (created && promote && this.commitPromoteExtract) {
+        await this.commitPromoteExtract(created.id, created);
+      } else if (!opts?.silent) {
+        const label = sourcePath.split("/").pop() ?? sourcePath;
+        new Notice(
+          `Extracted (anchored in "${label}", not a separate note).`,
+        );
+      }
       this.onChange?.();
     } catch (e) {
       console.error("Incremental Reading: anchored extract failed", e);
@@ -2051,6 +2086,7 @@ export class IrReviewView extends ItemView {
     // this the new highlight only appears after the next unrelated reconcile.
     await this.refreshDecorations?.();
     await this.renderCard();
+    return created;
   }
 
   public async handleCloze() {
@@ -2079,6 +2115,7 @@ export class IrReviewView extends ItemView {
       spans: Span[],
       headline: string,
     ) => Promise<void>,
+    onExtractToNote?: () => Promise<void>,
   ): IrHubEntry[] {
     const out: IrHubEntry[] = [];
     const slot = this.current;
@@ -2095,6 +2132,15 @@ export class IrReviewView extends ItemView {
           icon: "scissors",
           run: () => void this.handleExtract(),
         });
+        if (onExtractToNote && !this.settings.extractCreatesStandaloneNote) {
+          out.push({
+            title: "Extract to standalone note",
+            description:
+              "One-shot: create a child note without changing Settings (Alt+Shift+X).",
+            icon: "file-plus",
+            run: () => void onExtractToNote(),
+          });
+        }
       }
       if (this.canMakeClozeChild() && hasSel) {
         out.push({
