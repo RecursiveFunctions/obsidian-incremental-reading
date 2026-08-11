@@ -129,6 +129,9 @@ export class IrTreeView extends ItemView {
   /** Element id currently being dragged (session-only). */
   private dragSourceId: string | null = null;
 
+  /** Last loaded store snapshot, keyed by id. Used by the Promote command. */
+  private elementsById = new Map<string, IrElement>();
+
   /**
    * Element id under review right now (set by the review pane). When set,
    * the matching row gets highlighted and scrolled into view so the user
@@ -267,6 +270,34 @@ export class IrTreeView extends ItemView {
     return true;
   }
 
+  /** Reload the tree from the store. Safe to call from the host plugin. */
+  refresh(): Promise<void> {
+    return this.render();
+  }
+
+  /**
+   * Anchored extracts the Promote command should act on: the multi-selection
+   * if it contains any, otherwise the review-highlighted row.
+   */
+  unpromotedExtractsToPromote(): { id: ElementId; element: IrElement }[] {
+    const out: { id: ElementId; element: IrElement }[] = [];
+    const seen = new Set<string>();
+    const consider = (id: string | null | undefined) => {
+      if (!id || seen.has(id)) return;
+      const el = this.elementsById.get(id);
+      if (!el || el.type !== "extract" || el.notePath) return;
+      seen.add(id);
+      out.push({ id: id as ElementId, element: el });
+    };
+    for (const id of this.selectedIds) consider(id);
+    if (out.length === 0) consider(this.currentElementId);
+    return out;
+  }
+
+  hasUnpromotedExtractToPromote(): boolean {
+    return this.unpromotedExtractsToPromote().length > 0;
+  }
+
   private async render(): Promise<void> {
     const container = this.contentEl;
     container.empty();
@@ -391,6 +422,7 @@ export class IrTreeView extends ItemView {
       return;
     }
 
+    this.elementsById = new Map(state.elements);
     const allElements = Array.from(state.elements.values());
     const elements = this.showDismissed
       ? allElements

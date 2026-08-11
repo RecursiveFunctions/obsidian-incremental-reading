@@ -44,6 +44,23 @@ Promotion is the single moment an extract earns a place in the global graph.
 This mirrors the literature-note to permanent-note pipeline that serious
 Obsidian users already run, so it reads as faithful, not as a workaround.
 
+**Opt-in extract-as-note (2026-08-11, GitHub #1).** The default is
+unchanged: `Alt+X` stays anchored. Settings → **Extract to standalone
+note** (off by default) is the alternative: every extract becomes a child
+markdown note. That is still explicit promotion, just chosen once in
+settings instead of per extract.
+
+One-shot escapes when the setting is off:
+
+- Extract selection to standalone note (`Alt+Shift+X`)
+- Promote extract to standalone note (`Alt+Shift+P`, or the tree
+  context menu)
+
+New notes inherit an allowlisted slice of the parent YAML (`tags`,
+`aliases`, `cssclasses`, `source`, `url`) and set `ir-parent`. Cloze
+*item* notes (already files, per the vault-reality note in section 1)
+inherit the same keys either way.
+
 ## 3. Graph
 
 The global Obsidian graph shows **sources and promoted concepts only**.

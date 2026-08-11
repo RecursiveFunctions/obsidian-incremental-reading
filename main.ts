@@ -15,10 +15,12 @@ import { IR_SESSION_VIEW_TYPE, IrSessionView } from "./src/session-view";
 import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
 import {
   IrNoteResult,
+  applyInheritedFrontmatter,
   createCloze,
   createIrItemChildNote,
   getIrType,
   getPriority,
+  inheritableFrontmatter,
   isDismissed,
   markAsTopic,
   setDismissed,
@@ -367,6 +369,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           () => this.undoLastGrade(),
           (path) => this.decorationCache.rangesFor(path),
           () => this.refreshExtractDecorations(),
+          (id, el) => this.applyIrPromote(id, el),
         );
       },
     );
@@ -497,7 +500,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     // inside the IR review ItemView, which is not a MarkdownView.
     this.addCommand({
       id: "extract-selection",
-      name: "Extract selection (anchored in source)",
+      name: "Extract selection",
       icon: "scissors",
       hotkeys: [{ modifiers: ["Alt"], key: "x" }],
       checkCallback: (checking) => {
@@ -512,6 +515,43 @@ export default class IncrementalReadingPlugin extends Plugin {
           return true;
         }
         return false;
+      },
+    });
+
+    // DESIGN §2: extracts stay anchored by default. This command is the
+    // explicit promotion-at-extract-time path (GitHub #1) so a standalone
+    // note is opt-in, not the default.
+    this.addCommand({
+      id: "extract-selection-to-note",
+      name: "Extract selection to standalone note",
+      icon: "file-plus",
+      hotkeys: [{ modifiers: ["Alt", "Shift"], key: "x" }],
+      checkCallback: (checking) => {
+        const rv = this.getActiveReviewView();
+        if (rv) {
+          if (!checking) void this.extractSelectionToNoteFromReview(rv);
+          return true;
+        }
+        const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (mv?.file && mv.editor.getSelection().trim()) {
+          if (!checking) {
+            void this.extractSelection(mv.editor, mv.file, { promote: true });
+          }
+          return true;
+        }
+        return false;
+      },
+    });
+
+    this.addCommand({
+      id: "promote-extract-to-note",
+      name: "Promote extract to standalone note",
+      icon: "file-output",
+      hotkeys: [{ modifiers: ["Alt", "Shift"], key: "p" }],
+      checkCallback: (checking) => {
+        if (!this.canPromoteCurrentExtract()) return false;
+        if (!checking) void this.promoteCurrentExtract();
+        return true;
       },
     });
 
@@ -682,10 +722,24 @@ export default class IncrementalReadingPlugin extends Plugin {
           }
           menu.addItem((item) =>
             item
-              .setTitle("Extract to IR child note")
+              .setTitle(
+                this.settings.extractCreatesStandaloneNote
+                  ? "Extract to standalone note"
+                  : "Extract (anchored in source)",
+              )
               .setIcon("scissors")
               .onClick(() => void this.extractSelection(editor, file)),
           );
+          if (!this.settings.extractCreatesStandaloneNote) {
+            menu.addItem((item) =>
+              item
+                .setTitle("Extract to standalone note")
+                .setIcon("file-plus")
+                .onClick(() =>
+                  void this.extractSelection(editor, file, { promote: true }),
+                ),
+            );
+          }
           menu.addItem((item) =>
             item
               .setTitle("Cloze to IR item")
@@ -860,6 +914,35 @@ export default class IncrementalReadingPlugin extends Plugin {
     return leaf ?? null;
   }
 
+  private getTreeView(): IrTreeView | null {
+    const leaf = this.app.workspace.getLeavesOfType(IR_TREE_VIEW_TYPE)[0];
+    const view = leaf?.view;
+    return view instanceof IrTreeView ? view : null;
+  }
+
+  private canPromoteCurrentExtract(): boolean {
+    const rv = this.getActiveReviewView();
+    if (rv?.getCurrentExtractForPromote()) return true;
+    return this.getTreeView()?.hasUnpromotedExtractToPromote() ?? false;
+  }
+
+  private async promoteCurrentExtract(): Promise<void> {
+    const rv = this.getActiveReviewView();
+    const fromReview = rv?.getCurrentExtractForPromote();
+    if (fromReview) {
+      await this.applyIrPromote(fromReview.id, fromReview.element);
+      return;
+    }
+    const fromTree = this.getTreeView()?.unpromotedExtractsToPromote() ?? [];
+    if (fromTree.length === 0) {
+      new Notice("Incremental Reading: no anchored extract to promote.");
+      return;
+    }
+    for (const { id, element } of fromTree) {
+      await this.applyIrPromote(id, element);
+    }
+  }
+
   /**
    * Forward the review pane's current slot to any open IR tree view, so the
    * tree highlights and scrolls to the row the user is reviewing. No-op when
@@ -915,7 +998,11 @@ export default class IncrementalReadingPlugin extends Plugin {
     void this.refreshExtractDecorations();
   }
 
-  private async extractSelection(editor: Editor, source: TFile) {
+  private async extractSelection(
+    editor: Editor,
+    source: TFile,
+    opts?: { promote?: boolean },
+  ) {
     if (!(await this.ensureIrSource(source))) return;
     if (!this.store) {
       new Notice("Incremental Reading: store is not ready.");
@@ -973,6 +1060,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.store.appendEvent(ev);
       await this.store.reconcile();
       void this.refreshStatusBar();
+      const created = ev.payload.element as IrElement;
+      const promote =
+        opts?.promote ?? this.settings.extractCreatesStandaloneNote;
+      if (promote) {
+        await this.applyIrPromote(created.id, created);
+        return;
+      }
       new Notice(
         `Extracted (anchored in "${source.basename}", not a separate note).`,
       );
@@ -982,6 +1076,16 @@ export default class IncrementalReadingPlugin extends Plugin {
         "Incremental Reading: could not record the extract in the store. See the developer console.",
       );
     }
+  }
+
+  /**
+   * Review-pane counterpart of extract-selection-to-note: force-promote
+   * this extract even when the settings toggle is off.
+   */
+  private async extractSelectionToNoteFromReview(
+    rv: IrReviewView,
+  ): Promise<void> {
+    await rv.handleExtract({ silent: true, promote: true });
   }
 
   /* ----------------------------------------------------------------- */
@@ -1746,6 +1850,10 @@ export default class IncrementalReadingPlugin extends Plugin {
     element: IrElement,
   ): Promise<void> {
     if (!this.store) return;
+    if (element.notePath) {
+      new Notice("Incremental Reading: that extract is already a note.");
+      return;
+    }
     const notePath = this.promoteOrphanPath(element);
     await this.materializePromotedNote(notePath, element);
 
@@ -1758,11 +1866,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       now: Date.now(),
     });
     await this.store.appendEvent(ev);
+    element.notePath = notePath;
     await this.store.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after promote failed", e);
     });
     new Notice(`Promoted extract to "${notePath}".`);
     void this.refreshStatusBar();
+    const tree = this.getTreeView();
+    if (tree) void tree.refresh();
   }
 
   /**
@@ -2153,10 +2264,22 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const body = (el.text ?? "").trim() + "\n";
     const file = await this.app.vault.create(notePath, body);
+    const parentPath = el.anchor?.sourcePath;
+    const parentFile = parentPath
+      ? this.app.vault.getAbstractFileByPath(parentPath)
+      : null;
+    const inheritedMeta =
+      parentFile instanceof TFile
+        ? inheritableFrontmatter(
+            this.app.metadataCache.getFileCache(parentFile)?.frontmatter,
+          )
+        : {};
     await this.app.fileManager.processFrontMatter(file, (fm) => {
       fm[IR_KEYS.type] = "extract";
       fm[IR_KEYS.priority] = el.priority;
+      if (parentPath) fm[IR_KEYS.parent] = parentPath;
       writeTopicToFrontmatter(fm, newTopicState(this.settings));
+      applyInheritedFrontmatter(fm, inheritedMeta);
     });
   }
 
@@ -2347,10 +2470,23 @@ export default class IncrementalReadingPlugin extends Plugin {
     const review = this.getActiveReviewView();
     if (review) {
       out.push(
-        ...review.buildHubExtractEntries((source, spans, headline) =>
-          this.runBulkExtractAnchored(source, spans, headline),
+        ...review.buildHubExtractEntries(
+          (source, spans, headline) =>
+            this.runBulkExtractAnchored(source, spans, headline),
+          this.settings.extractCreatesStandaloneNote
+            ? undefined
+            : () => this.extractSelectionToNoteFromReview(review),
         ),
       );
+      if (review.getCurrentExtractForPromote()) {
+        out.push({
+          title: "Promote this extract to a note",
+          description:
+            "Turn the anchored extract into a standalone note (Alt+Shift+P). Inherits tags from the source.",
+          icon: "file-output",
+          run: () => this.promoteCurrentExtract(),
+        });
+      }
       const reviewFile = review.getCurrentReviewFile();
       if (reviewFile?.extension === "md" && this.store) {
         const state = await this.store.load();
@@ -2380,12 +2516,28 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     if (editor && file?.extension === "md" && sel) {
       out.push({
-        title: "Extract selection",
-        description: "Anchored extract in this note (Alt+X).",
+        title: this.settings.extractCreatesStandaloneNote
+          ? "Extract to standalone note"
+          : "Extract selection",
+        description: this.settings.extractCreatesStandaloneNote
+          ? "Creates a child note (Alt+X). Inherits tags from the parent."
+          : "Anchored extract in this note (Alt+X).",
         icon: "scissors",
         run: () =>
           this.runMarkdownHubAction(file, (ed, f) => this.extractSelection(ed, f)),
       });
+      if (!this.settings.extractCreatesStandaloneNote) {
+        out.push({
+          title: "Extract to standalone note",
+          description:
+            "One-shot: create a child note without changing Settings (Alt+Shift+X).",
+          icon: "file-plus",
+          run: () =>
+            this.runMarkdownHubAction(file, (ed, f) =>
+              this.extractSelection(ed, f, { promote: true }),
+            ),
+        });
+      }
       out.push({
         title: "Cloze selection",
         description: "Cloze item from selection (Alt+Z).",

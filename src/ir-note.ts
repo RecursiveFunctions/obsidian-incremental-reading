@@ -55,6 +55,51 @@ export interface IrNoteSettings extends TopicScheduleSettings {
   extractFolder: string;
 }
 
+/**
+ * Parent-note YAML copied onto a new IR child (promoted extract or cloze
+ * item). Intentionally an allowlist: `ir-*` scheduling keys must never
+ * hitch a ride, and one-off note ids / titles would collide.
+ *
+ * Covers the request in GitHub #1 (tags, and a source/url link when the
+ * parent has one). Body wikilinks inside the extracted span are already
+ * preserved because promotion copies the extract text verbatim.
+ */
+export const INHERITED_FRONTMATTER_KEYS = [
+  "tags",
+  "tag",
+  "aliases",
+  "alias",
+  "cssclasses",
+  "cssclass",
+  "source",
+  "url",
+] as const;
+
+/** Pick inheritable keys from a parent note's frontmatter. */
+export function inheritableFrontmatter(
+  parent: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!parent) return out;
+  for (const key of INHERITED_FRONTMATTER_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(parent, key)) continue;
+    const v = parent[key];
+    if (v === undefined) continue;
+    out[key] = Array.isArray(v) ? [...v] : v;
+  }
+  return out;
+}
+
+/** Write inherited keys onto `fm` without clobbering keys already set. */
+export function applyInheritedFrontmatter(
+  fm: Record<string, unknown>,
+  inherited: Record<string, unknown>,
+): void {
+  for (const [k, v] of Object.entries(inherited)) {
+    if (fm[k] === undefined) fm[k] = v;
+  }
+}
+
 /** The current IR type of a file, or null if it isn't an IR element yet. */
 export function getIrType(app: App, file: TFile): IrType | null {
   const t = app.metadataCache.getFileCache(file)?.frontmatter?.[IR_KEYS.type];
@@ -195,6 +240,9 @@ async function createChildNote(
   const file = await app.vault.create(path, body.trim() + "\n");
 
   const inherited = getPriority(app, source, settings.defaultPriority);
+  const inheritedMeta = inheritableFrontmatter(
+    app.metadataCache.getFileCache(source)?.frontmatter,
+  );
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm[IR_KEYS.type] = type satisfies IrType;
     fm[IR_KEYS.parent] = source.path;
@@ -204,6 +252,7 @@ async function createChildNote(
     // card.
     if (type === "item") writeCardToFrontmatter(fm, newCard());
     else writeTopicToFrontmatter(fm, newTopicState(settings));
+    applyInheritedFrontmatter(fm, inheritedMeta);
   });
 
   return { file };
