@@ -41,6 +41,13 @@ export interface IrSettings {
    * pre-feature deterministic order (priority, then due time).
    */
   interleaveSimilarPriority: boolean;
+  /**
+   * When true, after grading an item, if FSRS and SM-2 disagree enough on
+   * the next interval, show an inline picker. Off (default for new
+   * installs) silently follows FSRS. Existing vaults without this key
+   * are grandfathered on — see resolveShowDivergencePicker.
+   */
+  showDivergencePicker: boolean;
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
@@ -55,6 +62,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   mercyPriorityCutoff: 10,
   autoMarkSourceAsTopic: true,
   interleaveSimilarPriority: true,
+  showDivergencePicker: false,
 };
 
 export class IrSettingTab extends PluginSettingTab {
@@ -131,6 +139,23 @@ export class IrSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.reviewsPerReading = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Show scheduler divergence picker")
+      .setDesc(
+        "Off (default for new vaults): grades follow FSRS with no extra " +
+          "prompt. On: when FSRS and SM-2 disagree enough on the next " +
+          "interval, an inline picker lets you choose. Existing installs " +
+          "keep this on until you turn it off.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showDivergencePicker)
+          .onChange(async (value) => {
+            this.plugin.settings.showDivergencePicker = value;
             await this.plugin.saveSettings();
           }),
       );

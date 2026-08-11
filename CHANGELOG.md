@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Scheduler divergence picker is now a setting** (DESIGN §5). New vaults
+  default to off: grades follow FSRS with no prompt. Existing installs are
+  grandfathered on (same as today's always-on picker) until the user turns
+  **Settings → Show scheduler divergence picker** off.
+
 ## [0.3.9] — 2026-05-24
 
 ### Fixed

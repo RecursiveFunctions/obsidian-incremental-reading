@@ -14,7 +14,7 @@ Two things keep IR out of reach. SuperMemo is Windows-only and stores your knowl
 
 1. **A faithful SuperMemo element tree.** Source to extract to extract to item, with a dedicated hierarchy view and a graph that stays clean instead of drowning in review scaffolding. No other Obsidian plugin models this; the only tool that does is Logseq-only and stalled.
 2. **Principled postpone.** When the queue overloads it redistributes by priority and never tells the scheduler a card was reviewed when it was not. Overload handling that does not corrupt your scheduling data.
-3. **A multi-scheduler divergence picker.** Default FSRS, FSRS optimized on your own review history, and classic SM-2 run in parallel; when they disagree enough about an interval you can see why and choose. Opt-in, off by default, out of the way otherwise.
+3. **A multi-scheduler divergence picker.** Default FSRS, FSRS optimized on your own review history, and classic SM-2 run in parallel; when they disagree enough about an interval you can see why and choose. Opt-in via Settings → Show scheduler divergence picker; off for new vaults. Existing installs keep the picker until you turn it off.
 4. **Developed with mobile in mind.** One thing I lamented about SuperMemo was the inability to use it on the go without some hacky workarounds. I intend to make this plugin feel good to use on both mobile and the desktop version.
 5. **A privacy property, not a privacy policy.** See below.
 

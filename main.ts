@@ -10,6 +10,7 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
+import { resolveShowDivergencePicker } from "./src/ir/settings-resolve";
 import { IR_TREE_VIEW_TYPE, IrTreeView } from "./src/tree-view";
 import { IR_SESSION_VIEW_TYPE, IrSessionView } from "./src/session-view";
 import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
@@ -2843,11 +2844,15 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign(
-      {},
-      DEFAULT_SETTINGS,
-      (await this.loadData()) as Partial<IrSettings> | null,
-    );
+    const saved = (await this.loadData()) as Partial<IrSettings> | null;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    // New key: new vaults stay off (DEFAULT). Vaults that already had
+    // plugin data without this key keep the old always-on picker.
+    const resolved = resolveShowDivergencePicker(saved);
+    if (this.settings.showDivergencePicker !== resolved) {
+      this.settings.showDivergencePicker = resolved;
+      await this.saveSettings();
+    }
   }
 
   async saveSettings() {

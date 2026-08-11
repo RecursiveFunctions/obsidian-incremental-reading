@@ -2478,9 +2478,10 @@ export class IrReviewView extends ItemView {
     const next = schedule(storedToCard(slot.element.card), g);
     const stored = cardToStored(next);
 
-    const div = slot.element.card
-      ? checkGradeDivergence(slot.element.card, stored, g, Date.now())
-      : null;
+    const div =
+      this.settings.showDivergencePicker && slot.element.card
+        ? checkGradeDivergence(slot.element.card, stored, g, Date.now())
+        : null;
 
     if (div) {
       this.showDivergencePicker(slot, g, next, stored, div);

@@ -87,10 +87,13 @@ plus manual override.
   `max(intervals) / min(intervals) > k`, k configurable, ~1.5 to start.
   Optionally gated by an absolute interval floor so short intervals never nag.
 - UX: the picker is **opt-in expert mode, off by default**. Default behavior is
-  silent auto-follow of the primary scheduler. A modal in the queue every few
-  cards would destroy IR throughput, which is the entire point of IR. The
-  always-armed-on-extreme-divergence variant is a possible later setting, not
-  v1.
+  silent auto-follow of the primary scheduler (FSRS). Settings → **Show
+  scheduler divergence picker** arms the inline FSRS vs SM-2 chooser when
+  intervals diverge past the threshold. A prompt in the queue every few cards
+  would destroy IR throughput, which is the entire point of IR.
+  **Migration (2026-08-11):** new vaults get off. Existing installs that
+  already had the always-on picker are grandfathered to on so their workflow
+  does not silently change; they can turn it off in Settings.
 
 ## 6. Mercy / Postpone
 
