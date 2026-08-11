@@ -43,5 +43,6 @@
   },
   "dependencies": {
     "ts-fsrs": "^4.4.4"
-  }
+  },
+  "version": "0.5.6-feat.extract-to-note.1"
 }
