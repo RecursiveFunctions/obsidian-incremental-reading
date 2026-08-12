@@ -25,7 +25,7 @@ import {
   setPriority,
   uniqueMarkdownNotePath,
 } from "./src/ir-note";
-import { dueQueue, type ReviewSlot } from "./src/review";
+import { dueQueue, neuralQueue, type ReviewSlot } from "./src/review";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
 import { openPriorityPrompt } from "./src/priority-prompt";
 import { IrStore, META } from "./src/ir/store";
@@ -156,10 +156,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * prepared". A missing session (e.g. workspace restored an IR review leaf
    * from an older build) yields an empty queue; the view shows a recovery UI.
    */
-  private irReviewSession: {
-    queue: ReviewSlot[];
-    elementsById: Map<ElementId, IrElement>;
-  } | null = null;
+  private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; } | null = null;
 
   /**
    * The store, constructed once the layout exists (after a migration, or
@@ -272,6 +269,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
 
     this.addCommand({
+      id: "start-neural-review",
+      name: "Start Neural Review (from active note)",
+      icon: "network",
+      callback: () => void this.startNeuralReviewFromActiveNote(),
+    });
+
+    this.addCommand({
       id: "start-review",
       name: "Start IR review",
       icon: "play-circle",
@@ -306,6 +310,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrReanchor(elementId, element),
           (elementId) => void this.forkStoreExtract(elementId),
           (elementId) => this.resumeReadingBookmark(elementId),
+          (elementId) => void this.startNeuralReview(elementId, null),
         );
       },
     );
@@ -341,10 +346,10 @@ export default class IncrementalReadingPlugin extends Plugin {
           );
         }
         const session = this.irReviewSession;
+        const isNeural = session?.isNeural ?? false;
         this.irReviewSession = null;
         const queue = session?.queue ?? [];
-        const elementsById =
-          session?.elementsById ?? new Map<ElementId, IrElement>();
+        const elementsById = session?.elementsById ?? new Map<ElementId, IrElement>();
         return new IrReviewView(
           leaf,
           this,
@@ -352,6 +357,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           this.store,
           queue,
           elementsById,
+          isNeural,
           () => void this.refreshStatusBar(),
           () => void this.openIrActionsHub(),
           (id) => void this.notifyTreeOfReviewSlot(id),
@@ -1370,6 +1376,45 @@ export default class IncrementalReadingPlugin extends Plugin {
     const marked = await markAsTopic(this.app, source, this.settings);
     if (marked) await this.recordElement(source);
     return true;
+  }
+
+  private async startNeuralReviewFromActiveNote() {
+    const active = this.app.workspace.getActiveFile();
+    if (!active) {
+      new Notice("Incremental Reading: no active note to start Neural Review from.");
+      return;
+    }
+    await this.startNeuralReview(null, active.path);
+  }
+
+  public async startNeuralReview(seedElementId: ElementId | null, seedNotePath: string | null) {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const state = await this.store.load();
+    const queue = neuralQueue(this.app, state, seedElementId, seedNotePath);
+    
+    if (queue.length === 0) {
+      new Notice("Incremental Reading: no related elements found for Neural Review.");
+      return;
+    }
+    
+    new Notice(`Starting Neural Review: ${queue.length} elements found.`);
+
+    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
+    this.irReviewSession = { queue, elementsById: state.elements, isNeural: true };
+    try {
+      const leaf = this.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
+      this.app.workspace.revealLeaf(leaf);
+    } catch (e) {
+      this.irReviewSession = null;
+      console.error("Incremental Reading: opening neural review view failed", e);
+      new Notice(
+        "Incremental Reading: could not open the review view. See the developer console.",
+      );
+    }
   }
 
   private async startReview() {

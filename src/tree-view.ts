@@ -153,6 +153,7 @@ export class IrTreeView extends ItemView {
      * that construct the view without the resume integration.
      */
     private readonly resumeReading?: (id: ElementId) => Promise<boolean>,
+    private readonly startNeuralReview?: (id: ElementId) => void,
   ) {
     super(leaf);
     this.store = store;
@@ -1346,6 +1347,16 @@ export class IrTreeView extends ItemView {
           .onClick(() => void this.openNote(openTarget, node.element)),
       );
     }
+    
+    if (this.startNeuralReview) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Start Neural Review here")
+          .setIcon("network")
+          .onClick(() => this.startNeuralReview!(elId))
+      );
+    }
+
 
     if (this.commitDismiss) {
       const isDismissed = node.element.dismissed;

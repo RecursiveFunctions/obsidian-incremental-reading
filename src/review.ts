@@ -90,3 +90,45 @@ export function dueQueue(
     .map((id) => slots.get(id))
     .filter((s): s is ReviewSlot => s !== undefined);
 }
+
+import { computeNeuralActivation } from "./ir/neural";
+
+export function neuralQueue(
+  app: App,
+  state: LogState,
+  seedElementId: ElementId | null,
+  seedNotePath: string | null
+): ReviewSlot[] {
+  const scores = computeNeuralActivation(app, state, seedElementId, seedNotePath);
+  
+  const entries: (QueueEntry & { score: number })[] = [];
+  for (const [id, score] of Object.entries(scores)) {
+    const el = state.elements.get(id as ElementId);
+    if (!el || el.dismissed) continue;
+    
+    entries.push({
+      id: el.id,
+      type: el.type,
+      priority: el.priority,
+      dueMs: dueMsOf(el),
+      dismissed: el.dismissed,
+      score
+    });
+  }
+  
+  entries.sort((a, b) => b.score - a.score || a.priority - b.priority);
+  
+  const slots: ReviewSlot[] = [];
+  for (const entry of entries) {
+    const el = state.elements.get(entry.id as ElementId)!;
+    let file: TFile | null = null;
+    if (el.notePath) {
+      const af = app.vault.getAbstractFileByPath(el.notePath);
+      file = af instanceof TFile ? af : null;
+    }
+    if (!file && !el.text) continue;
+    slots.push({ id: el.id, element: el, file });
+  }
+  
+  return slots;
+}

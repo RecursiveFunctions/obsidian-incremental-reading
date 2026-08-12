@@ -159,6 +159,7 @@ export class IrReviewView extends ItemView {
      * the view does not need to touch the store mid-session.
      */
     private elementsById: Map<ElementId, IrElement>,
+    private isNeural: boolean = false,
     /**
      * Fired after any state change (grade, advance, postpone, dismiss,
      * child created) and on close. Lets the host plugin refresh the queue
