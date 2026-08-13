@@ -1444,11 +1444,16 @@ export class IrReviewView extends ItemView {
       }
 
       const label = reviewHeadlineLabel(slot.element, maskClozeChrome);
+      const mode = this.isNeural
+        ? `Neural · Neuro=${this.queue.length}`
+        : reading
+          ? "Reading"
+          : "Review";
       scroll.createEl("div", {
         cls: "ir-review-progress",
         text:
           `${this.index + 1} of ${this.queue.length}  ·  ` +
-          `${reading ? "Reading" : "Review"}  ·  ${label}` +
+          `${mode}  ·  ${label}` +
           (parts.length > 0 ? `  ·  ${parts.join(", ")} left` : ""),
       });
 

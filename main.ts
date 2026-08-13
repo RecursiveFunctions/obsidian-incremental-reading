@@ -270,8 +270,9 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.addCommand({
       id: "start-neural-review",
-      name: "Start Neural Review (from active note)",
+      name: "Go neural",
       icon: "network",
+      hotkeys: [{ modifiers: ["Alt"], key: "n" }],
       callback: () => void this.startNeuralReviewFromActiveNote(),
     });
 
@@ -1379,11 +1380,17 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async startNeuralReviewFromActiveNote() {
+    const reviewing = this.getActiveReviewView()?.getCurrentElementId();
+    if (reviewing) {
+      await this.startNeuralReview(reviewing, null);
+      return;
+    }
     const active = this.app.workspace.getActiveFile();
     if (!active) {
       new Notice("Incremental Reading: no active note to start Neural Review from.");
       return;
     }
+    if (!(await this.ensureIrSource(active))) return;
     const seedId = await this.resolveElementIdForFile(active);
     await this.startNeuralReview(seedId, seedId ? null : active.path);
   }
