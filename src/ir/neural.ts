@@ -42,7 +42,11 @@ interface NeuralHop {
   relays: number;
 }
 
-function linkedNotePaths(app: App, file: TFile): string[] {
+function linkedNotePaths(
+  app: App,
+  file: TFile,
+  backlinks: Map<string, string[]>,
+): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   const add = (p: string) => {
@@ -57,10 +61,7 @@ function linkedNotePaths(app: App, file: TFile): string[] {
       if (dest) add(dest.path);
     }
   }
-  const resolved = app.metadataCache.resolvedLinks;
-  for (const sourcePath in resolved) {
-    if (resolved[sourcePath][file.path]) add(sourcePath);
-  }
+  for (const src of backlinks.get(file.path) ?? []) add(src);
   return out;
 }
 
@@ -121,9 +122,36 @@ export function computeNeuralActivation(
   const activeElements = new Map<string, number>();
 
   const irNotePaths = new Set<string>();
+  const childrenByParent = new Map<string, string[]>();
+  const elementsByNote = new Map<string, string[]>();
   for (const el of state.elements.values()) {
-    if (el.notePath) irNotePaths.add(el.notePath);
-    if (el.anchor?.sourcePath) irNotePaths.add(el.anchor.sourcePath);
+    if (el.notePath) {
+      irNotePaths.add(el.notePath);
+      const occ = elementsByNote.get(el.notePath) ?? [];
+      occ.push(el.id);
+      elementsByNote.set(el.notePath, occ);
+    }
+    if (el.anchor?.sourcePath) {
+      irNotePaths.add(el.anchor.sourcePath);
+      const occ = elementsByNote.get(el.anchor.sourcePath) ?? [];
+      occ.push(el.id);
+      elementsByNote.set(el.anchor.sourcePath, occ);
+    }
+    if (el.parentId) {
+      const kids = childrenByParent.get(el.parentId) ?? [];
+      kids.push(el.id);
+      childrenByParent.set(el.parentId, kids);
+    }
+  }
+
+  const backlinks = new Map<string, string[]>();
+  const resolved = app.metadataCache.resolvedLinks ?? {};
+  for (const sourcePath of Object.keys(resolved)) {
+    for (const destPath of Object.keys(resolved[sourcePath] ?? {})) {
+      const srcs = backlinks.get(destPath) ?? [];
+      srcs.push(sourcePath);
+      backlinks.set(destPath, srcs);
+    }
   }
 
   // Initialize queue for BFS. `relays` counts unmarked notes traversed
@@ -147,7 +175,6 @@ export function computeNeuralActivation(
       activeElements.set(id, score);
       scores[id] = score;
       if (Object.keys(scores).length >= NEURAL_MAX_QUEUE) break;
-      if (Object.keys(scores).length >= NEURAL_MAX_QUEUE) break;
 
       const element = state.elements.get(id as ElementId);
       if (!element) continue;
@@ -163,20 +190,16 @@ export function computeNeuralActivation(
         });
       }
 
-      // Spread to children
-      for (const [childId, child] of state.elements) {
-        if (child.parentId === id) {
-          queue.push({
-            type: "element",
-            id: childId,
-            score: score * DECAY,
-            depth: depth + 1,
-            relays,
-          });
-        }
+      for (const childId of childrenByParent.get(id) ?? []) {
+        queue.push({
+          type: "element",
+          id: childId,
+          score: score * DECAY,
+          depth: depth + 1,
+          relays,
+        });
       }
 
-      // Spread to note
       const noteId = element.notePath ?? element.anchor?.sourcePath;
       if (noteId) {
         queue.push({
@@ -191,23 +214,19 @@ export function computeNeuralActivation(
       if ((activeNotes.get(id) ?? 0) >= score) continue;
       activeNotes.set(id, score);
 
-      // Spread to elements anchored to this note
-      for (const [elementId, element] of state.elements) {
-        if (element.notePath === id || element.anchor?.sourcePath === id) {
-          queue.push({
-            type: "element",
-            id: elementId,
-            score: score * DECAY,
-            depth: depth + 1,
-            relays,
-          });
-        }
+      for (const elementId of elementsByNote.get(id) ?? []) {
+        queue.push({
+          type: "element",
+          id: elementId,
+          score: score * DECAY,
+          depth: depth + 1,
+          relays,
+        });
       }
 
-      // Spread to linked notes
       const file = app.vault.getAbstractFileByPath(id);
       if (isVaultFile(file)) {
-        const neighbors = linkedNotePaths(app, file);
+        const neighbors = linkedNotePaths(app, file, backlinks);
         const capped = capWikilinkNeighbors(neighbors, irNotePaths);
         for (const path of capped) {
           enqueueLinkedNote(queue, path, score, depth, relays, irNotePaths);
