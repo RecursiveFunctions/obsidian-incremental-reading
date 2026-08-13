@@ -27,6 +27,50 @@ export function elementIdForNotePath(
 // Spreading activation parameters
 const DECAY = 0.5; // Each step halves the activation
 const MAX_DEPTH = 3;
+/** Unmarked notes may relay once without spending a neural layer. */
+const MAX_RELAYS = 1;
+
+interface NeuralHop {
+  type: "element" | "note";
+  id: string;
+  score: number;
+  depth: number;
+  relays: number;
+}
+
+/**
+ * Follow a wikilink. IR notes cost a layer and decay. Unmarked notes
+ * are relays: they keep score and depth so A → Bridge → B still reaches
+ * B, but two unmarked hops in a row stop.
+ */
+function enqueueLinkedNote(
+  queue: NeuralHop[],
+  path: string,
+  score: number,
+  depth: number,
+  relays: number,
+  irNotePaths: Set<string>,
+): void {
+  const isIr = irNotePaths.has(path);
+  if (isIr) {
+    queue.push({
+      type: "note",
+      id: path,
+      score: score * DECAY,
+      depth: depth + 1,
+      relays,
+    });
+    return;
+  }
+  if (relays >= MAX_RELAYS) return;
+  queue.push({
+    type: "note",
+    id: path,
+    score,
+    depth,
+    relays: relays + 1,
+  });
+}
 
 export interface NeuralScores {
   [elementId: string]: number;
@@ -42,18 +86,25 @@ export function computeNeuralActivation(
   const activeNotes = new Map<string, number>();
   const activeElements = new Map<string, number>();
 
-  // Initialize queue for BFS
-  const queue: { type: "element" | "note"; id: string; score: number; depth: number }[] = [];
+  const irNotePaths = new Set<string>();
+  for (const el of state.elements.values()) {
+    if (el.notePath) irNotePaths.add(el.notePath);
+    if (el.anchor?.sourcePath) irNotePaths.add(el.anchor.sourcePath);
+  }
+
+  // Initialize queue for BFS. `relays` counts unmarked notes traversed
+  // without spending a layer, so A → Bridge.md → B still reaches B.
+  const queue: NeuralHop[] = [];
 
   if (seedElementId) {
-    queue.push({ type: "element", id: seedElementId, score: 1.0, depth: 0 });
+    queue.push({ type: "element", id: seedElementId, score: 1.0, depth: 0, relays: 0 });
   }
   if (seedNotePath) {
-    queue.push({ type: "note", id: seedNotePath, score: 1.0, depth: 0 });
+    queue.push({ type: "note", id: seedNotePath, score: 1.0, depth: 0, relays: 0 });
   }
 
   while (queue.length > 0) {
-    const { type, id, score, depth } = queue.shift()!;
+    const { type, id, score, depth, relays } = queue.shift()!;
 
     if (depth > MAX_DEPTH || score < 0.05) continue;
 
@@ -67,21 +118,38 @@ export function computeNeuralActivation(
 
       // Spread to parent
       if (element.parentId) {
-        queue.push({ type: "element", id: element.parentId, score: score * DECAY, depth: depth + 1 });
+        queue.push({
+          type: "element",
+          id: element.parentId,
+          score: score * DECAY,
+          depth: depth + 1,
+          relays,
+        });
       }
 
       // Spread to children
       for (const [childId, child] of state.elements) {
         if (child.parentId === id) {
-          queue.push({ type: "element", id: childId, score: score * DECAY, depth: depth + 1 });
+          queue.push({
+            type: "element",
+            id: childId,
+            score: score * DECAY,
+            depth: depth + 1,
+            relays,
+          });
         }
       }
 
       // Spread to note
-      if (element.notePath) {
-        queue.push({ type: "note", id: element.notePath, score: score * DECAY, depth: depth + 1 });
-      } else if (element.anchor?.sourcePath) {
-        queue.push({ type: "note", id: element.anchor.sourcePath, score: score * DECAY, depth: depth + 1 });
+      const noteId = element.notePath ?? element.anchor?.sourcePath;
+      if (noteId) {
+        queue.push({
+          type: "note",
+          id: noteId,
+          score: score * DECAY,
+          depth: depth + 1,
+          relays,
+        });
       }
     } else if (type === "note") {
       if ((activeNotes.get(id) ?? 0) >= score) continue;
@@ -90,7 +158,13 @@ export function computeNeuralActivation(
       // Spread to elements anchored to this note
       for (const [elementId, element] of state.elements) {
         if (element.notePath === id || element.anchor?.sourcePath === id) {
-          queue.push({ type: "element", id: elementId, score: score * DECAY, depth: depth + 1 });
+          queue.push({
+            type: "element",
+            id: elementId,
+            score: score * DECAY,
+            depth: depth + 1,
+            relays,
+          });
         }
       }
 
@@ -102,17 +176,15 @@ export function computeNeuralActivation(
         if (cache?.links) {
           for (const link of cache.links) {
             const dest = app.metadataCache.getFirstLinkpathDest(link.link, file.path);
-            if (dest) {
-              queue.push({ type: "note", id: dest.path, score: score * DECAY, depth: depth + 1 });
-            }
+            if (dest) enqueueLinkedNote(queue, dest.path, score, depth, relays, irNotePaths);
           }
         }
-        
+
         // Backlinks
         const resolved = app.metadataCache.resolvedLinks;
         for (const sourcePath in resolved) {
           if (resolved[sourcePath][file.path]) {
-            queue.push({ type: "note", id: sourcePath, score: score * DECAY, depth: depth + 1 });
+            enqueueLinkedNote(queue, sourcePath, score, depth, relays, irNotePaths);
           }
         }
       }

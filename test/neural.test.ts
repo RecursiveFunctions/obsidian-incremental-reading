@@ -200,6 +200,34 @@ test("backlinks spread to the source note's elements", () => {
   assert.equal(scores["spoke"], 0.125);
 });
 
+test("an unmarked bridge note does not burn a layer", () => {
+  const a = el("a", { type: "topic", notePath: "A.md", text: "a" });
+  const b = el("b", { type: "topic", notePath: "B.md", text: "b" });
+  const app = fakeApp([
+    { path: "A.md", basename: "A", extension: "md", links: ["Bridge.md"] },
+    { path: "Bridge.md", basename: "Bridge", extension: "md", links: ["B.md"] },
+    { path: "B.md", basename: "B", extension: "md", links: [] },
+  ]);
+  const scores = computeNeuralActivation(app, state([a, b]), eid("a"), null);
+  assert.equal(scores["a"], 1);
+  // a → A.md (0.5) → Bridge (relay, still 0.5) → B.md (0.25) → b (0.125)
+  assert.equal(scores["b"], 0.125);
+});
+
+test("two unmarked hops in a row do not reach the far IR note", () => {
+  const a = el("a", { type: "topic", notePath: "A.md", text: "a" });
+  const b = el("b", { type: "topic", notePath: "B.md", text: "b" });
+  const app = fakeApp([
+    { path: "A.md", basename: "A", extension: "md", links: ["N1.md"] },
+    { path: "N1.md", basename: "N1", extension: "md", links: ["N2.md"] },
+    { path: "N2.md", basename: "N2", extension: "md", links: ["B.md"] },
+    { path: "B.md", basename: "B", extension: "md", links: [] },
+  ]);
+  const scores = computeNeuralActivation(app, state([a, b]), eid("a"), null);
+  assert.equal(scores["a"], 1);
+  assert.equal(scores["b"], undefined);
+});
+
 test("cycles do not loop forever; higher score wins", () => {
   const a = el("a", {
     type: "topic",
