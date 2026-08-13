@@ -9,8 +9,9 @@ import { fileURLToPath } from "node:url";
 const root = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
-if (!/^\d+\.\d+\.\d+$/.test(version)) {
-  throw new Error(`Unexpected package.json version: ${version} (need plain X.Y.Z for BRAT/CI)`);
+// Plain X.Y.Z or intentional feature builds like 0.6.0-feat.neural-review.1.
+if (!/^\d+\.\d+\.\d+([+-][0-9A-Za-z.-]+)*$/.test(version)) {
+  throw new Error(`Unexpected package.json version: ${version}`);
 }
 
 const manifestPath = join(root, "manifest.json");

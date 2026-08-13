@@ -21,10 +21,17 @@ This script runs tests + build, then `npm version <kind>`, which:
 1. Bumps `package.json` `version`.
 2. Runs `version-bump.mjs` (via the `version` npm hook) to sync `manifest.json` and append to `versions.json`.
 3. Commits with the version string as the message (e.g. `0.0.23`).
-4. Creates a plain semver tag (e.g. `0.0.23` — no `v` prefix; enforced by `.npmrc`).
+4. Creates a semver tag (e.g. `0.0.23` — no `v` prefix; enforced by `.npmrc`).
 5. Pushes branch + tag via the `postversion` hook.
 
 The pushed tag triggers `.github/workflows/release.yml`, which builds `main.js` in CI and creates the GitHub Release with all three assets.
+
+Feature / channel builds may use intentional prerelease tags such as
+`0.6.0-feat.neural-review.1` or `0.5.6-feat.extract-to-note.1`. Those are
+valid: set `package.json` / `manifest.json` to that string, tag the same
+string, and let Release publish it. **Never rename a deliberate feat tag to
+plain `X.Y.Z` to "fix BRAT"** — BRAT installs by exact release tag; flatten
+the name only when the human asks for a stable bump.
 
 ## Done bar — verify before you say "shipped"
 
@@ -48,7 +55,8 @@ If any of those is missing, or `gh release view` errors with "release not found"
 ## Common failure modes (don't repeat these)
 
 - **Bumped `manifest.json` only, no tag, no release.** BRAT sees nothing. (Happened on 0.0.8 — see auto-memory.)
-- **Tag pushed with `v` prefix (`v0.0.23`).** Release workflow rejects non-semver tags. `.npmrc` prevents this when you use `npm version`.
+- **Tag pushed with `v` prefix (`v0.0.23`).** Prefer no `v` prefix; `.npmrc` prevents this when you use `npm version`.
+- **Flattening an intentional `X.Y.Z-feat.*` tag to plain `X.Y.Z`.** That destroys the channel name BRAT users freeze to. Fix CI / publish under the feat tag instead.
 - **Commit on `main` without bumping any of the three version files.** Skip the bump only for non-shipping changes (docs, tests, CI). Code in `src/` or `main.ts` always ships.
 - **Saying "done" before `gh release view` shows all three assets.** Always verify.
 

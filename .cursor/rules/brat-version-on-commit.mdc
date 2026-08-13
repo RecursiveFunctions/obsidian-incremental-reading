@@ -11,12 +11,14 @@ Read `AGENTS.md` at the repo root. The non-negotiables are repeated here.
 
 A code change is **done** when **all** of these are true:
 
-1. `package.json`, `manifest.json`, `versions.json` are bumped in lockstep to the new `X.Y.Z`.
-2. A plain semver tag (no `v` prefix) exists at the bump commit on `origin`.
+1. `package.json`, `manifest.json`, `versions.json` are bumped in lockstep to the new version (`X.Y.Z` or intentional `X.Y.Z-feat.*`).
+2. A matching git tag (no `v` prefix) exists at the bump commit on `origin`.
 3. A GitHub Release exists at that tag with **`main.js`**, **`manifest.json`**, **`styles.css`** attached.
 4. The **Release** workflow run for that tag is green.
 
 Anything less and BRAT keeps every user pinned on the previous version. A commit on `main` without (2)-(4) is a half-finished release, not a shipped change.
+
+**Do not flatten an intentional `X.Y.Z-feat.*` version to plain `X.Y.Z`.** BRAT freezes by that exact tag name; renaming breaks the channel.
 
 ## The one command
 

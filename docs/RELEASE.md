@@ -12,6 +12,8 @@
 
 The **release tag name**, **release title**, and **`version` in the uploaded `manifest.json`** should all match (see the [BRAT developer guide](https://github.com/TfTHacker/obsidian42-brat/blob/main/BRAT-DEVELOPER-GUIDE.md)).
 
+Tags may be plain `X.Y.Z` or feature-channel builds like `0.6.0-feat.neural-review.1`. BRAT installs by that exact string — do not rewrite a feat tag to plain semver unless you mean to ship a stable release under a new name.
+
 `main.js` is **gitignored** here on purpose; the **Release workflow** builds it in CI and attaches it. Do not expect BRAT to work from tag-only pushes.
 
 ## Automated path (preferred)
