@@ -1,16 +1,24 @@
+# Runs on every push and every PR so a red suite is visible before
+# (or immediately after) the commit is on a public branch. Merging to
+# main should wait for this check; `npm run ship:*` also runs tests
+# locally before it pushes.
 name: Build
 
 on:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  test:
+    name: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +39,7 @@ jobs:
         run: npm run build
 
       - name: Upload build artifacts
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: plugin-build

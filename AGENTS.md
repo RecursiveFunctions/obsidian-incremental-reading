@@ -34,6 +34,23 @@ it. **Never rename a deliberate feat tag to plain `X.Y.Z` to "fix BRAT"** —
 and **never jump the `X.Y.Z` prefix** past the next planned stable (after
 `0.5.5`, use `0.5.6-feat.*`, not `0.6.0-feat.*`) unless you mean a minor/major.
 
+## Tests and GitHub CI
+
+`npm test` (Node's test runner, `test/*.test.ts`) is the suite. **Build**
+(`.github/workflows/build.yml`) runs it plus `npm run build` on every push
+and every pull request — including feature branches, not only `main`.
+
+That is the public gate:
+
+- Open a PR (or push a branch) and wait for the **test** check. Do not
+  merge or tag a release while it is red.
+- `npm run ship:*` already runs the same tests locally *before* it pushes
+  `main` + the tag. CI is the second net, not a substitute for a red local
+  run.
+- Direct pushes to `main` still become public immediately; CI on `push`
+  cannot rewind that. Prefer a PR into `main` when you want GitHub to
+  fail the merge before the commit is on `main`.
+
 ## Done bar — verify before you say "shipped"
 
 After `npm run ship:patch` returns, you must confirm:

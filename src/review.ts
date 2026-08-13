@@ -28,12 +28,14 @@
  * gated until the answer is revealed, because the raw body is the answer.
  */
 
-import { App, TFile } from "obsidian";
+import type { App, TFile } from "obsidian";
 import { interleavedQueue, type QueueEntry } from "./queue";
 import type { LogState } from "./ir/log";
 import type { IrElement } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
+import { isVaultFile } from "./ir/vault-file";
+import { computeNeuralActivation } from "./ir/neural";
 
 /**
  * One element scheduled into the session: its current store state plus the
@@ -65,7 +67,7 @@ export function dueQueue(
     let file: TFile | null = null;
     if (el.notePath) {
       const af = app.vault.getAbstractFileByPath(el.notePath);
-      file = af instanceof TFile ? af : null;
+      file = isVaultFile(af) ? af : null;
     }
     // Drop elements with no reviewable body: their `notePath` no longer
     // resolves (deleted/renamed/synced away) AND no `text` snapshot was
@@ -91,8 +93,7 @@ export function dueQueue(
     .filter((s): s is ReviewSlot => s !== undefined);
 }
 
-import { computeNeuralActivation } from "./ir/neural";
-
+/** Neural review is SuperMemo-style subset review: real reps, not due-gated. */
 export function neuralQueue(
   app: App,
   state: LogState,
@@ -124,7 +125,7 @@ export function neuralQueue(
     let file: TFile | null = null;
     if (el.notePath) {
       const af = app.vault.getAbstractFileByPath(el.notePath);
-      file = af instanceof TFile ? af : null;
+      file = isVaultFile(af) ? af : null;
     }
     if (!file && !el.text) continue;
     slots.push({ id: el.id, element: el, file });

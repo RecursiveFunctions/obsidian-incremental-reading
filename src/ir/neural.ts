@@ -1,6 +1,7 @@
-import { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 import type { LogState } from "./log";
 import type { ElementId } from "./ids";
+import { isVaultFile } from "./vault-file";
 
 // Spreading activation parameters
 const DECAY = 0.5; // Each step halves the activation
@@ -74,7 +75,7 @@ export function computeNeuralActivation(
 
       // Spread to linked notes
       const file = app.vault.getAbstractFileByPath(id);
-      if (file instanceof TFile) {
+      if (isVaultFile(file)) {
         // Forward links
         const cache = app.metadataCache.getFileCache(file);
         if (cache?.links) {
