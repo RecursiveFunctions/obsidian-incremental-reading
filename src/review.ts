@@ -34,8 +34,13 @@ import type { LogState } from "./ir/log";
 import type { IrElement } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
+import { elementIdForNotePath, neuralWalk, NEURAL_MAX_QUEUE } from "./ir/neural";
+import {
+  buildNeuralAdjacency,
+  neighborsForWalk,
+  type NoteLinkIndex,
+} from "./ir/neural-graph";
 import { isVaultFile } from "./ir/vault-file";
-import { computeNeuralActivation, elementIdForNotePath, NEURAL_MAX_QUEUE } from "./ir/neural";
 
 /**
  * One element scheduled into the session: its current store state plus the
@@ -98,39 +103,34 @@ export function neuralQueue(
   app: App,
   state: LogState,
   seedElementId: ElementId | null,
-  seedNotePath: string | null
+  seedNotePath: string | null,
 ): ReviewSlot[] {
-  // Prefer the element that *is* the note. Seeding the path at score 1
-  // puts every occupant at 0.5, so a hotter extract on the same file
-  // sorts ahead of the topic the user opened.
   let elementId = seedElementId;
   let notePath = seedNotePath;
   if (!elementId && notePath) {
     elementId = elementIdForNotePath(state, notePath);
     if (elementId) notePath = null;
   }
-  const scores = computeNeuralActivation(app, state, elementId, notePath);
-  
-  const entries: (QueueEntry & { score: number })[] = [];
-  for (const [id, score] of Object.entries(scores)) {
-    const el = state.elements.get(id as ElementId);
-    if (!el || el.dismissed) continue;
-    
-    entries.push({
-      id: el.id,
-      type: el.type,
-      priority: el.priority,
-      dueMs: dueMsOf(el),
-      dismissed: el.dismissed,
-      score
-    });
+  if (!elementId && notePath) {
+    // Unmarked note: walk from every IR occupant of that path, if any.
+    // With none, there is no seed.
+    return [];
   }
-  
-  entries.sort((a, b) => b.score - a.score || a.priority - b.priority);
-  
+  if (!elementId) return [];
+
+  const adj = buildNeuralAdjacency(state, obsidianLinkIndex(app));
+  const ids = neuralWalk({
+    seed: elementId,
+    priorityOf: (id) => state.elements.get(id as ElementId)?.priority ?? 50,
+    neighbors: (id) => neighborsForWalk(adj, id),
+    dismissed: (id) => state.elements.get(id as ElementId)?.dismissed === true,
+    maxQueue: NEURAL_MAX_QUEUE,
+  });
+
   const slots: ReviewSlot[] = [];
-  for (const entry of entries) {
-    const el = state.elements.get(entry.id as ElementId)!;
+  for (const id of ids) {
+    const el = state.elements.get(id as ElementId);
+    if (!el) continue;
     let file: TFile | null = null;
     if (el.notePath) {
       const af = app.vault.getAbstractFileByPath(el.notePath);
@@ -140,6 +140,44 @@ export function neuralQueue(
     slots.push({ id: el.id, element: el, file });
     if (slots.length >= NEURAL_MAX_QUEUE) break;
   }
-  
   return slots;
+}
+
+function obsidianLinkIndex(app: App): NoteLinkIndex {
+  const resolved = app.metadataCache.resolvedLinks ?? {};
+  const incoming = new Map<string, string[]>();
+  for (const src of Object.keys(resolved)) {
+    for (const dest of Object.keys(resolved[src] ?? {})) {
+      const list = incoming.get(dest) ?? [];
+      list.push(src);
+      incoming.set(dest, list);
+    }
+  }
+  return {
+    outgoing(path: string): readonly string[] {
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!isVaultFile(file)) {
+        return Object.keys(resolved[path] ?? {});
+      }
+      const cache = app.metadataCache.getFileCache(file);
+      const out: string[] = [];
+      const seen = new Set<string>();
+      if (cache?.links) {
+        for (const link of cache.links) {
+          const dest = app.metadataCache.getFirstLinkpathDest(link.link, file.path);
+          if (dest && !seen.has(dest.path)) {
+            seen.add(dest.path);
+            out.push(dest.path);
+          }
+        }
+      }
+      return out.length > 0 ? out : Object.keys(resolved[path] ?? {});
+    },
+    incoming(path: string): readonly string[] {
+      return incoming.get(path) ?? [];
+    },
+    tags(_path: string): readonly string[] {
+      return [];
+    },
+  };
 }

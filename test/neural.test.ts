@@ -1,15 +1,26 @@
 /**
  * Spreading activation + neural queue.
  *
- * SuperMemo neural review is subset review ordered by activation, with real
- * repetitions (including mid-interval / not-yet-due). These tests pin that
- * contract and the graph walk (tree, note, wikilink, backlink).
+ * SuperMemo neural review is subset review ordered by CombinePriority, with
+ * real repetitions (including mid-interval / not-yet-due).
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { App } from "obsidian";
-import { computeNeuralActivation, elementIdForNotePath, capWikilinkNeighbors, WIKILINK_DEGREE_CAP } from "../src/ir/neural";
+import {
+  capWikilinkNeighbors,
+  combinePriority,
+  elementIdForNotePath,
+  neuralWalk,
+  WIKILINK_DEGREE_CAP,
+} from "../src/ir/neural";
+import {
+  buildNeuralAdjacency,
+  emptyLinkIndex,
+  neighborsForWalk,
+  type NoteLinkIndex,
+} from "../src/ir/neural-graph";
 import { neuralQueue } from "../src/review";
 import { newElement } from "../src/ir/model";
 import type { IrElement } from "../src/ir/model";
@@ -55,9 +66,26 @@ interface FakeNote {
   basename: string;
   extension: string;
   links: string[];
+  tags?: string[];
 }
 
-/** Minimal App: vault files + wikilinks + resolved backlinks. */
+function linkIndex(notes: FakeNote[]): NoteLinkIndex {
+  const byPath = new Map(notes.map((n) => [n.path, n]));
+  const incoming = new Map<string, string[]>();
+  for (const n of notes) {
+    for (const dest of n.links) {
+      const list = incoming.get(dest) ?? [];
+      list.push(n.path);
+      incoming.set(dest, list);
+    }
+  }
+  return {
+    outgoing: (path) => byPath.get(path)?.links ?? [],
+    incoming: (path) => incoming.get(path) ?? [],
+    tags: (path) => byPath.get(path)?.tags ?? [],
+  };
+}
+
 function fakeApp(notes: FakeNote[]): App {
   const byPath = new Map(notes.map((n) => [n.path, n]));
   const resolvedLinks: Record<string, Record<string, number>> = {};
@@ -74,15 +102,29 @@ function fakeApp(notes: FakeNote[]): App {
       getFileCache: (file: { path: string }) => {
         const n = byPath.get(file.path);
         if (!n) return null;
-        return {
-          links: n.links.map((link) => ({ link })),
-        };
+        return { links: n.links.map((link) => ({ link })) };
       },
       getFirstLinkpathDest: (link: string, _from: string) =>
         byPath.get(link) ?? null,
       resolvedLinks,
     },
   } as unknown as App;
+}
+
+function walk(
+  elements: IrElement[],
+  seed: string,
+  links: NoteLinkIndex = emptyLinkIndex(),
+  graphOpts?: { useTags?: boolean; tagDegreeCap?: number },
+): string[] {
+  const s = state(elements);
+  const adj = buildNeuralAdjacency(s, links, graphOpts);
+  return neuralWalk({
+    seed,
+    priorityOf: (id) => s.elements.get(id as ElementId)?.priority ?? 50,
+    neighbors: (id) => neighborsForWalk(adj, id),
+    dismissed: (id) => s.elements.get(id as ElementId)?.dismissed === true,
+  });
 }
 
 test("isVaultFile: notes pass, folders and null do not", () => {
@@ -94,13 +136,23 @@ test("isVaultFile: notes pass, folders and null do not", () => {
   );
 });
 
-test("empty seeds yield no scores", () => {
-  const s = state([el("topic", { type: "topic", notePath: "A.md", text: "a" })]);
-  const scores = computeNeuralActivation(fakeApp([]), s, null, null);
-  assert.deepEqual(scores, {});
+test("CombinePriority matches the published Pascal, not the comment", () => {
+  assert.ok(Math.abs(combinePriority(0.2, 0.01) - 0.208) < 1e-9);
+  assert.ok(Math.abs(combinePriority(0.2, 0.26) - 0.408) < 1e-9);
+  assert.ok(Math.abs(combinePriority(0.2, 0.6) - 0.68) < 1e-9);
 });
 
-test("seed element scores 1 and decays to parent and children", () => {
+test("empty seeds yield no scores", () => {
+  const q = neuralQueue(
+    fakeApp([]),
+    state([el("topic", { type: "topic", notePath: "A.md", text: "a" })]),
+    null,
+    null,
+  );
+  assert.deepEqual(q.map((s) => s.id), []);
+});
+
+test("seed element is first; parent follows via the tree", () => {
   const parent = el("parent", {
     type: "topic",
     notePath: "Root.md",
@@ -111,27 +163,20 @@ test("seed element scores 1 and decays to parent and children", () => {
     parentId: eid("parent"),
     text: "extract body",
   });
-  const s = state([parent, child]);
-  const scores = computeNeuralActivation(fakeApp([]), s, eid("child"), null);
-  assert.equal(scores["child"], 1);
-  assert.equal(scores["parent"], 0.5);
+  const seq = walk([parent, child], "child");
+  assert.equal(seq[0], "child");
+  assert.ok(seq.includes("parent"));
 });
 
-test("seed note activates elements on that note at decay", () => {
-  const topic = el("topic", {
-    type: "topic",
-    notePath: "Dog.md",
-    text: "dogs",
-  });
-  const s = state([topic]);
-  const app = fakeApp([
-    { path: "Dog.md", basename: "Dog", extension: "md", links: [] },
-  ]);
-  const scores = computeNeuralActivation(app, s, null, "Dog.md");
-  assert.equal(scores["topic"], 0.5);
+test("tree-only graph still walks without wikilinks", () => {
+  const root = el("root", { type: "topic", notePath: "R.md", text: "r" });
+  const a = el("a", { type: "extract", parentId: eid("root"), text: "a" });
+  const b = el("b", { type: "extract", parentId: eid("root"), text: "b" });
+  const seq = walk([root, a, b], "a");
+  assert.deepEqual(new Set(seq), new Set(["root", "a", "b"]));
 });
 
-test("anchor.sourcePath is a note hop when notePath is absent", () => {
+test("colocated extracts on one source reach each other", () => {
   const extract = el("ex", {
     type: "extract",
     text: "quote",
@@ -148,87 +193,64 @@ test("anchor.sourcePath is a note hop when notePath is absent", () => {
       quote: { exact: "other", prefix: "", suffix: "" },
     },
   });
-  const s = state([extract, sibling]);
-  const scores = computeNeuralActivation(
-    fakeApp([]),
-    s,
-    eid("ex"),
-    null,
-  );
-  assert.equal(scores["ex"], 1);
-  // extract → article note (0.5) → sibling extract (0.25)
-  assert.equal(scores["sib"], 0.25);
+  const seq = walk([extract, sibling], "ex");
+  assert.equal(seq[0], "ex");
+  assert.ok(seq.includes("sib"));
 });
 
-test("forward wikilink spreads to the destination note's elements", () => {
+test("forward wikilink connects the destination topic", () => {
   const a = el("a", { type: "topic", notePath: "A.md", text: "a" });
   const b = el("b", { type: "topic", notePath: "B.md", text: "b" });
-  const app = fakeApp([
+  const notes: FakeNote[] = [
     { path: "A.md", basename: "A", extension: "md", links: ["B.md"] },
     { path: "B.md", basename: "B", extension: "md", links: [] },
-  ]);
-  const scores = computeNeuralActivation(app, state([a, b]), eid("a"), null);
-  assert.equal(scores["a"], 1);
-  // a → A.md (0.5) → B.md (0.25) → b (0.125)
-  assert.equal(scores["b"], 0.125);
+  ];
+  const seq = walk([a, b], "a", linkIndex(notes));
+  assert.equal(seq[0], "a");
+  assert.ok(seq.includes("b"));
 });
 
-test("backlinks spread to the source note's elements", () => {
+test("backlinks connect the source topic", () => {
   const hub = el("hub", { type: "topic", notePath: "Hub.md", text: "hub" });
   const spoke = el("spoke", {
     type: "topic",
     notePath: "Spoke.md",
     text: "spoke",
   });
-  const app = fakeApp([
+  const notes: FakeNote[] = [
     { path: "Hub.md", basename: "Hub", extension: "md", links: [] },
-    {
-      path: "Spoke.md",
-      basename: "Spoke",
-      extension: "md",
-      links: ["Hub.md"],
-    },
-  ]);
-  const scores = computeNeuralActivation(
-    app,
-    state([hub, spoke]),
-    eid("hub"),
-    null,
-  );
-  assert.equal(scores["hub"], 1);
-  // hub → Hub.md (0.5) → Spoke.md via backlink (0.25) → spoke (0.125)
-  assert.equal(scores["spoke"], 0.125);
+    { path: "Spoke.md", basename: "Spoke", extension: "md", links: ["Hub.md"] },
+  ];
+  const seq = walk([hub, spoke], "hub", linkIndex(notes));
+  assert.ok(seq.includes("spoke"));
 });
 
-test("an unmarked bridge note does not burn a layer", () => {
+test("an unmarked bridge note still connects the far IR topic", () => {
   const a = el("a", { type: "topic", notePath: "A.md", text: "a" });
   const b = el("b", { type: "topic", notePath: "B.md", text: "b" });
-  const app = fakeApp([
+  const notes: FakeNote[] = [
     { path: "A.md", basename: "A", extension: "md", links: ["Bridge.md"] },
     { path: "Bridge.md", basename: "Bridge", extension: "md", links: ["B.md"] },
     { path: "B.md", basename: "B", extension: "md", links: [] },
-  ]);
-  const scores = computeNeuralActivation(app, state([a, b]), eid("a"), null);
-  assert.equal(scores["a"], 1);
-  // a → A.md (0.5) → Bridge (relay, still 0.5) → B.md (0.25) → b (0.125)
-  assert.equal(scores["b"], 0.125);
+  ];
+  const seq = walk([a, b], "a", linkIndex(notes));
+  assert.ok(seq.includes("b"));
 });
 
 test("two unmarked hops in a row do not reach the far IR note", () => {
   const a = el("a", { type: "topic", notePath: "A.md", text: "a" });
   const b = el("b", { type: "topic", notePath: "B.md", text: "b" });
-  const app = fakeApp([
+  const notes: FakeNote[] = [
     { path: "A.md", basename: "A", extension: "md", links: ["N1.md"] },
     { path: "N1.md", basename: "N1", extension: "md", links: ["N2.md"] },
     { path: "N2.md", basename: "N2", extension: "md", links: ["B.md"] },
     { path: "B.md", basename: "B", extension: "md", links: [] },
-  ]);
-  const scores = computeNeuralActivation(app, state([a, b]), eid("a"), null);
-  assert.equal(scores["a"], 1);
-  assert.equal(scores["b"], undefined);
+  ];
+  const seq = walk([a, b], "a", linkIndex(notes));
+  assert.equal(seq.includes("b"), false);
 });
 
-test("cycles do not loop forever; higher score wins", () => {
+test("cycles do not loop forever", () => {
   const a = el("a", {
     type: "topic",
     notePath: "A.md",
@@ -241,14 +263,40 @@ test("cycles do not loop forever; higher score wins", () => {
     parentId: eid("a"),
     text: "b",
   });
-  const scores = computeNeuralActivation(
-    fakeApp([]),
-    state([a, b]),
-    eid("a"),
-    null,
-  );
-  assert.equal(scores["a"], 1);
-  assert.equal(scores["b"], 0.5);
+  const seq = walk([a, b], "a");
+  assert.equal(seq[0], "a");
+  assert.ok(seq.includes("b"));
+  assert.equal(seq.length, 2);
+});
+
+test("wikilink neighbors emit before siblings of equal element priority", () => {
+  const seed = el("seed", {
+    type: "topic",
+    notePath: "Seed.md",
+    text: "seed",
+    priority: 50,
+  });
+  const sib = el("sib", {
+    type: "extract",
+    parentId: eid("seed"),
+    text: "sib",
+    priority: 50,
+  });
+  const linked = el("linked", {
+    type: "topic",
+    notePath: "Linked.md",
+    text: "linked",
+    priority: 50,
+  });
+  const notes: FakeNote[] = [
+    { path: "Seed.md", basename: "Seed", extension: "md", links: ["Linked.md"] },
+    { path: "Linked.md", basename: "Linked", extension: "md", links: [] },
+  ];
+  const seq = walk([seed, sib, linked], "seed", linkIndex(notes));
+  const iLinked = seq.indexOf("linked");
+  const iSib = seq.indexOf("sib");
+  assert.ok(iLinked >= 0 && iSib >= 0);
+  assert.ok(iLinked < iSib);
 });
 
 test("neuralQueue drops dismissed and body-less elements, keeps not-due", () => {
@@ -295,15 +343,19 @@ test("neuralQueue drops dismissed and body-less elements, keeps not-due", () => 
     notePath: "Missing.md",
     parentId: eid("due"),
   });
-  const app = fakeApp([]);
-  const q = neuralQueue(app, state([due, future, dismissed, ghost]), eid("due"), null);
+  const q = neuralQueue(
+    fakeApp([]),
+    state([due, future, dismissed, ghost]),
+    eid("due"),
+    null,
+  );
   assert.deepEqual(
     q.map((s) => s.id),
     ["due", "future"],
   );
 });
 
-test("neuralQueue orders by activation then priority (lower = more important)", () => {
+test("neuralQueue seed is first; hotter child still follows", () => {
   const seed = el("seed", {
     type: "topic",
     notePath: "Seed.md",
@@ -328,11 +380,9 @@ test("neuralQueue orders by activation then priority (lower = more important)", 
     eid("seed"),
     null,
   );
-  // seed score 1, children 0.5; among children, priority 10 before 90
-  assert.deepEqual(
-    q.map((s) => s.id),
-    ["seed", "hot", "cold"],
-  );
+  assert.equal(q[0]?.id, "seed");
+  const rest = q.slice(1).map((s) => s.id);
+  assert.deepEqual(rest, ["hot", "cold"]);
 });
 
 test("neuralQueue empty when nothing related is reviewable", () => {
@@ -379,34 +429,23 @@ test("neuralQueue from a note path seeds the topic, not a hotter extract on it",
     { path: "Topic.md", basename: "Topic", extension: "md", links: [] },
   ]);
   const q = neuralQueue(app, state([topic, hot]), null, "Topic.md");
-  assert.deepEqual(
-    q.map((s) => s.id),
-    ["topic", "hot"],
-  );
+  assert.equal(q[0]?.id, "topic");
+  assert.ok(q.some((s) => s.id === "hot"));
 });
 
 test("capWikilinkNeighbors keeps IR notes first and truncates", () => {
   const ir = new Set(["A.md", "B.md"]);
   assert.deepEqual(
-    capWikilinkNeighbors(
-      ["Z.md", "A.md", "Y.md", "B.md"],
-      ir,
-      3,
-    ),
+    capWikilinkNeighbors(["Z.md", "A.md", "Y.md", "B.md"], ir, 3),
     ["A.md", "B.md", "Z.md"],
   );
 });
 
 test("a high-degree MOC does not dump every out-link into the walk", () => {
   const hub = el("hub", { type: "topic", notePath: "Hub.md", text: "hub" });
-  const spokes: ReturnType<typeof el>[] = [];
+  const spokes: IrElement[] = [];
   const notes: FakeNote[] = [
-    {
-      path: "Hub.md",
-      basename: "Hub",
-      extension: "md",
-      links: [],
-    },
+    { path: "Hub.md", basename: "Hub", extension: "md", links: [] },
   ];
   for (let i = 0; i < 40; i++) {
     const path = `S${i}.md`;
@@ -414,13 +453,8 @@ test("a high-degree MOC does not dump every out-link into the walk", () => {
     notes[0]!.links.push(path);
     notes.push({ path, basename: `S${i}`, extension: "md", links: [] });
   }
-  const scores = computeNeuralActivation(
-    fakeApp(notes),
-    state([hub, ...spokes]),
-    eid("hub"),
-    null,
-  );
-  const spokeHits = Object.keys(scores).filter((k) => k.startsWith("s"));
-  assert.equal(scores["hub"], 1);
+  const seq = walk([hub, ...spokes], "hub", linkIndex(notes));
+  const spokeHits = seq.filter((k) => k.startsWith("s"));
+  assert.equal(seq[0], "hub");
   assert.equal(spokeHits.length, WIKILINK_DEGREE_CAP);
 });
