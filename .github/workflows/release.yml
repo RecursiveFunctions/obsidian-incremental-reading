@@ -68,6 +68,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
+          draft: false
+          prerelease: false
+          make_latest: true
           files: |
             main.js
             manifest.json

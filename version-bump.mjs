@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 const root = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
-if (!/^\d+\.\d+\.\d+/.test(version)) {
-  throw new Error(`Unexpected package.json version: ${version}`);
+if (!/^\d+\.\d+\.\d+$/.test(version)) {
+  throw new Error(`Unexpected package.json version: ${version} (need plain X.Y.Z for BRAT/CI)`);
 }
 
 const manifestPath = join(root, "manifest.json");
