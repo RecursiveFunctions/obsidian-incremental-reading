@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { App } from "obsidian";
-import { computeNeuralActivation } from "../src/ir/neural";
+import { computeNeuralActivation, elementIdForNotePath } from "../src/ir/neural";
 import { neuralQueue } from "../src/review";
 import { newElement } from "../src/ir/model";
 import type { IrElement } from "../src/ir/model";
@@ -310,4 +310,49 @@ test("neuralQueue orders by activation then priority (lower = more important)", 
 test("neuralQueue empty when nothing related is reviewable", () => {
   const q = neuralQueue(fakeApp([]), state([]), eid("nope"), null);
   assert.deepEqual(q, []);
+});
+
+test("elementIdForNotePath prefers the topic on that path", () => {
+  const topic = el("topic", {
+    type: "topic",
+    notePath: "Topic.md",
+    text: "t",
+    priority: 80,
+  });
+  const promoted = el("promo", {
+    type: "extract",
+    notePath: "Other.md",
+    text: "p",
+  });
+  const s = state([topic, promoted]);
+  assert.equal(elementIdForNotePath(s, "Topic.md"), eid("topic"));
+  assert.equal(elementIdForNotePath(s, "Other.md"), eid("promo"));
+  assert.equal(elementIdForNotePath(s, "Missing.md"), null);
+});
+
+test("neuralQueue from a note path seeds the topic, not a hotter extract on it", () => {
+  const topic = el("topic", {
+    type: "topic",
+    notePath: "Topic.md",
+    text: "t",
+    priority: 80,
+  });
+  const hot = el("hot", {
+    type: "extract",
+    parentId: eid("topic"),
+    text: "hot",
+    priority: 10,
+    anchor: {
+      sourcePath: "Topic.md",
+      quote: { exact: "hot", prefix: "", suffix: "" },
+    },
+  });
+  const app = fakeApp([
+    { path: "Topic.md", basename: "Topic", extension: "md", links: [] },
+  ]);
+  const q = neuralQueue(app, state([topic, hot]), null, "Topic.md");
+  assert.deepEqual(
+    q.map((s) => s.id),
+    ["topic", "hot"],
+  );
 });

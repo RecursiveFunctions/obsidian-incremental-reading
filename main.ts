@@ -1384,7 +1384,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: no active note to start Neural Review from.");
       return;
     }
-    await this.startNeuralReview(null, active.path);
+    const seedId = await this.resolveElementIdForFile(active);
+    await this.startNeuralReview(seedId, seedId ? null : active.path);
   }
 
   public async startNeuralReview(seedElementId: ElementId | null, seedNotePath: string | null) {

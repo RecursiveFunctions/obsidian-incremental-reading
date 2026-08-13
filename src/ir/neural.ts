@@ -3,6 +3,27 @@ import type { LogState } from "./log";
 import type { ElementId } from "./ids";
 import { isVaultFile } from "./vault-file";
 
+/**
+ * Map a vault note to the IR element that *is* that note (topic or
+ * promoted extract/item), not extracts merely anchored in it.
+ *
+ * Prefer a topic when several elements share the path. Returns null when
+ * the note is not itself an IR element — callers may still walk from the
+ * path as a note seed.
+ */
+export function elementIdForNotePath(
+  state: LogState,
+  notePath: string,
+): ElementId | null {
+  let fallback: ElementId | null = null;
+  for (const el of state.elements.values()) {
+    if (el.notePath !== notePath || el.dismissed) continue;
+    if (el.type === "topic") return el.id;
+    if (fallback === null) fallback = el.id;
+  }
+  return fallback;
+}
+
 // Spreading activation parameters
 const DECAY = 0.5; // Each step halves the activation
 const MAX_DEPTH = 3;

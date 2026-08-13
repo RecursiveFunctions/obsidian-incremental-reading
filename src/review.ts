@@ -35,7 +35,7 @@ import type { IrElement } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
 import { isVaultFile } from "./ir/vault-file";
-import { computeNeuralActivation } from "./ir/neural";
+import { computeNeuralActivation, elementIdForNotePath } from "./ir/neural";
 
 /**
  * One element scheduled into the session: its current store state plus the
@@ -100,7 +100,16 @@ export function neuralQueue(
   seedElementId: ElementId | null,
   seedNotePath: string | null
 ): ReviewSlot[] {
-  const scores = computeNeuralActivation(app, state, seedElementId, seedNotePath);
+  // Prefer the element that *is* the note. Seeding the path at score 1
+  // puts every occupant at 0.5, so a hotter extract on the same file
+  // sorts ahead of the topic the user opened.
+  let elementId = seedElementId;
+  let notePath = seedNotePath;
+  if (!elementId && notePath) {
+    elementId = elementIdForNotePath(state, notePath);
+    if (elementId) notePath = null;
+  }
+  const scores = computeNeuralActivation(app, state, elementId, notePath);
   
   const entries: (QueueEntry & { score: number })[] = [];
   for (const [id, score] of Object.entries(scores)) {
