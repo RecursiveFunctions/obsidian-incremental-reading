@@ -12,6 +12,7 @@ import {
   capWikilinkNeighbors,
   combinePriority,
   elementIdForNotePath,
+  makeLcg,
   neuralWalk,
   WIKILINK_DEGREE_CAP,
 } from "../src/ir/neural";
@@ -457,4 +458,31 @@ test("a high-degree MOC does not dump every out-link into the walk", () => {
   const spokeHits = seq.filter((k) => k.startsWith("s"));
   assert.equal(seq[0], "hub");
   assert.equal(spokeHits.length, WIKILINK_DEGREE_CAP);
+});
+
+test("same RNG seed yields the same neural walk", () => {
+  const seed = el("seed", { type: "topic", notePath: "S.md", text: "s" });
+  const notes: FakeNote[] = [
+    { path: "S.md", basename: "S", extension: "md", links: [] },
+  ];
+  const elems = [seed];
+  for (let i = 0; i < 8; i++) {
+    const path = `N${i}.md`;
+    elems.push(el(`n${i}`, { type: "topic", notePath: path, text: `n${i}` }));
+    notes[0]!.links.push(path);
+    notes.push({ path, basename: `N${i}`, extension: "md", links: [] });
+  }
+  const s = state(elems);
+  const adj = buildNeuralAdjacency(s, linkIndex(notes));
+  const opts = {
+    seed: "seed",
+    priorityOf: (id: string) => s.elements.get(id as ElementId)?.priority ?? 50,
+    neighbors: (id: string) => neighborsForWalk(adj, id),
+  };
+  const a = neuralWalk({ ...opts, random: makeLcg(42) });
+  const b = neuralWalk({ ...opts, random: makeLcg(42) });
+  const c = neuralWalk({ ...opts, random: makeLcg(99) });
+  assert.deepEqual(a, b);
+  assert.equal(a[0], "seed");
+  assert.equal(c[0], "seed");
 });

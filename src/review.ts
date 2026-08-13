@@ -104,6 +104,7 @@ export function neuralQueue(
   state: LogState,
   seedElementId: ElementId | null,
   seedNotePath: string | null,
+  random?: () => number,
 ): ReviewSlot[] {
   let elementId = seedElementId;
   let notePath = seedNotePath;
@@ -125,6 +126,7 @@ export function neuralQueue(
     neighbors: (id) => neighborsForWalk(adj, id),
     dismissed: (id) => state.elements.get(id as ElementId)?.dismissed === true,
     maxQueue: NEURAL_MAX_QUEUE,
+    random,
   });
 
   const slots: ReviewSlot[] = [];

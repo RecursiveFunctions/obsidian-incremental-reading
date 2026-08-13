@@ -144,6 +144,15 @@ function orderFrontier(
  * Weighted Fisher-Yates: higher weight is more likely to land early.
  * Sequential sampling without replacement, O(n^2) on a few hundred nodes.
  */
+export function makeLcg(seed: number): () => number {
+  let s = seed >>> 0 || 1;
+  return () => {
+    s = ((s * 1664525) >>> 0) + 1013904223;
+    s >>>= 0;
+    return s / 0x1_0000_0000;
+  };
+}
+
 export function weightedShuffle<T>(
   arr: T[],
   weightOf: (item: T) => number,

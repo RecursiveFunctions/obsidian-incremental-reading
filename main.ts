@@ -26,6 +26,7 @@ import {
   uniqueMarkdownNotePath,
 } from "./src/ir-note";
 import { dueQueue, neuralQueue, type ReviewSlot } from "./src/review";
+import { makeLcg } from "./src/ir/neural";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
 import { openPriorityPrompt } from "./src/priority-prompt";
 import { IrStore, META } from "./src/ir/store";
@@ -1401,7 +1402,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     const state = await this.store.load();
-    const queue = neuralQueue(this.app, state, seedElementId, seedNotePath);
+    const queue = neuralQueue(
+      this.app,
+      state,
+      seedElementId,
+      seedNotePath,
+      makeLcg(Date.now() ^ 0x9e3779b9),
+    );
     
     if (queue.length === 0) {
       new Notice("Incremental Reading: no related elements found for Neural Review.");
