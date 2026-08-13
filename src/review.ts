@@ -119,7 +119,10 @@ export function neuralQueue(
   }
   if (!elementId) return [];
 
-  const adj = buildNeuralAdjacency(state, obsidianLinkIndex(app));
+  const adj = buildNeuralAdjacency(state, obsidianLinkIndex(app), {
+    useTags: true,
+    tagDegreeCap: 40,
+  });
   const ids = neuralWalk({
     seed: elementId,
     priorityOf: (id) => state.elements.get(id as ElementId)?.priority ?? 50,
@@ -178,8 +181,27 @@ function obsidianLinkIndex(app: App): NoteLinkIndex {
     incoming(path: string): readonly string[] {
       return incoming.get(path) ?? [];
     },
-    tags(_path: string): readonly string[] {
-      return [];
+    tags(path: string): readonly string[] {
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!isVaultFile(file)) return [];
+      const cache = app.metadataCache.getFileCache(file);
+      const out = new Set<string>();
+      if (cache?.tags) {
+        for (const t of cache.tags) {
+          const name = t.tag.replace(/^#/, "");
+          if (name) out.add(name);
+        }
+      }
+      const fmTags = cache?.frontmatter?.tags;
+      const addFm = (v: unknown) => {
+        if (typeof v === "string" && v) out.add(v.replace(/^#/, ""));
+      };
+      if (Array.isArray(fmTags)) {
+        for (const v of fmTags) addFm(v);
+      } else {
+        addFm(fmTags);
+      }
+      return [...out];
     },
   };
 }

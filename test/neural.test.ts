@@ -486,3 +486,41 @@ test("same RNG seed yields the same neural walk", () => {
   assert.equal(a[0], "seed");
   assert.equal(c[0], "seed");
 });
+
+test("shared tags connect topics like concept links", () => {
+  const dogsA = el("dogsA", { type: "topic", notePath: "DogsA.md", text: "a" });
+  const dogsB = el("dogsB", { type: "topic", notePath: "DogsB.md", text: "b" });
+  const cars = el("cars", { type: "topic", notePath: "Cars.md", text: "c" });
+  const notes: FakeNote[] = [
+    { path: "DogsA.md", basename: "DogsA", extension: "md", links: [], tags: ["dogs"] },
+    { path: "DogsB.md", basename: "DogsB", extension: "md", links: [], tags: ["dogs"] },
+    { path: "Cars.md", basename: "Cars", extension: "md", links: [], tags: ["cars"] },
+  ];
+  const seq = walk([dogsA, dogsB, cars], "dogsA", linkIndex(notes), {
+    useTags: true,
+  });
+  assert.ok(seq.includes("dogsB"));
+  assert.equal(seq.includes("cars"), false);
+});
+
+test("oversized tags are ignored as hubs", () => {
+  const notes: FakeNote[] = [];
+  const elems: IrElement[] = [];
+  for (let i = 0; i < 41; i++) {
+    const path = `T${i}.md`;
+    elems.push(el(`t${i}`, { type: "topic", notePath: path, text: `t${i}` }));
+    notes.push({
+      path,
+      basename: `T${i}`,
+      extension: "md",
+      links: [],
+      tags: ["todo"],
+    });
+  }
+  const seq = walk(elems, "t0", linkIndex(notes), {
+    useTags: true,
+    tagDegreeCap: 40,
+  });
+  assert.equal(seq.length, 1);
+  assert.equal(seq[0], "t0");
+});
