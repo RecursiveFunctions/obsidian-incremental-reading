@@ -35,7 +35,7 @@ import type { IrElement } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
 import { isVaultFile } from "./ir/vault-file";
-import { computeNeuralActivation, elementIdForNotePath } from "./ir/neural";
+import { computeNeuralActivation, elementIdForNotePath, NEURAL_MAX_QUEUE } from "./ir/neural";
 
 /**
  * One element scheduled into the session: its current store state plus the
@@ -138,6 +138,7 @@ export function neuralQueue(
     }
     if (!file && !el.text) continue;
     slots.push({ id: el.id, element: el, file });
+    if (slots.length >= NEURAL_MAX_QUEUE) break;
   }
   
   return slots;

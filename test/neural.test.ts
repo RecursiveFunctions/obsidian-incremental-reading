@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { App } from "obsidian";
-import { computeNeuralActivation, elementIdForNotePath } from "../src/ir/neural";
+import { computeNeuralActivation, elementIdForNotePath, capWikilinkNeighbors, WIKILINK_DEGREE_CAP } from "../src/ir/neural";
 import { neuralQueue } from "../src/review";
 import { newElement } from "../src/ir/model";
 import type { IrElement } from "../src/ir/model";
@@ -383,4 +383,44 @@ test("neuralQueue from a note path seeds the topic, not a hotter extract on it",
     q.map((s) => s.id),
     ["topic", "hot"],
   );
+});
+
+test("capWikilinkNeighbors keeps IR notes first and truncates", () => {
+  const ir = new Set(["A.md", "B.md"]);
+  assert.deepEqual(
+    capWikilinkNeighbors(
+      ["Z.md", "A.md", "Y.md", "B.md"],
+      ir,
+      3,
+    ),
+    ["A.md", "B.md", "Z.md"],
+  );
+});
+
+test("a high-degree MOC does not dump every out-link into the walk", () => {
+  const hub = el("hub", { type: "topic", notePath: "Hub.md", text: "hub" });
+  const spokes: ReturnType<typeof el>[] = [];
+  const notes: FakeNote[] = [
+    {
+      path: "Hub.md",
+      basename: "Hub",
+      extension: "md",
+      links: [],
+    },
+  ];
+  for (let i = 0; i < 40; i++) {
+    const path = `S${i}.md`;
+    spokes.push(el(`s${i}`, { type: "topic", notePath: path, text: `s${i}` }));
+    notes[0]!.links.push(path);
+    notes.push({ path, basename: `S${i}`, extension: "md", links: [] });
+  }
+  const scores = computeNeuralActivation(
+    fakeApp(notes),
+    state([hub, ...spokes]),
+    eid("hub"),
+    null,
+  );
+  const spokeHits = Object.keys(scores).filter((k) => k.startsWith("s"));
+  assert.equal(scores["hub"], 1);
+  assert.equal(spokeHits.length, WIKILINK_DEGREE_CAP);
 });

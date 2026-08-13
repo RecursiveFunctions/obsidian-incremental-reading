@@ -1,4 +1,4 @@
-import type { App } from "obsidian";
+import type { App, TFile } from "obsidian";
 import type { LogState } from "./log";
 import type { ElementId } from "./ids";
 import { isVaultFile } from "./vault-file";
@@ -29,6 +29,10 @@ const DECAY = 0.5; // Each step halves the activation
 const MAX_DEPTH = 3;
 /** Unmarked notes may relay once without spending a neural layer. */
 const MAX_RELAYS = 1;
+/** Keep a MOC from dumping the vault into layer 1. */
+export const WIKILINK_DEGREE_CAP = 12;
+/** SuperMemo caps the neural queue at a few hundred. */
+export const NEURAL_MAX_QUEUE = 200;
 
 interface NeuralHop {
   type: "element" | "note";
@@ -38,11 +42,41 @@ interface NeuralHop {
   relays: number;
 }
 
-/**
- * Follow a wikilink. IR notes cost a layer and decay. Unmarked notes
- * are relays: they keep score and depth so A → Bridge → B still reaches
- * B, but two unmarked hops in a row stop.
- */
+function linkedNotePaths(app: App, file: TFile): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (p: string) => {
+    if (p === file.path || seen.has(p)) return;
+    seen.add(p);
+    out.push(p);
+  };
+  const cache = app.metadataCache.getFileCache(file);
+  if (cache?.links) {
+    for (const link of cache.links) {
+      const dest = app.metadataCache.getFirstLinkpathDest(link.link, file.path);
+      if (dest) add(dest.path);
+    }
+  }
+  const resolved = app.metadataCache.resolvedLinks;
+  for (const sourcePath in resolved) {
+    if (resolved[sourcePath][file.path]) add(sourcePath);
+  }
+  return out;
+}
+
+/** IR neighbors first, then unmarked relays, truncated to the degree cap. */
+export function capWikilinkNeighbors(
+  neighbors: string[],
+  irNotePaths: Set<string>,
+  cap: number = WIKILINK_DEGREE_CAP,
+): string[] {
+  const ir: string[] = [];
+  const rest: string[] = [];
+  for (const p of neighbors) {
+    (irNotePaths.has(p) ? ir : rest).push(p);
+  }
+  return ir.concat(rest).slice(0, cap);
+}
 function enqueueLinkedNote(
   queue: NeuralHop[],
   path: string,
@@ -112,6 +146,8 @@ export function computeNeuralActivation(
       if ((activeElements.get(id) ?? 0) >= score) continue;
       activeElements.set(id, score);
       scores[id] = score;
+      if (Object.keys(scores).length >= NEURAL_MAX_QUEUE) break;
+      if (Object.keys(scores).length >= NEURAL_MAX_QUEUE) break;
 
       const element = state.elements.get(id as ElementId);
       if (!element) continue;
@@ -171,21 +207,10 @@ export function computeNeuralActivation(
       // Spread to linked notes
       const file = app.vault.getAbstractFileByPath(id);
       if (isVaultFile(file)) {
-        // Forward links
-        const cache = app.metadataCache.getFileCache(file);
-        if (cache?.links) {
-          for (const link of cache.links) {
-            const dest = app.metadataCache.getFirstLinkpathDest(link.link, file.path);
-            if (dest) enqueueLinkedNote(queue, dest.path, score, depth, relays, irNotePaths);
-          }
-        }
-
-        // Backlinks
-        const resolved = app.metadataCache.resolvedLinks;
-        for (const sourcePath in resolved) {
-          if (resolved[sourcePath][file.path]) {
-            enqueueLinkedNote(queue, sourcePath, score, depth, relays, irNotePaths);
-          }
+        const neighbors = linkedNotePaths(app, file);
+        const capped = capWikilinkNeighbors(neighbors, irNotePaths);
+        for (const path of capped) {
+          enqueueLinkedNote(queue, path, score, depth, relays, irNotePaths);
         }
       }
     }
