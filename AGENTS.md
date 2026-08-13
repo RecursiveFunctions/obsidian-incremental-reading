@@ -27,11 +27,12 @@ This script runs tests + build, then `npm version <kind>`, which:
 The pushed tag triggers `.github/workflows/release.yml`, which builds `main.js` in CI and creates the GitHub Release with all three assets.
 
 Feature / channel builds may use intentional prerelease tags such as
-`0.6.0-feat.neural-review.1` or `0.5.6-feat.extract-to-note.1`. Those are
-valid: set `package.json` / `manifest.json` to that string, tag the same
-string, and let Release publish it. **Never rename a deliberate feat tag to
-plain `X.Y.Z` to "fix BRAT"** — BRAT installs by exact release tag; flatten
-the name only when the human asks for a stable bump.
+`0.5.6-feat.neural-review.1` or `0.5.6-feat.extract-to-note.1` (see
+`docs/RELEASE.md` → Version naming). Those are valid: set `package.json` /
+`manifest.json` to that string, tag the same string, and let Release publish
+it. **Never rename a deliberate feat tag to plain `X.Y.Z` to "fix BRAT"** —
+and **never jump the `X.Y.Z` prefix** past the next planned stable (after
+`0.5.5`, use `0.5.6-feat.*`, not `0.6.0-feat.*`) unless you mean a minor/major.
 
 ## Done bar — verify before you say "shipped"
 

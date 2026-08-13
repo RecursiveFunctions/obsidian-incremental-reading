@@ -12,7 +12,22 @@
 
 The **release tag name**, **release title**, and **`version` in the uploaded `manifest.json`** should all match (see the [BRAT developer guide](https://github.com/TfTHacker/obsidian42-brat/blob/main/BRAT-DEVELOPER-GUIDE.md)).
 
-Tags may be plain `X.Y.Z` or feature-channel builds like `0.6.0-feat.neural-review.1`. BRAT installs by that exact string — do not rewrite a feat tag to plain semver unless you mean to ship a stable release under a new name.
+## Version naming
+
+| Kind | Form | Example | Notes |
+|------|------|---------|-------|
+| Stable | `X.Y.Z` | `0.5.5` | GitHub **Latest**. Use `npm run ship:patch` / `minor` / `major`. |
+| Feature channel | `(next-stable)-feat.<slug>.<n>` | `0.5.6-feat.extract-to-note.1` | Tester / BRAT **frozen** builds. Not Latest. |
+
+Rules:
+
+1. **`next-stable` is the stable this work is aiming at**, usually one patch above current Latest. After `0.5.5`, feature builds are `0.5.6-feat.*` — not `0.6.0-feat.*` (that would imply a minor bump).
+2. **`<slug>`** is a short kebab feature id (`extract-to-note`, `neural-review`).
+3. **`<n>`** starts at `1` and increments when you publish another build on the same channel.
+4. Parallel channels may share the same `next-stable` (e.g. `0.5.6-feat.extract-to-note.1` and `0.5.6-feat.neural-review.1`). BRAT users **freeze** to the exact tag; they should not use “latest” for channel builds.
+5. When the feature lands as stable, ship plain `next-stable` (e.g. `0.5.6`) and stop publishing that channel (or bump `<n>` only if you still need a side branch).
+
+**Never flatten** a deliberate `…-feat.*` tag to plain `X.Y.Z` just to please CI/BRAT — fix publishing under the feat name instead.
 
 `main.js` is **gitignored** here on purpose; the **Release workflow** builds it in CI and attaches it. Do not expect BRAT to work from tag-only pushes.
 
