@@ -34,7 +34,7 @@ Your data never leaves your vault because the code physically cannot send it.
 
 The plugin has two layers.
 
-The workflow layer is the element tree, extracts, cloze deletions, the priority queue, the interleaved review-and-reading session, postpone, and dismissals. SuperMemo documents these models publicly at [supermemo.guru](https://supermemo.guru).
+The workflow layer is the element tree, extracts, cloze deletions, the priority queue, the interleaved review-and-reading session, neural review, postpone, and dismissals. SuperMemo documents these models publicly at [supermemo.guru](https://supermemo.guru).
 
 The scheduling layer is [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler), used through the [`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs) package. FSRS is an open-source scheduler in the same Difficulty/Stability/Retrievability family as SuperMemo's SM-17 and SM-18, with parameters trained on real review data.
 
@@ -48,7 +48,8 @@ Every IR command ships with a default `Alt+letter` binding. The full set:
 - `Alt+Shift+X`: one-shot extract to a standalone note (does not change the setting).
 - `Alt+Shift+P`: promote the current anchored extract to a standalone note (review card, or the IR tree selection).
 - `Alt+Z`: cloze selection into a review item (optional SuperMemo-style hint; stored as `{{cN::answer::hint}}`, Anki-compatible).
-- `Alt+R`: start a review session.
+- `Alt+R`: start a review session (outstanding due queue).
+- `Alt+N`: **Go neural** — subset review from the current note, review card, or tree row, sequenced by spreading activation (tree + wikilinks + tags). Not due-gated; grading is a real repetition.
 - `Alt+T`: mark current note as an IR topic.
 - `Alt+P`: set IR priority of current element.
 - `Alt+I`: open the IR element tree.
@@ -117,9 +118,12 @@ The v0.1 MVP is complete. State has since moved off frontmatter into the structu
 - [x] **Auto-mark plain notes.** Optional setting: notes you start reviewing are promoted to topics automatically.
 - [x] **Mobile surfaces.** Mark-as-topic, priority, dismiss, **start review, tree, session log, stats, mercy, and Anki export** are on the note file menu on mobile. Session/stats leaf polish and other small-screen UX remain.
 
-### Now (toward v0.3)
+### Now (toward v0.3 / 0.6)
 
 Per the [UI commitments contract](docs/UI-COMMITMENTS.md), the modal-removal pass replaced Stats, Priority, and Review with workspace views / non-modal controls (see [`docs/SCOPE-MODAL-REMOVAL.md`](docs/SCOPE-MODAL-REMOVAL.md)). **Done:** stats leaf, status-bar priority prompt (fallback when a note has no store element), review `ItemView` with a **source column** for parent context (commitment #2), in-tree priority click-to-edit, **Alt+P** opens the tree and focuses that inline editor when the active note maps to an element.
+
+- [x] **Go neural.** Spreading-activation subset review (`Alt+N`).
+- [x] **Extract to standalone note.** Settings toggle (off by default) plus `Alt+Shift+X` / `Alt+Shift+P`.
 
 ### Stretch
 

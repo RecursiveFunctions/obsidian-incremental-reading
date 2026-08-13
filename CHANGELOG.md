@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Go neural (`Alt+N`).** SuperMemo-style subset review from the current
+  note, review card, or tree row. Spreading activation walks the element
+  tree, wikilinks/backlinks, and shared tags (CombinePriority weights).
+  Associated not-due material is included; grading is a real repetition.
+  Progress shows `Neural · Neuro=N`. `Alt+R` is unchanged.
 - **Settings → Extract to standalone note** (off by default). Off keeps
   today's anchored extracts (DESIGN §2). On is GitHub #1: each extract
   becomes a child markdown note and inherits the parent's tags, aliases,

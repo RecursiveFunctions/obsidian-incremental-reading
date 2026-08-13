@@ -130,6 +130,27 @@ Not a SuperMemo clone. The honest pitch: the SuperMemo incremental reading
 workflow, on the open descendant of SM-17's algorithm, with data in plain
 files and a better concept graph than SuperMemo itself.
 
+## Neural review
+
+`Learn : Go neural` (`Alt+N`) is a **second session builder**, not a
+scheduler change. FSRS / A-factor run as in outstanding review; only the
+sequence differs.
+
+- Seed: current review card, else the active note's IR element (auto-mark
+  via `ensureIrSource`), else a tree-row action.
+- Graph: `parentId` tree (child 0.16, sibling 0.26–0.5, root parent 0.40)
+  plus vault wikilinks/backlinks (0.05) and shared tags (0.01, skipped
+  when a tag has more than 40 IR members). Unmarked notes may relay once
+  so A → Bridge.md → B still connects. Store-only extracts enter via the
+  tree, not the Obsidian graph.
+- Walk: SuperMemo CombinePriority, a few layers, cap 200, wikilink degree
+  12 at expansion time. Per-session RNG shuffles each layer by weight
+  `(1-P)`.
+- Eligibility: not dismissed, reviewable body. **Due date is not a gate.**
+  Grading is a real repetition. No `reviewsPerReading` interleave.
+- No concept registry and no new `IrType`. Closing the review tab ends
+  neural; `Alt+R` is the outstanding queue.
+
 ## Open design questions (decide before implementation)
 
 These are expensive to reverse once the store exists and users have real
