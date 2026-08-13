@@ -78,14 +78,16 @@ export function formatLoad(load: QueueLoad): string {
  * element is the one returned by `Plugin.addStatusBarItem()`; we own its
  * contents while the plugin is loaded, and `dispose` clears it on unload.
  *
- * Clicking the indicator runs `onClick` (wired in main.ts to start a review),
- * but the indicator's job is read-only display: every datum is glanceable
+ * Clicking the indicator runs `onClick` (wired in main.ts to start a review).
+ * Right-click / long-press runs `onContextMenu` (tree, neural, hub, etc.).
+ * The indicator's job is still glanceable display: every datum is visible
  * without interaction (commitment #4).
  */
 export function renderStatusBar(
   el: HTMLElement,
   load: QueueLoad,
   onClick?: () => void,
+  onContextMenu?: (evt: MouseEvent) => void,
 ): void {
   el.empty();
   el.addClass("ir-status-bar");
@@ -104,7 +106,8 @@ export function renderStatusBar(
   el.setAttribute(
     "aria-label",
     `IR queue: ${load.due} due now, ${load.later} later today, ` +
-      `${load.inflow7d} added in last 7 days. Click to start review.`,
+      `${load.inflow7d} added in last 7 days. Click to start review. ` +
+      `Right-click for tree, neural, and other IR actions.`,
   );
 
   if (onClick) {
@@ -112,6 +115,9 @@ export function renderStatusBar(
   } else {
     el.onclick = null;
   }
+  el.oncontextmenu = onContextMenu
+    ? (evt) => onContextMenu(evt)
+    : null;
 }
 
 export function disposeStatusBar(el: HTMLElement): void {
@@ -119,5 +125,6 @@ export function disposeStatusBar(el: HTMLElement): void {
   el.removeClass("ir-status-bar");
   el.removeClass("has-due");
   el.onclick = null;
+  el.oncontextmenu = null;
   el.removeAttribute("aria-label");
 }

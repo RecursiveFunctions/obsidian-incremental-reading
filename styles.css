@@ -1475,6 +1475,19 @@
   font-style: italic;
 }
 
+/* Inline success flash (replaces routine Notices in the review dock) */
+.ir-review-flash {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  padding: 4px 8px 0;
+  opacity: 1;
+  transition: opacity 0.4s ease;
+}
+
+.ir-review-flash--out {
+  opacity: 0;
+}
+
 /* Inline cloze hint bar (replaces modal — commitment #6) */
 .ir-hint-bar {
   display: flex;

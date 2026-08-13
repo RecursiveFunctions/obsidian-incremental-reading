@@ -14,7 +14,7 @@ Two things keep IR out of reach. SuperMemo is Windows-only and stores your knowl
 
 1. **A faithful SuperMemo element tree.** Source to extract to extract to item, with a dedicated hierarchy view and a graph that stays clean instead of drowning in review scaffolding. No other Obsidian plugin models this; the only tool that does is Logseq-only and stalled.
 2. **Principled postpone.** When the queue overloads it redistributes by priority and never tells the scheduler a card was reviewed when it was not. Overload handling that does not corrupt your scheduling data.
-3. **A multi-scheduler divergence picker.** Default FSRS, FSRS optimized on your own review history, and classic SM-2 run in parallel; when they disagree enough about an interval you can see why and choose. Opt-in, off by default, out of the way otherwise.
+3. **A multi-scheduler divergence picker.** Default FSRS, FSRS optimized on your own review history, and classic SM-2 run in parallel; when they disagree enough about an interval you can see why and choose. Opt-in via Settings → Show scheduler divergence picker; off for new vaults. Existing installs keep the picker until you turn it off.
 4. **Developed with mobile in mind.** One thing I lamented about SuperMemo was the inability to use it on the go without some hacky workarounds. I intend to make this plugin feel good to use on both mobile and the desktop version.
 5. **A privacy property, not a privacy policy.** See below.
 
@@ -59,9 +59,11 @@ Every IR command ships with a default `Alt+letter` binding. The full set:
 - `Alt+D`: dismiss or restore the current element.
 - `Alt+E`: export IR items to Anki TSV.
 - `Alt+B`: import clipboard text as an IR topic (bulk import).
-- `Alt+Shift+U`: **IR quick actions** — opens a **radial wheel** (contextual: new sibling cloze when you have a selection, split multi-cloze items, fork promoted extracts). Same as the ribbon **layout-list** icon and review **Quick actions**. The wheel always opens centered on the active pane; if no action applies, the center explains why.
+- `Alt+Shift+U`: **IR quick actions** — opens a **radial wheel** (contextual: new sibling cloze when you have a selection, split multi-cloze items, fork promoted extracts). Same as review **Quick actions**, the command palette, or a right-click on the IR status bar. The wheel always opens centered on the active pane; if no action applies, the center explains why.
 
 Rebind or clear any of them under Settings, Hotkeys.
+
+The left ribbon has one IR icon: **Start IR review**. Tree, quick actions, mark-as-topic, neural, session log, and stats stay in the command palette (and the status bar's right-click menu). Click the status bar to start review.
 
 In the **IR review** tab (after **Start IR review**), defaults include **`Space`** / **`Enter`** for the next reading card, **`[`** for the **Previous** card in the current session (same as the button; first card disables it), **`L`** / **`D`** for later today / dismiss, **`1`–`4`** on revealed clozes, **`Alt+X`** / **`Alt+Z`** for extract / cloze when the card allows children, and **`Ctrl+Enter`** (**`Cmd+Enter`** on macOS) for next while the reading editor is focused.
 

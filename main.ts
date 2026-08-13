@@ -10,6 +10,7 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
+import { resolveShowDivergencePicker } from "./src/ir/settings-resolve";
 import { IR_TREE_VIEW_TYPE, IrTreeView } from "./src/tree-view";
 import { IR_SESSION_VIEW_TYPE, IrSessionView } from "./src/session-view";
 import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
@@ -235,6 +236,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.statusBarEl,
       { due: 0, later: 0, inflow7d: 0 },
       () => void this.startReview(),
+      (evt) => this.showStatusBarMenu(evt),
     );
     void this.refreshStatusBar();
 
@@ -255,21 +257,9 @@ export default class IncrementalReadingPlugin extends Plugin {
       );
     }
 
-    this.addRibbonIcon("book-open", "Mark note as IR topic", () => {
-      void this.markActiveFileAsTopic();
-    });
-
     this.addRibbonIcon("brain-circuit", "Start IR review", () => {
       void this.startReview();
     });
-
-    this.addRibbonIcon(
-      "layout-list",
-      "IR quick actions (radial, Alt+Shift+U) — new cloze / split / fork when this note matches",
-      () => {
-        void this.openIrActionsHub();
-      },
-    );
 
     this.addCommand({
       id: "start-neural-review",
@@ -370,13 +360,10 @@ export default class IncrementalReadingPlugin extends Plugin {
           (path) => this.decorationCache.rangesFor(path),
           () => this.refreshExtractDecorations(),
           (id, el) => this.applyIrPromote(id, el),
+          () => this.restoreEmptyReviewSession(),
         );
       },
     );
-
-    this.addRibbonIcon("list-tree", "Open IR element tree", () => {
-      void this.openTreeView();
-    });
 
     this.addCommand({
       id: "open-tree-view",
@@ -991,11 +978,89 @@ export default class IncrementalReadingPlugin extends Plugin {
         this.statusBarEl,
         load,
         () => void this.startReview(),
+        (evt) => this.showStatusBarMenu(evt),
       );
     } catch (e) {
       console.error("Incremental Reading: status bar refresh failed", e);
     }
     void this.refreshExtractDecorations();
+  }
+
+  /**
+   * Right-click (or long-press) on the status-bar load indicator. Replaces
+   * the extra ribbon icons: tree, hub, mark-as-topic, neural, session, stats.
+   */
+  private showStatusBarMenu(evt: MouseEvent): void {
+    evt.preventDefault();
+    const menu = new Menu();
+    menu.addItem((item) =>
+      item
+        .setTitle("Start IR review")
+        .setIcon("brain-circuit")
+        .onClick(() => void this.startReview()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Go neural")
+        .setIcon("network")
+        .onClick(() => void this.startNeuralReviewFromActiveNote()),
+    );
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("Open IR element tree")
+        .setIcon("list-tree")
+        .onClick(() => void this.openTreeView()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("IR quick actions")
+        .setIcon("layout-list")
+        .onClick(() => void this.openIrActionsHub()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Mark note as IR topic")
+        .setIcon("book-open")
+        .onClick(() => void this.markActiveFileAsTopic()),
+    );
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("Open IR session log")
+        .setIcon("history")
+        .onClick(() => void this.openSessionView()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Open IR stats")
+        .setIcon("bar-chart")
+        .onClick(() => void this.openStatsView()),
+    );
+    menu.showAtMouseEvent(evt);
+  }
+
+  /**
+   * Workspace restore of an IR review leaf has no live session. Rebuild
+   * today's due queue so the tab is usable, or return null so the view
+   * can detach instead of showing a dead pane.
+   */
+  private async restoreEmptyReviewSession(): Promise<{
+    queue: ReviewSlot[];
+    elementsById: Map<ElementId, IrElement>;
+    isNeural: boolean;
+  } | null> {
+    if (!this.store) return null;
+    const state = await this.store.load();
+    const queue = dueQueue(
+      this.app,
+      this.settings.reviewsPerReading,
+      state,
+      new Date(),
+      this.settings.interleaveSimilarPriority,
+    );
+    if (queue.length === 0) return null;
+    return { queue, elementsById: state.elements, isNeural: false };
   }
 
   private async extractSelection(
@@ -1518,8 +1583,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: no related elements found for Neural Review.");
       return;
     }
-    
-    new Notice(`Starting Neural Review: ${queue.length} elements found.`);
 
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     this.irReviewSession = { queue, elementsById: state.elements, isNeural: true };
@@ -1553,18 +1616,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: nothing due for review.");
       return;
     }
-    const counts = { topics: 0, extracts: 0, items: 0 };
-    for (const s of queue) {
-      const t = s.element.type;
-      if (t === "topic") counts.topics++;
-      else if (t === "extract") counts.extracts++;
-      else counts.items++;
-    }
-    const parts: string[] = [];
-    if (counts.topics > 0) parts.push(`${counts.topics} topic${counts.topics !== 1 ? "s" : ""}`);
-    if (counts.extracts > 0) parts.push(`${counts.extracts} extract${counts.extracts !== 1 ? "s" : ""}`);
-    if (counts.items > 0) parts.push(`${counts.items} item${counts.items !== 1 ? "s" : ""}`);
-    new Notice(`Starting review: ${parts.join(", ")} (${queue.length} total).`);
 
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     this.irReviewSession = { queue, elementsById: state.elements };
@@ -3055,11 +3106,15 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign(
-      {},
-      DEFAULT_SETTINGS,
-      (await this.loadData()) as Partial<IrSettings> | null,
-    );
+    const saved = (await this.loadData()) as Partial<IrSettings> | null;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    // New key: new vaults stay off (DEFAULT). Vaults that already had
+    // plugin data without this key keep the old always-on picker.
+    const resolved = resolveShowDivergencePicker(saved);
+    if (this.settings.showDivergencePicker !== resolved) {
+      this.settings.showDivergencePicker = resolved;
+      await this.saveSettings();
+    }
   }
 
   async saveSettings() {

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-08-13
+
+### Changed
+
+- **Scheduler divergence picker is now a setting** (DESIGN §5). New vaults
+  default to off: grades follow FSRS with no prompt. Existing installs are
+  grandfathered on (same as 0.6.0's always-on picker) until the user turns
+  **Settings → Show scheduler divergence picker** off.
+- **One ribbon icon.** Only **Start IR review** remains on the left ribbon.
+  Tree, quick actions, and mark-as-topic stay in the command palette; right-
+  click (or long-press) the status bar for the same menu.
+- **Review success feedback is in-dock.** Extract, cloze, dismiss, and undo
+  flash a one-line status in the review dock instead of a Notice. Failures
+  and "nothing due" still toast. Starting review no longer announces the
+  queue composition (the progress line already shows it).
+
+### Fixed
+
+- **Empty review tab after workspace restore.** A leftover IR review leaf
+  with no session now rebuilds today's due queue, or detaches if nothing is
+  due, instead of showing a dead "Close this tab then Alt+R" pane.
+
 ## [0.6.0] — 2026-08-13
 
 ### Added

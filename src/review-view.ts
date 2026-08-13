@@ -145,6 +145,11 @@ export class IrReviewView extends ItemView {
 
   /** Reading-position bookmarks loaded once on open, saved incrementally. */
   private bookmarks: BookmarkMap = {};
+  /** False until loadBookmarks succeeds — onClose must not persist {}. */
+  private bookmarksLoaded = false;
+  /** In-dock success line; survives the next renderCard until it fades. */
+  private pendingFlash: string | null = null;
+  private flashClearTimer: number | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -216,6 +221,16 @@ export class IrReviewView extends ItemView {
       id: ElementId,
       element: IrElement,
     ) => Promise<void>,
+    /**
+     * Workspace restore: this leaf exists with an empty queue. Return
+     * today's due queue to adopt, or null so onOpen can detach the tab
+     * instead of rendering a dead pane.
+     */
+    private readonly restoreEmptySession?: () => Promise<{
+      queue: ReviewSlot[];
+      elementsById: Map<ElementId, IrElement>;
+      isNeural: boolean;
+    } | null>,
   ) {
     super(leaf);
   }
@@ -243,7 +258,20 @@ export class IrReviewView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    if (this.queue.length === 0) {
+      const restored = await this.restoreEmptySession?.();
+      if (restored && restored.queue.length > 0) {
+        this.queue = restored.queue;
+        this.elementsById = restored.elementsById;
+        this.isNeural = restored.isNeural;
+      } else {
+        window.setTimeout(() => this.leaf.detach(), 0);
+        return;
+      }
+    }
+
     this.bookmarks = await this.store.loadBookmarks();
+    this.bookmarksLoaded = true;
     this.contentEl.addClass("ir-review-modal");
     this.contentEl.addClass("ir-review-layout");
     this.cardHostEl = this.contentEl.createDiv({ cls: "ir-review-card-host" });
@@ -415,6 +443,10 @@ export class IrReviewView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    if (this.flashClearTimer != null) {
+      window.clearTimeout(this.flashClearTimer);
+      this.flashClearTimer = null;
+    }
     this.captureBookmark();
     this.swipeGestureCleanup?.();
     this.swipeGestureCleanup = undefined;
@@ -426,6 +458,10 @@ export class IrReviewView extends ItemView {
     this.cardHostEl = undefined;
     this.contentEl.empty();
     this.onSlotChange?.(null);
+    if (!this.bookmarksLoaded) {
+      this.onChange?.();
+      return;
+    }
     void this.persistBookmarks()
       .then(() => this.store.reconcile())
       .catch((e) => {
@@ -1288,18 +1324,7 @@ export class IrReviewView extends ItemView {
     this.onSlotChange?.(slot ? slot.id : null);
     if (!slot) {
       this.contentEl.removeClass("ir-review-has-context");
-      const scroll = host.createDiv({ cls: "ir-review-scroll" });
-      scroll.createEl("h3", { text: "No active review session" });
-      scroll.createEl("p", {
-        text:
-          "This pane has no queue loaded. That usually means it was restored " +
-          "from a saved workspace (for example after a plugin update) while " +
-          "the review session data had already been cleared. Close this tab, " +
-          "then start review from the IR queue in the status bar or with Alt+R.",
-      });
-      scroll
-        .createEl("button", { text: "Close", cls: "mod-cta" })
-        .addEventListener("click", () => this.leaf.detach());
+      window.setTimeout(() => this.leaf.detach(), 0);
       return;
     }
 
@@ -1664,7 +1689,42 @@ export class IrReviewView extends ItemView {
           .addEventListener("click", () => void this.tryUndoLastGrade());
       }
     }
+    this.paintFlash();
     this.ensureFocus();
+  }
+
+  /** Cards still in this session, including the current one. */
+  private remainingInSession(): number {
+    return Math.max(0, this.queue.length - this.index);
+  }
+
+  /**
+   * One-line success feedback in the review dock. Notices are reserved
+   * for failures the user has to act on.
+   */
+  private flash(text: string): void {
+    this.pendingFlash = text;
+    this.paintFlash();
+  }
+
+  private paintFlash(): void {
+    const dock = this.contentEl.querySelector(".ir-review-dock");
+    if (!dock || !this.pendingFlash) return;
+    let el = dock.querySelector<HTMLElement>(".ir-review-flash");
+    if (!el) {
+      el = dock.createDiv({ cls: "ir-review-flash" });
+      dock.prepend(el);
+    }
+    el.setText(this.pendingFlash);
+    el.removeClass("ir-review-flash--out");
+    if (this.flashClearTimer != null) window.clearTimeout(this.flashClearTimer);
+    const text = this.pendingFlash;
+    this.flashClearTimer = window.setTimeout(() => {
+      if (this.pendingFlash === text) {
+        el?.addClass("ir-review-flash--out");
+        this.pendingFlash = null;
+      }
+    }, 2500);
   }
 
   /**
@@ -1687,9 +1747,7 @@ export class IrReviewView extends ItemView {
       new Notice("Incremental Reading: nothing to undo.");
       return;
     }
-    new Notice(
-      `Incremental Reading: undid grade for "${result.targetLabel}".`,
-    );
+    this.flash(`Undid grade for "${result.targetLabel}"`);
     if (this.index > 0) {
       const prev = this.queue[this.index - 1];
       if (prev && prev.element.id === result.targetId) {
@@ -2074,10 +2132,7 @@ export class IrReviewView extends ItemView {
       if (created && promote && this.commitPromoteExtract) {
         await this.commitPromoteExtract(created.id, created);
       } else if (!opts?.silent) {
-        const label = sourcePath.split("/").pop() ?? sourcePath;
-        new Notice(
-          `Extracted (anchored in "${label}", not a separate note).`,
-        );
+        this.flash(`Extracted · ${this.remainingInSession()} left`);
       }
       this.onChange?.();
     } catch (e) {
@@ -2286,7 +2341,7 @@ export class IrReviewView extends ItemView {
       await this.store.appendEvent(ev);
       const created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
-      new Notice(`Extracted (anchored in "${labelFor(created)}").`);
+      this.flash(`Extracted · ${this.remainingInSession()} left`);
       this.onChange?.();
     } catch (e) {
       console.error("Incremental Reading: anchored extract failed", e);
@@ -2397,7 +2452,7 @@ export class IrReviewView extends ItemView {
       this.settings,
       hint,
     );
-    await this.afterChildCreated(result, "Cloze item created:");
+    await this.afterChildCreated(result);
     if (!slot.file && result.file) {
       const id = elementIdForPath(result.file.path);
       await this.emit("reparented", id, { parentId: slot.id });
@@ -2411,6 +2466,9 @@ export class IrReviewView extends ItemView {
     // element, so there is no source-mutation step here any more.
     await this.reloadCurrentRaw();
     await this.renderCard();
+    if (result.file) {
+      this.flash(`Cloze item created · ${this.remainingInSession()} left`);
+    }
   }
 
   /**
@@ -2440,7 +2498,7 @@ export class IrReviewView extends ItemView {
     await saveBody(this.app, file, body);
     this.currentRaw = body;
     this.rawOnDisk = body;
-    new Notice(`Cloze c${groupN} added: "${answer}".`);
+    this.flash(`Cloze c${groupN} added`);
     this.onChange?.();
     await this.renderCard();
   }
@@ -2465,7 +2523,7 @@ export class IrReviewView extends ItemView {
     }
   }
 
-  private async afterChildCreated(result: IrNoteResult, verb: string) {
+  private async afterChildCreated(result: IrNoteResult) {
     if (!result.file) {
       new Notice(`Incremental Reading: ${result.error}`);
       return;
@@ -2489,7 +2547,6 @@ export class IrReviewView extends ItemView {
     } catch (e) {
       console.error("Incremental Reading: recording child element failed", e);
     }
-    new Notice(`${verb} "${result.file.basename}".`);
   }
 
   private advance(doneVerb: string) {
@@ -2530,9 +2587,10 @@ export class IrReviewView extends ItemView {
     const next = schedule(storedToCard(slot.element.card), g);
     const stored = cardToStored(next);
 
-    const div = slot.element.card
-      ? checkGradeDivergence(slot.element.card, stored, g, Date.now())
-      : null;
+    const div =
+      this.settings.showDivergencePicker && slot.element.card
+        ? checkGradeDivergence(slot.element.card, stored, g, Date.now())
+        : null;
 
     if (div) {
       this.showDivergencePicker(slot, g, next, stored, div);
@@ -2672,7 +2730,9 @@ export class IrReviewView extends ItemView {
     await this.emit("dismiss-set", slot.id, { dismissed: true });
     slot.element = { ...slot.element, dismissed: true };
     if (slot.file) await setDismissed(this.app, slot.file, true);
-    new Notice(`Dismissed "${slot.file?.basename ?? slot.id}".`);
+    if (this.index + 1 < this.queue.length) {
+      this.flash(`Dismissed · ${this.queue.length - this.index - 1} left`);
+    }
     this.advance("Session complete");
   }
 }
