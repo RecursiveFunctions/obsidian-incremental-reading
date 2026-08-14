@@ -1368,9 +1368,27 @@
 /* Row representing the slot the user is reviewing right now. Makes
  * position-in-tree obvious while the review pane is open. */
 .ir-tree-row--current {
-  background-color: var(--background-modifier-active-hover);
+  background-color: var(--background-modifier-hover);
   border-radius: var(--radius-s);
-  box-shadow: inset 2px 0 0 var(--text-accent);
+  box-shadow: inset 3px 0 0 var(--interactive-accent);
+}
+
+.ir-tree-row--current .ir-tree-title {
+  font-weight: var(--font-semibold, 600);
+}
+
+.ir-tree-reviewing {
+  margin-left: 0.4em;
+  padding: 0 0.35em;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  border-radius: var(--radius-s);
+}
+
+.ir-tree-row--focused {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
 }
 
 .ir-tree-row--dragging {
@@ -1543,6 +1561,32 @@
 
 .ir-review-flash--out {
   opacity: 0;
+}
+
+.ir-review-reanchor-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em 0.75em;
+  margin: 0.5em 0 0.75em;
+  padding: 0.55em 0.7em;
+  font-size: var(--font-ui-small);
+  background: var(--background-modifier-error);
+  border-radius: var(--radius-s);
+}
+
+.ir-review-reanchor-banner--detached {
+  background: var(--background-modifier-hover);
+}
+
+.ir-review-reanchor-msg {
+  flex: 1 1 12em;
+}
+
+.ir-review-reanchor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35em;
 }
 
 /* Inline cloze hint bar (replaces modal — commitment #6) */

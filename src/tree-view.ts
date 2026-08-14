@@ -18,6 +18,12 @@ import {
   rangeSelectIds,
   TreeNode,
 } from "./ir/tree";
+import {
+  treeClickKind,
+  treeKeyCommand,
+  treeNavId,
+  treeRowCollapsed,
+} from "./ir/tree-nav";
 import { treeRowLabel } from "./ir/labels";
 import { clampPriority, type IrElement, type IrType } from "./ir/model";
 import type { ElementId } from "./ir/ids";
@@ -139,6 +145,12 @@ export class IrTreeView extends ItemView {
    */
   private currentElementId: ElementId | null = null;
 
+  /** Keyboard / click focus; independent of the review highlight. */
+  private focusedId: string | null = null;
+
+  /** Delayed single-click so a double-click can cancel "reveal or open". */
+  private pendingClickTimer: number | null = null;
+
   constructor(
     leaf: WorkspaceLeaf,
     store: IrStore,
@@ -157,6 +169,11 @@ export class IrTreeView extends ItemView {
      */
     private readonly resumeReading?: (id: ElementId) => Promise<boolean>,
     private readonly startNeuralReview?: (id: ElementId) => void,
+    /**
+     * If a review session is open, jump its cursor to this id. Returns
+     * false when there is no session or the id is not in that queue.
+     */
+    private readonly revealInReview?: (id: ElementId) => boolean,
   ) {
     super(leaf);
     this.store = store;
@@ -175,6 +192,9 @@ export class IrTreeView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    this.registerDomEvent(this.contentEl, "keydown", (evt: KeyboardEvent) => {
+      this.onTreeKey(evt);
+    });
     await this.render();
   }
 
@@ -472,7 +492,6 @@ export class IrTreeView extends ItemView {
         this.lastRenderedRoots = [];
         return;
       }
-      for (const id of this.lastNodeIds) this.collapsed.delete(id);
     }
     this.lastNodeIds = this.collectNodeIds(roots);
     this.lastRenderedRoots = roots;
@@ -511,9 +530,33 @@ export class IrTreeView extends ItemView {
       });
     }
 
-    const ul = body.createEl("ul", { cls: "ir-tree-root" });
+    const ul = body.createEl("ul", { cls: "ir-tree-root", attr: { role: "tree" } });
+    const orderPreview: string[] = [];
+    const walkIds = (n: TreeNode): void => {
+      orderPreview.push(n.id);
+      if (this.rowIsCollapsed(n.id)) return;
+      for (const c of n.children) walkIds(c);
+    };
+    for (const root of roots) walkIds(root);
+    if (!this.focusedId || !orderPreview.includes(this.focusedId)) {
+      this.focusedId =
+        (this.currentElementId && orderPreview.includes(this.currentElementId)
+          ? this.currentElementId
+          : orderPreview[0]) ?? null;
+    }
     for (const root of roots) {
       this.renderNode(ul, root);
+    }
+    if (this.currentElementId) this.scrollCurrentIntoView();
+    if (!this.filterText && this.focusedId) {
+      const keep = this.focusedId;
+      requestAnimationFrame(() => {
+        this.contentEl
+          .querySelector<HTMLElement>(
+            `.ir-tree-row[data-ir-tree-id="${CSS.escape(keep)}"]`,
+          )
+          ?.focus();
+      });
     }
   }
 
@@ -696,11 +739,245 @@ export class IrTreeView extends ItemView {
     const out: string[] = [];
     const walk = (n: TreeNode): void => {
       out.push(n.id);
-      if (this.collapsed.has(n.id)) return;
+      if (this.rowIsCollapsed(n.id)) return;
       for (const c of n.children) walk(c);
     };
     for (const r of this.lastRenderedRoots) walk(r);
     return out;
+  }
+
+  private filterForcesExpand(): boolean {
+    return this.filterText.trim().length > 0 || this.visibleTypes.size < 3;
+  }
+
+  private rowIsCollapsed(id: string): boolean {
+    return treeRowCollapsed(this.collapsed, id, this.filterForcesExpand());
+  }
+
+  private findRenderedNode(id: string): TreeNode | null {
+    const walk = (nodes: TreeNode[]): TreeNode | null => {
+      for (const n of nodes) {
+        if (n.id === id) return n;
+        const found = walk(n.children);
+        if (found) return found;
+      }
+      return null;
+    };
+    return walk(this.lastRenderedRoots);
+  }
+
+  private cancelPendingClick(): void {
+    if (this.pendingClickTimer !== null) {
+      window.clearTimeout(this.pendingClickTimer);
+      this.pendingClickTimer = null;
+    }
+  }
+
+  private onRowClick(
+    e: MouseEvent,
+    node: TreeNode,
+    titleTarget: string | null,
+  ): void {
+    const kind = treeClickKind({
+      metaKey: e.metaKey,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      detail: e.detail,
+    });
+    if (kind === "select") {
+      e.preventDefault();
+      this.cancelPendingClick();
+      if (e.shiftKey) this.extendRowSelectionTo(node.id);
+      else this.toggleRowSelection(node.id);
+      this.focusedId = node.id;
+      void this.render();
+      return;
+    }
+    this.focusedId = node.id;
+    if (kind === "open-note") {
+      this.cancelPendingClick();
+      if (titleTarget) void this.openNote(titleTarget, node.element);
+      return;
+    }
+    this.cancelPendingClick();
+    this.pendingClickTimer = window.setTimeout(() => {
+      this.pendingClickTimer = null;
+      void this.revealOrOpen(node);
+    }, 300);
+  }
+
+  private async revealOrOpen(node: TreeNode): Promise<void> {
+    if (this.revealInReview?.(node.id as ElementId)) return;
+    const path = node.element.notePath ?? node.element.anchor?.sourcePath;
+    if (path) await this.openNote(path, node.element);
+  }
+
+  private async enterReview(id: string): Promise<void> {
+    if (this.revealInReview?.(id as ElementId)) return;
+    if (this.resumeReading) {
+      await this.resumeReading(id as ElementId);
+      return;
+    }
+    const node = this.findRenderedNode(id);
+    if (node) await this.revealOrOpen(node);
+  }
+
+  private focusId(id: string | null): void {
+    this.focusedId = id;
+    const order = this.visibleNodeOrder();
+    const rows = Array.from(
+      this.contentEl.querySelectorAll<HTMLElement>(".ir-tree-row"),
+    );
+    for (const row of rows) {
+      const rid = row.getAttribute("data-ir-tree-id");
+      const on = rid === id;
+      row.toggleClass("ir-tree-row--focused", on);
+      row.setAttribute("tabindex", on ? "0" : "-1");
+    }
+    const el = this.contentEl.querySelector<HTMLElement>(
+      `.ir-tree-row[data-ir-tree-id="${CSS.escape(id ?? "")}"]`,
+    );
+    el?.focus();
+    el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (id && !order.includes(id) && order[0]) {
+      this.focusedId = order[0];
+    }
+  }
+
+  private onTreeKey(evt: KeyboardEvent): void {
+    const t = evt.target;
+    if (
+      t instanceof HTMLInputElement ||
+      t instanceof HTMLTextAreaElement ||
+      (t instanceof HTMLElement && t.isContentEditable)
+    ) {
+      return;
+    }
+    const cmd = treeKeyCommand({
+      key: evt.key,
+      altKey: evt.altKey,
+      ctrlKey: evt.ctrlKey,
+      metaKey: evt.metaKey,
+    });
+    if (!cmd) return;
+    evt.preventDefault();
+    const order = this.visibleNodeOrder();
+    const current =
+      this.focusedId && order.includes(this.focusedId)
+        ? this.focusedId
+        : (this.currentElementId && order.includes(this.currentElementId)
+            ? this.currentElementId
+            : (order[0] ?? null));
+    if (cmd.kind === "move") {
+      this.focusId(treeNavId(order, current, cmd.delta));
+      return;
+    }
+    if (!current) return;
+    const node = this.findRenderedNode(current);
+    if (!node) return;
+    if (cmd.kind === "enter-review") {
+      void this.enterReview(current);
+      return;
+    }
+    if (cmd.kind === "open-note") {
+      const path = node.element.notePath ?? node.element.anchor?.sourcePath;
+      if (path) void this.openNote(path, node.element);
+      return;
+    }
+    if (cmd.kind === "priority") {
+      const wrap = this.contentEl.querySelector<HTMLElement>(
+        `.ir-tree-priority-wrap[data-ir-element-id="${CSS.escape(current)}"]`,
+      );
+      if (!wrap) return;
+      const abs = node.element.notePath
+        ? this.app.vault.getAbstractFileByPath(node.element.notePath)
+        : null;
+      const file = abs instanceof TFile ? abs : null;
+      this.beginPriorityEdit(
+        wrap,
+        current as ElementId,
+        file,
+        node.element.priority,
+      );
+      return;
+    }
+    if (cmd.kind === "dismiss" && this.commitDismiss) {
+      const abs = node.element.notePath
+        ? this.app.vault.getAbstractFileByPath(node.element.notePath)
+        : null;
+      const file = abs instanceof TFile ? abs : null;
+      void (async () => {
+        await this.commitDismiss!(
+          current as ElementId,
+          file,
+          !node.element.dismissed,
+        );
+        void this.render();
+      })();
+      return;
+    }
+    if (cmd.kind === "postpone") {
+      this.showPostponeMenuAtRow(current, node);
+      return;
+    }
+    if (cmd.kind === "toggle-collapse") {
+      this.toggleCollapse(node);
+      return;
+    }
+    if (cmd.kind === "collapse-or-parent") {
+      if (node.children.length > 0 && !this.rowIsCollapsed(node.id)) {
+        this.collapsed.add(node.id);
+        void this.render().then(() => this.focusId(current));
+        return;
+      }
+      if (node.element.parentId) this.focusId(node.element.parentId);
+      return;
+    }
+    if (cmd.kind === "expand-or-child") {
+      if (node.children.length > 0 && this.rowIsCollapsed(node.id)) {
+        this.collapsed.delete(node.id);
+        void this.render().then(() => this.focusId(current));
+        return;
+      }
+      if (node.children[0]) this.focusId(node.children[0].id);
+    }
+  }
+
+  private toggleCollapse(node: TreeNode): void {
+    if (node.children.length === 0) return;
+    if (this.collapsed.has(node.id)) this.collapsed.delete(node.id);
+    else this.collapsed.add(node.id);
+    const keep = node.id;
+    void this.render().then(() => this.focusId(keep));
+  }
+
+  private showPostponeMenuAtRow(id: string, node: TreeNode): void {
+    if (!this.commitPostpone || node.element.dismissed) return;
+    const row = this.contentEl.querySelector<HTMLElement>(
+      `.ir-tree-row[data-ir-tree-id="${CSS.escape(id)}"]`,
+    );
+    if (!row) return;
+    const abs = node.element.notePath
+      ? this.app.vault.getAbstractFileByPath(node.element.notePath)
+      : null;
+    const file = abs instanceof TFile ? abs : null;
+    const rect = row.getBoundingClientRect();
+    const menu = new Menu();
+    for (const days of [1, 3, 7, 14, 30]) {
+      const label = days === 1 ? "1 day" : `${days} days`;
+      menu.addItem((item) =>
+        item
+          .setTitle(`Postpone ${label}`)
+          .setIcon("clock")
+          .onClick(() => {
+            void (async () => {
+              await this.commitPostpone!(id as ElementId, file, days);
+              void this.render();
+            })();
+          }),
+      );
+    }
+    menu.showAtPosition({ x: rect.left, y: rect.bottom });
   }
 
   private toggleRowSelection(id: string): void {
@@ -1117,14 +1394,20 @@ export class IrTreeView extends ItemView {
     const li = parent.createEl("li", { cls: "ir-tree-node" });
 
     const row = li.createDiv({ cls: "ir-tree-row" });
+    row.setAttribute("data-ir-tree-id", node.id);
+    row.setAttribute("role", "treeitem");
+    row.setAttribute("tabindex", this.focusedId === node.id ? "0" : "-1");
     if (this.currentElementId && node.id === this.currentElementId) {
       row.addClass("ir-tree-row--current");
+    }
+    if (this.focusedId === node.id) {
+      row.addClass("ir-tree-row--focused");
     }
     if (this.selectedIds.has(node.id)) {
       row.addClass("ir-tree-row--selected");
     }
     const hasChildren = node.children.length > 0;
-    const isCollapsed = this.collapsed.has(node.id);
+    const isCollapsed = this.rowIsCollapsed(node.id);
 
     if (hasChildren) {
       const toggle = row.createSpan({ cls: "ir-tree-toggle" });
@@ -1152,39 +1435,22 @@ export class IrTreeView extends ItemView {
       cls: "ir-tree-title",
       text: label,
     });
-    // Anchored extracts have no `notePath` (they live in the store; their
-    // text lives inside the parent note's body). Fall back to the anchor's
-    // source path so the row stays clickable and jumps to where the extract
-    // lives in the vault. Without this, only promoted extracts and items
-    // are reachable from the tree.
     const titleTarget =
       node.element.notePath ?? node.element.anchor?.sourcePath ?? null;
     if (titleTarget) {
       titleEl.addClass("ir-tree-link");
-      titleEl.addEventListener("click", (e) => {
-        // Modifier clicks belong to multi-select; suppress navigation so a
-        // shift-click that extends the selection doesn't also yank the
-        // user into a different note.
-        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-        void this.openNote(titleTarget, node.element);
-      });
+    }
+    if (this.currentElementId && node.id === this.currentElementId) {
+      row.createSpan({ cls: "ir-tree-reviewing", text: "reviewing" });
     }
 
     row.addEventListener("click", (e) => {
-      // Click handlers further inside the row (the title link, priority
-      // controls, action buttons) call stopPropagation when they want to
-      // own the gesture. What lands here is "user clicked the row, but no
-      // inner control claimed it" — exactly the gesture we want to map to
-      // multi-select on modifier keys.
-      if (e.metaKey || e.ctrlKey) {
-        e.preventDefault();
-        this.toggleRowSelection(node.id);
-        void this.render();
-      } else if (e.shiftKey) {
-        e.preventDefault();
-        this.extendRowSelectionTo(node.id);
-        void this.render();
-      }
+      this.onRowClick(e, node, titleTarget);
+    });
+    row.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      this.cancelPendingClick();
+      if (titleTarget) void this.openNote(titleTarget, node.element);
     });
 
     const notePath = node.element.notePath ?? "";

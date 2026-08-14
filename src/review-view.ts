@@ -63,6 +63,7 @@ import {
 } from "./ir/labels";
 import { buildExtractEvent, buildTextEditedEvent } from "./ir/extract";
 import { newElementId, newEventId, type ElementId } from "./ir/ids";
+import { shouldShowReanchorBanner } from "./ir/tree-nav";
 import type { ReviewSlot } from "./review";
 import {
   contextSourceParentId,
@@ -248,6 +249,14 @@ export class IrReviewView extends ItemView {
       elementsById: Map<ElementId, IrElement>;
       isNeural: boolean;
     } | null>,
+    private readonly commitReanchor?: (
+      id: ElementId,
+      element: IrElement,
+    ) => Promise<boolean>,
+    private readonly commitDetachAnchor?: (
+      id: ElementId,
+      element: IrElement,
+    ) => Promise<void>,
   ) {
     super(leaf);
   }
@@ -1479,6 +1488,7 @@ export class IrReviewView extends ItemView {
         text: `${kind}  ·  ${label}`,
       });
       this.renderResumeChrome(scroll, slot);
+      this.renderReanchorBanner(scroll, slot);
 
       const ancestors = ancestorChain(slot.element, this.elementsById);
       if (ancestors.length > 0) {
@@ -1698,6 +1708,27 @@ export class IrReviewView extends ItemView {
     void this.renderCard();
   }
 
+  /**
+   * Jump the session cursor to `id` if that card is in this queue.
+   * Used by the element tree's click policy.
+   */
+  jumpToElement(id: ElementId): boolean {
+    const i = this.queue.findIndex((s) => s.id === id);
+    if (i < 0) return false;
+    if (i === this.index && !this.sessionComplete) return true;
+    void (async () => {
+      await this.flushEdits();
+      void this.persistBookmarks();
+      this.index = i;
+      this.revealed = false;
+      this.editing = false;
+      this.loadedSlotId = null;
+      this.sessionComplete = false;
+      void this.renderCard();
+    })();
+    return true;
+  }
+
   private paintSessionBar(): void {
     const bar = this.sessionBarEl;
     if (!bar) return;
@@ -1794,6 +1825,77 @@ export class IrReviewView extends ItemView {
         }
         row.remove();
       });
+  }
+
+  private renderReanchorBanner(parent: HTMLElement, slot: ReviewSlot): void {
+    if (!shouldShowReanchorBanner(slot.element.anchorState)) return;
+    const detached = slot.element.anchorState === "detached";
+    const banner = parent.createDiv({
+      cls: detached
+        ? "ir-review-reanchor-banner ir-review-reanchor-banner--detached"
+        : "ir-review-reanchor-banner",
+    });
+    banner.createSpan({
+      cls: "ir-review-reanchor-msg",
+      text: detached
+        ? "Source is gone. This extract survives on stored text."
+        : "This extract’s place in the source has drifted.",
+    });
+    const actions = banner.createDiv({ cls: "ir-review-reanchor-actions" });
+    if (!detached && this.commitReanchor) {
+      actions
+        .createEl("button", {
+          cls: "mod-cta",
+          type: "button",
+          text: "Re-anchor",
+        })
+        .addEventListener("click", () => {
+          void (async () => {
+            const ok = await this.commitReanchor!(slot.id, slot.element);
+            if (!ok) {
+              new Notice("Could not re-anchor: text not found in source.");
+              return;
+            }
+            const state = await this.store.load();
+            const updated = state.elements.get(slot.id);
+            if (updated) {
+              slot.element = updated;
+              this.elementsById.set(slot.id, updated);
+            }
+            this.flash("Anchor repaired");
+            void this.renderCard();
+          })();
+        });
+    }
+    if (!detached && this.commitDetachAnchor) {
+      actions
+        .createEl("button", { type: "button", text: "Detach" })
+        .addEventListener("click", () => {
+          void (async () => {
+            await this.commitDetachAnchor!(slot.id, slot.element);
+            const state = await this.store.load();
+            const updated = state.elements.get(slot.id);
+            if (updated) {
+              slot.element = updated;
+              this.elementsById.set(slot.id, updated);
+            }
+            void this.renderCard();
+          })();
+        });
+    }
+    const sourcePath = slot.element.anchor?.sourcePath;
+    if (sourcePath) {
+      actions
+        .createEl("button", { type: "button", text: "Open source" })
+        .addEventListener("click", () => {
+          const file = this.app.vault.getAbstractFileByPath(sourcePath);
+          if (!(file instanceof TFile)) {
+            new Notice(`Incremental Reading: source "${sourcePath}" not found.`);
+            return;
+          }
+          void this.app.workspace.getLeaf(false).openFile(file);
+        });
+    }
   }
 
   /**

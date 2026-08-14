@@ -77,6 +77,8 @@ Defaults include **`Space`** / **`Enter`** for the next reading card, **`[`** fo
 
 On **mobile portrait**, the review dock shows primary actions only (**Extract**, **Cloze**, **Next** / grade buttons); tap **⋯** for Edit, Previous, Later today, Dismiss, and Undo. **Priority** and **A-Factor** collapse to a **P … · A …** chip — tap to edit. Swipe the card for the same navigation and grading gestures; a one-time notice explains the directions when review starts.
 
+In the **IR element tree**, `j`/`k` or arrows move; **Enter** opens or jumps review; **`o`** opens the note; **`p`** edits priority; **`d`** dismisses; **`m`** postpones; **Space** toggles collapse. A single click reveals the row in an open review session (or opens the note); double-click always opens the note. Extracts whose source has drifted show a **Re-anchor / Detach / Open source** banner on the review card.
+
 ## Mobile toolbar
 
 Obsidian’s mobile editor toolbar is user-configured (**Settings → Mobile → Configure mobile toolbar**). The plugin cannot reorder it, but these commands are the most useful to pin near the front (left side of the toolbar, before formatting icons):

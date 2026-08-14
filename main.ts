@@ -347,6 +347,8 @@ export default class IncrementalReadingPlugin extends Plugin {
           (elementId) => void this.forkStoreExtract(elementId),
           (elementId) => this.resumeReadingBookmark(elementId),
           (elementId) => void this.startNeuralReview(elementId, null),
+          (elementId) =>
+            this.getActiveReviewView()?.jumpToElement(elementId) ?? false,
         );
       },
     );
@@ -403,6 +405,8 @@ export default class IncrementalReadingPlugin extends Plugin {
           () => this.refreshExtractDecorations(),
           (id, el) => this.applyIrPromote(id, el),
           () => this.restoreEmptyReviewSession(),
+          (id, el) => this.applyIrReanchor(id, el),
+          (id, el) => this.applyIrDetachAnchor(id, el),
         );
       },
     );
@@ -2063,6 +2067,27 @@ export default class IncrementalReadingPlugin extends Plugin {
       console.error("Incremental Reading: reconcile after re-anchor failed", e);
     });
     return true;
+  }
+
+  /** Mark a drifted extract as detached; it keeps stored text for review. */
+  private async applyIrDetachAnchor(
+    elementId: ElementId,
+    _element: IrElement,
+  ): Promise<void> {
+    if (!this.store) return;
+    await this.store.appendEvent({
+      id: newEventId(),
+      ts: Date.now(),
+      lamport: Date.now(),
+      device: await this.store.getDeviceId(),
+      kind: "anchor-detached",
+      target: elementId,
+      payload: {},
+    });
+    await this.store.reconcile().catch((e) => {
+      console.error("Incremental Reading: reconcile after detach failed", e);
+    });
+    void this.refreshStatusBar();
   }
 
   /** Move an element to a new parent via a reparented event. */

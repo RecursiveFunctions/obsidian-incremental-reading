@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-08-13
+
+### Changed
+
+- **Tree is a keyboard home.** `j`/`k` or arrows move; Enter opens (or
+  jumps) review; `o` opens the note; `p` edits priority; `d` dismisses;
+  `m` postpones; Space toggles collapse. Click a row to reveal it in an
+  open review session, or open the note if none is running. Double-click
+  always opens the note. Expand/collapse survives filter and Refresh; the
+  current review card keeps a **reviewing** chip.
+- **Needs-reanchor banner on the review card** with Re-anchor / Detach /
+  Open source, instead of only a tree context-menu item.
+
 ## [0.6.4] — 2026-08-13
 
 ### Fixed
