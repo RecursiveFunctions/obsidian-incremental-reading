@@ -10,6 +10,7 @@ import {
   GROUP_P,
   WIKILINK_DEGREE_CAP,
   capWikilinkNeighbors,
+  type NeuralEdgeKind,
   type NeuralNeighbor,
 } from "./neural";
 
@@ -40,20 +41,39 @@ export function buildNeuralAdjacency(
   opts?: { useTags?: boolean; tagDegreeCap?: number },
 ): NeuralAdjacency {
   const adj: NeuralAdjacency = new Map();
-  const add = (from: string, to: string, groupP: number) => {
+  const add = (
+    from: string,
+    to: string,
+    groupP: number,
+    kind: NeuralEdgeKind,
+    tag?: string,
+  ) => {
     if (from === to) return;
     const list = adj.get(from) ?? [];
     const existing = list.find((n) => n.id === to);
     if (existing) {
-      if (groupP < existing.groupP) existing.groupP = groupP;
+      if (groupP < existing.groupP) {
+        existing.groupP = groupP;
+        existing.kind = kind;
+        if (tag) existing.tag = tag;
+        else delete existing.tag;
+      }
       return;
     }
-    list.push({ id: to, groupP });
+    const n: NeuralNeighbor = { id: to, groupP, kind };
+    if (tag) n.tag = tag;
+    list.push(n);
     adj.set(from, list);
   };
-  const addUndirected = (a: string, b: string, groupP: number) => {
-    add(a, b, groupP);
-    add(b, a, groupP);
+  const addUndirected = (
+    a: string,
+    b: string,
+    groupP: number,
+    kind: NeuralEdgeKind,
+    tag?: string,
+  ) => {
+    add(a, b, groupP, kind, tag);
+    add(b, a, groupP, kind, tag);
   };
 
   const elements = [...state.elements.values()];
@@ -76,9 +96,12 @@ export function buildNeuralAdjacency(
   for (const el of elements) {
     if (el.parentId && state.elements.has(el.parentId as ElementId)) {
       const parent = state.elements.get(el.parentId as ElementId)!;
-      const parentP = parent.parentId === null ? GROUP_P.rootParent : GROUP_P.parent;
-      add(el.id, parent.id, parentP);
-      add(parent.id, el.id, GROUP_P.child);
+      const parentKind: NeuralEdgeKind =
+        parent.parentId === null ? "rootParent" : "parent";
+      const parentP =
+        parentKind === "rootParent" ? GROUP_P.rootParent : GROUP_P.parent;
+      add(el.id, parent.id, parentP, parentKind);
+      add(parent.id, el.id, GROUP_P.child, "child");
     }
   }
 
@@ -94,7 +117,7 @@ export function buildNeuralAdjacency(
         const groupP =
           GROUP_P.sibling +
           (dist / Math.max(n - 1, 1)) * (GROUP_P.siblingFar - GROUP_P.sibling);
-        addUndirected(sorted[i]!.id, sorted[j]!.id, groupP);
+        addUndirected(sorted[i]!.id, sorted[j]!.id, groupP, "sibling");
       }
     }
   }
@@ -103,7 +126,7 @@ export function buildNeuralAdjacency(
     if (occupants.length < 2) continue;
     for (let i = 0; i < occupants.length; i++) {
       for (let j = i + 1; j < occupants.length; j++) {
-        addUndirected(occupants[i]!.id, occupants[j]!.id, GROUP_P.child);
+        addUndirected(occupants[i]!.id, occupants[j]!.id, GROUP_P.child, "child");
       }
     }
   }
@@ -116,7 +139,7 @@ export function buildNeuralAdjacency(
     for (const destPath of capped) {
       for (const dest of byNote.get(destPath) ?? []) {
         if (dest.notePath === destPath) {
-          addUndirected(el.id, dest.id, GROUP_P.wikilink);
+          addUndirected(el.id, dest.id, GROUP_P.wikilink, "wikilink");
         }
       }
     }
@@ -131,11 +154,11 @@ export function buildNeuralAdjacency(
         push(byTag, tag, el);
       }
     }
-    for (const members of byTag.values()) {
+    for (const [tag, members] of byTag.entries()) {
       if (members.length < 2 || members.length > cap) continue;
       for (let i = 0; i < members.length; i++) {
         for (let j = i + 1; j < members.length; j++) {
-          addUndirected(members[i]!.id, members[j]!.id, GROUP_P.tag);
+          addUndirected(members[i]!.id, members[j]!.id, GROUP_P.tag, "tag", tag);
         }
       }
     }
@@ -153,7 +176,7 @@ export function neighborsForWalk(
   const wiki: NeuralNeighbor[] = [];
   const rest: NeuralNeighbor[] = [];
   for (const n of all) {
-    (n.groupP === GROUP_P.wikilink ? wiki : rest).push(n);
+    (n.kind === "wikilink" ? wiki : rest).push(n);
   }
   wiki.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return rest.concat(wiki.slice(0, WIKILINK_DEGREE_CAP));

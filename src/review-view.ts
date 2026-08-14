@@ -63,6 +63,7 @@ import {
 } from "./ir/labels";
 import { buildExtractEvent, buildTextEditedEvent } from "./ir/extract";
 import { newElementId, newEventId, type ElementId } from "./ir/ids";
+import { neuralViaLabel } from "./ir/neural";
 import { shouldShowReanchorBanner } from "./ir/tree-nav";
 import type { ReviewSlot } from "./review";
 import {
@@ -163,6 +164,8 @@ export class IrReviewView extends ItemView {
   private sessionBarEl?: HTMLElement;
   /** True after the last card is graded/advanced; show complete state, don't detach. */
   private sessionComplete = false;
+  /** Esc ended neural mid-pass (distinct copy from finishing the queue). */
+  private neuralEndedEarly = false;
   /** Frozen label of the first card (neural seed / session identity). */
   private sessionSeedLabel = "";
   /** Latest source-context availability, for the mobile Source chip. */
@@ -260,6 +263,8 @@ export class IrReviewView extends ItemView {
       id: ElementId,
       element: IrElement,
     ) => Promise<void>,
+    /** End neural and start today's due queue (session-complete / Esc). */
+    private readonly startOutstandingDue?: () => void,
   ) {
     super(leaf);
   }
@@ -363,11 +368,18 @@ export class IrReviewView extends ItemView {
         this.leaf.detach();
         return false;
       }
-      if (!this.editing) return; // pass through to Obsidian's default
-      evt.preventDefault();
-      this.editing = false;
-      void this.renderCard();
-      return false;
+      if (this.editing) {
+        evt.preventDefault();
+        this.editing = false;
+        void this.renderCard();
+        return false;
+      }
+      if (this.isNeural) {
+        evt.preventDefault();
+        this.endNeuralMode();
+        return false;
+      }
+      return;
     });
 
     this.registerDomEvent(this.contentEl, "keydown", (evt: KeyboardEvent) => {
@@ -1345,15 +1357,18 @@ export class IrReviewView extends ItemView {
     this.syncMobileEditChrome();
 
     const slot = this.current;
+    if (this.sessionComplete) {
+      this.hasSourceContext = false;
+      this.contentEl.removeClass("ir-review-has-context");
+      this.onSlotChange?.(null);
+      this.paintSessionBar();
+      this.renderSessionComplete(host);
+      return;
+    }
     this.onSlotChange?.(slot ? slot.id : null);
     if (!slot) {
       this.hasSourceContext = false;
       this.contentEl.removeClass("ir-review-has-context");
-      if (this.sessionComplete) {
-        this.paintSessionBar();
-        this.renderSessionComplete(host);
-        return;
-      }
       window.setTimeout(() => this.leaf.detach(), 0);
       return;
     }
@@ -1743,15 +1758,38 @@ export class IrReviewView extends ItemView {
     const pct = this.sessionComplete ? 100 : donePct;
 
     const row = bar.createDiv({ cls: "ir-review-session-row" });
+    const chip = row.createSpan({
+      cls: this.isNeural
+        ? "ir-review-mode-chip ir-review-mode-chip--neural"
+        : "ir-review-mode-chip ir-review-mode-chip--due",
+      text: this.sessionComplete
+        ? "Done"
+        : this.isNeural
+          ? "Neural"
+          : "Due",
+    });
+    chip.setAttr("aria-hidden", "true");
     row.createSpan({
       cls: "ir-review-session-label",
-      text: sessionBarLabel({
+      text: this.sessionComplete
+        ? this.neuralEndedEarly
+          ? "Neural session ended"
+          : "Session complete"
+        : this.isNeural
+          ? this.sessionSeedLabel
+            ? `${remaining} left · ${this.sessionSeedLabel}`
+            : `${remaining} left`
+          : `${remaining} left`,
+    });
+    bar.setAttr(
+      "aria-label",
+      sessionBarLabel({
         done: this.sessionComplete,
         isNeural: this.isNeural,
         remaining,
         seedLabel: this.isNeural ? this.sessionSeedLabel : undefined,
       }),
-    });
+    );
     if (
       Platform.isMobile &&
       this.hasSourceContext &&
@@ -1772,27 +1810,66 @@ export class IrReviewView extends ItemView {
       });
     }
 
+    if (this.isNeural && !this.sessionComplete) {
+      const via = this.current?.neuralVia;
+      if (via) {
+        const fromEl = this.elementsById.get(via.fromId as ElementId);
+        const fromLabel = fromEl ? labelFor(fromEl) : via.fromId;
+        bar.createDiv({
+          cls: "ir-review-neural-via",
+          text: neuralViaLabel(via, fromLabel),
+        });
+      }
+    }
+
     const track = bar.createDiv({ cls: "ir-review-session-track" });
     const fill = track.createDiv({ cls: "ir-review-session-fill" });
     fill.style.width = `${pct}%`;
   }
 
+  private endNeuralMode(): void {
+    this.neuralEndedEarly = true;
+    this.sessionComplete = true;
+    this.editing = false;
+    void this.flushEdits();
+    void this.persistBookmarks();
+    void this.renderCard();
+  }
+
   private renderSessionComplete(host: HTMLElement): void {
     const scroll = host.createDiv({ cls: "ir-review-scroll" });
-    scroll.createEl("h3", { text: "Session complete" });
-    const n = this.queue.length;
-    scroll.createEl("p", {
-      text:
-        n === 1
-          ? "You finished 1 element in this pass."
-          : `You finished ${n} elements in this pass.`,
+    const neural = this.isNeural;
+    scroll.createEl("h3", {
+      text: this.neuralEndedEarly ? "Neural session ended" : "Session complete",
     });
+    if (!this.neuralEndedEarly) {
+      const n = this.queue.length;
+      scroll.createEl("p", {
+        text:
+          n === 1
+            ? "You finished 1 element in this pass."
+            : `You finished ${n} elements in this pass.`,
+      });
+    }
     scroll.createEl("p", {
       cls: "ir-review-complete-hint",
-      text: "Alt+R starts remaining due. Escape or Close leaves this tab.",
+      text: neural
+        ? "Start outstanding (Alt+R) for today's due queue. Escape or Close leaves this tab."
+        : "Alt+R starts remaining due. Escape or Close leaves this tab.",
     });
+    if (neural && this.startOutstandingDue) {
+      scroll
+        .createEl("button", {
+          text: "Start outstanding (Alt+R)",
+          cls: "mod-cta",
+        })
+        .addEventListener("click", () => this.startOutstandingDue?.());
+    }
     scroll
-      .createEl("button", { text: "Close", cls: "mod-cta" })
+      .createEl("button", {
+        text: "Close",
+        cls: neural && this.startOutstandingDue ? "" : "mod-cta",
+      })
       .addEventListener("click", () => this.leaf.detach());
   }
 

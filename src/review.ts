@@ -34,7 +34,7 @@ import type { LogState } from "./ir/log";
 import type { IrElement } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
-import { elementIdForNotePath, neuralWalk, NEURAL_MAX_QUEUE } from "./ir/neural";
+import { elementIdForNotePath, neuralWalkDetailed, NEURAL_MAX_QUEUE, type NeuralProvenance } from "./ir/neural";
 import {
   buildNeuralAdjacency,
   neighborsForWalk,
@@ -51,6 +51,8 @@ export interface ReviewSlot {
   id: ElementId;
   element: IrElement;
   file: TFile | null;
+  /** Winning inbound neural edge. Absent on due review and on the seed. */
+  neuralVia?: NeuralProvenance;
 }
 
 /**
@@ -123,7 +125,7 @@ export function neuralQueue(
     useTags: true,
     tagDegreeCap: 40,
   });
-  const ids = neuralWalk({
+  const walked = neuralWalkDetailed({
     seed: elementId,
     priorityOf: (id) => state.elements.get(id as ElementId)?.priority ?? 50,
     neighbors: (id) => neighborsForWalk(adj, id),
@@ -133,7 +135,7 @@ export function neuralQueue(
   });
 
   const slots: ReviewSlot[] = [];
-  for (const id of ids) {
+  for (const id of walked.sequence) {
     const el = state.elements.get(id as ElementId);
     if (!el) continue;
     let file: TFile | null = null;
@@ -142,7 +144,8 @@ export function neuralQueue(
       file = isVaultFile(af) ? af : null;
     }
     if (!file && !el.text) continue;
-    slots.push({ id: el.id, element: el, file });
+    const via = walked.provenance.get(id);
+    slots.push(via ? { id: el.id, element: el, file, neuralVia: via } : { id: el.id, element: el, file });
     if (slots.length >= NEURAL_MAX_QUEUE) break;
   }
   return slots;
@@ -224,6 +227,7 @@ export function upsertAfterCurrent(
       ...prev,
       element: child.element,
       file: child.file ?? prev.file,
+      neuralVia: child.neuralVia ?? prev.neuralVia,
     };
     return out;
   }
@@ -244,9 +248,12 @@ export function slotFromElement(app: App, el: IrElement): ReviewSlot | null {
   return { id: el.id, element: el, file };
 }
 
+export const EMPTY_NEURAL_COPY =
+  "No related IR elements. Add wikilinks, extract children, or mark linked notes as topics.";
+
 /**
  * Session chrome (distinct from the per-card title). `remaining` includes
- * the current card.
+ * the current card. Neural vs Due is a mode, not a `Neuro=` prefix.
  */
 export function sessionBarLabel(opts: {
   done: boolean;
@@ -256,10 +263,8 @@ export function sessionBarLabel(opts: {
 }): string {
   if (opts.done) return "Session complete";
   if (opts.isNeural) {
-    const n = `Neuro=${opts.remaining}`;
-    return opts.seedLabel
-      ? `Neural · ${n} · ${opts.seedLabel}`
-      : `Neural · ${n}`;
+    const rest = `${opts.remaining} left`;
+    return opts.seedLabel ? `Neural · ${rest} · ${opts.seedLabel}` : `Neural · ${rest}`;
   }
   return `Due · ${opts.remaining} left`;
 }

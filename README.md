@@ -49,7 +49,7 @@ Every IR command ships with a default `Alt+letter` binding. The full set:
 - `Alt+Shift+P`: promote the current anchored extract to a standalone note (review card, or the IR tree selection).
 - `Alt+Z`: cloze selection into a review item (optional SuperMemo-style hint; stored as `{{cN::answer::hint}}`, Anki-compatible).
 - `Alt+R`: start a review session (outstanding due queue).
-- `Alt+N`: **Go neural** — subset review from the current IR review card, IR note, or tree row, sequenced by spreading activation (tree + wikilinks + tags). Not due-gated; grading is a real repetition. Hidden unless you are already looking at something in IR.
+- `Alt+N`: **Go neural** — subset review from the current IR review card, IR note, or tree row, sequenced by spreading activation (tree + wikilinks + tags). Not due-gated; grading is a real repetition. Hidden unless you are already looking at something in IR. Escape (when not editing) ends the neural pass and offers Start outstanding (Alt+R).
 - `Alt+T`: mark current note as an IR topic.
 - `Alt+P`: set IR priority of current element.
 - `Alt+I`: open the IR element tree.
@@ -66,12 +66,16 @@ Rebind or clear any of them under Settings, Hotkeys.
 The left ribbon has one IR icon: **Start IR review**. Tree, quick actions, mark-as-topic, neural, session log, and stats stay in the command palette (and the status bar's right-click menu). Click the status bar to start review.
 
 In the **IR review** tab (after **Start IR review**), a session bar shows
-**Due · N left** or **Neural · Neuro=N · seed**. Extract and cloze during
+**Due · N left** or **Neural · N left · seed**, with a Due/Neural chip.
+A muted **via wikilink ← Foo** (or child / tag) line explains why this
+card is in a neural pass. Extract and cloze during
 review append the new card immediately after the current one (this pass,
 not a rebuilt queue). On mobile, **Source** sits on that bar so it is not
 scrolled away. Reading cards with a saved position show **Resumed from last
 time**. When the pass ends, the tab stays on **Session complete** (Alt+R
-for remaining due, Escape/Close to leave) instead of vanishing.
+for remaining due, Escape/Close to leave) instead of vanishing. In a
+**neural** pass, Escape while not editing ends the mode and offers
+**Start outstanding** rather than closing the tab.
 
 Defaults include **`Space`** / **`Enter`** for the next reading card, **`[`** for the **Previous** card in the current session (same as the button; first card disables it), **`L`** / **`D`** for later today / dismiss, **`1`–`4`** on revealed clozes, **`Alt+X`** / **`Alt+Z`** for extract / cloze when the card allows children, and **`Ctrl+Enter`** (**`Cmd+Enter`** on macOS) for next while the reading editor is focused.
 

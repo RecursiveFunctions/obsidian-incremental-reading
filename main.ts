@@ -29,7 +29,7 @@ import {
   setPriority,
   uniqueMarkdownNotePath,
 } from "./src/ir-note";
-import { dueQueue, neuralQueue, type ReviewSlot } from "./src/review";
+import { dueQueue, neuralQueue, EMPTY_NEURAL_COPY, type ReviewSlot } from "./src/review";
 import { makeLcg } from "./src/ir/neural";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
 import { openPriorityPrompt } from "./src/priority-prompt";
@@ -421,6 +421,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           () => this.restoreEmptyReviewSession(),
           (id, el) => this.applyIrReanchor(id, el),
           (id, el) => this.applyIrDetachAnchor(id, el),
+          () => void this.startReview(),
         );
       },
     );
@@ -1911,8 +1912,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       makeLcg(Date.now() ^ 0x9e3779b9),
     );
     
-    if (queue.length === 0) {
-      new Notice("Incremental Reading: no related elements found for Neural Review.");
+    if (queue.length < 2) {
+      new Notice(`Incremental Reading: ${EMPTY_NEURAL_COPY}`);
       return;
     }
 

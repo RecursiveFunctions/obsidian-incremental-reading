@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   contextSourceParentId,
+  EMPTY_NEURAL_COPY,
   sessionBarLabel,
   upsertAfterCurrent,
   type ReviewSlot,
@@ -69,12 +70,21 @@ test("sessionBarLabel: due, neural, and complete", () => {
       remaining: 12,
       seedLabel: "dogs",
     }),
-    "Neural · Neuro=12 · dogs",
+    "Neural · 12 left · dogs",
+  );
+  assert.equal(
+    sessionBarLabel({ done: false, isNeural: true, remaining: 12 }),
+    "Neural · 12 left",
   );
   assert.equal(
     sessionBarLabel({ done: true, isNeural: false, remaining: 0 }),
     "Session complete",
   );
+});
+
+test("EMPTY_NEURAL_COPY tells the user what to do", () => {
+  assert.match(EMPTY_NEURAL_COPY, /wikilinks/);
+  assert.match(EMPTY_NEURAL_COPY, /extract/);
 });
 
 test("contextSourceParentId: item walks up to the nearest extract", () => {

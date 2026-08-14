@@ -48,6 +48,35 @@
   white-space: nowrap;
 }
 
+.ir-review-mode-chip {
+  flex: 0 0 auto;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  border-radius: 4px;
+}
+
+.ir-review-mode-chip--neural {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ir-review-mode-chip--due {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.ir-review-neural-via {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  padding: 0 8px 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ir-review-session-source {
   flex: 0 0 auto;
   font-size: var(--font-ui-small);

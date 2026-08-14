@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] — 2026-08-14
+
+### Changed
+
+- **Neural is a mode.** Session bar chip is Neural vs Due (no `Neuro=`
+  prefix). Escape when not editing ends the neural pass and offers
+  **Start outstanding (Alt+R)** instead of closing the tab.
+- **Why this card:** a muted line on neural cards —
+  `via wikilink ← Foo`, `via child of Bar`, or `via tag #dogs`.
+- **Empty neural** tells you what to do: add wikilinks, extract children,
+  or mark linked notes. A seed with nothing related no longer opens a
+  one-card session.
+
 ## [0.6.7] — 2026-08-14
 
 ### Changed

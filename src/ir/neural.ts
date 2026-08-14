@@ -39,9 +39,27 @@ export function combinePriority(originalP: number, groupP: number): number {
   return 1 - op * gp;
 }
 
+export type NeuralEdgeKind =
+  | "wikilink"
+  | "child"
+  | "parent"
+  | "rootParent"
+  | "sibling"
+  | "tag";
+
 export interface NeuralNeighbor {
   id: string;
   groupP: number;
+  kind: NeuralEdgeKind;
+  /** Set when `kind` is `tag`. */
+  tag?: string;
+}
+
+/** How this card was reached from the previous firing node. Seed has none. */
+export interface NeuralProvenance {
+  fromId: string;
+  kind: NeuralEdgeKind;
+  tag?: string;
 }
 
 export interface NeuralWalkOpts {
@@ -92,27 +110,62 @@ export function capWikilinkNeighbors(
   return ir.concat(rest).slice(0, cap);
 }
 
+export function neuralViaLabel(
+  via: NeuralProvenance,
+  fromLabel: string,
+): string {
+  switch (via.kind) {
+    case "wikilink":
+      return `via wikilink ← ${fromLabel}`;
+    case "child":
+      return `via child of ${fromLabel}`;
+    case "parent":
+    case "rootParent":
+      return `via parent ← ${fromLabel}`;
+    case "sibling":
+      return `via sibling of ${fromLabel}`;
+    case "tag":
+      return via.tag ? `via tag #${via.tag}` : `via tag ← ${fromLabel}`;
+  }
+}
+
 /**
  * Layered spreading activation. The seed is always first. Each later
  * layer is the neighbors of the previous layer, scored with CombinePriority.
  */
 export function neuralWalk(opts: NeuralWalkOpts): string[] {
+  return neuralWalkDetailed(opts).sequence;
+}
+
+/**
+ * Same walk as {@link neuralWalk}, plus the winning inbound edge per node
+ * (lowest CombinePriority when several neighbors reach it).
+ */
+export function neuralWalkDetailed(opts: NeuralWalkOpts): {
+  sequence: string[];
+  provenance: Map<string, NeuralProvenance>;
+} {
   const maxLayers = opts.maxLayers ?? NEURAL_MAX_LAYERS;
   const maxQueue = opts.maxQueue ?? NEURAL_MAX_QUEUE;
   const dismissed = opts.dismissed ?? (() => false);
   const sequence: string[] = [];
+  const provenance = new Map<string, NeuralProvenance>();
   const emitted = new Set<string>();
-  let frontier = new Map<string, number>();
-  frontier.set(opts.seed, toUnitPriority(opts.priorityOf(opts.seed)));
+  let frontier = new Map<string, FrontierEntry>();
+  frontier.set(opts.seed, {
+    p: toUnitPriority(opts.priorityOf(opts.seed)),
+    via: null,
+  });
 
   for (let layer = 0; layer < maxLayers && sequence.length < maxQueue; layer++) {
     const nodes = orderFrontier(frontier, opts.random);
     frontier = new Map();
-    for (const [id] of nodes) {
+    for (const [id, entry] of nodes) {
       if (emitted.has(id)) continue;
       if (id !== opts.seed && dismissed(id)) continue;
       emitted.add(id);
       sequence.push(id);
+      if (entry.via) provenance.set(id, entry.via);
       if (sequence.length >= maxQueue) break;
       for (const n of opts.neighbors(id)) {
         if (emitted.has(n.id)) continue;
@@ -121,22 +174,36 @@ export function neuralWalk(opts: NeuralWalkOpts): string[] {
           toUnitPriority(opts.priorityOf(n.id)),
           n.groupP,
         );
+        const via: NeuralProvenance = {
+          fromId: id,
+          kind: n.kind,
+          ...(n.tag ? { tag: n.tag } : {}),
+        };
         const prev = frontier.get(n.id);
-        if (prev === undefined || combined < prev) frontier.set(n.id, combined);
+        if (prev === undefined || combined < prev.p) {
+          frontier.set(n.id, { p: combined, via });
+        }
       }
     }
   }
-  return sequence;
+  return { sequence, provenance };
+}
+
+interface FrontierEntry {
+  p: number;
+  via: NeuralProvenance | null;
 }
 
 function orderFrontier(
-  frontier: Map<string, number>,
+  frontier: Map<string, FrontierEntry>,
   random?: () => number,
-): [string, number][] {
+): [string, FrontierEntry][] {
   const nodes = [...frontier.entries()];
-  nodes.sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  nodes.sort(
+    (a, b) => a[1].p - b[1].p || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
+  );
   if (!random) return nodes;
-  weightedShuffle(nodes, (pair) => 1 - pair[1], random);
+  weightedShuffle(nodes, (pair) => 1 - pair[1].p, random);
   return nodes;
 }
 

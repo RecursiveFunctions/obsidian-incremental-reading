@@ -13,7 +13,9 @@ import {
   combinePriority,
   elementIdForNotePath,
   makeLcg,
+  neuralViaLabel,
   neuralWalk,
+  neuralWalkDetailed,
   WIKILINK_DEGREE_CAP,
 } from "../src/ir/neural";
 import {
@@ -523,4 +525,82 @@ test("oversized tags are ignored as hubs", () => {
   });
   assert.equal(seq.length, 1);
   assert.equal(seq[0], "t0");
+});
+
+test("neuralViaLabel: wikilink, child, tag copy", () => {
+  assert.equal(
+    neuralViaLabel({ fromId: "x", kind: "wikilink" }, "Foo"),
+    "via wikilink ← Foo",
+  );
+  assert.equal(
+    neuralViaLabel({ fromId: "x", kind: "child" }, "Bar"),
+    "via child of Bar",
+  );
+  assert.equal(
+    neuralViaLabel({ fromId: "x", kind: "tag", tag: "dogs" }, "Other"),
+    "via tag #dogs",
+  );
+  assert.equal(
+    neuralViaLabel({ fromId: "x", kind: "parent" }, "Kid"),
+    "via parent ← Kid",
+  );
+});
+
+test("neuralWalkDetailed: child of seed records via child of seed", () => {
+  const parent = el("parent", {
+    type: "topic",
+    notePath: "Root.md",
+    text: "root",
+  });
+  const child = el("child", {
+    type: "extract",
+    parentId: eid("parent"),
+    text: "extract body",
+  });
+  const s = state([parent, child]);
+  const adj = buildNeuralAdjacency(s, emptyLinkIndex());
+  const { sequence, provenance } = neuralWalkDetailed({
+    seed: "parent",
+    priorityOf: (id) => s.elements.get(id as ElementId)?.priority ?? 50,
+    neighbors: (id) => neighborsForWalk(adj, id),
+  });
+  assert.equal(sequence[0], "parent");
+  assert.equal(provenance.get("parent"), undefined);
+  assert.equal(provenance.get("child")?.kind, "child");
+  assert.equal(provenance.get("child")?.fromId, "parent");
+});
+
+test("neuralWalkDetailed: shared tag carries the tag name", () => {
+  const dogsA = el("dogsA", { type: "topic", notePath: "DogsA.md", text: "a" });
+  const dogsB = el("dogsB", { type: "topic", notePath: "DogsB.md", text: "b" });
+  const notes: FakeNote[] = [
+    { path: "DogsA.md", basename: "DogsA", extension: "md", links: [], tags: ["dogs"] },
+    { path: "DogsB.md", basename: "DogsB", extension: "md", links: [], tags: ["dogs"] },
+  ];
+  const s = state([dogsA, dogsB]);
+  const adj = buildNeuralAdjacency(s, linkIndex(notes), { useTags: true });
+  const { provenance } = neuralWalkDetailed({
+    seed: "dogsA",
+    priorityOf: (id) => s.elements.get(id as ElementId)?.priority ?? 50,
+    neighbors: (id) => neighborsForWalk(adj, id),
+  });
+  assert.equal(provenance.get("dogsB")?.kind, "tag");
+  assert.equal(provenance.get("dogsB")?.tag, "dogs");
+});
+
+test("neuralQueue stamps neuralVia on non-seed cards", () => {
+  const seed = el("seed", {
+    type: "topic",
+    notePath: "Seed.md",
+    text: "seed",
+  });
+  const hot = el("hot", {
+    type: "extract",
+    parentId: eid("seed"),
+    text: "hot",
+  });
+  const q = neuralQueue(fakeApp([]), state([seed, hot]), eid("seed"), null);
+  assert.equal(q[0]!.neuralVia, undefined);
+  assert.equal(q[1]!.neuralVia?.kind, "child");
+  assert.equal(q[1]!.neuralVia?.fromId, "seed");
 });
