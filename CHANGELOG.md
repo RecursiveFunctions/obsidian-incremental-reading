@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.11] — 2026-08-14
+
+### Added
+
+- **Source gone prompt:** deleting a source note (or finding it missing on
+  launch) asks once: make orphan highlights into notes, keep them as
+  review cards only, or undo (tree unchanged). A Notice Undo reverses
+  make-notes / keep-without-notes and trashes notes the plugin created.
+- **Settings → When a source note is deleted** picks the default if you
+  close that prompt. On (default) makes them notes.
+
+### Changed
+
+- **FAB during review:** the radial wheel keeps **Start IR review** on the
+  ring (with the tree and Go neural), so the phone entry still starts
+  today's due queue mid-session.
+- Docs no longer sell Obsidian Graph view as a product goal. Anchored
+  extracts stay the default so a session of highlights does not mint a
+  file per span.
+
 ## [0.6.10] — 2026-08-14
 
 ### Added

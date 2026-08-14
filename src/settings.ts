@@ -129,6 +129,23 @@ export class IrSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("When a source note is deleted")
+      .setDesc(
+        "Highlights from that note can become their own files, or stay as " +
+          "review cards with no new file. You still get a choice each time; " +
+          "this is the default if you close the prompt. On (default): make " +
+          "them notes. Off: keep without notes.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.makeNotesWhenSourceDeleted)
+          .onChange(async (value) => {
+            this.plugin.settings.makeNotesWhenSourceDeleted = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Auto-mark source as topic")
       .setDesc(
         "When you run Extract or Cloze on a plain markdown note (not yet " +

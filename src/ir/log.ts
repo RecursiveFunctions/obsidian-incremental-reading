@@ -148,6 +148,13 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
         break;
       }
 
+      case "demoted": {
+        if (element) {
+          delete element.notePath;
+        }
+        break;
+      }
+
       case "source-tombstoned": {
         const tombstone = event.payload.tombstone as SourceTombstone;
         tombstones.set(tombstone.path, tombstone);

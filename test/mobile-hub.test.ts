@@ -38,14 +38,14 @@ test("Go neural is only on the hub when the current note is already IR", () => {
   );
 });
 
-test("review hub keeps tree and Go neural, not Start review", () => {
+test("review hub keeps Start review, the tree, and Go neural", () => {
   assert.deepEqual(
     sessionHubKinds({
       inReview: true,
       hasMarkdownFile: true,
       alreadyIr: true,
     }),
-    ["open-tree", "go-neural"],
+    ["start-review", "open-tree", "go-neural"],
   );
 });
 

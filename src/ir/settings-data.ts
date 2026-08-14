@@ -34,6 +34,12 @@ export interface IrSettings {
    */
   autoMarkSourceAsTopic: boolean;
   /**
+   * When a source note is deleted, orphaned highlights can become their
+   * own files (true) or stay as review cards with no new file (false).
+   * The prompt still offers both; this is the default if you close it.
+   */
+  makeNotesWhenSourceDeleted: boolean;
+  /**
    * SuperMemo "interwoven learning": within a priority band, shuffle the
    * order of due items so positional memory doesn't leak into recall. Seed
    * is the calendar day, so resuming a session mid-day keeps the same
@@ -62,6 +68,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   mercyCeiling: 40,
   mercyPriorityCutoff: 10,
   autoMarkSourceAsTopic: true,
+  makeNotesWhenSourceDeleted: true,
   interleaveSimilarPriority: true,
   showDivergencePicker: false,
 };

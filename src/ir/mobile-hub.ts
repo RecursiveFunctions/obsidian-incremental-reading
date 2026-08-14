@@ -3,8 +3,10 @@
  * entry: no status bar, one ribbon icon behind a swipe, FAB hidden on the
  * file explorer, and a hub that only listed extract/cloze when a selection
  * existed. Session actions on the ring stay small: Start review and the
- * element tree are always there; Go neural only when the current thing is
- * already in IR (a singleton walk off a just-imported note is not useful).
+ * element tree are always there (including during an open session, so the
+ * FAB can still start today's due queue). Go neural only when the current
+ * thing is already in IR — during review that is the card; otherwise the
+ * open note. A singleton walk off a just-imported note is not useful.
  */
 
 export type SessionHubKind =
@@ -18,7 +20,7 @@ export function sessionHubKinds(ctx: {
   hasMarkdownFile: boolean;
   alreadyIr: boolean;
 }): SessionHubKind[] {
-  if (ctx.inReview) return ["open-tree", "go-neural"];
+  if (ctx.inReview) return ["start-review", "open-tree", "go-neural"];
   const out: SessionHubKind[] = ["start-review", "open-tree"];
   if (ctx.alreadyIr) out.push("go-neural");
   if (ctx.hasMarkdownFile && !ctx.alreadyIr) out.push("mark-topic");

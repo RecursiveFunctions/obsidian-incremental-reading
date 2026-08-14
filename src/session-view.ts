@@ -27,6 +27,7 @@ const KIND_ICON: Record<string, string> = {
   "priority-set": "sliders-horizontal",
   "element-created": "plus-circle",
   promoted: "arrow-up",
+  demoted: "arrow-down",
   reparented: "git-branch",
   "source-tombstoned": "trash",
   "source-restored": "undo-2",

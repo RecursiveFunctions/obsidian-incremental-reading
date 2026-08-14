@@ -93,6 +93,15 @@ outside review). **Reversed in 0.6.7:** editor and review both use the
 inline hint bar (`src/cloze-hint-bar.ts`). Empty hint is still allowed;
 Esc / Cancel aborts.
 
+**Documented exception (0.6.9+):** The **re-link** prompt when a deleted
+source note comes back (`src/relink-confirm-modal.ts`) is a modal because
+silently re-pointing anchors is the unrecoverable failure in DESIGN Q1.
+
+**Documented exception (0.6.11):** The **source gone** prompt
+(`src/source-gone-modal.ts`) is a modal because a source delete is
+destructive to provenance: make-notes vs keep-without-notes vs undo must
+be an explicit choice, not a toast.
+
 ## 7. Session audit ("what did I touch")
 
 One command shows the user every item, extract, and source touched in the

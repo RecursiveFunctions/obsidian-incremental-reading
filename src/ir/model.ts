@@ -147,6 +147,7 @@ export type IrEventKind =
   | "anchor-repaired"
   | "anchor-detached"
   | "promoted"
+  | "demoted"
   | "reparented"
   | "source-tombstoned"
   | "source-restored"

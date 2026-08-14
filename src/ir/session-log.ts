@@ -31,6 +31,7 @@ const KIND_LABEL: Record<IrEventKind, string> = {
   "anchor-repaired": "anchor repaired",
   "anchor-detached": "anchor detached",
   promoted: "promoted",
+  demoted: "demoted",
   reparented: "reparented",
   "source-tombstoned": "source removed",
   "source-restored": "source restored",

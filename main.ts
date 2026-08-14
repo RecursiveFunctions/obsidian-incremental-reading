@@ -46,7 +46,7 @@ import {
 } from "./src/ir/obsidian-vault-fs";
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
 import { toAnkiTsv } from "./src/ir/anki-export";
-import { planClearTombstone, planSourceDeletion, planSourceRelink, relinkCandidates } from "./src/ir/deletion";
+import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath } from "./src/ir/deletion";
 import { findLastUndoableGrade, nextLamport } from "./src/ir/log";
 import { mostRecentBookmark } from "./src/ir/bookmark";
 import { newCard, storedToCard, writeCardToFrontmatter } from "./src/fsrs";
@@ -74,6 +74,7 @@ import {
   promptStateResetConfirm,
 } from "./src/nuke-confirm-modal";
 import { promptSourceRelink } from "./src/relink-confirm-modal";
+import { promptSourceGone, type SourceGoneChoice } from "./src/source-gone-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
 import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
@@ -241,6 +242,15 @@ export default class IncrementalReadingPlugin extends Plugin {
   private relinkBusy = false;
   private relinkQueue: TFile[] = [];
 
+  /** Serialize source-gone prompts (live delete + load-time reconcile). */
+  private sourceGoneBusy = false;
+  private sourceGoneQueue: { path: string; title: string }[] = [];
+  private lastSourceDeletionUndo: {
+    before: IrElement[];
+    deletionEvents: IrEvent[];
+    promotedPaths: string[];
+  } | null = null;
+
   /**
    * Decoration cache that the CM6 extension reads from. Rebuilt by
    * {@link refreshExtractDecorations} after every store reconcile so new
@@ -293,7 +303,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     void this.refreshStatusBar();
     void this.storeInit.then(() => {
       void this.refreshStatusBar();
-      void this.offerPendingRelinks();
+      void this.reconcileMissingSources().then(() => this.offerPendingRelinks());
     });
 
     // Background tick: refreshes the "+N/7d" rolling window so it does not
@@ -855,15 +865,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     // mobile (no keyboard, ribbon is hidden behind a swipe). Tapping the
     // three-dot button on a note surfaces this menu, so mark-as-topic,
     // priority, dismiss, and (on mobile) the full IR command set live here.
-    // Vault delete handler: when a source note disappears, the pure
-    // planSourceDeletion decides which extracts auto-promote to standalone
-    // notes (so their reviewable text never disappears) and emits a
-    // source-tombstone event so the UI can offer re-link if the source ever
-    // comes back via Sync/git/trash.
+    // Vault delete handler: when a source note disappears, prompt once
+    // (make notes / keep without notes / undo). Load-time reconcile catches
+    // deletes that happened while Obsidian was closed.
     this.registerEvent(
       this.app.vault.on("delete", (deleted) => {
         if (!(deleted instanceof TFile) || deleted.extension !== "md") return;
-        void this.handleSourceDeletion(deleted);
+        this.enqueueSourceGone(deleted.path, deleted.basename);
       }),
     );
 
@@ -2750,66 +2758,209 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Vault-delete handler. Routes the deletion through the pure
-   * planSourceDeletion: source-tombstone, reparent children to grandparent,
-   * delete source-element shadows, detach anchors, auto-promote
-   * genuinely-rootless extracts to standalone notes. Filesystem work
-   * (creating promoted notes) happens before the events are appended so the
-   * store and disk land consistent; a write failure leaves the store
-   * untouched.
+   * Queue a vanished source path. Live vault deletes and the load-time
+   * reconcile share this so prompts never stack.
    */
-  private async handleSourceDeletion(deleted: TFile): Promise<void> {
-    if (this.nuking) return;
+  private enqueueSourceGone(path: string, title: string): void {
+    this.sourceGoneQueue.push({ path, title });
+    void this.drainSourceGoneQueue();
+  }
+
+  private async drainSourceGoneQueue(): Promise<void> {
+    if (this.sourceGoneBusy) return;
+    this.sourceGoneBusy = true;
+    try {
+      const seen = new Set<string>();
+      while (this.sourceGoneQueue.length > 0) {
+        const next = this.sourceGoneQueue.shift();
+        if (!next || seen.has(next.path)) continue;
+        seen.add(next.path);
+        await this.offerSourceGone(next.path, next.title);
+      }
+    } finally {
+      this.sourceGoneBusy = false;
+      if (this.sourceGoneQueue.length > 0) {
+        await this.drainSourceGoneQueue();
+      }
+    }
+  }
+
+  /**
+   * Deletes that happened while Obsidian was closed never fire
+   * vault.on("delete"). After store init, any path the collection still
+   * names whose file is gone and which has no tombstone gets the same
+   * prompt as a live delete.
+   */
+  private async reconcileMissingSources(): Promise<void> {
+    if (this.nuking || !this.store) return;
+    try {
+      const state = await this.store.load();
+      const missing = missingSourcePaths(
+        Array.from(state.elements.values()),
+        state.tombstones.keys(),
+        (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile,
+      );
+      for (const path of missing) {
+        this.enqueueSourceGone(path, titleFromSourcePath(path));
+      }
+      await this.drainSourceGoneQueue();
+    } catch (e) {
+      console.error("Incremental Reading: missing-source reconcile failed", e);
+    }
+  }
+
+  private async offerSourceGone(path: string, title: string): Promise<void> {
+    if (this.nuking || !this.store) return;
+    try {
+      const state = await this.store.load();
+      if (state.tombstones.has(path)) return;
+      if (this.app.vault.getAbstractFileByPath(path) instanceof TFile) return;
+
+      const elements = Array.from(state.elements.values());
+      const affected = elements.filter(
+        (e) => e.notePath === path || e.anchor?.sourcePath === path,
+      );
+      if (affected.length === 0) return;
+
+      const labels = affected
+        .filter((e) => e.anchor?.sourcePath === path && e.notePath !== path)
+        .map((e) => labelFor(e));
+      const defaultPromote = this.settings.makeNotesWhenSourceDeleted;
+      const choice = await promptSourceGone(this.app, {
+        title,
+        path,
+        labels,
+        defaultPromote,
+      });
+      await this.applySourceGone(path, title, elements, choice);
+    } catch (e) {
+      console.error("Incremental Reading: source-gone handling failed", e);
+    }
+  }
+
+  private async applySourceGone(
+    path: string,
+    title: string,
+    elements: IrElement[],
+    choice: SourceGoneChoice,
+  ): Promise<void> {
     if (!this.store) return;
+    const events = await this.store.loadEvents();
+    const device = await this.store.getDeviceId();
+    const now = Date.now();
+    const lamport = nextLamport(events);
+    const before = elements.map((e) => structuredClone(e));
+
+    if (choice === "undo") {
+      const tomb = planSourceTombstoneOnly(
+        elements,
+        path,
+        title,
+        now,
+        lamport,
+        device,
+        () => newEventId(),
+      );
+      await this.appendRelinkEvents(tomb);
+      new Notice(
+        `Incremental Reading: remembered that “${title}” is gone. Tree unchanged.`,
+      );
+      return;
+    }
+
+    const newEvents = planSourceDeletion(
+      elements,
+      path,
+      title,
+      now,
+      lamport,
+      device,
+      () => newEventId(),
+      (el) => this.promoteOrphanPath(el),
+      { autoPromoteRootless: choice === "promote-all" },
+    );
+
+    const byId = new Map(elements.map((e) => [e.id, e]));
+    const promotedPaths: string[] = [];
+    for (const ev of newEvents) {
+      if (ev.kind === "promoted") {
+        const notePath = (ev.payload as { notePath?: string }).notePath;
+        const el = byId.get(ev.target);
+        if (notePath && el) {
+          await this.materializePromotedNote(notePath, el);
+          promotedPaths.push(notePath);
+        }
+      }
+    }
+
+    for (const ev of newEvents) await this.store.appendEvent(ev);
+    await this.store.reconcile();
+
+    this.lastSourceDeletionUndo = {
+      before,
+      deletionEvents: newEvents,
+      promotedPaths,
+    };
+    this.showSourceGoneNotice(choice, promotedPaths.length, title);
+  }
+
+  private showSourceGoneNotice(
+    choice: SourceGoneChoice,
+    promoted: number,
+    title: string,
+  ): void {
+    const text =
+      choice === "promote-all"
+        ? `Incremental Reading: “${title}” is gone. ${promoted} note${promoted === 1 ? "" : "s"} created.`
+        : `Incremental Reading: “${title}” is gone. Highlights kept without new notes.`;
+    const notice = new Notice("", 10000);
+    notice.noticeEl.empty();
+    const row = notice.noticeEl.createDiv();
+    row.createSpan({ text: `${text} ` });
+    const btn = row.createEl("button", { text: "Undo" });
+    btn.addEventListener("click", () => {
+      notice.hide();
+      void this.undoLastSourceDeletion();
+    });
+  }
+
+  private async undoLastSourceDeletion(): Promise<void> {
+    if (!this.store || !this.lastSourceDeletionUndo) {
+      new Notice("Incremental Reading: nothing to undo.");
+      return;
+    }
+    const pending = this.lastSourceDeletionUndo;
+    this.lastSourceDeletionUndo = null;
     try {
       const events = await this.store.loadEvents();
-      const state = await this.store.load();
-      const elements = Array.from(state.elements.values());
-      const affected = elements.some(
-        (e) =>
-          e.notePath === deleted.path ||
-          e.anchor?.sourcePath === deleted.path,
-      );
-      if (!affected) return;
-
-      const newEvents = planSourceDeletion(
-        elements,
-        deleted.path,
-        deleted.basename,
+      const undo = planUndoSourceDeletion(
+        pending.before,
+        pending.deletionEvents,
         Date.now(),
         nextLamport(events),
         await this.store.getDeviceId(),
         () => newEventId(),
-        (el) => this.promoteOrphanPath(el),
-        { autoPromoteRootless: true },
       );
+      await this.appendRelinkEvents(undo);
 
-      const byId = new Map(elements.map((e) => [e.id, e]));
-      for (const ev of newEvents) {
-        if (ev.kind === "promoted") {
-          const path = (ev.payload as { notePath?: string }).notePath;
-          const el = byId.get(ev.target);
-          if (path && el) await this.materializePromotedNote(path, el);
+      this.nuking = true;
+      try {
+        for (const notePath of pending.promotedPaths) {
+          const af = this.app.vault.getAbstractFileByPath(notePath);
+          if (af instanceof TFile) await this.app.fileManager.trashFile(af);
         }
+      } finally {
+        this.nuking = false;
       }
 
-      for (const ev of newEvents) await this.store.appendEvent(ev);
-      await this.store.reconcile();
-
-      const promoted = newEvents.filter((e) => e.kind === "promoted").length;
-      const reparented = newEvents.filter((e) => e.kind === "reparented")
-        .length;
-      const parts: string[] = [];
-      if (promoted)
-        parts.push(`${promoted} extract${promoted === 1 ? "" : "s"} promoted`);
-      if (reparented)
-        parts.push(`${reparented} reparented`);
-      const detail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
       new Notice(
-        `Incremental Reading: source "${deleted.basename}" removed${detail}.`,
+        "Incremental Reading: undid source-delete handling. Restore the note from trash if you still want it.",
       );
     } catch (e) {
-      console.error("Incremental Reading: deletion handling failed", e);
+      console.error("Incremental Reading: undo source-delete failed", e);
+      new Notice(
+        "Incremental Reading: could not undo. See the developer console.",
+      );
     }
   }
 

@@ -229,6 +229,105 @@ test("planSourceRelink repairs anchors and source-restored drops the tombstone",
   assert.equal(unrel.anchor?.sourcePath, "Other.md");
 });
 
+test("autoPromoteRootless false detaches without creating notes", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/deletion.ts not implemented yet");
+
+  const els = world();
+  const events = m.planSourceDeletion(
+    els,
+    SRC_PATH,
+    "Source",
+    NOW,
+    100,
+    "dev_test" as DeviceId,
+    (i: number) => `ev_det_${i}` as EventId,
+    (el: IrElement) => `Promoted/${el.id}.md`,
+    { autoPromoteRootless: false },
+  ) as IrEvent[];
+  const st = fold([...seedEvents(world()), ...events]);
+  const ex1 = st.elements.get("el_ex1" as ElementId)!;
+  assert.equal(ex1.anchorState, "detached");
+  assert.equal(ex1.notePath, undefined);
+  assert.equal(
+    events.filter((e) => e.kind === "promoted").length,
+    0,
+  );
+});
+
+test("missingSourcePaths lists gone notes that have no tombstone", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/deletion.ts not implemented yet");
+
+  const els = world();
+  const vault = new Set(["Other.md"]);
+  const missing = m.missingSourcePaths(
+    els,
+    [],
+    (p: string) => vault.has(p),
+  ) as string[];
+  assert.deepEqual(missing, [SRC_PATH]);
+});
+
+test("missingSourcePaths skips tombstoned paths", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/deletion.ts not implemented yet");
+
+  const missing = m.missingSourcePaths(
+    world(),
+    [SRC_PATH],
+    (p: string) => p === "Other.md",
+  ) as string[];
+  assert.deepEqual(missing, []);
+});
+
+test("planSourceTombstoneOnly writes a tombstone and leaves the tree", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/deletion.ts not implemented yet");
+
+  const events = m.planSourceTombstoneOnly(
+    world(),
+    SRC_PATH,
+    "Source",
+    NOW,
+    100,
+    "dev_test" as DeviceId,
+    (i: number) => `ev_tomb_${i}` as EventId,
+  ) as IrEvent[];
+  const st = fold([...seedEvents(world()), ...events]);
+  assert.ok(st.tombstones.get(SRC_PATH));
+  assert.equal(st.elements.has("el_src" as ElementId), true);
+  const ex1 = st.elements.get("el_ex1" as ElementId)!;
+  assert.equal(ex1.anchorState, "ok");
+  assert.equal(ex1.parentId, "el_src");
+});
+
+test("planUndoSourceDeletion restores the tree, drops promoted notes, keeps the tombstone", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/deletion.ts not implemented yet");
+
+  const before = world();
+  const deletion = plan(m);
+  const undo = m.planUndoSourceDeletion(
+    before,
+    deletion,
+    NOW + 1,
+    200,
+    "dev_test" as DeviceId,
+    (i: number) => `ev_undo_${i}` as EventId,
+  ) as IrEvent[];
+  const st = fold([...seedEvents(before), ...deletion, ...undo]);
+  assert.ok(st.tombstones.get(SRC_PATH));
+  assert.equal(st.elements.has("el_src" as ElementId), true);
+  const ex1 = st.elements.get("el_ex1" as ElementId)!;
+  assert.equal(ex1.parentId, "el_src");
+  assert.equal(ex1.anchorState, "ok");
+  assert.equal(ex1.notePath, undefined);
+  const ex2 = st.elements.get("el_ex2" as ElementId)!;
+  assert.equal(ex2.parentId, "el_ex1");
+  assert.equal(ex2.anchorState, "ok");
+});
+
 test("planClearTombstone drops the tombstone without repairing anchors", async (t) => {
   const m = await load();
   if (!m) return t.skip("src/ir/deletion.ts not implemented yet");

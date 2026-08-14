@@ -193,6 +193,22 @@ test("clock-order conflict: highest lamport grade wins", () => {
   assert.equal(s.elements.get(id)?.card?.due, 9_000_000);
 });
 
+test("demoted clears a promoted notePath", () => {
+  const id = newElementId();
+  const el = newElement({
+    id,
+    type: "extract",
+    priority: 50,
+    now: 0,
+    notePath: "Promoted/x.md",
+  });
+  const s = fold([
+    ev({ lamport: 1, kind: "element-created", target: id, payload: { element: el } }),
+    ev({ lamport: 2, kind: "demoted", target: id }),
+  ]);
+  assert.equal(s.elements.get(id)?.notePath, undefined);
+});
+
 test("element-deleted removes it; later events for it are no-ops", () => {
   const id = newElementId();
   const s = fold([

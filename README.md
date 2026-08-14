@@ -2,7 +2,7 @@
 
 Read many sources in parallel, extract the important bits, and review them on a spaced schedule — SuperMemo-style incremental reading, inside Obsidian.
 
-**Status:** Pre-release alpha (**0.6.9**). Install from **[GitHub Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases)** via [BRAT](#installation). A commit on `main` is not enough; BRAT reads the release assets.
+**Status:** Pre-release alpha (**0.6.11**). Install from **[GitHub Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases)** via [BRAT](#installation). A commit on `main` is not enough; BRAT reads the release assets.
 
 ## What this is
 
@@ -12,7 +12,7 @@ SuperMemo is Windows-only and stores knowledge in a proprietary format. Obsidian
 
 ## What makes this different
 
-1. **A real element tree.** Source → extract → extract → cloze item, with a hierarchy you can browse. The graph stays your notes, not a pile of review scaffolding.
+1. **A real element tree.** Source → extract → extract → cloze item, with a hierarchy you can browse. Anchored extracts stay in the source until you promote them. Cloze items (and extracts you promote) are notes.
 2. **Postpone that does not lie.** When the queue is too big, overflow is pushed by priority. The scheduler is not told you reviewed a card you only postponed.
 3. **FSRS scheduling, with an optional second opinion.** Grades follow [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler). If you turn on **Settings → Show scheduler divergence picker**, you can choose when FSRS and classic SM-2 disagree a lot about the next interval. New vaults leave that off.
 4. **Built to work on a phone.** SuperMemo does not. This plugin is meant to feel usable on Obsidian mobile as well as desktop.
@@ -34,7 +34,7 @@ Your data never leaves your vault because the code cannot send it.
 
 1. Open a markdown note you want to read incrementally.
 2. **Mark it as an IR topic** (`Alt+T`, or the note ⋯ menu on mobile).
-3. **Start review** (`Alt+R`, the ribbon brain, or a click on the status bar).
+3. **Start review** (`Alt+R`, the ribbon brain, or a click on the status bar). On a phone, tap the brain button in the corner.
 
 If you have no topics yet, Start review opens a pane that says so — mark a note (`Alt+T`), then start review (`Alt+R`). It does not just flash “nothing due.”
 
@@ -61,17 +61,19 @@ Two kinds of extract; the menus say this in those words:
 - **Anchored extract** (default): a highlight in the source. No new file.
 - **Standalone note**: a new markdown file. Turn on **Settings → Extract to standalone note**, or one-shot with `Alt+Shift+X`. `Alt+Shift+P` promotes an anchored extract later.
 
-Cloze items always get their own notes. Creating a cloze (`Alt+Z` or **Cloze** in review) offers an optional hint on a short inline bar — Enter confirms (empty = no hint), Escape cancels.
+Only that default extract path skips a new file. Cloze items always get their own notes. Creating a cloze (`Alt+Z` or **Cloze** in review) offers an optional hint on a short inline bar — Enter confirms (empty = no hint), Escape cancels.
 
 Deletions use Anki-compatible markup: `{{c1::hidden text}}` or `{{c1::hidden text::hint}}`.
 
 If you run Extract or Cloze from **Reading view** and the selection cannot be mapped onto the markdown, the note switches to **Edit** and keeps the selection when it can.
 
-If you delete a source note, its extracts are not thrown away. If that note comes back (trash, Sync, git), you are asked whether to re-link them. Nothing is re-linked behind your back.
+If you delete a source note in Obsidian, the extracts stay and you get one prompt: make them notes, keep them as review cards only, or undo (tree unchanged). The same prompt appears on the next launch if the note vanished while Obsidian was closed. After you choose, a short Undo is offered.
+
+If you restore that note, you are asked whether to attach the highlights again. Nothing is attached behind your back.
 
 ## Neural review
 
-**Go neural** (`Alt+N`) is a second kind of session, not a replacement for today's due queue. It starts from the card, note, or tree row you are already looking at — something already in IR — and walks related material (children, wikilinks, tags). Grading still counts.
+**Go neural** (`Alt+N`) is a second kind of session, not a replacement for today's due queue. It starts from the card you are reviewing, or from the IR note you have open — something already in IR. From a row in the element tree, use that row's menu. It then walks related material (children, wikilinks, tags). Grading still counts.
 
 A muted line on the card says why it is here: `via wikilink ← Foo`, `via child of Bar`, or `via tag #dogs`. Escape (when you are not editing) ends the neural pass and offers **Start outstanding (Alt+R)** instead of closing the tab.
 
@@ -79,13 +81,13 @@ A muted line on the card says why it is here: `via wikilink ← Foo`, `via child
 
 The **IR element tree** (`Alt+I`) is a keyboard home: `j`/`k` or arrows move, Enter opens or jumps review, `o` opens the note, `p` edits priority, `d` dismisses, `m` postpones, Space folds. Click a row to find it in an open review (or open the note); double-click always opens the note. The card you are reviewing keeps a **reviewing** chip.
 
-The **status bar** shows `due · postponed · +inflow/7d`. Click it to start review; right-click (or long-press) for the IR menu. **Stats** (`Alt+S`) redraw with that same load. The **session log** (`Alt+L`) is this review pass — stamped when you actually start Alt+R or Alt+N — not everything since the plugin loaded. Click a row to jump that card or open the note.
+The **status bar** shows `due · postponed · +inflow/7d`. Click it to start review; right-click (or long-press) for the IR menu. **Stats** (`Alt+S`) refresh those counts when you open them. The **session log** (`Alt+L`) is this review pass — stamped when you actually start Alt+R or Alt+N — not everything since the plugin loaded. Click a row to jump that card or open the note.
 
 The left ribbon has one IR icon: **Start IR review**. Everything else is in the command palette, the status-bar menu, or the tree.
 
 ## Keyboard
 
-Every IR command has a default `Alt+…` binding. Rebind or clear them under Settings → Hotkeys.
+The SuperMemo-adjacent commands have default `Alt+…` bindings. Rebind or clear them under Settings → Hotkeys. Other IR commands (resume last read, undo last grade, split cloze, extract paragraph / heading / bulk) have no default — assign one there if you want it.
 
 | | |
 |---|---|
@@ -96,6 +98,7 @@ Every IR command has a default `Alt+…` binding. Rebind or clear them under Set
 | `Alt+Shift+X` | Extract once to a standalone note |
 | `Alt+Shift+P` | Promote the current anchored extract |
 | `Alt+Z` | Cloze selection (optional hint) |
+| `Alt+Shift+Z` | New cloze card (separate item from selection) |
 | `Alt+I` | Open the IR element tree |
 | `Alt+L` | Open this review's session log |
 | `Alt+S` | Stats |
@@ -110,9 +113,9 @@ In the **review tab:** `Space` / `Enter` advances a reading card, `[` is Previou
 
 ## Mobile
 
-On a phone, a **brain FAB** stays visible (file explorer included). It opens the same radial wheel, with **Start IR review** and **Open IR element tree** on the ring. **Go neural** appears once the open note is already in IR. The note ⋯ menu still has the full command set.
+On a phone, a **brain FAB** stays visible (file explorer included). It opens the same radial wheel, with **Start IR review** and **Open IR element tree** on the ring — including during a session. **Go neural** is on the ring while you are reviewing, or when the open note is already in IR. The note ⋯ menu still has the full command set.
 
-In review, the dock keeps the primary actions (**Extract**, **Cloze**, **Next** / grades); **⋯** holds Edit, Previous, Later today, Dismiss, and Undo. Priority and A-Factor collapse to a chip you tap to edit. Swipe the card to navigate and grade; a one-time legend explains the directions.
+In review, the dock keeps the primary actions (**Extract**, **Cloze**, **Next** / **Show answer** / grades). **⋯** is the rest for that card, not a fixed list: reading cards put Edit, Previous, Later today, and Dismiss there; an unrevealed cloze only has Previous; after the answer is showing, Previous, Edit, Dismiss, and Undo last grade. Priority and A-Factor collapse to a chip you tap to edit. Swipe the card to navigate and grade; a one-time legend explains the directions.
 
 Pin these on the **mobile editor toolbar** (Settings → Mobile → Configure mobile toolbar) if you extract from the editor:
 
@@ -124,11 +127,11 @@ Pin these on the **mobile editor toolbar** (Settings → Mobile → Configure mo
 
 ## Settings
 
-Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, **Overload**, **Anki export**, **Danger zone**. **Restore defaults** at the top puts every control back to a new vault's values without touching notes or review history. Overload is the daily ceiling and priority cutoff for postpone. Danger zone can reset IR state (keep notes) or trash every IR note.
+Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, **Overload**, **Anki export**, **Danger zone**. **Restore defaults** at the top puts every control back to a new vault's values without touching notes or review history. Overload is the daily ceiling and priority cutoff for postpone. Extracts includes what happens when a source note is deleted (make orphan highlights into notes, or keep them as cards only). Danger zone can reset IR state (keep notes) or trash every IR note.
 
 ## Roadmap
 
-**Shipped through 0.6.10** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB, a prompt if a deleted source comes back, and Restore defaults in Settings.
+**Shipped through 0.6.11** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
 
 ### Stretch
 
