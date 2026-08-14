@@ -3363,7 +3363,10 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
 
     try {
-      await this.runMigrationIfOwed();
+      const fs = new ObsidianVaultFs(adapter);
+      this.store = new IrStore(fs, { conflict: "clock-order" });
+      this.storeInit = this.runMigrationIfOwed(fs);
+      await this.storeInit;
     } catch (e) {
       console.error("Incremental Reading: post-wipe store re-init failed", e);
     }
