@@ -37,8 +37,14 @@ async function ensureAncestors(adapter: ObsidianDataAdapter, filePath: string): 
 export class ObsidianVaultFs implements VaultFs {
   constructor(private adapter: ObsidianDataAdapter) {}
 
-  exists(p: string): Promise<boolean> {
-    return this.adapter.exists(p);
+  async exists(p: string): Promise<boolean> {
+    try {
+      return await this.adapter.exists(p);
+    } catch {
+      // Capacitor / iCloud adapters throw on missing hidden paths instead
+      // of returning false. Treat that as absent so store init can proceed.
+      return false;
+    }
   }
 
   read(p: string): Promise<string> {

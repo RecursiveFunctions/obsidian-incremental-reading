@@ -1,14 +1,15 @@
 /**
  * Workspace-level IR quick-actions FAB for Obsidian mobile.
  *
- * Fixed to the viewport on markdown source notes and during IR review so
- * extract/cloze and the radial wheel are one tap away. Mounted on
- * `document.body` so Obsidian workspace transforms do not clip it.
+ * Fixed to the viewport on every mobile surface (file explorer included)
+ * so Start review is one tap away. Mounted on `document.body` so Obsidian
+ * workspace transforms do not clip it.
  */
 
 import type { App, Plugin } from "obsidian";
-import { MarkdownView, Platform, setIcon } from "obsidian";
+import { Platform, setIcon } from "obsidian";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./review-view";
+import { irWorkspaceFabShouldShow } from "./ir/mobile-hub";
 import { layoutWorkspaceFab } from "./ir/mobile-viewport";
 
 const FAB_CLASS = "ir-workspace-fab";
@@ -32,9 +33,9 @@ export function registerWorkspaceIrFab(
 
   const fab = document.body.createDiv({ cls: FAB_CLASS });
   fab.setAttr("role", "button");
-  fab.setAttr("aria-label", "IR quick actions");
-  fab.setAttr("title", "IR quick actions");
-  setIcon(fab, "layout-list");
+  fab.setAttr("aria-label", "Incremental Reading");
+  fab.setAttr("title", "Incremental Reading");
+  setIcon(fab, "brain-circuit");
   const prepare = () => hooks.prepareOpenHub();
   fab.addEventListener(
     "pointerdown",
@@ -104,16 +105,12 @@ function fabLayoutContext(app: App): {
   reviewDock: boolean;
   layoutRoot?: HTMLElement;
 } {
-  if (!Platform.isMobile) {
+  if (!irWorkspaceFabShouldShow(Platform.isMobile)) {
     return { show: false, review: false, reviewDock: false };
   }
 
   const leaf = app.workspace.activeLeaf;
-  if (!leaf) {
-    return { show: false, review: false, reviewDock: false };
-  }
-
-  if (leaf.view instanceof IrReviewView) {
+  if (leaf?.view instanceof IrReviewView) {
     return {
       show: true,
       review: true,
@@ -122,22 +119,10 @@ function fabLayoutContext(app: App): {
     };
   }
 
-  const vt = leaf.view.getViewType();
+  const vt = leaf?.view.getViewType();
   if (vt === IR_REVIEW_VIEW_TYPE) {
     return { show: true, review: true, reviewDock: true };
   }
 
-  const mv = app.workspace.getActiveViewOfType(MarkdownView);
-  if (mv?.file?.extension === "md") {
-    return { show: true, review: false, reviewDock: false };
-  }
-
-  if (vt === "markdown") {
-    const m = leaf.view as MarkdownView;
-    if (m.file && m.file.extension === "md") {
-      return { show: true, review: false, reviewDock: false };
-    }
-  }
-
-  return { show: false, review: false, reviewDock: false };
+  return { show: true, review: false, reviewDock: false };
 }

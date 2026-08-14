@@ -87,7 +87,9 @@ Obsidian’s mobile editor toolbar is user-configured (**Settings → Mobile →
 4. **IR quick actions (radial wheel)** (layout-list) — contextual bulk extract / split / fork.
 5. **Mark note as IR topic** (book-open) — promote the open note to a reading source.
 
-Outside the editor, use the **workspace FAB** (purple list icon, bottom-right on markdown notes) for quick actions, or the note **⋯ file menu** for the full IR command set.
+Outside the editor, the **workspace FAB** (brain icon, always visible on
+mobile — file explorer included) opens the radial wheel with **Start IR
+review** on the ring. The note **⋯** menu still has the full IR command set.
 
 ## Cloze markup
 

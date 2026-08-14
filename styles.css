@@ -284,7 +284,7 @@
 /* Workspace FAB: position is set in JS (mobile-viewport.ts) above Obsidian nav. */
 .ir-workspace-fab {
   position: fixed;
-  z-index: 1000;
+  z-index: 10000;
   width: 52px;
   height: 52px;
   border-radius: 50%;

@@ -107,6 +107,7 @@ import {
   notifyWorkspaceFabSync,
   registerWorkspaceIrFab,
 } from "./src/ir-mobile-fab";
+import { sessionHubKinds } from "./src/ir/mobile-hub";
 import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
 
 /**
@@ -135,6 +136,31 @@ function getMachineHostname(): string {
     // fall through
   }
   return "unknown";
+}
+
+/** Bound a vault-adapter call so a hung Capacitor/iCloud exists() cannot stall onload. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = window.setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Incremental Reading: ${label} timed out after ${ms}ms`,
+          ),
+        ),
+      ms,
+    );
+    p.then(
+      (v) => {
+        window.clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        window.clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
 }
 
 /** True when `span` shares any byte with at least one range in `ranges`. */
@@ -170,6 +196,13 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private store?: IrStore;
 
+  /**
+   * Store init / first-run migration. Started from onload but not awaited
+   * there: a hung `.ir/` exists() on mobile must not block command and FAB
+   * registration. Callers that need a ready store await this.
+   */
+  private storeInit: Promise<void> = Promise.resolve();
+
   /** Status bar queue-load indicator (UI commitment #4). */
   private statusBarEl?: HTMLElement;
 
@@ -202,7 +235,11 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
-    await this.runMigrationIfOwed();
+    const fs = new ObsidianVaultFs(
+      this.app.vault.adapter as unknown as ObsidianDataAdapter,
+    );
+    this.store = new IrStore(fs, { conflict: "clock-order" });
+    this.storeInit = this.runMigrationIfOwed(fs);
     this.addSettingTab(new IrSettingTab(this.app, this));
 
     // Editor decoration extension (DESIGN §Q3). Registered before any extract
@@ -239,6 +276,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       (evt) => this.showStatusBarMenu(evt),
     );
     void this.refreshStatusBar();
+    void this.storeInit.then(() => void this.refreshStatusBar());
 
     // Background tick: refreshes the "+N/7d" rolling window so it does not
     // drift when nothing in the plugin is triggering a redraw. Cheap (reads
@@ -677,6 +715,14 @@ export default class IncrementalReadingPlugin extends Plugin {
         "editor-menu",
         (menu: Menu, editor: Editor, view: MarkdownView) => {
           if (!view.file) return;
+          if (Platform.isMobile) {
+            menu.addItem((item) =>
+              item
+                .setTitle("Start IR review")
+                .setIcon("play-circle")
+                .onClick(() => void this.startReview()),
+            );
+          }
           menu.addItem((item) =>
             item
               .setTitle("IR quick actions (radial wheel)…")
@@ -1051,6 +1097,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     isNeural: boolean;
   } | null> {
     if (!this.store) return null;
+    await this.storeInit;
     const state = await this.store.load();
     const queue = dueQueue(
       this.app,
@@ -1609,6 +1656,15 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async startReview() {
     if (!this.store) {
       new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    try {
+      await withTimeout(this.storeInit, 8000, "store init");
+    } catch (e) {
+      console.error("Incremental Reading: store init still running", e);
+      new Notice(
+        "Incremental Reading: still starting up. Try Start IR review again in a moment.",
+      );
       return;
     }
     const state = await this.store.load();
@@ -2510,10 +2566,6 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /** Command palette / ribbon / review: contextual IR actions as a radial wheel. */
   private async openIrActionsHub(): Promise<void> {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
-      return;
-    }
     if (!this.hubSelectionSnapshot) this.captureHubEditorSelection();
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (mv?.file && mv.editor) {
@@ -2527,6 +2579,41 @@ export default class IncrementalReadingPlugin extends Plugin {
     const out: IrHubEntry[] = [];
 
     const review = this.getActiveReviewView();
+    const mvForHub = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const hubFile = mvForHub?.file ?? this.app.workspace.getActiveFile();
+    for (const kind of sessionHubKinds({
+      inReview: !!review,
+      hasMarkdownFile: hubFile?.extension === "md",
+      alreadyIr: !!(
+        hubFile &&
+        hubFile.extension === "md" &&
+        getIrType(this.app, hubFile)
+      ),
+    })) {
+      if (kind === "start-review") {
+        out.push({
+          title: "Start IR review",
+          description: "Open today's due queue.",
+          icon: "play-circle",
+          run: () => this.startReview(),
+        });
+      } else if (kind === "go-neural") {
+        out.push({
+          title: "Go neural",
+          description: "Subset review from the current note.",
+          icon: "network",
+          run: () => this.startNeuralReviewFromActiveNote(),
+        });
+      } else {
+        out.push({
+          title: "Mark as IR topic",
+          description: "Queue this note as a reading source.",
+          icon: "book-open",
+          run: () => this.markActiveFileAsTopic(hubFile ?? undefined),
+        });
+      }
+    }
+
     if (review) {
       out.push(
         ...review.buildHubExtractEntries(
@@ -3045,34 +3132,42 @@ export default class IncrementalReadingPlugin extends Plugin {
    * frontmatter remains authoritative, and breaking `onload` would take the
    * whole plugin (commands, review) down with it.
    */
-  private async runMigrationIfOwed(): Promise<void> {
-    const fs = new ObsidianVaultFs(
-      this.app.vault.adapter as unknown as ObsidianDataAdapter,
-    );
+  private async runMigrationIfOwed(fs: ObsidianVaultFs): Promise<void> {
+    const store = this.store;
+    if (!store) return;
     // clock-order, not conservative: on the live single-device plugin the
     // newest event must win, otherwise a "graded" event whose due moves
     // later than the migrated card is folded away and the item never
     // reschedules. This matches the Obsidian-Sync last-write-wins model the
     // log is designed around; the raw log is intact either way, so a
     // re-fold under another policy stays possible.
-    const store = new IrStore(fs, { conflict: "clock-order" });
     const hostname = getMachineHostname();
 
     try {
       // Detection happens before init(): init() is what writes the marker.
-      if (await fs.exists(META)) {
+      // Timeout: Capacitor/iCloud can hang on hidden `.ir/` exists() and
+      // that used to stall the whole plugin (no commands, no FAB).
+      const hasMeta = await withTimeout(
+        fs.exists(META),
+        4000,
+        "exists(.ir/meta.json)",
+      );
+      if (hasMeta) {
         // Still call init() so the per-host device.json resolution runs and
         // this machine's device id is stable for the session. init() is a
         // no-op for META in the already-initialized branch; it only touches
         // .ir/device.json.
-        await store.init({ hostname });
-        this.store = store;
+        await withTimeout(
+          store.init({ hostname }),
+          8000,
+          "IrStore.init",
+        );
         return;
       }
 
       // Marker + device id first, so the append below has a shard to write
       // to and a re-run sees the marker.
-      await store.init({ hostname });
+      await withTimeout(store.init({ hostname }), 8000, "IrStore.init");
 
       const notes = this.enumerateIrNotes();
       const events = migrateNotes(notes, Date.now());
@@ -3081,7 +3176,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
       await store.reconcile();
 
-      this.store = store;
       if (events.length > 0) {
         new Notice(
           `Incremental Reading: migrated ${events.length} element` +

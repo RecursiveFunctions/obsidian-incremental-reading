@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-08-13
+
+### Fixed
+
+- **Mobile: Incremental Reading actually shows up.** 0.6.1 left the phone
+  with no status bar, one ribbon icon behind a swipe, a FAB that hid on the
+  file explorer, and a hub that listed no Start-review action on a plain
+  note. The purple FAB is now always on (brain icon), and the hub always
+  includes **Start IR review** / **Go neural** (and **Mark as IR topic** on
+  a plain note). Plugin load no longer waits on `.ir/` IO, so a hung hidden
+  folder on iOS cannot register zero commands.
+
 ## [0.6.2] — 2026-08-13
 
 ### Changed

@@ -9,7 +9,7 @@ export type IrHubEntry = {
 };
 
 const EMPTY_HELP_LINES: string[] = [
-  "This ring only shows actions that fit your current context.",
+  "Start IR review and Go neural are on this ring whenever you are not already in a session.",
   "",
   "New cloze (separate card): select text in a Markdown note, then tap the IR FAB or open the wheel. On an IR item, the new card is filed under that item’s ir-parent.",
   "",
