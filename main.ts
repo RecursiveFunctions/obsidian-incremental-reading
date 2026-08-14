@@ -1357,6 +1357,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     const device = await this.store.getDeviceId();
 
     let created = 0;
+    const createdEls: IrElement[] = [];
     for (const span of candidates) {
       const now = Date.now();
       try {
@@ -1377,6 +1378,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           ),
         });
         await this.store.appendEvent(ev);
+        createdEls.push(ev.payload.element as IrElement);
         created += 1;
       } catch (e) {
         console.error(
@@ -1394,6 +1396,11 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     await this.store.reconcile();
     void this.refreshStatusBar();
+    const rv = this.getActiveReviewView();
+    if (rv && rv.getCurrentReviewFile()?.path === source.path) {
+      for (const el of createdEls) rv.adoptElement(el);
+      rv.refreshView();
+    }
     new Notice(
       `${headlineLabel}: ${created} extract${created === 1 ? "" : "s"} created.`,
     );
@@ -1923,6 +1930,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     });
     new Notice(`Promoted extract to "${notePath}".`);
     void this.refreshStatusBar();
+    this.getActiveReviewView()?.adoptElement(element);
     const tree = this.getTreeView();
     if (tree) void tree.refresh();
   }
@@ -2899,6 +2907,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.recordElement(nf);
       new Notice(`Incremental Reading: forked extract to "${nf.basename}".`);
       void this.refreshStatusBar();
+      if (this.store) {
+        const state = await this.store.load();
+        const created = state.elements.get(elementIdForPath(newPath));
+        if (created) this.getActiveReviewView()?.adoptElement(created);
+      }
       return;
     }
 
@@ -2936,6 +2949,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     });
     new Notice("Incremental Reading: forked extract (second reading element).");
     void this.refreshStatusBar();
+    this.getActiveReviewView()?.adoptElement(newEl);
   }
 
   private async openResult(result: IrNoteResult, verb: string) {

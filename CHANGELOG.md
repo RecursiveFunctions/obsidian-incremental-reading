@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-08-13
+
+### Changed
+
+- **Live review session.** Extract, cloze, promote, fork, and hub bulk
+  extract append the new card immediately after the current one instead of
+  waiting for the next Alt+R. The session bar shows `Due · N left` or
+  `Neural · Neuro=N · seed`. Finishing the pass leaves a **Session complete**
+  pane (Alt+R / Escape / Close) rather than closing the tab.
+- **Source chip on mobile** lives on the session bar so it is not scrolled
+  off the card. Cloze items prefer the nearest extract ancestor in the
+  source column.
+- **Resume chrome.** Reading cards with a saved position show **Resumed from
+  last time** and **From the top**.
+
 ## [0.6.1] — 2026-08-13
 
 ### Changed

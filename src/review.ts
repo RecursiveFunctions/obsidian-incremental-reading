@@ -205,3 +205,83 @@ function obsidianLinkIndex(app: App): NoteLinkIndex {
     },
   };
 }
+
+/**
+ * Insert `child` immediately after the current index so a mid-session
+ * extract/cloze joins this pass without rebuilding the due queue.
+ * If the id is already in the queue, refresh its element/file in place.
+ */
+export function upsertAfterCurrent(
+  queue: readonly ReviewSlot[],
+  index: number,
+  child: ReviewSlot,
+): ReviewSlot[] {
+  const existing = queue.findIndex((s) => s.id === child.id);
+  if (existing >= 0) {
+    const out = queue.slice();
+    const prev = out[existing]!;
+    out[existing] = {
+      ...prev,
+      element: child.element,
+      file: child.file ?? prev.file,
+    };
+    return out;
+  }
+  const out = queue.slice();
+  const at = Math.max(0, Math.min(index + 1, out.length));
+  out.splice(at, 0, child);
+  return out;
+}
+
+/** Resolve a vault file for `el` when `notePath` still exists. */
+export function slotFromElement(app: App, el: IrElement): ReviewSlot | null {
+  let file: TFile | null = null;
+  if (el.notePath) {
+    const af = app.vault.getAbstractFileByPath(el.notePath);
+    file = isVaultFile(af) ? af : null;
+  }
+  if (!file && !el.text) return null;
+  return { id: el.id, element: el, file };
+}
+
+/**
+ * Session chrome (distinct from the per-card title). `remaining` includes
+ * the current card.
+ */
+export function sessionBarLabel(opts: {
+  done: boolean;
+  isNeural: boolean;
+  remaining: number;
+  seedLabel?: string;
+}): string {
+  if (opts.done) return "Session complete";
+  if (opts.isNeural) {
+    const n = `Neuro=${opts.remaining}`;
+    return opts.seedLabel
+      ? `Neural · ${n} · ${opts.seedLabel}`
+      : `Neural · ${n}`;
+  }
+  return `Due · ${opts.remaining} left`;
+}
+
+/**
+ * Source-column parent: items prefer the nearest extract ancestor so a
+ * cloze shows the extract it came from, not only the cloze note (and not
+ * a long root topic when an extract sits in between).
+ */
+export function contextSourceParentId(
+  el: IrElement,
+  elements: ReadonlyMap<ElementId, IrElement>,
+): ElementId | null {
+  if (!el.parentId) return null;
+  if (el.type !== "item") return el.parentId;
+  let pid: ElementId | null = el.parentId;
+  const fallback = el.parentId;
+  while (pid) {
+    const p = elements.get(pid);
+    if (!p) return fallback;
+    if (p.type === "extract") return p.id;
+    pid = p.parentId;
+  }
+  return fallback;
+}

@@ -25,6 +25,63 @@
   box-sizing: border-box;
 }
 
+.ir-review-modal.ir-review-layout > .ir-review-session-bar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ir-review-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px 2px;
+}
+
+.ir-review-session-label {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ir-review-session-source {
+  flex: 0 0 auto;
+  font-size: var(--font-ui-small);
+  min-height: 32px;
+}
+
+.ir-review-session-track {
+  height: 3px;
+  background: var(--background-modifier-border);
+}
+
+.ir-review-session-fill {
+  height: 100%;
+  background: var(--text-accent);
+  transition: width 0.3s ease;
+}
+
+.ir-review-resume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  margin: 0 0 0.4em;
+}
+
+.ir-review-resume-btn {
+  font-size: var(--font-ui-small);
+}
+
+.ir-review-complete-hint {
+  color: var(--text-muted);
+}
+
 .ir-review-modal.ir-review-layout > .ir-review-card-host {
   flex: 1 1 0;
   min-height: 0;

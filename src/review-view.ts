@@ -64,6 +64,12 @@ import {
 import { buildExtractEvent, buildTextEditedEvent } from "./ir/extract";
 import { newElementId, newEventId, type ElementId } from "./ir/ids";
 import type { ReviewSlot } from "./review";
+import {
+  contextSourceParentId,
+  sessionBarLabel,
+  slotFromElement,
+  upsertAfterCurrent,
+} from "./review";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import { findExtractRange } from "./ir/extract-range";
 import {
@@ -150,6 +156,17 @@ export class IrReviewView extends ItemView {
   /** In-dock success line; survives the next renderCard until it fades. */
   private pendingFlash: string | null = null;
   private flashClearTimer: number | null = null;
+
+  /** Thin session chrome; sibling of cardHost so it survives card re-renders. */
+  private sessionBarEl?: HTMLElement;
+  /** True after the last card is graded/advanced; show complete state, don't detach. */
+  private sessionComplete = false;
+  /** Frozen label of the first card (neural seed / session identity). */
+  private sessionSeedLabel = "";
+  /** Latest source-context availability, for the mobile Source chip. */
+  private hasSourceContext = false;
+  /** User chose "From the top" on these reading cards; skip bookmark restore. */
+  private resumeFromTop = new Set<ElementId>();
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -272,8 +289,14 @@ export class IrReviewView extends ItemView {
 
     this.bookmarks = await this.store.loadBookmarks();
     this.bookmarksLoaded = true;
+    this.sessionSeedLabel = this.queue[0]
+      ? labelFor(this.queue[0].element)
+      : "";
     this.contentEl.addClass("ir-review-modal");
     this.contentEl.addClass("ir-review-layout");
+    this.sessionBarEl = this.contentEl.createDiv({
+      cls: "ir-review-session-bar",
+    });
     this.cardHostEl = this.contentEl.createDiv({ cls: "ir-review-card-host" });
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
@@ -305,7 +328,10 @@ export class IrReviewView extends ItemView {
             return reviewSwipeMode(reading, isCloze, this.revealed);
           },
           isBlocked: () =>
-            !this.current || this.editing || this.isTypingInInput(),
+            !this.current ||
+            this.sessionComplete ||
+            this.editing ||
+            this.isTypingInInput(),
           onOutcome: (outcome) => this.handleSwipeOutcome(outcome),
         },
       );
@@ -320,6 +346,11 @@ export class IrReviewView extends ItemView {
     const scope = new Scope(this.app.scope);
     this.scope = scope;
     scope.register([], "Escape", (evt) => {
+      if (this.sessionComplete) {
+        evt.preventDefault();
+        this.leaf.detach();
+        return false;
+      }
       if (!this.editing) return; // pass through to Obsidian's default
       evt.preventDefault();
       this.editing = false;
@@ -455,6 +486,7 @@ export class IrReviewView extends ItemView {
     this.mobileOrientationCleanup?.();
     this.mobileOrientationCleanup = undefined;
     this.swipeHintEl = undefined;
+    this.sessionBarEl = undefined;
     this.cardHostEl = undefined;
     this.contentEl.empty();
     this.onSlotChange?.(null);
@@ -872,26 +904,6 @@ export class IrReviewView extends ItemView {
     });
   }
 
-  private renderMobileSourceToggle(
-    parent: HTMLElement,
-    title: string,
-    masked: boolean,
-  ): void {
-    const label = masked
-      ? "Show source (hidden until reveal)"
-      : `Show source · ${title}`;
-    parent
-      .createEl("button", {
-        cls: "ir-review-source-toggle",
-        text: label,
-        type: "button",
-      })
-      .addEventListener("click", () => {
-        this.mobileSourceExpanded = true;
-        void this.renderCard();
-      });
-  }
-
   private readingOverflowItems(): {
     label: string;
     disabled?: boolean;
@@ -1108,7 +1120,7 @@ export class IrReviewView extends ItemView {
      */
     siblingRanges: ReadonlyArray<{ start: number; end: number }>;
   } | null> {
-    const pid = slot.element.parentId;
+    const pid = contextSourceParentId(slot.element, this.elementsById);
     if (!pid) return null;
     const parent = this.elementsById.get(pid);
     if (!parent) return null;
@@ -1189,6 +1201,7 @@ export class IrReviewView extends ItemView {
    */
   private restoreBookmark(slot: ReviewSlot): void {
     if (!this.isReading(slot)) return;
+    if (this.resumeFromTop.has(slot.id)) return;
     const bm = getBookmark(this.bookmarks, slot.id);
     if (!bm) return;
 
@@ -1323,7 +1336,13 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     this.onSlotChange?.(slot ? slot.id : null);
     if (!slot) {
+      this.hasSourceContext = false;
       this.contentEl.removeClass("ir-review-has-context");
+      if (this.sessionComplete) {
+        this.paintSessionBar();
+        this.renderSessionComplete(host);
+        return;
+      }
       window.setTimeout(() => this.leaf.detach(), 0);
       return;
     }
@@ -1331,6 +1350,8 @@ export class IrReviewView extends ItemView {
     await this.ensureLoaded(slot);
 
     const sourceCtx = await this.loadSourceContext(slot);
+    this.hasSourceContext = !!sourceCtx;
+    this.paintSessionBar();
     if (sourceCtx) this.contentEl.addClass("ir-review-has-context");
     else this.contentEl.removeClass("ir-review-has-context");
 
@@ -1448,63 +1469,16 @@ export class IrReviewView extends ItemView {
       cls: "ir-review-scroll ir-review-swipe-zone",
     });
 
-    if (
-      sourceCtx &&
-      Platform.isMobile &&
-      !this.mobileSourceExpanded &&
-      !mobileCompactEdit
-    ) {
-      this.renderMobileSourceToggle(scroll, sourceCtx.title, maskClozeChrome);
-    }
-
     if (mobileCompactEdit) {
       this.renderEditor(scroll);
     } else {
-      const pct = this.queue.length > 0
-        ? Math.round(((this.index) / this.queue.length) * 100)
-        : 0;
-      const progressWrap = mainCol.createDiv({ cls: "ir-review-progress-bar" });
-      const fill = progressWrap.createDiv({ cls: "ir-review-progress-fill" });
-      fill.style.width = `${pct}%`;
-
-      const remaining = this.queue.length - this.index;
-      const remainingByType = { topics: 0, extracts: 0, items: 0 };
-      for (let i = this.index; i < this.queue.length; i++) {
-        const t = this.queue[i]!.element.type;
-        if (t === "topic") remainingByType.topics++;
-        else if (t === "extract") remainingByType.extracts++;
-        else remainingByType.items++;
-      }
-      const parts: string[] = [];
-      if (remainingByType.topics > 0) {
-        parts.push(
-          `${remainingByType.topics} topic${remainingByType.topics !== 1 ? "s" : ""}`,
-        );
-      }
-      if (remainingByType.extracts > 0) {
-        parts.push(
-          `${remainingByType.extracts} extract${remainingByType.extracts !== 1 ? "s" : ""}`,
-        );
-      }
-      if (remainingByType.items > 0) {
-        parts.push(
-          `${remainingByType.items} item${remainingByType.items !== 1 ? "s" : ""}`,
-        );
-      }
-
       const label = reviewHeadlineLabel(slot.element, maskClozeChrome);
-      const mode = this.isNeural
-        ? `Neural · Neuro=${this.queue.length}`
-        : reading
-          ? "Reading"
-          : "Review";
+      const kind = reading ? "Reading" : "Review";
       scroll.createEl("div", {
         cls: "ir-review-progress",
-        text:
-          `${this.index + 1} of ${this.queue.length}  ·  ` +
-          `${mode}  ·  ${label}` +
-          (parts.length > 0 ? `  ·  ${parts.join(", ")} left` : ""),
+        text: `${kind}  ·  ${label}`,
       });
+      this.renderResumeChrome(scroll, slot);
 
       const ancestors = ancestorChain(slot.element, this.elementsById);
       if (ancestors.length > 0) {
@@ -1695,7 +1669,131 @@ export class IrReviewView extends ItemView {
 
   /** Cards still in this session, including the current one. */
   private remainingInSession(): number {
-    return Math.max(0, this.queue.length - this.index);
+    return this.sessionComplete
+      ? 0
+      : Math.max(0, this.queue.length - this.index);
+  }
+
+  /**
+   * Mid-session extract/cloze/promote/fork: the new (or updated) element
+   * joins this pass immediately after the current card. Does not rebuild
+   * the due queue. Safe to call from the host plugin (hub/tree).
+   */
+  adoptElement(el: IrElement): void {
+    const slot = slotFromElement(this.app, el);
+    if (!slot) return;
+    this.elementsById.set(el.id, el);
+    const currentId = this.current?.id;
+    this.queue = upsertAfterCurrent(this.queue, this.index, slot);
+    if (currentId === el.id) {
+      this.loadedSlotId = null;
+      void this.renderCard();
+    }     else {
+      this.paintSessionBar();
+    }
+  }
+
+  /** Re-paint after the host plugin mutates the session (bulk extract). */
+  refreshView(): void {
+    void this.renderCard();
+  }
+
+  private paintSessionBar(): void {
+    const bar = this.sessionBarEl;
+    if (!bar) return;
+    bar.empty();
+    const remaining = this.remainingInSession();
+    const donePct =
+      this.queue.length === 0
+        ? 100
+        : Math.round((this.index / this.queue.length) * 100);
+    const pct = this.sessionComplete ? 100 : donePct;
+
+    const row = bar.createDiv({ cls: "ir-review-session-row" });
+    row.createSpan({
+      cls: "ir-review-session-label",
+      text: sessionBarLabel({
+        done: this.sessionComplete,
+        isNeural: this.isNeural,
+        remaining,
+        seedLabel: this.isNeural ? this.sessionSeedLabel : undefined,
+      }),
+    });
+    if (
+      Platform.isMobile &&
+      this.hasSourceContext &&
+      !this.sessionComplete
+    ) {
+      const btn = row.createEl("button", {
+        cls: "ir-review-session-source",
+        type: "button",
+        text: this.mobileSourceExpanded ? "Hide source" : "Source",
+      });
+      btn.setAttr(
+        "aria-expanded",
+        this.mobileSourceExpanded ? "true" : "false",
+      );
+      btn.addEventListener("click", () => {
+        this.mobileSourceExpanded = !this.mobileSourceExpanded;
+        void this.renderCard();
+      });
+    }
+
+    const track = bar.createDiv({ cls: "ir-review-session-track" });
+    const fill = track.createDiv({ cls: "ir-review-session-fill" });
+    fill.style.width = `${pct}%`;
+  }
+
+  private renderSessionComplete(host: HTMLElement): void {
+    const scroll = host.createDiv({ cls: "ir-review-scroll" });
+    scroll.createEl("h3", { text: "Session complete" });
+    const n = this.queue.length;
+    scroll.createEl("p", {
+      text:
+        n === 1
+          ? "You finished 1 element in this pass."
+          : `You finished ${n} elements in this pass.`,
+    });
+    scroll.createEl("p", {
+      cls: "ir-review-complete-hint",
+      text: "Alt+R starts remaining due. Escape or Close leaves this tab.",
+    });
+    scroll
+      .createEl("button", { text: "Close", cls: "mod-cta" })
+      .addEventListener("click", () => this.leaf.detach());
+  }
+
+  private renderResumeChrome(parent: HTMLElement, slot: ReviewSlot): void {
+    if (!this.isReading(slot)) return;
+    if (this.resumeFromTop.has(slot.id)) return;
+    const bm = getBookmark(this.bookmarks, slot.id);
+    if (!bm || (bm.scrollTop <= 0 && bm.line <= 0)) return;
+    const row = parent.createDiv({ cls: "ir-review-resume" });
+    row.createSpan({
+      cls: "ir-review-resume-msg",
+      text: "Resumed from last time",
+    });
+    row
+      .createEl("button", {
+        cls: "ir-review-resume-btn",
+        type: "button",
+        text: "From the top",
+      })
+      .addEventListener("click", () => {
+        this.resumeFromTop.add(slot.id);
+        const scroll = this.contentEl.querySelector<HTMLElement>(
+          ".ir-review-main-col .ir-review-scroll",
+        );
+        if (scroll) scroll.scrollTop = 0;
+        const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
+          ".ir-review-textarea",
+        );
+        if (ta) {
+          ta.setSelectionRange(0, 0);
+          ta.scrollTop = 0;
+        }
+        row.remove();
+      });
   }
 
   /**
@@ -2131,7 +2229,9 @@ export class IrReviewView extends ItemView {
         opts?.promote ?? this.settings.extractCreatesStandaloneNote;
       if (created && promote && this.commitPromoteExtract) {
         await this.commitPromoteExtract(created.id, created);
-      } else if (!opts?.silent) {
+      }
+      this.adoptElement(created);
+      if (!opts?.silent) {
         this.flash(`Extracted · ${this.remainingInSession()} left`);
       }
       this.onChange?.();
@@ -2341,6 +2441,7 @@ export class IrReviewView extends ItemView {
       await this.store.appendEvent(ev);
       const created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
+      this.adoptElement(created);
       this.flash(`Extracted · ${this.remainingInSession()} left`);
       this.onChange?.();
     } catch (e) {
@@ -2452,7 +2553,7 @@ export class IrReviewView extends ItemView {
       this.settings,
       hint,
     );
-    await this.afterChildCreated(result);
+    const created = await this.afterChildCreated(result);
     if (!slot.file && result.file) {
       const id = elementIdForPath(result.file.path);
       await this.emit("reparented", id, { parentId: slot.id });
@@ -2460,6 +2561,10 @@ export class IrReviewView extends ItemView {
       if (el) {
         this.elementsById.set(id, { ...el, parentId: slot.id });
       }
+    }
+    if (created) {
+      const latest = this.elementsById.get(created.id) ?? created;
+      this.adoptElement(latest);
     }
     // Source remains pristine under DESIGN §Q3: the cloze item carries the
     // `{{cN::...}}` syntax in its own note and the queue records the new
@@ -2523,11 +2628,14 @@ export class IrReviewView extends ItemView {
     }
   }
 
-  private async afterChildCreated(result: IrNoteResult) {
+  private async afterChildCreated(
+    result: IrNoteResult,
+  ): Promise<IrElement | undefined> {
     if (!result.file) {
       new Notice(`Incremental Reading: ${result.error}`);
       return;
     }
+    let created: IrElement | undefined;
     try {
       let fm: Record<string, unknown> = {};
       await this.app.fileManager.processFrontMatter(result.file, (f) => {
@@ -2540,24 +2648,25 @@ export class IrReviewView extends ItemView {
       for (const ev of events) {
         await this.store.appendEvent(ev);
         if (ev.kind === "element-created") {
-          const el = ev.payload.element as IrElement;
-          this.elementsById.set(el.id, el);
+          created = ev.payload.element as IrElement;
+          this.elementsById.set(created.id, created);
         }
       }
     } catch (e) {
       console.error("Incremental Reading: recording child element failed", e);
     }
+    return created;
   }
 
-  private advance(doneVerb: string) {
+  private advance() {
     void this.persistBookmarks();
     this.index += 1;
     this.revealed = false;
     this.editing = false;
     this.loadedSlotId = null;
     if (!this.current) {
-      new Notice(`${doneVerb}: ${this.queue.length} element(s).`);
-      this.leaf.detach();
+      this.sessionComplete = true;
+      void this.renderCard();
       return;
     }
     void this.renderCard();
@@ -2576,6 +2685,7 @@ export class IrReviewView extends ItemView {
     this.revealed = false;
     this.editing = false;
     this.loadedSlotId = null;
+    this.sessionComplete = false;
     void this.renderCard();
   }
 
@@ -2612,7 +2722,7 @@ export class IrReviewView extends ItemView {
         writeCardToFrontmatter(f, next);
       });
     }
-    this.advance("Review complete");
+    this.advance();
   }
 
   /**
@@ -2692,7 +2802,7 @@ export class IrReviewView extends ItemView {
         writeTopicToFrontmatter(f, advanced);
       });
     }
-    this.advance("Reading session complete");
+    this.advance();
   }
 
   private async later() {
@@ -2720,7 +2830,7 @@ export class IrReviewView extends ItemView {
         writeTopicToFrontmatter(f, postponed);
       });
     }
-    this.advance("Session complete");
+    this.advance();
   }
 
   private async dismiss() {
@@ -2733,6 +2843,6 @@ export class IrReviewView extends ItemView {
     if (this.index + 1 < this.queue.length) {
       this.flash(`Dismissed · ${this.queue.length - this.index - 1} left`);
     }
-    this.advance("Session complete");
+    this.advance();
   }
 }
