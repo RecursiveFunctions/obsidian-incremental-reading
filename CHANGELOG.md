@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.10] — 2026-08-14
+
+### Added
+
+- **Restore defaults** at the top of Settings puts every slider, toggle,
+  and text field back to a new vault's values. Notes and review history
+  are untouched.
+
 ## [0.6.9] — 2026-08-14
 
 ### Changed

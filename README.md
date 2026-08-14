@@ -124,11 +124,11 @@ Pin these on the **mobile editor toolbar** (Settings → Mobile → Configure mo
 
 ## Settings
 
-Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, **Overload**, **Anki export**, **Danger zone**. Overload is the daily ceiling and priority cutoff for postpone. Danger zone can reset IR state (keep notes) or trash every IR note.
+Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, **Overload**, **Anki export**, **Danger zone**. **Restore defaults** at the top puts every control back to a new vault's values without touching notes or review history. Overload is the daily ceiling and priority cutoff for postpone. Danger zone can reset IR state (keep notes) or trash every IR note.
 
 ## Roadmap
 
-**Shipped through 0.6.9** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB, and a prompt if a deleted source comes back.
+**Shipped through 0.6.10** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB, a prompt if a deleted source comes back, and Restore defaults in Settings.
 
 ### Stretch
 
