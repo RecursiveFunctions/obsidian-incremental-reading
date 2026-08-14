@@ -213,10 +213,12 @@ export default class IncrementalReadingPlugin extends Plugin {
   private hubSelectionSnapshot: EditorSelectionSnapshot | null = null;
 
   /**
-   * Wall-clock at plugin load; the session audit (UI commitment #7) filters
-   * the store event log to events newer than this.
+   * Wall-clock when the current review pass started (Alt+R / Alt+N). The
+   * session audit (UI commitment #7) filters the store event log to events
+   * newer than this. Infinity until the first pass so plugin-load noise
+   * does not masquerade as a review.
    */
-  private sessionStartMs = Date.now();
+  private sessionStartMs = Number.POSITIVE_INFINITY;
 
   /**
    * Set true while {@link nukeAllIrData} is trashing notes so the vault
@@ -271,7 +273,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.statusBarEl = this.addStatusBarItem();
     renderStatusBar(
       this.statusBarEl,
-      { due: 0, later: 0, inflow7d: 0 },
+      { due: 0, later: 0, postponed: 0, inflow7d: 0, dueByType: { topic: 0, extract: 0, item: 0 } },
       () => void this.startReview(),
       (evt) => this.showStatusBarMenu(evt),
     );
@@ -361,7 +363,12 @@ export default class IncrementalReadingPlugin extends Plugin {
             "Incremental Reading: store not ready for session view.",
           );
         }
-        return new IrSessionView(leaf, this.store, this.sessionStartMs);
+        return new IrSessionView(
+          leaf,
+          this.store,
+          this.sessionStartMs,
+          (id, notePath) => this.revealSessionEntry(id, notePath),
+        );
       },
     );
 
@@ -1040,10 +1047,55 @@ export default class IncrementalReadingPlugin extends Plugin {
         () => void this.startReview(),
         (evt) => this.showStatusBarMenu(evt),
       );
+      this.refreshAuxiliaryViews();
     } catch (e) {
       console.error("Incremental Reading: status bar refresh failed", e);
     }
     void this.refreshExtractDecorations();
+  }
+
+  private refreshAuxiliaryViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(IR_STATS_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof IrStatsView) void view.refresh();
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(IR_SESSION_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof IrSessionView) void view.render();
+    }
+  }
+
+  /** Session log is this review, not plugin-load. Stamp when a pass starts. */
+  private beginReviewSession(): void {
+    this.sessionStartMs = Date.now();
+    for (const leaf of this.app.workspace.getLeavesOfType(IR_SESSION_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof IrSessionView) {
+        view.setSessionStart(this.sessionStartMs);
+        void view.render();
+      }
+    }
+  }
+
+  private revealSessionEntry(id: string, notePath?: string): void {
+    const eid = id as ElementId;
+    for (const leaf of this.app.workspace.getLeavesOfType(IR_REVIEW_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof IrReviewView && view.jumpToElement(eid)) {
+        this.app.workspace.revealLeaf(leaf);
+        return;
+      }
+    }
+    if (!notePath) {
+      new Notice("Incremental Reading: that element has no note to open.");
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(notePath);
+    if (!(file instanceof TFile)) {
+      new Notice(`Incremental Reading: note "${notePath}" not found.`);
+      return;
+    }
+    void this.app.workspace.getLeaf(false).openFile(file);
   }
 
   /**
@@ -1123,6 +1175,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.settings.interleaveSimilarPriority,
     );
     if (queue.length === 0) return null;
+    this.beginReviewSession();
     return { queue, elementsById: state.elements, isNeural: false };
   }
 
@@ -1677,6 +1730,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
+    this.beginReviewSession();
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     this.irReviewSession = { queue, elementsById: state.elements, isNeural: true };
     try {
@@ -1719,6 +1773,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
+    this.beginReviewSession();
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     this.irReviewSession = { queue, elementsById: state.elements };
     try {
@@ -2244,7 +2299,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       const leaf = existing[0];
       this.app.workspace.revealLeaf(leaf);
       const view = leaf.view;
-      if (view instanceof IrStatsView) void view.onOpen();
+      if (view instanceof IrStatsView) void view.refresh();
       return;
     }
     const leaf = this.app.workspace.getLeaf("tab");

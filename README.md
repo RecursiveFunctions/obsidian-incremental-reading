@@ -129,7 +129,7 @@ The v0.1 MVP is complete. State has since moved off frontmatter into the structu
 - [x] **Anki TSV export.** One-way export of IR items into Anki's import format.
 - [x] **Mercy / postpone.** Single command to redistribute an overloaded queue by priority without lying to the scheduler.
 - [x] **Status-bar queue load.** Glanceable due / postponed / inflow counts at all times.
-- [x] **Session audit log.** Per-session view of every item, extract, and source you touched.
+- [x] **Session audit log.** This review pass: every item, extract, and source you touched. Click a row to jump the card or open the note.
 - [x] **Multi-cloze on items.** Add more cloze deletions to an existing item in place.
 - [x] **Auto-mark plain notes.** Optional setting: notes you start reviewing are promoted to topics automatically.
 - [x] **Mobile surfaces.** Mark-as-topic, priority, dismiss, **start review, tree, session log, stats, mercy, and Anki export** are on the note file menu on mobile. Session/stats leaf polish and other small-screen UX remain.

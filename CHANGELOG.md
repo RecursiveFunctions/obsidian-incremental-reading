@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] — 2026-08-14
+
+### Changed
+
+- **Status bar** shows `due · postponed · +inflow/7d`. Postponed means the
+  last due-changing event is mercy and the due is still in the future.
+  Later-today stays in the tooltip, split by topic / extract / item.
+- **Stats leaf** drops Refresh and redraws with the status bar. Empty
+  vault: “Mark a note as a topic (Alt+T) to start.” A 14-day grade spark
+  sits under the five numbers.
+- **Session log is this review**, stamped when Alt+R / Alt+N actually
+  opens a queue, not at plugin load. Click a row to jump that card in the
+  open review, or open the note.
+
 ## [0.6.5] — 2026-08-13
 
 ### Changed

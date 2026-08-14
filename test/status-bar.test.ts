@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeLoad, endOfDayMs, formatLoad } from "../src/status-bar";
+import {
+  computeLoad,
+  endOfDayMs,
+  formatLoad,
+  formatLoadTooltip,
+} from "../src/status-bar";
 import type { IrElement, IrEvent } from "../src/ir/model";
 import type { ElementId, EventId, DeviceId } from "../src/ir/ids";
 
@@ -68,6 +73,23 @@ function created(id: string, ts: number): IrEvent {
   };
 }
 
+function dueChange(
+  kind: "mercy-postponed" | "graded" | "topic-advanced",
+  target: string,
+  ts: number,
+  lamport = ts,
+): IrEvent {
+  return {
+    id: `ev-${kind}-${target}-${lamport}` as EventId,
+    ts,
+    lamport,
+    device: "dev" as DeviceId,
+    kind,
+    target: target as ElementId,
+    payload: {},
+  };
+}
+
 test("endOfDayMs lands on 23:59:59.999 of the same local day", () => {
   const end = endOfDayMs(NOW);
   const d = new Date(end);
@@ -90,6 +112,7 @@ test("computeLoad: due is everything with due <= now", () => {
   );
   assert.equal(load.due, 3);
   assert.equal(load.later, 1);
+  assert.deepEqual(load.dueByType, { topic: 1, extract: 0, item: 2 });
 });
 
 test("computeLoad: later counts items due after now but on or before end-of-day", () => {
@@ -182,14 +205,92 @@ test("computeLoad: non-create events do not count toward inflow", () => {
 
 test("formatLoad: compact human-readable summary", () => {
   assert.equal(
-    formatLoad({ due: 12, later: 3, inflow7d: 21 }),
-    "12 due  ·  3 later  ·  +21/7d",
+    formatLoad({
+      due: 12,
+      later: 3,
+      postponed: 4,
+      inflow7d: 21,
+      dueByType: { topic: 2, extract: 3, item: 7 },
+    }),
+    "12 due  ·  4 postponed  ·  +21/7d",
   );
 });
 
 test("formatLoad: zeros render explicitly, not blank", () => {
   assert.equal(
-    formatLoad({ due: 0, later: 0, inflow7d: 0 }),
-    "0 due  ·  0 later  ·  +0/7d",
+    formatLoad({
+      due: 0,
+      later: 0,
+      postponed: 0,
+      inflow7d: 0,
+      dueByType: { topic: 0, extract: 0, item: 0 },
+    }),
+    "0 due  ·  0 postponed  ·  +0/7d",
   );
+});
+
+test("formatLoadTooltip: due split, later today, postponed", () => {
+  const tip = formatLoadTooltip({
+    due: 12,
+    later: 3,
+    postponed: 4,
+    inflow7d: 21,
+    dueByType: { topic: 2, extract: 3, item: 7 },
+  });
+  assert.match(tip, /12 due now \(2 topics, 3 extracts, 7 items\)/);
+  assert.match(tip, /3 later today/);
+  assert.match(tip, /4 postponed/);
+  assert.match(tip, /21 added in last 7 days/);
+});
+
+test("computeLoad: mercy-postponed with future due counts as postponed", () => {
+  const load = computeLoad(
+    [item({ id: "i1", dueMs: NOW + DAY })],
+    [dueChange("mercy-postponed", "i1", NOW - 1)],
+    NOW,
+  );
+  assert.equal(load.due, 0);
+  assert.equal(load.postponed, 1);
+  assert.equal(load.later, 0);
+});
+
+test("computeLoad: graded after mercy is not postponed", () => {
+  const load = computeLoad(
+    [item({ id: "i1", dueMs: NOW + DAY })],
+    [
+      dueChange("mercy-postponed", "i1", NOW - 10, 1),
+      dueChange("graded", "i1", NOW - 1, 2),
+    ],
+    NOW,
+  );
+  assert.equal(load.postponed, 0);
+});
+
+test("computeLoad: due-now mercy counts as due, not postponed", () => {
+  const load = computeLoad(
+    [item({ id: "i1", dueMs: NOW })],
+    [dueChange("mercy-postponed", "i1", NOW - 1)],
+    NOW,
+  );
+  assert.equal(load.due, 1);
+  assert.equal(load.postponed, 0);
+});
+
+test("computeLoad: topic-advanced later today is later, not postponed", () => {
+  const load = computeLoad(
+    [topic({ id: "t1", dueMs: NOW + 60_000 })],
+    [dueChange("topic-advanced", "t1", NOW - 1)],
+    NOW,
+  );
+  assert.equal(load.later, 1);
+  assert.equal(load.postponed, 0);
+});
+
+test("computeLoad: dismissed mercy-postponed is ignored", () => {
+  const load = computeLoad(
+    [item({ id: "i1", dueMs: NOW + DAY, dismissed: true })],
+    [dueChange("mercy-postponed", "i1", NOW - 1)],
+    NOW,
+  );
+  assert.equal(load.postponed, 0);
 });

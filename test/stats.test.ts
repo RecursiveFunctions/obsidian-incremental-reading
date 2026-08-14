@@ -122,3 +122,37 @@ test("computeStats: deterministic", async (t) => {
     JSON.stringify(m.computeStats(world(), grades(), NOW, WINDOW_START)),
   );
 });
+
+test("startOfLocalDayMs: midnight of the local day", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/stats.ts not implemented yet");
+  const now = new Date(2026, 4, 19, 15, 30, 45, 123).getTime();
+  const start = m.startOfLocalDayMs(now);
+  const d = new Date(start);
+  assert.equal(d.getHours(), 0);
+  assert.equal(d.getMinutes(), 0);
+  assert.equal(d.getSeconds(), 0);
+  assert.equal(d.getMilliseconds(), 0);
+  assert.equal(d.getDate(), 19);
+});
+
+test("gradeSpark: 14 days, today in last bucket, older excluded", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/stats.ts not implemented yet");
+  const now = new Date(2026, 4, 19, 15, 0, 0, 0).getTime();
+  const today = m.startOfLocalDayMs(now);
+  const spark = m.gradeSpark(
+    [
+      { ts: today + 1, grade: 3 },
+      { ts: today + 2, grade: 4 },
+      { ts: today - DAY, grade: 2 },
+      { ts: today - 14 * DAY, grade: 3 },
+    ],
+    now,
+    14,
+  );
+  assert.equal(spark.length, 14);
+  assert.equal(spark[13], 2);
+  assert.equal(spark[12], 1);
+  assert.equal(spark[0], 0);
+});

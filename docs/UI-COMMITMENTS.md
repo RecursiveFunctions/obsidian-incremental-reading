@@ -103,8 +103,8 @@ current review session, with timestamps. Closes the audit-your-own-pass
 loop SuperMemo never made obvious.
 
 **Satisfied when:** a command (default-bound) displays a session log;
-the log persists for the duration of the Obsidian session; entries link
-back to the touched items.
+the log is this review pass (stamped at Alt+R / Alt+N), not plugin load;
+entries jump the review cursor or open the note.
 
 **Common violations:** session state only available via developer
 console; log resets between cards.

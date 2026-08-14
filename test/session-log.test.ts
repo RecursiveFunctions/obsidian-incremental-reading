@@ -105,3 +105,13 @@ test("sessionEntries: notePath surfaces from element", () => {
   assert.equal(entries[0].notePath, "Notes/A.md");
   assert.equal(entries[0].label, "A");
 });
+
+test("sessionEntries: Infinity start (no review yet) yields empty", () => {
+  const byId = new Map([[el("a").id, el("a")]]);
+  const entries = sessionEntries(
+    [ev({ id: "e1", ts: NOW, kind: "graded", target: "a" })],
+    byId,
+    Number.POSITIVE_INFINITY,
+  );
+  assert.equal(entries.length, 0);
+});

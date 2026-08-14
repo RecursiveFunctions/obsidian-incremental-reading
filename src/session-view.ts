@@ -1,13 +1,14 @@
 /**
  * Session audit view (UI commitment #7). A workspace leaf that lists every
- * IR action taken since the current Obsidian session started, newest first,
- * with click-to-open links back to the touched notes.
+ * IR action taken since the current review session started, newest first.
+ * Click an entry to jump the review cursor when that id is in the queue,
+ * otherwise open the note.
  *
  * Pure compute lives in src/ir/session-log.ts; this file is the thin
  * Obsidian wiring. Lives in a leaf, NOT a modal, per commitment #6.
  */
 
-import { ItemView, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import { IrStore } from "./ir/store";
 import {
   actionLabel,
@@ -37,11 +38,18 @@ const KIND_ICON: Record<string, string> = {
 export class IrSessionView extends ItemView {
   private store: IrStore;
   private sessionStartMs: number;
+  private readonly onOpenEntry?: (elementId: string, notePath?: string) => void;
 
-  constructor(leaf: WorkspaceLeaf, store: IrStore, sessionStartMs: number) {
+  constructor(
+    leaf: WorkspaceLeaf,
+    store: IrStore,
+    sessionStartMs: number,
+    onOpenEntry?: (elementId: string, notePath?: string) => void,
+  ) {
     super(leaf);
     this.store = store;
     this.sessionStartMs = sessionStartMs;
+    this.onOpenEntry = onOpenEntry;
   }
 
   getViewType(): string {
@@ -54,6 +62,10 @@ export class IrSessionView extends ItemView {
 
   getIcon(): string {
     return "history";
+  }
+
+  setSessionStart(ms: number): void {
+    this.sessionStartMs = ms;
   }
 
   async onOpen(): Promise<void> {
@@ -70,11 +82,6 @@ export class IrSessionView extends ItemView {
 
     const header = container.createDiv({ cls: "ir-session-header" });
     header.createEl("h4", { text: "IR session log" });
-    const refresh = header.createEl("button", {
-      text: "Refresh",
-      cls: "ir-session-refresh",
-    });
-    refresh.onclick = () => void this.render();
 
     const body = container.createDiv({ cls: "ir-session-body" });
 
@@ -95,9 +102,8 @@ export class IrSessionView extends ItemView {
       body.createEl("p", {
         cls: "ir-session-empty",
         text:
-          "No IR actions yet in this session. Anything you do " +
-          "(extract, grade, postpone, dismiss, change priority) will " +
-          "appear here so you can audit your own pass.",
+          "No IR actions yet in this review. Start a session (Alt+R / Alt+N), " +
+          "then extract, grade, or postpone — this list is that pass.",
       });
       return;
     }
@@ -110,6 +116,8 @@ export class IrSessionView extends ItemView {
 
   private renderEntry(parent: HTMLElement, entry: SessionEntry): void {
     const li = parent.createEl("li", { cls: "ir-session-entry" });
+    li.setAttribute("role", "button");
+    li.setAttribute("tabindex", "0");
 
     const timeEl = li.createSpan({
       cls: "ir-session-time",
@@ -126,21 +134,22 @@ export class IrSessionView extends ItemView {
     });
 
     const label = li.createSpan({
-      cls: "ir-session-label",
+      cls: "ir-session-label ir-session-link",
       text: entry.label,
     });
-    if (entry.notePath) {
-      label.addClass("ir-session-link");
-      label.onclick = () => void this.openNote(entry.notePath!);
-    }
-  }
-
-  private async openNote(path: string): Promise<void> {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) {
-      new Notice(`Incremental Reading: note "${path}" not found.`);
-      return;
-    }
-    await this.app.workspace.getLeaf(false).openFile(file);
+    const open = (): void => {
+      this.onOpenEntry?.(entry.elementId, entry.notePath);
+    };
+    label.onclick = (ev) => {
+      ev.stopPropagation();
+      open();
+    };
+    li.addEventListener("click", () => open());
+    li.addEventListener("keydown", (ev: KeyboardEvent) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        open();
+      }
+    });
   }
 }

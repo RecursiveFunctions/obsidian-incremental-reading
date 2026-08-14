@@ -1442,6 +1442,35 @@
   font-weight: 600;
 }
 
+.ir-stats-empty {
+  color: var(--text-muted);
+}
+
+.ir-stats-spark-wrap {
+  margin-top: 1.1em;
+}
+
+.ir-stats-spark-caption {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-bottom: 0.35em;
+}
+
+.ir-stats-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 2.4em;
+}
+
+.ir-stats-spark-bar {
+  flex: 1 1 0;
+  min-width: 4px;
+  background: var(--interactive-accent);
+  border-radius: 1px 1px 0 0;
+  opacity: 0.85;
+}
+
 /* Status bar queue-load indicator (UI commitment #4). Sits in Obsidian's
  * native status bar element, so colors come from theme variables and the
  * font size already matches the rest of the bar. The .has-due class is set
@@ -1466,7 +1495,7 @@
   margin: 0 0.15em;
 }
 
-.ir-status-bar-later,
+.ir-status-bar-postponed,
 .ir-status-bar-inflow {
   color: var(--text-muted);
 }
@@ -1506,6 +1535,11 @@
   padding: 3px 0;
   font-size: var(--font-ui-small);
   border-bottom: 1px solid var(--background-modifier-border-hover);
+  cursor: pointer;
+}
+
+.ir-session-entry:hover {
+  background: var(--background-modifier-hover);
 }
 
 .ir-session-entry:last-child {

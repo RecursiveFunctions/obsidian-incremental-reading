@@ -14,6 +14,33 @@ export interface Stats {
   dueCount: number;
 }
 
+export function startOfLocalDayMs(now: number): number {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * Grade counts per local day, oldest → newest, covering `days` days ending
+ * at the local day of `now`. Pure CSS sparkline input.
+ */
+export function gradeSpark(
+  grades: ReadonlyArray<GradeEvent>,
+  now: number,
+  days = 14,
+): number[] {
+  const counts = Array.from({ length: days }, () => 0);
+  const dayMs = 86400000;
+  const end = startOfLocalDayMs(now);
+  const start = end - (days - 1) * dayMs;
+  for (const g of grades) {
+    if (g.ts < start || g.ts > now) continue;
+    const i = Math.floor((startOfLocalDayMs(g.ts) - start) / dayMs);
+    if (i >= 0 && i < days) counts[i] += 1;
+  }
+  return counts;
+}
+
 export function computeStats(
   elements: IrElement[],
   grades: GradeEvent[],

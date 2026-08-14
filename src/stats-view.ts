@@ -1,11 +1,12 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 
 import { IrStore } from "./ir/store";
-import { computeStats, type GradeEvent } from "./ir/stats";
+import { computeStats, gradeSpark, type GradeEvent } from "./ir/stats";
 
 export const IR_STATS_VIEW_TYPE = "ir-stats-view";
 
 const WINDOW_DAYS = 30;
+const SPARK_DAYS = 14;
 const DAY_MS = 86400000;
 
 export class IrStatsView extends ItemView {
@@ -34,6 +35,11 @@ export class IrStatsView extends ItemView {
 
   async onClose(): Promise<void> {}
 
+  /** Re-render from the store. Safe to call from the host plugin onChange. */
+  refresh(): Promise<void> {
+    return this.render();
+  }
+
   private async render(): Promise<void> {
     const container = this.contentEl;
     container.empty();
@@ -41,11 +47,6 @@ export class IrStatsView extends ItemView {
 
     const header = container.createDiv({ cls: "ir-tree-header" });
     header.createEl("h4", { text: "IR stats" });
-    const refresh = header.createEl("button", {
-      text: "Refresh",
-      cls: "ir-tree-refresh",
-    });
-    refresh.onclick = () => void this.render();
 
     const body = container.createDiv({ cls: "ir-stats-body" });
     body.createEl("p", { text: "Loading..." });
@@ -53,11 +54,6 @@ export class IrStatsView extends ItemView {
     const events = await this.store.loadEvents();
     const state = await this.store.load();
     const now = Date.now();
-    // Skip grade events the user retracted via "Undo last grade". The fold
-    // already excludes them from element state; counting them in the
-    // review-history window would let the stats panel disagree with the
-    // queue ("3 reviews / 50 due / 0 retention" when only 2 actually
-    // counted).
     const undoneEventIds = new Set<string>();
     for (const ev of events) {
       if (ev.kind === "grade-undone") {
@@ -73,14 +69,23 @@ export class IrStatsView extends ItemView {
       if (typeof g === "number") grades.push({ ts: ev.ts, grade: g });
     }
 
+    const elements = Array.from(state.elements.values());
     const stats = computeStats(
-      Array.from(state.elements.values()),
+      elements,
       grades,
       now,
       now - WINDOW_DAYS * DAY_MS,
     );
 
     body.empty();
+    if (stats.total === 0) {
+      body.createEl("p", {
+        cls: "ir-stats-empty",
+        text: "Mark a note as a topic (Alt+T) to start.",
+      });
+      return;
+    }
+
     const rows: Array<[string, string]> = [
       ["Total elements", String(stats.total)],
       ["Queue size", String(stats.queueSize)],
@@ -98,6 +103,21 @@ export class IrStatsView extends ItemView {
       const tr = table.createEl("tr");
       tr.createEl("td", { text: label, cls: "ir-stats-label" });
       tr.createEl("td", { text: value, cls: "ir-stats-value" });
+    }
+
+    const spark = gradeSpark(grades, now, SPARK_DAYS);
+    const max = Math.max(0, ...spark);
+    const sparkWrap = body.createDiv({ cls: "ir-stats-spark-wrap" });
+    sparkWrap.createDiv({
+      cls: "ir-stats-spark-caption",
+      text: `Grades · last ${SPARK_DAYS} days`,
+    });
+    const row = sparkWrap.createDiv({ cls: "ir-stats-spark" });
+    for (const n of spark) {
+      const bar = row.createDiv({ cls: "ir-stats-spark-bar" });
+      const pct = max === 0 ? 0 : Math.round((n / max) * 100);
+      bar.style.setProperty("height", `${Math.max(n === 0 ? 0 : 8, pct)}%`);
+      bar.setAttribute("title", String(n));
     }
   }
 }

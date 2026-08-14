@@ -1,6 +1,6 @@
 /**
  * Session audit (UI commitment #7). Compiles the list of every IR action
- * taken since the current Obsidian session started, so the user can
+ * taken since the current review pass started (Alt+R / Alt+N), so the user can
  * "audit their own pass" the way SuperMemo never made obvious.
  *
  * Pure: takes events + an element index + the session start timestamp,

@@ -2,8 +2,9 @@
  * Status bar queue-load indicator (UI commitment #4: glanceable queue load).
  *
  * Surfaces three numbers without requiring a click: how many elements are due
- * now, how many are queued for later today, how many new elements landed in
- * the last seven days. Direct response to the SuperMemo Information Fatigue
+ * now, how many are postponed (last due-change is mercy, due still future),
+ * how many new elements landed in the last seven days. "Later today" stays
+ * in the tooltip. Direct response to the SuperMemo Information Fatigue
  * Syndrome pain noted in MARKET-RESEARCH.md §8.2 and §9 feature rank #5.
  *
  * The compute function is pure (takes elements + events + now, returns three
@@ -21,14 +22,28 @@ export interface QueueLoad {
   /** Elements due after `now` but on or before end-of-day local time. */
   later: number;
   /**
+   * Non-dismissed elements whose last due-changing event is
+   * `mercy-postponed` and whose due is still in the future. Later-today
+   * (topic-advanced) is not mercy and stays in `later`.
+   */
+  postponed: number;
+  /**
    * Count of `element-created` events in the last seven days. Not net of
    * dismissals or deletions; this is "inflow," tracked as a leading
    * indicator that the user is importing faster than they can process.
    */
   inflow7d: number;
+  /** `due` split by element type for the tooltip. */
+  dueByType: { topic: number; extract: number; item: number };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const DUE_CHANGE_KINDS = new Set<IrEvent["kind"]>([
+  "mercy-postponed",
+  "graded",
+  "topic-advanced",
+]);
 
 /** End of the local-time day containing `now`, in epoch ms. */
 export function endOfDayMs(now: number): number {
@@ -43,6 +58,34 @@ function dueOf(el: IrElement): number | undefined {
   return d;
 }
 
+/** Last event that moved an element's due, per target. */
+export function lastDueChangeKind(
+  events: Iterable<IrEvent>,
+): Map<string, IrEvent["kind"]> {
+  const last = new Map<
+    string,
+    { lamport: number; ts: number; kind: IrEvent["kind"] }
+  >();
+  for (const ev of events) {
+    if (!DUE_CHANGE_KINDS.has(ev.kind)) continue;
+    const prev = last.get(ev.target);
+    if (
+      !prev ||
+      ev.lamport > prev.lamport ||
+      (ev.lamport === prev.lamport && ev.ts >= prev.ts)
+    ) {
+      last.set(ev.target, {
+        lamport: ev.lamport,
+        ts: ev.ts,
+        kind: ev.kind,
+      });
+    }
+  }
+  const out = new Map<string, IrEvent["kind"]>();
+  for (const [id, rec] of last) out.set(id, rec.kind);
+  return out;
+}
+
 export function computeLoad(
   elements: Iterable<IrElement>,
   events: Iterable<IrEvent>,
@@ -50,26 +93,46 @@ export function computeLoad(
 ): QueueLoad {
   const endToday = endOfDayMs(now);
   const sevenDaysAgo = now - 7 * DAY_MS;
+  const lastKind = lastDueChangeKind(events);
   let due = 0;
   let later = 0;
+  let postponed = 0;
+  const dueByType = { topic: 0, extract: 0, item: 0 };
   for (const el of elements) {
     if (el.dismissed) continue;
     const d = dueOf(el);
     if (d === undefined) continue;
-    if (d <= now) due += 1;
-    else if (d <= endToday) later += 1;
+    if (d <= now) {
+      due += 1;
+      dueByType[el.type] += 1;
+    } else if (d <= endToday) {
+      later += 1;
+    }
+    if (d > now && lastKind.get(el.id) === "mercy-postponed") {
+      postponed += 1;
+    }
   }
   let inflow7d = 0;
   for (const ev of events) {
     if (ev.kind === "element-created" && ev.ts >= sevenDaysAgo) inflow7d += 1;
   }
-  return { due, later, inflow7d };
+  return { due, later, postponed, inflow7d, dueByType };
 }
 
 /** Compact text form used for the aria-label and as a render fallback. */
 export function formatLoad(load: QueueLoad): string {
   return (
-    `${load.due} due  ·  ${load.later} later  ·  +${load.inflow7d}/7d`
+    `${load.due} due  ·  ${load.postponed} postponed  ·  +${load.inflow7d}/7d`
+  );
+}
+
+export function formatLoadTooltip(load: QueueLoad): string {
+  return (
+    `IR queue: ${load.due} due now ` +
+    `(${load.dueByType.topic} topics, ${load.dueByType.extract} extracts, ` +
+    `${load.dueByType.item} items), ${load.later} later today, ` +
+    `${load.postponed} postponed, ${load.inflow7d} added in last 7 days. ` +
+    `Click to start review. Right-click for tree, neural, and other IR actions.`
   );
 }
 
@@ -96,19 +159,17 @@ export function renderStatusBar(
 
   el.createSpan({ cls: "ir-status-bar-due", text: `${load.due} due` });
   el.createSpan({ cls: "ir-status-bar-sep", text: " · " });
-  el.createSpan({ cls: "ir-status-bar-later", text: `${load.later} later` });
+  el.createSpan({
+    cls: "ir-status-bar-postponed",
+    text: `${load.postponed} postponed`,
+  });
   el.createSpan({ cls: "ir-status-bar-sep", text: " · " });
   el.createSpan({
     cls: "ir-status-bar-inflow",
     text: `+${load.inflow7d}/7d`,
   });
 
-  el.setAttribute(
-    "aria-label",
-    `IR queue: ${load.due} due now, ${load.later} later today, ` +
-      `${load.inflow7d} added in last 7 days. Click to start review. ` +
-      `Right-click for tree, neural, and other IR actions.`,
-  );
+  el.setAttribute("aria-label", formatLoadTooltip(load));
 
   if (onClick) {
     el.onclick = () => onClick();
