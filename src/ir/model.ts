@@ -149,6 +149,7 @@ export type IrEventKind =
   | "promoted"
   | "reparented"
   | "source-tombstoned"
+  | "source-restored"
   | "source-renamed"
   | "element-deleted"
   | "text-edited";

@@ -83,22 +83,60 @@ export class IrSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
+    containerEl.createEl("h3", { text: "Review" });
+
     new Setting(containerEl)
-      .setName("Default topic priority")
+      .setName("Reviews per reading")
       .setDesc(
-        `Priority (${PRIORITY_MIN}-${PRIORITY_MAX}, lower = more important) ` +
-          "given to a note when you first mark it as a topic.",
+        "How many review items to show between each reading element in a " +
+          "session. Set to 0 to review items only.",
       )
       .addSlider((slider) =>
         slider
-          .setLimits(PRIORITY_MIN, PRIORITY_MAX, 1)
-          .setValue(this.plugin.settings.defaultPriority)
+          .setLimits(0, 10, 1)
+          .setValue(this.plugin.settings.reviewsPerReading)
           .setDynamicTooltip()
           .onChange(async (value) => {
-            this.plugin.settings.defaultPriority = value;
+            this.plugin.settings.reviewsPerReading = value;
             await this.plugin.saveSettings();
           }),
       );
+
+    new Setting(containerEl)
+      .setName("Interleave items of similar priority")
+      .setDesc(
+        "SuperMemo-style: within an equal-priority band, shuffle the order " +
+          "so positional memory doesn't help you recall. Seeded by the " +
+          "calendar day, so a paused session keeps its order when you " +
+          "resume the same day. Off restores priority + due-time order.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.interleaveSimilarPriority)
+          .onChange(async (value) => {
+            this.plugin.settings.interleaveSimilarPriority = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Show scheduler divergence picker")
+      .setDesc(
+        "Off (default for new vaults): grades follow FSRS with no extra " +
+          "prompt. On: when FSRS and SM-2 disagree enough on the next " +
+          "interval, an inline picker lets you choose. Existing installs " +
+          "keep this on until you turn it off.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showDivergencePicker)
+          .onChange(async (value) => {
+            this.plugin.settings.showDivergencePicker = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    containerEl.createEl("h3", { text: "Extracts" });
 
     new Setting(containerEl)
       .setName("Extract to standalone note")
@@ -152,58 +190,24 @@ export class IrSettingTab extends PluginSettingTab {
           }),
       );
 
+    containerEl.createEl("h3", { text: "Topics" });
+
     new Setting(containerEl)
-      .setName("Reviews per reading")
+      .setName("Default topic priority")
       .setDesc(
-        "How many review items to show between each reading element in a " +
-          "session. Set to 0 to review items only.",
+        `Priority (${PRIORITY_MIN}-${PRIORITY_MAX}, lower = more important) ` +
+          "given to a note when you first mark it as a topic.",
       )
       .addSlider((slider) =>
         slider
-          .setLimits(0, 10, 1)
-          .setValue(this.plugin.settings.reviewsPerReading)
+          .setLimits(PRIORITY_MIN, PRIORITY_MAX, 1)
+          .setValue(this.plugin.settings.defaultPriority)
           .setDynamicTooltip()
           .onChange(async (value) => {
-            this.plugin.settings.reviewsPerReading = value;
+            this.plugin.settings.defaultPriority = value;
             await this.plugin.saveSettings();
           }),
       );
-
-    new Setting(containerEl)
-      .setName("Interleave items of similar priority")
-      .setDesc(
-        "SuperMemo-style: within an equal-priority band, shuffle the order " +
-          "so positional memory doesn't help you recall. Seeded by the " +
-          "calendar day, so a paused session keeps its order when you " +
-          "resume the same day. Off restores priority + due-time order.",
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.interleaveSimilarPriority)
-          .onChange(async (value) => {
-            this.plugin.settings.interleaveSimilarPriority = value;
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Show scheduler divergence picker")
-      .setDesc(
-        "Off (default for new vaults): grades follow FSRS with no extra " +
-          "prompt. On: when FSRS and SM-2 disagree enough on the next " +
-          "interval, an inline picker lets you choose. Existing installs " +
-          "keep this on until you turn it off.",
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showDivergencePicker)
-          .onChange(async (value) => {
-            this.plugin.settings.showDivergencePicker = value;
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    containerEl.createEl("h3", { text: "Topic scheduling" });
 
     new Setting(containerEl)
       .setName("First interval (days)")
@@ -255,7 +259,7 @@ export class IrSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "Mercy / postpone" });
+    containerEl.createEl("h3", { text: "Overload" });
 
     new Setting(containerEl)
       .setName("Daily ceiling")

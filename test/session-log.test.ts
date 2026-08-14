@@ -45,6 +45,7 @@ test("actionLabel maps kinds to user-readable strings", () => {
   assert.equal(actionLabel("topic-advanced"), "advanced");
   assert.equal(actionLabel("mercy-postponed"), "mercy postponed");
   assert.equal(actionLabel("source-tombstoned"), "source removed");
+  assert.equal(actionLabel("source-restored"), "source restored");
 });
 
 test("sessionEntries: excludes events before sessionStart", () => {

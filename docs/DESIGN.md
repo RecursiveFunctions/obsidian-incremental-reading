@@ -209,18 +209,12 @@ Source deletion behavior:
   Preserves provenance and enables re-link.
 - Comes-back case (Sync/git/trash restore): offer conservative re-link when a
   matching note reappears. Never re-link silently.
-  **STATUS (2026-05-31): NOT IMPLEMENTED.** The delete side writes the
-  tombstone with `path` + `title` + `deletedAt`, but nothing reads it on
-  create/rename. A recreated note at the same path leaves the tombstone
-  unread and the promoted extracts stay as their own standalone notes. The
-  load-bearing guarantee (no content lost on delete) holds; the recovery
-  convenience does not exist yet. Spec for the missing piece: a
-  `vault.on("create")` and `vault.on("rename")` handler that looks up
-  `state.tombstones.get(newPath)` and, on hit, prompts the user with the
-  tombstone's title and the list of extracts/promoted-notes that came
-  from it. Re-link emits `anchor-repaired` for each extract (restoring
-  `sourcePath`) and removes the tombstone via a `source-restored` event
-  kind that needs to be added to the model.
+  **STATUS (2026-08-14): IMPLEMENTED.** `vault.on("create")` / `rename` and a
+  load scan look up `state.tombstones.get(path)`. On a hit, a modal lists the
+  extracts still pointing at that path. Confirm emits `anchor-repaired` per
+  extract (restoring `sourcePath`) plus `source-restored` to drop the
+  tombstone. Decline emits `source-restored` only, so the offer is not
+  repeated. An empty candidate list clears the tombstone with no prompt.
 - Bulk UX: one source delete fires a single batched notification
   (promote-all / leave-detached / undo). Undo must also reverse the
   auto-created notes, not just the detach.

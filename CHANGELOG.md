@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] — 2026-08-14
+
+### Changed
+
+- **Settings** are grouped the way people think: Review, Extracts, Topics,
+  Overload, Anki export, Danger zone. Mercy ceiling sits under Overload,
+  not next to the Anki deck name.
+- **Empty vault:** Start review opens a one-leaf pane
+  (“Mark a note as a topic (Alt+T), then start review (Alt+R)”) instead of
+  a Notice.
+- **Deleted source comes back** (trash/Sync/git restore): a prompt lists
+  extracts from that source. Re-link restores provenance; leave detached
+  forgets the offer. Never re-links silently.
+- **Frontmatter dual-write** failures after a successful store write are
+  logged once. No “see the developer console” toast — the store still has
+  the change.
+
 ## [0.6.8] — 2026-08-14
 
 ### Changed

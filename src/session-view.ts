@@ -29,6 +29,7 @@ const KIND_ICON: Record<string, string> = {
   promoted: "arrow-up",
   reparented: "git-branch",
   "source-tombstoned": "trash",
+  "source-restored": "undo-2",
   "source-renamed": "pencil",
   "element-deleted": "trash",
   "anchor-repaired": "wrench",

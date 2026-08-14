@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   contextSourceParentId,
+  EMPTY_COLLECTION_COPY,
   EMPTY_NEURAL_COPY,
   sessionBarLabel,
   upsertAfterCurrent,
@@ -85,6 +86,11 @@ test("sessionBarLabel: due, neural, and complete", () => {
 test("EMPTY_NEURAL_COPY tells the user what to do", () => {
   assert.match(EMPTY_NEURAL_COPY, /wikilinks/);
   assert.match(EMPTY_NEURAL_COPY, /extract/);
+});
+
+test("EMPTY_COLLECTION_COPY tells a first-run user what to do", () => {
+  assert.match(EMPTY_COLLECTION_COPY, /Alt\+T/);
+  assert.match(EMPTY_COLLECTION_COPY, /Alt\+R/);
 });
 
 test("contextSourceParentId: item walks up to the nearest extract", () => {

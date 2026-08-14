@@ -251,6 +251,10 @@ export function slotFromElement(app: App, el: IrElement): ReviewSlot | null {
 export const EMPTY_NEURAL_COPY =
   "No related IR elements. Add wikilinks, extract children, or mark linked notes as topics.";
 
+/** First-run review leaf when the collection has no elements yet. */
+export const EMPTY_COLLECTION_COPY =
+  "Mark a note as a topic (Alt+T), then start review (Alt+R).";
+
 /**
  * Session chrome (distinct from the per-card title). `remaining` includes
  * the current card. Neural vs Due is a mode, not a `Neuro=` prefix.

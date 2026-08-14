@@ -187,3 +187,63 @@ test("deterministic (byte-identical plan on re-run)", async (t) => {
 
   assert.equal(JSON.stringify(plan(m)), JSON.stringify(plan(m)));
 });
+
+test("relinkCandidates lists extracts still pointing at the tombstone", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/deletion.ts not implemented yet");
+
+  const st = fold([...seedEvents(world()), ...plan(m)]);
+  const cands = m.relinkCandidates(
+    Array.from(st.elements.values()),
+    SRC_PATH,
+  ) as IrElement[];
+  assert.deepEqual(
+    cands.map((e) => e.id).sort(),
+    ["el_ex1", "el_ex2"],
+  );
+});
+
+test("planSourceRelink repairs anchors and source-restored drops the tombstone", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/deletion.ts not implemented yet");
+
+  const afterDel = fold([...seedEvents(world()), ...plan(m)]);
+  const relink = m.planSourceRelink(
+    Array.from(afterDel.elements.values()),
+    SRC_PATH,
+    SRC_PATH,
+    NOW + 1,
+    200,
+    "dev_test" as DeviceId,
+    (i: number) => `ev_relink_${i}` as EventId,
+  ) as IrEvent[];
+  const st = fold([...seedEvents(world()), ...plan(m), ...relink]);
+  assert.equal(st.tombstones.has(SRC_PATH), false);
+  const ex1 = st.elements.get("el_ex1" as ElementId)!;
+  assert.equal(ex1.anchorState, "ok");
+  assert.equal(ex1.anchor?.sourcePath, SRC_PATH);
+  const ex2 = st.elements.get("el_ex2" as ElementId)!;
+  assert.equal(ex2.anchorState, "ok");
+  assert.equal(ex2.anchor?.sourcePath, SRC_PATH);
+  const unrel = st.elements.get("el_unrel" as ElementId)!;
+  assert.equal(unrel.anchor?.sourcePath, "Other.md");
+});
+
+test("planClearTombstone drops the tombstone without repairing anchors", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/deletion.ts not implemented yet");
+
+  const afterDel = fold([...seedEvents(world()), ...plan(m)]);
+  const cleared = m.planClearTombstone(
+    SRC_PATH,
+    "el_ex1" as ElementId,
+    NOW + 1,
+    200,
+    "dev_test" as DeviceId,
+    (i: number) => `ev_clear_${i}` as EventId,
+  ) as IrEvent[];
+  const st = fold([...seedEvents(world()), ...plan(m), ...cleared]);
+  assert.equal(st.tombstones.has(SRC_PATH), false);
+  const ex1 = st.elements.get("el_ex1" as ElementId)!;
+  assert.equal(ex1.anchorState, "detached");
+});

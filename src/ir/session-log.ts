@@ -33,6 +33,7 @@ const KIND_LABEL: Record<IrEventKind, string> = {
   promoted: "promoted",
   reparented: "reparented",
   "source-tombstoned": "source removed",
+  "source-restored": "source restored",
   "source-renamed": "source renamed",
   "element-deleted": "deleted",
   "text-edited": "text edited",

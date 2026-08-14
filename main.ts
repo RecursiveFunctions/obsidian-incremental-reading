@@ -25,11 +25,12 @@ import {
   inheritableFrontmatter,
   isDismissed,
   markAsTopic,
+  quietFrontmatterWrite,
   setDismissed,
   setPriority,
   uniqueMarkdownNotePath,
 } from "./src/ir-note";
-import { dueQueue, neuralQueue, EMPTY_NEURAL_COPY, type ReviewSlot } from "./src/review";
+import { dueQueue, neuralQueue, EMPTY_COLLECTION_COPY, EMPTY_NEURAL_COPY, type ReviewSlot } from "./src/review";
 import { makeLcg } from "./src/ir/neural";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
 import { openPriorityPrompt } from "./src/priority-prompt";
@@ -45,7 +46,7 @@ import {
 } from "./src/ir/obsidian-vault-fs";
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
 import { toAnkiTsv } from "./src/ir/anki-export";
-import { planSourceDeletion } from "./src/ir/deletion";
+import { planClearTombstone, planSourceDeletion, planSourceRelink, relinkCandidates } from "./src/ir/deletion";
 import { findLastUndoableGrade, nextLamport } from "./src/ir/log";
 import { mostRecentBookmark } from "./src/ir/bookmark";
 import { newCard, storedToCard, writeCardToFrontmatter } from "./src/fsrs";
@@ -72,6 +73,7 @@ import {
   promptNukeConfirm,
   promptStateResetConfirm,
 } from "./src/nuke-confirm-modal";
+import { promptSourceRelink } from "./src/relink-confirm-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
 import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
@@ -193,7 +195,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * prepared". A missing session (e.g. workspace restored an IR review leaf
    * from an older build) yields an empty queue; the view shows a recovery UI.
    */
-  private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; } | null = null;
+  private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; emptyVault?: boolean; } | null = null;
 
   /**
    * The store, constructed once the layout exists (after a migration, or
@@ -234,6 +236,10 @@ export default class IncrementalReadingPlugin extends Plugin {
    * parent we just trashed, defeating the whole point of a reset.
    */
   private nuking = false;
+
+  /** Serialize Q1 comes-back prompts so create + load scan don't stack modals. */
+  private relinkBusy = false;
+  private relinkQueue: TFile[] = [];
 
   /**
    * Decoration cache that the CM6 extension reads from. Rebuilt by
@@ -285,7 +291,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       (evt) => this.showStatusBarMenu(evt),
     );
     void this.refreshStatusBar();
-    void this.storeInit.then(() => void this.refreshStatusBar());
+    void this.storeInit.then(() => {
+      void this.refreshStatusBar();
+      void this.offerPendingRelinks();
+    });
 
     // Background tick: refreshes the "+N/7d" rolling window so it does not
     // drift when nothing in the plugin is triggering a redraw. Cheap (reads
@@ -399,6 +408,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
         const session = this.irReviewSession;
         const isNeural = session?.isNeural ?? false;
+        const emptyVault = session?.emptyVault ?? false;
         this.irReviewSession = null;
         const queue = session?.queue ?? [];
         const elementsById = session?.elementsById ?? new Map<ElementId, IrElement>();
@@ -422,6 +432,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           (id, el) => this.applyIrReanchor(id, el),
           (id, el) => this.applyIrDetachAnchor(id, el),
           () => void this.startReview(),
+          emptyVault,
         );
       },
     );
@@ -856,14 +867,24 @@ export default class IncrementalReadingPlugin extends Plugin {
       }),
     );
 
+    this.registerEvent(
+      this.app.vault.on("create", (created) => {
+        if (!(created instanceof TFile) || created.extension !== "md") return;
+        void this.maybeOfferRelink(created);
+      }),
+    );
+
     // Vault rename handler: keep stored `notePath` / anchor `sourcePath` in
     // sync when the user moves or renames a source note in Obsidian. Without
     // this, the review surface treats the rename as a deletion and shows the
-    // "source no longer in the vault" banner.
+    // "source no longer in the vault" banner. Also offers Q1 re-link when
+    // the new path matches a tombstone (restore-by-rename).
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         if (!(file instanceof TFile)) return;
-        void this.handleSourceRename(file, oldPath);
+        void this.handleSourceRename(file, oldPath).then(() =>
+          this.maybeOfferRelink(file),
+        );
       }),
     );
 
@@ -1948,6 +1969,24 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     const state = await this.store.load();
+    if (state.elements.size === 0) {
+      this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
+      this.irReviewSession = {
+        queue: [],
+        elementsById: state.elements,
+        emptyVault: true,
+      };
+      try {
+        const leaf = this.app.workspace.getLeaf("tab");
+        await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
+        this.app.workspace.revealLeaf(leaf);
+      } catch (e) {
+        this.irReviewSession = null;
+        console.error("Incremental Reading: opening review view failed", e);
+        new Notice(EMPTY_COLLECTION_COPY);
+      }
+      return;
+    }
     const queue = dueQueue(
       this.app,
       this.settings.reviewsPerReading,
@@ -2164,7 +2203,12 @@ export default class IncrementalReadingPlugin extends Plugin {
       target: elementId,
       payload: { priority: p },
     });
-    if (file) await setPriority(this.app, file, p);
+    if (file) {
+      await quietFrontmatterWrite(
+        () => setPriority(this.app, file, p).then(() => undefined),
+        "priority",
+      );
+    }
     await this.store.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after priority failed", e);
     });
@@ -2187,7 +2231,12 @@ export default class IncrementalReadingPlugin extends Plugin {
       target: elementId,
       payload: { dismissed },
     });
-    if (file) await setDismissed(this.app, file, dismissed);
+    if (file) {
+      await quietFrontmatterWrite(
+        () => setDismissed(this.app, file, dismissed).then(() => undefined),
+        "dismiss",
+      );
+    }
     await this.store.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after dismiss failed", e);
     });
@@ -2806,6 +2855,114 @@ export default class IncrementalReadingPlugin extends Plugin {
     } catch (e) {
       console.error("Incremental Reading: rename handling failed", e);
     }
+  }
+
+  /**
+   * Q1 comes-back: if a note exists at a tombstoned path (plugin load after
+   * trash restore, or a create we missed), offer re-link once per path.
+   */
+  private async offerPendingRelinks(): Promise<void> {
+    if (this.nuking || !this.store) return;
+    try {
+      const state = await this.store.load();
+      for (const path of state.tombstones.keys()) {
+        const af = this.app.vault.getAbstractFileByPath(path);
+        if (af instanceof TFile && af.extension === "md") {
+          await this.maybeOfferRelink(af);
+        }
+      }
+    } catch (e) {
+      console.error("Incremental Reading: pending re-link scan failed", e);
+    }
+  }
+
+  private async maybeOfferRelink(file: TFile): Promise<void> {
+    if (this.nuking || !this.store) return;
+    if (file.extension !== "md") return;
+    this.relinkQueue.push(file);
+    if (this.relinkBusy) return;
+    this.relinkBusy = true;
+    try {
+      const seen = new Set<string>();
+      while (this.relinkQueue.length > 0) {
+        const next = this.relinkQueue.shift();
+        if (!next || seen.has(next.path)) continue;
+        seen.add(next.path);
+        await this.offerRelinkForFile(next);
+      }
+    } finally {
+      this.relinkBusy = false;
+    }
+  }
+
+  private async offerRelinkForFile(file: TFile): Promise<void> {
+    if (this.nuking || !this.store) return;
+    try {
+      const state = await this.store.load();
+      const tomb = state.tombstones.get(file.path);
+      if (!tomb) return;
+
+      const elements = Array.from(state.elements.values());
+      const candidates = relinkCandidates(elements, tomb.path);
+      const events = await this.store.loadEvents();
+      const device = await this.store.getDeviceId();
+      const now = Date.now();
+      const lamport = nextLamport(events);
+
+      if (candidates.length === 0) {
+        await this.appendRelinkEvents(
+          planClearTombstone(
+            tomb.path,
+            `el_restored:${tomb.path}` as ElementId,
+            now,
+            lamport,
+            device,
+            () => newEventId(),
+          ),
+        );
+        return;
+      }
+
+      const ok = await promptSourceRelink(this.app, {
+        title: tomb.title,
+        path: file.path,
+        labels: candidates.map((el) => labelFor(el)),
+      });
+
+      const planned = ok
+        ? planSourceRelink(
+            elements,
+            tomb.path,
+            file.path,
+            now,
+            lamport,
+            device,
+            () => newEventId(),
+          )
+        : planClearTombstone(
+            tomb.path,
+            candidates[0].id,
+            now,
+            lamport,
+            device,
+            () => newEventId(),
+          );
+      await this.appendRelinkEvents(planned);
+      if (ok) {
+        const n = candidates.length;
+        new Notice(
+          `Incremental Reading: re-linked ${n} extract${n === 1 ? "" : "s"} to "${file.basename}".`,
+        );
+      }
+    } catch (e) {
+      console.error("Incremental Reading: source re-link failed", e);
+    }
+  }
+
+  private async appendRelinkEvents(events: IrEvent[]): Promise<void> {
+    if (!this.store) return;
+    for (const ev of events) await this.store.appendEvent(ev);
+    await this.store.reconcile();
   }
 
   private async toggleDismiss(file: TFile) {

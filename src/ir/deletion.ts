@@ -115,3 +115,88 @@ export function planSourceDeletion(
 
   return out;
 }
+
+/** Extracts (and promoted notes) whose anchor still names this deleted source. */
+export function relinkCandidates(
+  elements: IrElement[],
+  tombstonePath: string,
+): IrElement[] {
+  return [...elements]
+    .filter((e) => e.anchor?.sourcePath === tombstonePath)
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * Restore `sourcePath` on every extract that still names the tombstone, then
+ * drop the tombstone. `restoredPath` is where the note lives now (same as
+ * `tombstonePath` on a trash restore; a rename-onto-the-old-path can differ).
+ */
+export function planSourceRelink(
+  elements: IrElement[],
+  tombstonePath: string,
+  restoredPath: string,
+  now: number,
+  startLamport: number,
+  device: DeviceId,
+  mkEventId: (i: number) => EventId,
+): IrEvent[] {
+  const candidates = relinkCandidates(elements, tombstonePath);
+  const out: IrEvent[] = [];
+  let seq = 0;
+  let lamport = startLamport;
+
+  const push = (
+    kind: IrEvent["kind"],
+    target: ElementId,
+    payload: Record<string, unknown>,
+  ) => {
+    out.push({
+      id: mkEventId(seq),
+      ts: now,
+      lamport,
+      device,
+      kind,
+      target,
+      payload,
+    });
+    seq += 1;
+    lamport += 1;
+  };
+
+  for (const el of candidates) {
+    if (!el.anchor) continue;
+    push("anchor-repaired", el.id, {
+      anchor: { ...el.anchor, sourcePath: restoredPath },
+    });
+  }
+
+  const tombTarget: ElementId =
+    candidates[0]?.id ?? (`el_restored:${tombstonePath}` as ElementId);
+  push("source-restored", tombTarget, {
+    path: tombstonePath,
+    restoredPath,
+  });
+  return out;
+}
+
+/** Forget a tombstone without repairing anchors (user declined re-link). */
+export function planClearTombstone(
+  tombstonePath: string,
+  target: ElementId,
+  now: number,
+  startLamport: number,
+  device: DeviceId,
+  mkEventId: (i: number) => EventId,
+): IrEvent[] {
+  return [
+    {
+      id: mkEventId(0),
+      ts: now,
+      lamport: startLamport,
+      device,
+      kind: "source-restored",
+      target,
+      payload: { path: tombstonePath },
+    },
+  ];
+}

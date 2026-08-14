@@ -154,6 +154,12 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
         break;
       }
 
+      case "source-restored": {
+        const path = event.payload.path as string;
+        tombstones.delete(path);
+        break;
+      }
+
       case "source-renamed": {
         if (element) {
           const oldPath = event.payload.oldPath as string;

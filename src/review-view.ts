@@ -20,6 +20,7 @@ import {
 import {
   createClozeFromText,
   getIrType,
+  quietFrontmatterWrite,
   setDismissed,
   setPriority,
   type IrNoteResult,
@@ -68,6 +69,7 @@ import { shouldShowReanchorBanner } from "./ir/tree-nav";
 import type { ReviewSlot } from "./review";
 import {
   contextSourceParentId,
+  EMPTY_COLLECTION_COPY,
   sessionBarLabel,
   slotFromElement,
   upsertAfterCurrent,
@@ -265,6 +267,8 @@ export class IrReviewView extends ItemView {
     ) => Promise<void>,
     /** End neural and start today's due queue (session-complete / Esc). */
     private readonly startOutstandingDue?: () => void,
+    /** First-run: collection is empty — show onboarding, do not detach. */
+    private readonly emptyVault: boolean = false,
   ) {
     super(leaf);
   }
@@ -292,7 +296,7 @@ export class IrReviewView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
-    if (this.queue.length === 0) {
+    if (this.queue.length === 0 && !this.emptyVault) {
       const restored = await this.restoreEmptySession?.();
       if (restored && restored.queue.length > 0) {
         this.queue = restored.queue;
@@ -363,7 +367,7 @@ export class IrReviewView extends ItemView {
     const scope = new Scope(this.app.scope);
     this.scope = scope;
     scope.register([], "Escape", (evt) => {
-      if (this.sessionComplete) {
+      if (this.sessionComplete || this.emptyVault) {
         evt.preventDefault();
         this.leaf.detach();
         return false;
@@ -1045,7 +1049,12 @@ export class IrReviewView extends ItemView {
       if (!Number.isFinite(n)) return;
       await this.emit("priority-set", slot.id, { priority: n });
       slot.element = { ...slot.element, priority: clampPriority(n) };
-      if (slot.file) await setPriority(this.app, slot.file, n);
+      if (slot.file) {
+        await quietFrontmatterWrite(
+          () => setPriority(this.app, slot.file!, n).then(() => undefined),
+          "priority",
+        );
+      }
     };
     input.addEventListener("change", () => void commit());
     row.createEl("span", {
@@ -1357,6 +1366,14 @@ export class IrReviewView extends ItemView {
     this.syncMobileEditChrome();
 
     const slot = this.current;
+    if (this.emptyVault) {
+      this.hasSourceContext = false;
+      this.contentEl.removeClass("ir-review-has-context");
+      this.onSlotChange?.(null);
+      this.paintSessionBar();
+      this.renderEmptyCollection(host);
+      return;
+    }
     if (this.sessionComplete) {
       this.hasSourceContext = false;
       this.contentEl.removeClass("ir-review-has-context");
@@ -1762,33 +1779,39 @@ export class IrReviewView extends ItemView {
       cls: this.isNeural
         ? "ir-review-mode-chip ir-review-mode-chip--neural"
         : "ir-review-mode-chip ir-review-mode-chip--due",
-      text: this.sessionComplete
-        ? "Done"
-        : this.isNeural
-          ? "Neural"
-          : "Due",
+      text: this.emptyVault
+        ? "IR"
+        : this.sessionComplete
+          ? "Done"
+          : this.isNeural
+            ? "Neural"
+            : "Due",
     });
     chip.setAttr("aria-hidden", "true");
     row.createSpan({
       cls: "ir-review-session-label",
-      text: this.sessionComplete
-        ? this.neuralEndedEarly
-          ? "Neural session ended"
-          : "Session complete"
-        : this.isNeural
-          ? this.sessionSeedLabel
-            ? `${remaining} left · ${this.sessionSeedLabel}`
-            : `${remaining} left`
-          : `${remaining} left`,
+      text: this.emptyVault
+        ? "No topics yet"
+        : this.sessionComplete
+          ? this.neuralEndedEarly
+            ? "Neural session ended"
+            : "Session complete"
+          : this.isNeural
+            ? this.sessionSeedLabel
+              ? `${remaining} left · ${this.sessionSeedLabel}`
+              : `${remaining} left`
+            : `${remaining} left`,
     });
     bar.setAttr(
       "aria-label",
-      sessionBarLabel({
-        done: this.sessionComplete,
-        isNeural: this.isNeural,
-        remaining,
-        seedLabel: this.isNeural ? this.sessionSeedLabel : undefined,
-      }),
+      this.emptyVault
+        ? "No Incremental Reading topics yet"
+        : sessionBarLabel({
+            done: this.sessionComplete,
+            isNeural: this.isNeural,
+            remaining,
+            seedLabel: this.isNeural ? this.sessionSeedLabel : undefined,
+          }),
     );
     if (
       Platform.isMobile &&
@@ -1834,6 +1857,19 @@ export class IrReviewView extends ItemView {
     void this.flushEdits();
     void this.persistBookmarks();
     void this.renderCard();
+  }
+
+  private renderEmptyCollection(host: HTMLElement): void {
+    const scroll = host.createDiv({ cls: "ir-review-scroll" });
+    scroll.createEl("h3", { text: "Incremental Reading" });
+    scroll.createEl("p", { text: EMPTY_COLLECTION_COPY });
+    scroll.createEl("p", {
+      cls: "ir-review-complete-hint",
+      text: "Escape or Close leaves this tab.",
+    });
+    scroll
+      .createEl("button", { text: "Close", cls: "mod-cta" })
+      .addEventListener("click", () => this.leaf.detach());
   }
 
   private renderSessionComplete(host: HTMLElement): void {
@@ -2864,9 +2900,11 @@ export class IrReviewView extends ItemView {
     await this.emit("graded", slot.id, { card: stored });
     slot.element = { ...slot.element, card: stored };
     if (slot.file) {
-      await this.app.fileManager.processFrontMatter(slot.file, (f) => {
-        writeCardToFrontmatter(f, next);
-      });
+      await quietFrontmatterWrite(async () => {
+        await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
+          writeCardToFrontmatter(f, next);
+        });
+      }, "grade");
     }
     this.advance();
   }
@@ -2944,9 +2982,11 @@ export class IrReviewView extends ItemView {
       schedule: topicStateToSchedule(advanced),
     };
     if (slot.file) {
-      await this.app.fileManager.processFrontMatter(slot.file, (f) => {
-        writeTopicToFrontmatter(f, advanced);
-      });
+      await quietFrontmatterWrite(async () => {
+        await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
+          writeTopicToFrontmatter(f, advanced);
+        });
+      }, "topic-advanced");
     }
     this.advance();
   }
@@ -2972,9 +3012,11 @@ export class IrReviewView extends ItemView {
       schedule: topicStateToSchedule(postponed),
     };
     if (slot.file) {
-      await this.app.fileManager.processFrontMatter(slot.file, (f) => {
-        writeTopicToFrontmatter(f, postponed);
-      });
+      await quietFrontmatterWrite(async () => {
+        await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
+          writeTopicToFrontmatter(f, postponed);
+        });
+      }, "later");
     }
     this.advance();
   }
@@ -2985,7 +3027,12 @@ export class IrReviewView extends ItemView {
     await this.flushEdits();
     await this.emit("dismiss-set", slot.id, { dismissed: true });
     slot.element = { ...slot.element, dismissed: true };
-    if (slot.file) await setDismissed(this.app, slot.file, true);
+    if (slot.file) {
+      await quietFrontmatterWrite(
+        () => setDismissed(this.app, slot.file!, true).then(() => undefined),
+        "dismiss",
+      );
+    }
     if (this.index + 1 < this.queue.length) {
       this.flash(`Dismissed · ${this.queue.length - this.index - 1} left`);
     }

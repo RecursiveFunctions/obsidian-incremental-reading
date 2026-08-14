@@ -213,6 +213,17 @@ test("source-tombstoned is recorded keyed by path", () => {
   assert.deepEqual(s.tombstones.get("src/Note.md"), tomb);
 });
 
+test("source-restored removes the tombstone", () => {
+  const id = newElementId();
+  const tomb = { path: "src/Note.md", title: "Note", deletedAt: 123 };
+  const s = fold([
+    ev({ lamport: 1, kind: "element-created", target: id, payload: { element: topic(id) } }),
+    ev({ lamport: 2, kind: "source-tombstoned", target: id, payload: { tombstone: tomb } }),
+    ev({ lamport: 3, kind: "source-restored", target: id, payload: { path: "src/Note.md" } }),
+  ]);
+  assert.equal(s.tombstones.size, 0);
+});
+
 test("anchor-detached flips anchorState without losing the element", () => {
   const id = newElementId();
   const s = fold([
