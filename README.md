@@ -49,7 +49,7 @@ Every IR command ships with a default `Alt+letter` binding. The full set:
 - `Alt+Shift+P`: promote the current anchored extract to a standalone note (review card, or the IR tree selection).
 - `Alt+Z`: cloze selection into a review item (optional SuperMemo-style hint; stored as `{{cN::answer::hint}}`, Anki-compatible).
 - `Alt+R`: start a review session (outstanding due queue).
-- `Alt+N`: **Go neural** — subset review from the current note, review card, or tree row, sequenced by spreading activation (tree + wikilinks + tags). Not due-gated; grading is a real repetition.
+- `Alt+N`: **Go neural** — subset review from the current IR review card, IR note, or tree row, sequenced by spreading activation (tree + wikilinks + tags). Not due-gated; grading is a real repetition. Hidden unless you are already looking at something in IR.
 - `Alt+T`: mark current note as an IR topic.
 - `Alt+P`: set IR priority of current element.
 - `Alt+I`: open the IR element tree.
@@ -89,7 +89,9 @@ Obsidian’s mobile editor toolbar is user-configured (**Settings → Mobile →
 
 Outside the editor, the **workspace FAB** (brain icon, always visible on
 mobile — file explorer included) opens the radial wheel with **Start IR
-review** on the ring. The note **⋯** menu still has the full IR command set.
+review** and **Open IR element tree** on the ring. **Go neural** appears
+once the open note is already in IR. The note **⋯** menu still has the full
+IR command set.
 
 ## Cloze markup
 

@@ -139,8 +139,9 @@ files and a better concept graph than SuperMemo itself.
 scheduler change. FSRS / A-factor run as in outstanding review; only the
 sequence differs.
 
-- Seed: current review card, else the active note's IR element (auto-mark
-  via `ensureIrSource`), else a tree-row action.
+- Seed: current review card, else the active note's IR element (the note
+  must already be in the collection — Go neural does not auto-mark), else a
+  tree-row action.
 - Graph: `parentId` tree (child 0.16, sibling 0.26–0.5, root parent 0.40)
   plus vault wikilinks/backlinks (0.05) and shared tags (0.01, skipped
   when a tag has more than 40 IR members). Unmarked notes may relay once

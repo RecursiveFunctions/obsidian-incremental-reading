@@ -304,7 +304,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       name: "Go neural",
       icon: "network",
       hotkeys: [{ modifiers: ["Alt"], key: "n" }],
-      callback: () => void this.startNeuralReviewFromActiveNote(),
+      checkCallback: (checking) => {
+        if (!this.canGoNeuralFromContext()) return false;
+        if (!checking) void this.startNeuralReviewFromActiveNote();
+        return true;
+      },
     });
 
     this.addCommand({
@@ -722,6 +726,12 @@ export default class IncrementalReadingPlugin extends Plugin {
                 .setIcon("play-circle")
                 .onClick(() => void this.startReview()),
             );
+            menu.addItem((item) =>
+              item
+                .setTitle("Open IR element tree")
+                .setIcon("list-tree")
+                .onClick(() => void this.openTreeView()),
+            );
           }
           menu.addItem((item) =>
             item
@@ -1045,12 +1055,14 @@ export default class IncrementalReadingPlugin extends Plugin {
         .setIcon("brain-circuit")
         .onClick(() => void this.startReview()),
     );
-    menu.addItem((item) =>
-      item
-        .setTitle("Go neural")
-        .setIcon("network")
-        .onClick(() => void this.startNeuralReviewFromActiveNote()),
-    );
+    if (this.canGoNeuralFromContext()) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Go neural")
+          .setIcon("network")
+          .onClick(() => void this.startNeuralReviewFromActiveNote()),
+      );
+    }
     menu.addSeparator();
     menu.addItem((item) =>
       item
@@ -1603,6 +1615,17 @@ export default class IncrementalReadingPlugin extends Plugin {
     return true;
   }
 
+  /**
+   * Go neural is subset review of the IR graph. It is available only on an
+   * existing IR element (review card, or a note already in the collection).
+   * Auto-marking a plain note and walking from that singleton is not useful.
+   */
+  private canGoNeuralFromContext(): boolean {
+    if (this.getActiveReviewView()?.getCurrentElementId()) return true;
+    const file = this.app.workspace.getActiveFile();
+    return !!(file && file.extension === "md" && getIrType(this.app, file));
+  }
+
   private async startNeuralReviewFromActiveNote() {
     const reviewing = this.getActiveReviewView()?.getCurrentElementId();
     if (reviewing) {
@@ -1610,13 +1633,25 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     const active = this.app.workspace.getActiveFile();
-    if (!active) {
+    if (!active || active.extension !== "md") {
       new Notice("Incremental Reading: no active note to start Neural Review from.");
       return;
     }
-    if (!(await this.ensureIrSource(active))) return;
+    if (!getIrType(this.app, active)) {
+      new Notice(
+        `"${active.basename}" is not in Incremental Reading. ` +
+          "Mark it as a topic first, then Go neural from there.",
+      );
+      return;
+    }
     const seedId = await this.resolveElementIdForFile(active);
-    await this.startNeuralReview(seedId, seedId ? null : active.path);
+    if (!seedId) {
+      new Notice(
+        "Incremental Reading: that note is marked IR but is not in the store yet. Try again in a moment.",
+      );
+      return;
+    }
+    await this.startNeuralReview(seedId, null);
   }
 
   public async startNeuralReview(seedElementId: ElementId | null, seedNotePath: string | null) {
@@ -2597,10 +2632,17 @@ export default class IncrementalReadingPlugin extends Plugin {
           icon: "play-circle",
           run: () => this.startReview(),
         });
+      } else if (kind === "open-tree") {
+        out.push({
+          title: "Open IR element tree",
+          description: "Browse topics, extracts, and items.",
+          icon: "list-tree",
+          run: () => this.openTreeView(),
+        });
       } else if (kind === "go-neural") {
         out.push({
           title: "Go neural",
-          description: "Subset review from the current note.",
+          description: "Subset review from the current IR element.",
           icon: "network",
           run: () => this.startNeuralReviewFromActiveNote(),
         });

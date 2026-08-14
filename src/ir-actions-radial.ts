@@ -9,7 +9,7 @@ export type IrHubEntry = {
 };
 
 const EMPTY_HELP_LINES: string[] = [
-  "Start IR review and Go neural are on this ring whenever you are not already in a session.",
+  "Start IR review and the element tree are on this ring whenever you are not already in a session. Go neural appears once the current note is in Incremental Reading.",
   "",
   "New cloze (separate card): select text in a Markdown note, then tap the IR FAB or open the wheel. On an IR item, the new card is filed under that item’s ir-parent.",
   "",

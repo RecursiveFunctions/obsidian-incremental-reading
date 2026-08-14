@@ -5,14 +5,14 @@ import {
   sessionHubKinds,
 } from "../src/ir/mobile-hub";
 
-test("session hub always offers Start review outside an IR session", () => {
+test("session hub offers Start review and the tree outside an IR session", () => {
   assert.deepEqual(
     sessionHubKinds({
       inReview: false,
       hasMarkdownFile: false,
       alreadyIr: false,
     }),
-    ["start-review", "go-neural"],
+    ["start-review", "open-tree"],
   );
 });
 
@@ -23,29 +23,29 @@ test("session hub adds Mark as IR topic on a plain markdown note", () => {
       hasMarkdownFile: true,
       alreadyIr: false,
     }),
-    ["start-review", "go-neural", "mark-topic"],
+    ["start-review", "open-tree", "mark-topic"],
   );
 });
 
-test("session hub skips Mark as topic when the note is already IR", () => {
+test("Go neural is only on the hub when the current note is already IR", () => {
   assert.deepEqual(
     sessionHubKinds({
       inReview: false,
       hasMarkdownFile: true,
       alreadyIr: true,
     }),
-    ["start-review", "go-neural"],
+    ["start-review", "open-tree", "go-neural"],
   );
 });
 
-test("session hub stays out of the way during review", () => {
+test("review hub keeps tree and Go neural, not Start review", () => {
   assert.deepEqual(
     sessionHubKinds({
       inReview: true,
       hasMarkdownFile: true,
       alreadyIr: true,
     }),
-    [],
+    ["open-tree", "go-neural"],
   );
 });
 

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-08-13
+
+### Fixed
+
+- **Mobile: Open IR element tree is on the FAB hub** (and the editor ⋯
+  menu), not only behind the file-menu swipe. During review the same petal
+  is there so you can jump from a card to the tree.
+- **Go neural is only offered on something already in IR.** A plain note
+  no longer auto-marks and opens a one-card neural session. Mark it as a
+  topic first; the command, hub petal, and status-bar item stay hidden
+  until then.
+
 ## [0.6.3] — 2026-08-13
 
 ### Fixed
