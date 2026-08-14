@@ -7,8 +7,9 @@
  * them against the current note body and pushes the resulting decoration
  * set into every open MarkdownView whose file matches.
  *
- * Reading view and the review pane are NOT covered by this module yet —
- * see DESIGN §Q3 deferred-items. Legacy notes that still carry persisted
+ * Reading view and the review pane are NOT covered by this module's CM6
+ * path — see DESIGN §Q3. Reading view uses the post-processor below.
+ * Legacy notes that still carry persisted
  * `<mark class="ir-extract-source">` chrome continue to render in those
  * surfaces because the CSS class is unchanged.
  */
@@ -29,6 +30,7 @@ import {
 import type { IrStore } from "./store";
 import type { Anchor } from "./model";
 import { resolveAnchor } from "./anchor";
+import { readingViewNeedlePasses } from "./extract-reading-marks";
 
 /** CSS class shared with pre-§Q3 inline marks so styles.css needs no change. */
 const EXTRACT_CLASS = "ir-extract-source";
@@ -241,15 +243,15 @@ interface PostProcessorContext {
 /**
  * Build the `MarkdownPostProcessor` registered against Obsidian's reading
  * view. For each section block rendered from a known IR source path, walks
- * the rendered text nodes and wraps the first occurrence of each cached
- * extract's text in `<mark class="ir-extract-source">`.
+ * the rendered text nodes and wraps each extract's text in
+ * `<mark class="ir-extract-source">` (Nth occurrence when quotes repeat).
  *
  * Limitations (best-effort, §Q3 reading-view path):
  * - Only matches within a single text node. An extract that spans inline
  *   formatting boundaries (e.g. text crossing a `<strong>`) won't be found.
- * - Two extracts with identical text are deduped before walking, so the
- *   identical passage gets marked once. The editor surface marks every
- *   occurrence; reading view collapses them.
+ * - Identical quotes at different offsets each get a mark (Nth occurrence
+ *   of that needle). Spans that already sit inside an IR mark are not
+ *   wrapped again.
  * - Needles shorter than 4 characters are skipped to avoid noisy matches.
  */
 export function createIrExtractMarkdownPostProcessor(
@@ -260,47 +262,65 @@ export function createIrExtractMarkdownPostProcessor(
     if (!path) return;
     const ranges = cache.rangesFor(path);
     if (ranges.length === 0) return;
-    const seen = new Set<string>();
-    for (const r of ranges) {
-      const needle = r.text.trim();
-      if (needle.length < 4) continue;
-      if (seen.has(needle)) continue;
-      seen.add(needle);
-      wrapFirstOccurrenceInTextNode(el, needle);
+    for (const pass of readingViewNeedlePasses(ranges)) {
+      wrapNthOccurrenceInTextNode(el, pass.needle, pass.n);
     }
   };
 }
 
+function isInsideIrExtractMark(node: Node): boolean {
+  let p: Node | null = node.parentNode;
+  while (p) {
+    if (
+      p instanceof HTMLElement &&
+      p.tagName === "MARK" &&
+      p.classList.contains(EXTRACT_CLASS)
+    ) {
+      return true;
+    }
+    p = p.parentNode;
+  }
+  return false;
+}
+
 /**
- * Walk text nodes under `root` in document order; on the first text node
- * that contains `needle`, split the node and wrap the matched range in a
- * `<mark class="ir-extract-source">`. Returns true on a hit, false if no
- * text node contained the needle.
+ * Walk text nodes under `root` in document order; wrap the `n`-th occurrence
+ * of `needle` (0-based, counting inside already-marked nodes so indices
+ * match source order). Returns true on a hit or if that occurrence is
+ * already inside an IR mark.
  */
-function wrapFirstOccurrenceInTextNode(
+function wrapNthOccurrenceInTextNode(
   root: HTMLElement,
   needle: string,
+  n: number,
 ): boolean {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let seen = 0;
   let node: Node | null = walker.nextNode();
   while (node) {
     const t = node as Text;
     const text = t.nodeValue ?? "";
-    const idx = text.indexOf(needle);
-    if (idx !== -1) {
-      const parent = t.parentNode;
-      if (!parent) return false;
-      const before = text.slice(0, idx);
-      const after = text.slice(idx + needle.length);
-      const mark = document.createElement("mark");
-      mark.className = EXTRACT_CLASS;
-      mark.textContent = needle;
-      // Insert in document order: before, mark, after, then drop original.
-      if (before) parent.insertBefore(document.createTextNode(before), t);
-      parent.insertBefore(mark, t);
-      if (after) parent.insertBefore(document.createTextNode(after), t);
-      parent.removeChild(t);
-      return true;
+    let searchFrom = 0;
+    while (searchFrom < text.length) {
+      const idx = text.indexOf(needle, searchFrom);
+      if (idx === -1) break;
+      if (seen === n) {
+        if (isInsideIrExtractMark(t)) return true;
+        const parent = t.parentNode;
+        if (!parent) return false;
+        const before = text.slice(0, idx);
+        const after = text.slice(idx + needle.length);
+        const mark = document.createElement("mark");
+        mark.className = EXTRACT_CLASS;
+        mark.textContent = needle;
+        if (before) parent.insertBefore(document.createTextNode(before), t);
+        parent.insertBefore(mark, t);
+        if (after) parent.insertBefore(document.createTextNode(after), t);
+        parent.removeChild(t);
+        return true;
+      }
+      seen += 1;
+      searchFrom = idx + 1;
     }
     node = walker.nextNode();
   }

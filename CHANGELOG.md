@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] — 2026-08-14
+
+### Changed
+
+- **Editor cloze hint is the same inline bar as review**, not a modal.
+  Enter confirms (empty = no hint), Esc cancels.
+- **Preview extract/cloze that cannot map onto markdown** switches to
+  Edit and keeps the selection when it can: “Switch to Edit to extract
+  the exact markdown.”
+- **Reading view** marks each occurrence of a duplicate quote instead of
+  collapsing them to one highlight. Spans that cross formatting
+  boundaries are still a known gap.
+- **Glossary:** anchored extract vs standalone note. Menus and Settings
+  no longer say “child note.”
+
 ## [0.6.6] — 2026-08-14
 
 ### Changed

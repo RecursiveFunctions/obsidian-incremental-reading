@@ -78,7 +78,8 @@ import {
   saveBody,
   stripExtractMarks,
 } from "./ir/frontmatter-body";
-import { mapRenderedSelectionToRaw } from "./ir/selection-map";
+import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY } from "./ir/selection-map";
+import { promptClozeHintInline } from "./cloze-hint-bar";
 import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
 import {
   attachReviewSwipeGestures,
@@ -168,6 +169,8 @@ export class IrReviewView extends ItemView {
   private hasSourceContext = false;
   /** User chose "From the top" on these reading cards; skip bookmark restore. */
   private resumeFromTop = new Set<ElementId>();
+  /** After a failed preview-map, restore this range in the edit textarea. */
+  private pendingEditSelection: { start: number; end: number } | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -1103,8 +1106,7 @@ export class IrReviewView extends ItemView {
     // Reading topics/extracts: start in rendered markdown (same pipeline as
     // Preview). **Edit** or a click on the card body (outside links) opens the
     // raw textarea. Extract/cloze from the preview use DOM selection → source
-    // offsets (works for typical text; switch to Edit if the tool reports
-    // ambiguity across heavy formatting).
+    // offsets; if that map fails we switch to Edit and keep the selection.
     this.editing = false;
   }
 
@@ -2174,7 +2176,15 @@ export class IrReviewView extends ItemView {
     } else {
       requestAnimationFrame(() => {
         ta.focus();
-        ta.setSelectionRange(ta.value.length, ta.value.length);
+        const pending = this.pendingEditSelection;
+        this.pendingEditSelection = null;
+        if (pending) {
+          const start = Math.max(0, Math.min(pending.start, ta.value.length));
+          const end = Math.max(start, Math.min(pending.end, ta.value.length));
+          ta.setSelectionRange(start, end);
+        } else {
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+        }
       });
     }
   }
@@ -2241,7 +2251,7 @@ export class IrReviewView extends ItemView {
 
   private resolveSelection():
     | { ok: true; text: string; start: number; end: number }
-    | { ok: false; reason: string } {
+    | { ok: false; reason: string; renderedText?: string } {
     if (this.editing) {
       const active = this.contentEl.ownerDocument.activeElement;
       if (!(active instanceof HTMLTextAreaElement)) {
@@ -2274,8 +2284,8 @@ export class IrReviewView extends ItemView {
     if (!mapped) {
       return {
         ok: false,
-        reason:
-          "Selection spans formatting; switch to Edit mode for an exact cloze.",
+        reason: SWITCH_TO_EDIT_COPY,
+        renderedText: sel.toString(),
       };
     }
     return {
@@ -2286,6 +2296,17 @@ export class IrReviewView extends ItemView {
     };
   }
 
+  /** Preview map failed: open Edit and keep the selection when we can find it. */
+  private async switchToEditForExactSelection(needle: string): Promise<void> {
+    const located = locateTextInBody(this.currentRaw, needle);
+    this.pendingEditSelection = located
+      ? { start: located.start, end: located.end }
+      : null;
+    this.editing = true;
+    await this.renderCard();
+    this.flash(SWITCH_TO_EDIT_COPY);
+  }
+
   public async handleExtract(opts?: {
     silent?: boolean;
     promote?: boolean;
@@ -2294,6 +2315,10 @@ export class IrReviewView extends ItemView {
     if (!slot || !this.canMakeChild()) return;
     const sel = this.resolveSelection();
     if (!sel.ok) {
+      if (sel.renderedText?.trim()) {
+        await this.switchToEditForExactSelection(sel.renderedText);
+        return;
+      }
       new Notice(`Incremental Reading: ${sel.reason}`);
       return;
     }
@@ -2357,10 +2382,21 @@ export class IrReviewView extends ItemView {
     if (!slot || !this.canMakeClozeChild()) return;
     const sel = this.resolveSelection();
     if (!sel.ok) {
+      if (sel.renderedText?.trim()) {
+        await this.switchToEditForExactSelection(sel.renderedText);
+        return;
+      }
       new Notice(`Incremental Reading: ${sel.reason}`);
       return;
     }
-    this.showInlineHintPrompt(slot, sel);
+    const dock = this.contentEl.querySelector(".ir-review-dock");
+    if (!(dock instanceof HTMLElement)) {
+      new Notice("Incremental Reading: review dock is not ready.");
+      return;
+    }
+    const hintR = await promptClozeHintInline(dock);
+    if (!hintR.ok) return;
+    await this.commitCloze(slot, sel, hintR.hint);
   }
 
   /** Vault file for the card under review, when the slot is file-backed. */
@@ -2399,7 +2435,7 @@ export class IrReviewView extends ItemView {
           out.push({
             title: "Extract to standalone note",
             description:
-              "One-shot: create a child note without changing Settings (Alt+Shift+X).",
+              "One-shot: create a standalone note without changing Settings (Alt+Shift+X).",
             icon: "file-plus",
             run: () => void onExtractToNote(),
           });
@@ -2555,75 +2591,6 @@ export class IrReviewView extends ItemView {
     await this.reloadCurrentRaw();
     await this.refreshDecorations?.();
     await this.renderCard();
-  }
-
-  /**
-   * Inline hint bar: replaces the modal so cloze creation stays in-pane
-   * (UI commitment #6). Enter submits (empty = no hint), Esc cancels.
-   */
-  private showInlineHintPrompt(
-    slot: ReviewSlot,
-    sel: { text: string; start: number; end: number },
-  ): void {
-    const existing = this.contentEl.querySelector(".ir-hint-bar");
-    if (existing) existing.remove();
-
-    const dock = this.contentEl.querySelector(".ir-review-dock");
-    if (!dock) return;
-
-    const bar = createDiv({ cls: "ir-hint-bar" });
-    dock.prepend(bar);
-
-    bar.createSpan({
-      cls: "ir-hint-bar-label",
-      text: "Cloze hint (optional):",
-    });
-    const input = bar.createEl("input", {
-      cls: "ir-hint-bar-input",
-      type: "text",
-      placeholder: "e.g. capital of France — Enter to confirm, Esc to cancel",
-    });
-    const submit = bar.createEl("button", {
-      cls: "mod-cta ir-hint-bar-btn",
-      text: "OK",
-    });
-    const cancel = bar.createEl("button", {
-      cls: "ir-hint-bar-btn",
-      text: "Cancel",
-    });
-
-    let finished = false;
-    const finish = (hint: string | null) => {
-      if (finished) return;
-      finished = true;
-      bar.remove();
-      if (hint === null) return;
-      if (hint.includes("::")) {
-        new Notice(
-          'Incremental Reading: hints cannot contain "::" (reserved for cloze syntax).',
-        );
-        return;
-      }
-      void this.commitCloze(slot, sel, hint);
-    };
-
-    // stopPropagation: finish() removes this input before bubble completes; the
-    // contentEl handler would then see no focused input and treat Enter as Next.
-    input.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        e.stopPropagation();
-        finish(input.value.trim());
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        finish(null);
-      }
-    });
-    submit.addEventListener("click", () => finish(input.value.trim()));
-    cancel.addEventListener("click", () => finish(null));
-
-    requestAnimationFrame(() => input.focus());
   }
 
   private async commitCloze(

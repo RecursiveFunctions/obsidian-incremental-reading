@@ -44,7 +44,7 @@ State lives in a local store inside your vault, designed to survive multi-device
 
 Every IR command ships with a default `Alt+letter` binding. The full set:
 
-- `Alt+X`: extract selection. Default: anchored in the source (no new note). If Settings → **Extract to standalone note** is on, this creates a child note instead.
+- `Alt+X`: extract selection. Default: **anchored extract** in the source (no new note). If Settings → **Extract to standalone note** is on, this creates a **standalone note** instead.
 - `Alt+Shift+X`: one-shot extract to a standalone note (does not change the setting).
 - `Alt+Shift+P`: promote the current anchored extract to a standalone note (review card, or the IR tree selection).
 - `Alt+Z`: cloze selection into a review item (optional SuperMemo-style hint; stored as `{{cN::answer::hint}}`, Anki-compatible).
@@ -112,7 +112,7 @@ Smallest plugin that delivers real IR value. Open an issue before building any i
 
 - [x] **Topic mark.** A command/ribbon action that marks the current note as an IR *topic* (reading source). Adds frontmatter: `ir-type: topic`, `ir-priority: <0-100>`, FSRS state fields.
 - [x] **Priority slider UI.** Inline 0-100 priority control on every element in the review modal, plus a *Set IR priority of current element* command. Reordering the queue is part of the SuperMemo flow, so priority is editable wherever an element is shown.
-- [x] **Extract from selection.** Select text in a topic, run *Extract*. Creates a new child note containing just that text, with `ir-parent: <source>`, inherited priority, queued as a sub-topic.
+- [x] **Extract from selection.** Select text in a topic, run *Extract*. Default: an **anchored extract** (highlight in the source, no new file). Settings / Alt+Shift+X / tree Promote create a **standalone note**.
 - [x] **Cloze from selection.** Select a span inside a topic/extract, run *Cloze*. Creates a child *item* note with the cloze deletion ready to review.
 - [x] **Review UI.** Modal or side panel showing the next due item with grade buttons (Again / Hard / Good / Easy mapping to FSRS grades 1-4). Updates FSRS state, schedules next review.
 - [x] **Interleaved queue.** Daily session: alternates due items (review queue) with topics surfaced by priority (reading queue). Configurable ratio.

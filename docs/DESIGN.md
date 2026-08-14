@@ -377,8 +377,9 @@ Reading-view limitations (worth knowing about, not bugs):
   single text node. Extracts spanning inline formatting boundaries
   (`<strong>`, links, embedded blocks) won't be marked in reading view.
   The editor surface marks them precisely via CM6 offsets.
-- Two extracts with identical text get deduped to one rendered mark in
-  reading view. The editor marks each occurrence.
+- Identical quotes at different positions each get a mark in reading view
+  (Nth occurrence of that needle). Spans that cross formatting boundaries
+  still will not.
 
 ## Open items
 

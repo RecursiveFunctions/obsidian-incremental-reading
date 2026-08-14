@@ -14,7 +14,7 @@ export interface IrSettings {
   /** Folder new extracts go in. Empty means beside their source note. */
   extractFolder: string;
   /**
-   * When true, Extract creates a standalone child note (GitHub #1).
+   * When true, Extract creates a standalone note (GitHub #1).
    * Default false keeps DESIGN §2: extracts stay anchored in the source.
    */
   extractCreatesStandaloneNote: boolean;
@@ -103,10 +103,13 @@ export class IrSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Extract to standalone note")
       .setDesc(
-        "Off (default): extracts stay anchored in the source and do not " +
-          "create a file. On: each extract becomes a child markdown note " +
-          "(in the folder below) and inherits the parent's tags, aliases, " +
-          "and source/url. Cloze items already create notes either way.",
+        "Glossary: an anchored extract stays in the source (highlight only, " +
+          "no new file). A standalone note is a new markdown file. Off " +
+          "(default) creates anchored extracts. On: each extract becomes a " +
+          "standalone note in the folder below and inherits the parent's " +
+          "tags, aliases, and source/url. Cloze items already create notes " +
+          "either way. Promote (Alt+Shift+P) turns an anchored extract into " +
+          "a standalone note later.",
       )
       .addToggle((toggle) =>
         toggle

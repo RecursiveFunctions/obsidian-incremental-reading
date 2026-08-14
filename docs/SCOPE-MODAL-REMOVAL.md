@@ -170,7 +170,7 @@ imports. Run `npm run build` and the full test suite.
 For every phase, the PR template's UI commitment checklist must be checked
 end-to-end. Specifically:
 
-- [ ] No new modals introduced, except the [documented cloze-hint exception](UI-COMMITMENTS.md#6-no-popups-that-block-the-document) in UI commitment #6.
+- [ ] No new modals introduced, except the [documented cloze-hint exception](UI-COMMITMENTS.md#6-no-popups-that-block-the-document) in UI commitment #6 (reversed 0.6.7: editor uses the inline hint bar).
 - [ ] Existing keyboard shortcuts still work (Alt+X, Alt+Z in editor;
       in-review keys 1-4, Space, Enter, L, D, `[` Previous, Alt+X, Alt+Z).
 - [ ] Status bar continues to refresh after grading / postponing /

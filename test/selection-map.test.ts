@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { locateTextInBody } from "../src/ir/selection-map";
+import { locateTextInBody, SWITCH_TO_EDIT_COPY } from "../src/ir/selection-map";
 
 test("locateTextInBody: finds multi-line text when needle has newlines", () => {
   const raw = "intro\nfirst line here\nsecond line there\noutro";
@@ -16,4 +16,8 @@ test("locateTextInBody: bridges lines when needle collapsed whitespace", () => {
   const r = locateTextInBody(raw, "line here second");
   assert.ok(r);
   assert.equal(r!.text, "line here\nsecond");
+});
+
+test("SWITCH_TO_EDIT_COPY is the user-facing preview-map fallback", () => {
+  assert.match(SWITCH_TO_EDIT_COPY, /Switch to Edit/);
 });

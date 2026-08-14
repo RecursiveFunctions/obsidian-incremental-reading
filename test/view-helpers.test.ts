@@ -14,6 +14,7 @@ import {
 import { formatDueLabel } from "../src/ir/due-label";
 import {
   bodyOffsetsFromFullOffsets,
+  fullOffsetsFromBodyOffsets,
   sanitizeExtractSelection,
   stripExtractMarks,
   stripFrontmatter,
@@ -380,6 +381,17 @@ test("bodyOffsetsFromFullOffsets: clamps when selection extends past trimmed bod
   const r = bodyOffsetsFromFullOffsets(full, 13, 19);
   assert.deepEqual(r, { start: 0, end: stripped.length });
   assert.equal(stripped.slice(r!.start, r!.end), "Body");
+});
+
+test("fullOffsetsFromBodyOffsets: inverse of bodyOffsetsFromFullOffsets", () => {
+  const full = "---\ntitle: Hello\n---\nBody text here.";
+  const bodyStart = full.indexOf("Body");
+  const r = bodyOffsetsFromFullOffsets(full, bodyStart, bodyStart + 4);
+  assert.ok(r);
+  assert.deepEqual(fullOffsetsFromBodyOffsets(full, r.start, r.end), {
+    from: bodyStart,
+    to: bodyStart + 4,
+  });
 });
 
 /* ------------------------------------------------------------------ */

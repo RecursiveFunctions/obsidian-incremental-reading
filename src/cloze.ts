@@ -9,7 +9,7 @@
  *
  * When a hint is present, everything before the **last** `::` inside the tag
  * is the hidden answer (so answers may contain `::`). The hint must not
- * contain `::` (validated in the creation modal).
+ * contain `::` (validated in the inline hint bar).
  *
  * The numbered group supports multiple deletions per note later without a
  * format change.

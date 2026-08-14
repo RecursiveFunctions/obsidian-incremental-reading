@@ -55,6 +55,20 @@ export function bodyOffsetsFromFullOffsets(
   return { start, end };
 }
 
+/** Inverse of {@link bodyOffsetsFromFullOffsets}. */
+export function fullOffsetsFromBodyOffsets(
+  fullFile: string,
+  start: number,
+  end: number,
+): { from: number; to: number } {
+  const fm = fullFile.match(FRONTMATTER_RE);
+  const fmLen = fm ? fm[0].length : 0;
+  const afterFm = fullFile.slice(fmLen);
+  const leadingWs = afterFm.length - afterFm.trimStart().length;
+  const bodyStartInFull = fmLen + leadingWs;
+  return { from: bodyStartInFull + start, to: bodyStartInFull + end };
+}
+
 /**
  * Strip pre-§Q3 `<mark class="ir-extract-source">...</mark>` chrome, leaving
  * only the visible text. Iteratively removes pairs from the inside out so it

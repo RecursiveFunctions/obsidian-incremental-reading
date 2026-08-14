@@ -2,6 +2,10 @@
  * Map DOM / editor selections to offsets in a markdown note body (no YAML).
  */
 
+/** Shown when a preview selection cannot be mapped onto source markdown. */
+export const SWITCH_TO_EDIT_COPY =
+  "Switch to Edit to extract the exact markdown.";
+
 const BLOCK_TAGS = new Set([
   "P",
   "DIV",

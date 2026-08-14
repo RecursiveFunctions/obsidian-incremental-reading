@@ -1623,13 +1623,15 @@
   gap: 0.35em;
 }
 
-/* Inline cloze hint bar (replaces modal — commitment #6) */
+/* Inline cloze hint bar (replaces modal — commitment #6). Review dock and
+ * markdown editor (Alt+Z) share this chrome. */
 .ir-hint-bar {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
 }
 
 .ir-hint-bar-label {

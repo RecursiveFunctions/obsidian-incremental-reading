@@ -18,6 +18,7 @@ import {
   IrNoteResult,
   applyInheritedFrontmatter,
   createCloze,
+  createClozeFromText,
   createIrItemChildNote,
   getIrType,
   getPriority,
@@ -66,7 +67,7 @@ import {
   nextClozeNumber,
   wrapCloze,
 } from "./src/cloze";
-import { promptClozeHint } from "./src/cloze-hint-modal";
+import { promptClozeHintInline } from "./src/cloze-hint-bar";
 import {
   promptNukeConfirm,
   promptStateResetConfirm,
@@ -83,8 +84,14 @@ import {
 } from "./src/ir/extract-decorations";
 import {
   bodyOffsetsFromFullOffsets,
+  fullOffsetsFromBodyOffsets,
   stripFrontmatter,
 } from "./src/ir/frontmatter-body";
+import {
+  locateTextInBody,
+  mapRenderedSelectionToRaw,
+  SWITCH_TO_EDIT_COPY,
+} from "./src/ir/selection-map";
 import {
   captureEditorSelection,
   restoreEditorSelection,
@@ -550,8 +557,8 @@ export default class IncrementalReadingPlugin extends Plugin {
           return true;
         }
         const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (mv?.file && mv.editor.getSelection().trim()) {
-          if (!checking) void this.extractSelection(mv.editor, mv.file);
+        if (mv?.file && this.markdownViewHasSelection(mv)) {
+          if (!checking) void this.extractFromMarkdownView(mv);
           return true;
         }
         return false;
@@ -573,9 +580,9 @@ export default class IncrementalReadingPlugin extends Plugin {
           return true;
         }
         const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (mv?.file && mv.editor.getSelection().trim()) {
+        if (mv?.file && this.markdownViewHasSelection(mv)) {
           if (!checking) {
-            void this.extractSelection(mv.editor, mv.file, { promote: true });
+            void this.extractFromMarkdownView(mv, { promote: true });
           }
           return true;
         }
@@ -607,8 +614,8 @@ export default class IncrementalReadingPlugin extends Plugin {
           return true;
         }
         const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (mv?.file && mv.editor.getSelection().trim()) {
-          if (!checking) void this.clozeSelection(mv.editor, mv.file);
+        if (mv?.file && this.markdownViewHasSelection(mv)) {
+          if (!checking) void this.clozeFromMarkdownView(mv);
           return true;
         }
         return false;
@@ -1179,6 +1186,179 @@ export default class IncrementalReadingPlugin extends Plugin {
     return { queue, elementsById: state.elements, isNeural: false };
   }
 
+  private markdownViewHasSelection(mv: MarkdownView): boolean {
+    if (mv.editor.getSelection().trim()) return true;
+    return this.previewSelectionRange(mv) !== null;
+  }
+
+  private previewRoot(mv: MarkdownView): HTMLElement | null {
+    return mv.contentEl.querySelector(".markdown-preview-view");
+  }
+
+  private previewSelectionRange(mv: MarkdownView): Range | null {
+    const root = this.previewRoot(mv);
+    if (!root) return null;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+    if (!sel.anchorNode || !root.contains(sel.anchorNode)) return null;
+    return sel.getRangeAt(0);
+  }
+
+  private clozeHintHost(): HTMLElement {
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    return mv?.contentEl ?? document.body;
+  }
+
+  private async switchMarkdownToSource(
+    mv: MarkdownView,
+    needle: string,
+  ): Promise<void> {
+    const vs = mv.leaf.getViewState();
+    const prev =
+      vs.state && typeof vs.state === "object"
+        ? (vs.state as Record<string, unknown>)
+        : {};
+    await mv.leaf.setViewState({
+      ...vs,
+      state: { ...prev, mode: "source" },
+    });
+    const editor = mv.editor;
+    const full = editor.getValue();
+    const located = locateTextInBody(stripFrontmatter(full), needle);
+    if (located) {
+      const { from, to } = fullOffsetsFromBodyOffsets(
+        full,
+        located.start,
+        located.end,
+      );
+      editor.setSelection(editor.offsetToPos(from), editor.offsetToPos(to));
+    }
+    new Notice(`Incremental Reading: ${SWITCH_TO_EDIT_COPY}`);
+  }
+
+  private async extractFromMarkdownView(
+    mv: MarkdownView,
+    opts?: { promote?: boolean },
+  ): Promise<void> {
+    const file = mv.file;
+    if (!file) return;
+    if (mv.editor.getSelection().trim()) {
+      await this.extractSelection(mv.editor, file, opts);
+      return;
+    }
+    const range = this.previewSelectionRange(mv);
+    const root = this.previewRoot(mv);
+    if (!range || !root) {
+      new Notice("Incremental Reading: nothing selected.");
+      return;
+    }
+    const body = stripFrontmatter(await this.app.vault.cachedRead(file));
+    const mapped = mapRenderedSelectionToRaw(body, root, range);
+    if (!mapped) {
+      await this.switchMarkdownToSource(mv, range.toString());
+      return;
+    }
+    await this.extractMappedBodyRange(file, mapped, opts);
+  }
+
+  private async extractMappedBodyRange(
+    source: TFile,
+    mapped: { start: number; end: number; text: string },
+    opts?: { promote?: boolean },
+  ): Promise<void> {
+    if (!(await this.ensureIrSource(source))) return;
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const selection = mapped.text.trim();
+    if (!selection) {
+      new Notice("Incremental Reading: nothing selected.");
+      return;
+    }
+    const bodyBeforeExtract = stripFrontmatter(
+      await this.app.vault.cachedRead(source),
+    );
+    const parentId =
+      (await this.resolveElementIdForFile(source)) ??
+      elementIdForPath(source.path);
+    const now = Date.now();
+    try {
+      const ev = buildExtractEvent({
+        sourcePath: source.path,
+        sourceText: bodyBeforeExtract,
+        selStart: mapped.start,
+        selEnd: mapped.end,
+        parentId,
+        priority: getPriority(this.app, source, this.settings.defaultPriority),
+        elementId: newElementId(),
+        eventId: newEventId(),
+        device: await this.store.getDeviceId(),
+        lamport: now,
+        now,
+        schedule: topicStateToSchedule(
+          newTopicState(this.settings, new Date(now)),
+        ),
+      });
+      await this.store.appendEvent(ev);
+      await this.store.reconcile();
+      void this.refreshStatusBar();
+      const created = ev.payload.element as IrElement;
+      const promote =
+        opts?.promote ?? this.settings.extractCreatesStandaloneNote;
+      if (promote) {
+        await this.applyIrPromote(created.id, created);
+        return;
+      }
+      new Notice(
+        `Extracted (anchored in "${source.basename}", not a separate note).`,
+      );
+    } catch (e) {
+      console.error("Incremental Reading: anchored extract failed", e);
+      new Notice(
+        "Incremental Reading: could not record the extract in the store. See the developer console.",
+      );
+    }
+  }
+
+  private async clozeFromMarkdownView(mv: MarkdownView): Promise<void> {
+    const file = mv.file;
+    if (!file) return;
+    if (mv.editor.getSelection().trim()) {
+      await this.clozeSelection(mv.editor, file);
+      return;
+    }
+    const range = this.previewSelectionRange(mv);
+    const root = this.previewRoot(mv);
+    if (!range || !root) {
+      new Notice("Incremental Reading: nothing selected.");
+      return;
+    }
+    const body = stripFrontmatter(await this.app.vault.cachedRead(file));
+    const mapped = mapRenderedSelectionToRaw(body, root, range);
+    if (!mapped) {
+      await this.switchMarkdownToSource(mv, range.toString());
+      return;
+    }
+    if (getIrType(this.app, file) === "item") {
+      await this.switchMarkdownToSource(mv, mapped.text);
+      return;
+    }
+    if (!(await this.ensureIrSource(file))) return;
+    const hintR = await promptClozeHintInline(mv.contentEl);
+    if (!hintR.ok) return;
+    const result = await createClozeFromText(
+      this.app,
+      file,
+      body,
+      mapped.start,
+      mapped.end,
+      this.settings,
+      hintR.hint,
+    );
+    await this.openResult(result, "Cloze item created:");
+  }
+
   private async extractSelection(
     editor: Editor,
     source: TFile,
@@ -1605,8 +1785,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.addClozeInPlace(editor, source);
       return;
     }
-    const hintR = await promptClozeHint(this.app);
+    const fromPos = editor.getCursor("from");
+    const toPos = editor.getCursor("to");
+    const hintR = await promptClozeHintInline(this.clozeHintHost());
     if (!hintR.ok) return;
+    editor.setSelection(fromPos, toPos);
     const result = await createCloze(
       this.app,
       source,
@@ -1644,8 +1827,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: nothing selected.");
       return;
     }
-    const hintR = await promptClozeHint(this.app);
+    const fromPos = editor.getCursor("from");
+    const toPos = editor.getCursor("to");
+    const hintR = await promptClozeHintInline(this.clozeHintHost());
     if (!hintR.ok) return;
+    editor.setSelection(fromPos, toPos);
     const n = nextClozeNumber(editor.getValue());
     editor.replaceSelection(wrapCloze(answer, n, hintR.hint));
     new Notice(`Added cloze c${n} to "${source.basename}".`);
@@ -2788,7 +2974,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           ? "Extract to standalone note"
           : "Extract selection",
         description: this.settings.extractCreatesStandaloneNote
-          ? "Creates a child note (Alt+X). Inherits tags from the parent."
+          ? "Creates a standalone note (Alt+X). Inherits tags from the parent."
           : "Anchored extract in this note (Alt+X).",
         icon: "scissors",
         run: () =>
@@ -2798,7 +2984,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         out.push({
           title: "Extract to standalone note",
           description:
-            "One-shot: create a child note without changing Settings (Alt+Shift+X).",
+            "One-shot: create a standalone note without changing Settings (Alt+Shift+X).",
           icon: "file-plus",
           run: () =>
             this.runMarkdownHubAction(file, (ed, f) =>
@@ -2998,8 +3184,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       parentFile = abs;
     }
     if (!(await this.ensureIrSource(parentFile))) return;
-    const hintR = await promptClozeHint(this.app);
+    const fromPos = editor.getCursor("from");
+    const toPos = editor.getCursor("to");
+    const hintR = await promptClozeHintInline(this.clozeHintHost());
     if (!hintR.ok) return;
+    editor.setSelection(fromPos, toPos);
     // Editor is on the item note, not the parent — its offsets only mark the
     // item itself (which is harmless but redundant). Skip source marking here
     // because the parent's matching span needs text-based lookup, not editor
