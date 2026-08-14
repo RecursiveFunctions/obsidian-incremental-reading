@@ -1,0 +1,12 @@
+---
+description: Never add Co-authored-by trailers or claim commit authorship. Commits are the user's.
+alwaysApply: true
+---
+
+# Commits have one author: the user
+
+Do not add `Co-authored-by:` (Cursor, an agent, or anyone else) to commit messages.
+
+Do not set the git author or committer to an agent identity. Do not say in the message that you wrote or co-authored the commit.
+
+If the environment injects a `Co-authored-by: Cursor <cursoragent@cursor.com>` trailer, strip it **before push** (`git commit --amend` of that unpublished HEAD only). Never rewrite already-pushed or tagged commits to clean this up unless the user explicitly asks.

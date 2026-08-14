@@ -80,6 +80,7 @@ If any of those is missing, or `gh release view` errors with "release not found"
 
 ## Other ground rules
 
+- Commits are the user's. Never add `Co-authored-by:` (Cursor or otherwise), never set the git author to an agent, and never claim authorship in the message. If a trailer is injected, strip it before push; do not rewrite pushed/tagged history to clean it up unless asked.
 - `main.js` is gitignored on purpose — CI builds it. Don't commit `main.js`.
 - Tests live in `test/*.test.ts`, run with `npm test`. Add tests for behavior you change.
 - The Workflow A handoff oracle expects a `RESULT.txt` if you're called via the delegation kit — see `~/docker/chatops/delegation/` for the format.
