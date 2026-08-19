@@ -274,6 +274,8 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private pdfHighlights?: PdfHighlightPainter;
   private lastPdfMarks = new Map<string, PdfExtractMark[]>();
+  /** Survives the click that focuses review and collapses the PDF selection. */
+  private lastPdfSelection: PdfTextSelection | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -284,6 +286,10 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.storeInit = this.runMigrationIfOwed(fs);
     this.addSettingTab(new IrSettingTab(this.app, this));
     this.pdfHighlights = new PdfHighlightPainter(this.app);
+    this.registerDomEvent(document, "selectionchange", () => {
+      const sel = findPdfTextSelection(this.app);
+      if (sel) this.lastPdfSelection = sel;
+    });
 
     // Editor decoration extension (DESIGN §Q3). Registered before any extract
     // command so the first highlight after onload paints into a wired editor.
@@ -599,8 +605,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       hotkeys: [{ modifiers: ["Alt"], key: "x" }],
       checkCallback: (checking) => {
         const pdfSel = findPdfTextSelection(this.app);
-        if (pdfSel) {
-          if (!checking) void this.extractFromPdfSelection(pdfSel);
+        if (pdfSel) this.lastPdfSelection = pdfSel;
+        if (pdfSel || this.lastPdfSelection) {
+          if (!checking) {
+            void this.extractFromPdfSelection(
+              pdfSel ?? this.lastPdfSelection!,
+            );
+          }
           return true;
         }
         const rv = this.getActiveReviewView();
@@ -627,9 +638,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       hotkeys: [{ modifiers: ["Alt", "Shift"], key: "x" }],
       checkCallback: (checking) => {
         const pdfSel = findPdfTextSelection(this.app);
-        if (pdfSel) {
+        if (pdfSel) this.lastPdfSelection = pdfSel;
+        if (pdfSel || this.lastPdfSelection) {
           if (!checking) {
-            void this.extractFromPdfSelection(pdfSel, { promote: true });
+            void this.extractFromPdfSelection(
+              pdfSel ?? this.lastPdfSelection!,
+              { promote: true },
+            );
           }
           return true;
         }
@@ -1068,8 +1083,12 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private getActiveReviewView(): IrReviewView | null {
-    const leaf = this.app.workspace.getActiveViewOfType(IrReviewView);
-    return leaf ?? null;
+    const active = this.app.workspace.getActiveViewOfType(IrReviewView);
+    if (active) return active;
+    for (const leaf of this.app.workspace.getLeavesOfType(IR_REVIEW_VIEW_TYPE)) {
+      if (leaf.view instanceof IrReviewView) return leaf.view;
+    }
+    return null;
   }
 
   private getTreeView(): IrTreeView | null {
@@ -1550,7 +1569,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async extractFromPdfInReview(opts?: {
     promote?: boolean;
   }): Promise<IrElement | undefined> {
-    const sel = findPdfTextSelection(this.app);
+    const sel = findPdfTextSelection(this.app) ?? this.lastPdfSelection;
     if (!sel) return undefined;
     return this.extractFromPdfSelection(sel, opts);
   }
@@ -1598,9 +1617,13 @@ export default class IncrementalReadingPlugin extends Plugin {
         opts?.promote ?? this.settings.extractCreatesStandaloneNote;
       if (promote) {
         await this.applyIrPromote(created.id, created);
+        await this.refreshExtractDecorations();
+        this.lastPdfSelection = null;
         return created;
       }
       this.getActiveReviewView()?.adoptElement(created);
+      await this.refreshExtractDecorations();
+      this.lastPdfSelection = null;
       new Notice(
         `Extracted (anchored in "${sel.file.basename}", page ${sel.page}).`,
       );

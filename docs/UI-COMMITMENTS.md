@@ -33,10 +33,11 @@ detached window; the source is reachable in the same surface; closing the
 review does not leave orphan panes.
 
 **PDF exception (2026-08-19):** a PDF source is Obsidian's built-in viewer,
-not markdown spliced into the side column. The review pane keeps an Open
-PDF control and opens (or reuses) that viewer at the extract's page.
-Embedding a second pdf.js in the review leaf is out of v1; reversal is
-that embed if we ever ship it.
+not markdown spliced into the side column. The review pane keeps a Focus
+PDF control and **auto-opens (or reuses) and focuses** that viewer at the
+extract's page, in a split so the review leaf stays visible. Embedding a
+second pdf.js in the review leaf is out of v1; reversal is that embed if
+we ever ship it.
 
 **Common violations:** modal flashcard popovers, full-screen review modes
 that hide the rest of Obsidian, dialogs that require a click to dismiss

@@ -10,7 +10,7 @@
  */
 
 import type { App } from "obsidian";
-import type { PdfExtractMark } from "./pdf-marks";
+import { pdfTextItemPaint, type PdfExtractMark } from "./pdf-marks";
 import {
   PDF_VIEW_TYPE,
   pdfContainerEl,
@@ -29,24 +29,30 @@ function clearPaint(container: HTMLElement): void {
     });
 }
 
+function textLayerItems(pageEl: HTMLElement): HTMLElement[] {
+  const withIdx = Array.from(
+    pageEl.querySelectorAll<HTMLElement>("[data-idx]"),
+  );
+  if (withIdx.length > 0) return withIdx;
+  const layer = pageEl.querySelector(".textLayer");
+  return layer
+    ? Array.from(layer.querySelectorAll<HTMLElement>(":scope > span"))
+    : [];
+}
+
 function paintPage(
   pageEl: HTMLElement,
   marks: PdfExtractMark[],
   emphasizeId: string | null,
 ): void {
-  const items = Array.from(pageEl.querySelectorAll<HTMLElement>("[data-idx]"));
-  for (const el of items) {
-    const idx = Number(el.dataset.idx);
-    if (!Number.isInteger(idx)) continue;
-    for (const m of marks) {
-      const [beginIndex, , endIndex] = m.selection;
-      if (idx < beginIndex || idx > endIndex) continue;
-      el.classList.add(SOURCE_CLASS);
-      if (emphasizeId && m.elementId === emphasizeId) {
-        el.classList.add(FOCUS_CLASS);
-      }
-    }
-  }
+  const items = textLayerItems(pageEl);
+  items.forEach((el, i) => {
+    const fromAttr = Number(el.dataset.idx);
+    const idx = Number.isInteger(fromAttr) ? fromAttr : i;
+    const paint = pdfTextItemPaint(idx, marks, emphasizeId);
+    if (paint.source) el.classList.add(SOURCE_CLASS);
+    if (paint.focus) el.classList.add(FOCUS_CLASS);
+  });
 }
 
 export function paintPdfView(
@@ -84,15 +90,27 @@ export class PdfHighlightPainter {
   ): void {
     this.detach();
     for (const leaf of this.app.workspace.getLeavesOfType(PDF_VIEW_TYPE)) {
-      const file = pdfFileFromView(leaf.view);
-      if (!file) continue;
-      const marks = marksByPath.get(file.path) ?? [];
       const view = leaf.view;
-      paintPdfView(view, marks, emphasizeId);
-      const unsub = subscribePdfTextLayer(view, () => {
+      const paint = () => {
+        const file = pdfFileFromView(view);
+        const marks = file ? (marksByPath.get(file.path) ?? []) : [];
         paintPdfView(view, marks, emphasizeId);
-      });
+      };
+      paint();
+      const unsub = subscribePdfTextLayer(view, paint);
       if (unsub) this.unsubs.push(unsub);
+      // pdf.js often has no text layer on the first layout-change.
+      let n = 0;
+      const tick = () => {
+        n += 1;
+        paint();
+        if (n < 15) {
+          const id = window.setTimeout(tick, 120);
+          this.unsubs.push(() => window.clearTimeout(id));
+        }
+      };
+      const id = window.setTimeout(tick, 120);
+      this.unsubs.push(() => window.clearTimeout(id));
     }
   }
 

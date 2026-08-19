@@ -11,7 +11,7 @@
  * `data-idx` either way, so capture and highlight stay aligned.
  */
 
-import type { App, TFile } from "obsidian";
+import type { App, TFile, WorkspaceLeaf } from "obsidian";
 import {
   formatPdfLinktext,
   parsePdfFragment,
@@ -217,64 +217,90 @@ export function getPdfPageForPath(app: App, path: string): number | null {
 /**
  * Open (or reuse) the core PDF viewer at a page, optionally with a
  * selection highlight. Uses the public `openLinkText` fragment, not a
- * second pdf.js instance.
+ * second pdf.js instance. Reveals the leaf so the viewer can take
+ * keyboard/selection focus (review's ensureFocus is skipped for PDF cards).
+ * Reuses an existing leaf for this file; otherwise splits so the review
+ * pane stays on screen.
  */
 export async function openPdfAt(
   app: App,
   path: string,
   page: number,
   selection?: [number, number, number, number],
-): Promise<void> {
+): Promise<WorkspaceLeaf | null> {
   const file = app.vault.getAbstractFileByPath(path);
-  if (!file || !("extension" in file)) return;
+  if (!file || !("extension" in file)) return null;
   const sel = selection && pdfSelectionIsRange(selection) ? selection : undefined;
   const subpath = formatPdfLinktext("", page, sel); // "#page=…"
   const leaves = app.workspace.getLeavesOfType(PDF_VIEW_TYPE);
-  for (const leaf of leaves) {
-    if (pdfFileFromView(leaf.view)?.path === path) {
-      await leaf.openFile(file as TFile, { eState: { subpath } });
-      return;
+  let leaf: WorkspaceLeaf | null = null;
+  for (const l of leaves) {
+    if (pdfFileFromView(l.view)?.path === path) {
+      leaf = l;
+      break;
     }
   }
-  await app.workspace.openLinkText(`${path}${subpath}`, "", "tab");
+  if (leaf) {
+    await leaf.openFile(file as TFile, { eState: { subpath } });
+  } else {
+    await app.workspace.openLinkText(`${path}${subpath}`, "", "split");
+    leaf =
+      app.workspace.getLeavesOfType(PDF_VIEW_TYPE).find(
+        (l) => pdfFileFromView(l.view)?.path === path,
+      ) ?? app.workspace.activeLeaf;
+  }
+  if (leaf) app.workspace.revealLeaf(leaf);
+  return leaf;
 }
 
 export function subscribePdfTextLayer(
   view: unknown,
   onRendered: () => void,
 ): (() => void) | null {
+  const cleanups: Array<() => void> = [];
   const bus = pdfChild(view)?.pdfViewer?.eventBus;
   if (bus?.on && bus?.off) {
     const handler = () => onRendered();
     try {
       bus.on("textlayerrendered", handler);
       bus.on("pagerendered", handler);
-      return () => {
+      cleanups.push(() => {
         try {
           bus.off?.("textlayerrendered", handler);
           bus.off?.("pagerendered", handler);
         } catch {
           /* viewer gone */
         }
-      };
+      });
     } catch {
       /* fall through to MutationObserver */
     }
   }
   const container = pdfContainerEl(view);
-  if (!container || typeof MutationObserver === "undefined") return null;
-  let timer: number | null = null;
-  const obs = new MutationObserver(() => {
-    if (timer != null) window.clearTimeout(timer);
-    timer = window.setTimeout(() => {
-      timer = null;
-      onRendered();
-    }, 50);
-  });
-  obs.observe(container, { childList: true, subtree: true });
+  if (container && typeof MutationObserver !== "undefined") {
+    let timer: number | null = null;
+    const obs = new MutationObserver(() => {
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        onRendered();
+      }, 50);
+    });
+    obs.observe(container, { childList: true, subtree: true });
+    cleanups.push(() => {
+      if (timer != null) window.clearTimeout(timer);
+      obs.disconnect();
+    });
+  }
+  if (cleanups.length === 0) return null;
   return () => {
-    if (timer != null) window.clearTimeout(timer);
-    obs.disconnect();
+    for (const c of cleanups) {
+      try {
+        c();
+      } catch {
+        /* viewer gone */
+      }
+    }
   };
 }
 

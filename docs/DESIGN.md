@@ -92,9 +92,9 @@ fenced in `src/ir/pdf-view.ts`. Obsidian updates can break that path; a
 `data-idx` DOM fallback exists. Do not spread those calls through
 `main.ts` / `review-view.ts`.
 
-The review side column cannot host the PDF. It offers **Open PDF** and
-auto-opens the native viewer at the extract's page (UI commitment #2
-exception, named in `docs/UI-COMMITMENTS.md`).
+The review side column cannot host the PDF. It auto-opens the native
+viewer in a split, focuses it, and offers **Focus PDF** to bring it back
+(UI commitment #2 exception, named in `docs/UI-COMMITMENTS.md`).
 
 ## 3. Graph (Obsidian Graph view)
 

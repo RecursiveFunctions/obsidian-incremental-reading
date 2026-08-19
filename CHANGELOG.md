@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.13] — 2026-08-19
+
+### Fixed
+
+- **PDF review focus:** a PDF card splits the built-in viewer beside
+  review and focuses it so you can select text immediately. Extract
+  (Alt+X) still records the highlight if the click onto review cleared
+  the selection. Yellow marks paint on the text layer after extract.
+
 ## [0.6.12] — 2026-08-19
 
 ### Added

@@ -1347,7 +1347,7 @@ export class IrReviewView extends ItemView {
     });
   }
 
-  private maybeOpenPdfSource(slot: ReviewSlot): void {
+  private async maybeOpenPdfSource(slot: ReviewSlot): Promise<void> {
     if (!this.pendingPdfOpen) return;
     this.pendingPdfOpen = false;
     const path = this.pdfSourcePath(slot);
@@ -1355,7 +1355,7 @@ export class IrReviewView extends ItemView {
     const pdf = slot.element.anchor?.pdf;
     const bm = getBookmark(this.bookmarks, slot.id);
     const page = pdf?.page ?? bm?.page ?? 1;
-    void openPdfAt(this.app, path, page, pdf?.selection);
+    await openPdfAt(this.app, path, page, pdf?.selection);
   }
 
   private async persistBookmarks(): Promise<void> {
@@ -1556,7 +1556,7 @@ export class IrReviewView extends ItemView {
         const openBtn = ctxScroll.createEl("button", {
           type: "button",
           cls: "mod-cta ir-review-open-pdf",
-          text: `Open PDF (page ${sourceCtx.pdf.page})`,
+          text: `Focus PDF (page ${sourceCtx.pdf.page})`,
         });
         const pdf = sourceCtx.pdf;
         openBtn.addEventListener("click", () => {
@@ -1666,7 +1666,7 @@ export class IrReviewView extends ItemView {
       this.attachMobileEditResizeObserver();
       if (reading) {
         this.restoreBookmark(slot);
-        this.maybeOpenPdfSource(slot);
+        void this.maybeOpenPdfSource(slot);
       }
       requestAnimationFrame(() => {
         scroll
@@ -1728,8 +1728,10 @@ export class IrReviewView extends ItemView {
           .addEventListener("click", () => void this.dismiss());
       }
       this.restoreBookmark(slot);
-      this.maybeOpenPdfSource(slot);
-      this.ensureFocus();
+      void this.maybeOpenPdfSource(slot).then(() => {
+        if (!this.pdfSourcePath(slot)) this.ensureFocus();
+      });
+      if (!this.pdfSourcePath(slot)) this.ensureFocus();
       return;
     }
 

@@ -171,14 +171,21 @@
   padding: 0.05em 0;
 }
 
-/* PDF text-layer highlights (store-painted; the PDF file is never mutated). */
-.workspace-leaf-content[data-type="pdf"] .textLayer .ir-extract-source {
+/* PDF text-layer highlights (store-painted; the PDF file is never mutated).
+ * pdf.js paints glyphs on a canvas; the text layer spans are transparent
+ * overlays. Background + inset box-shadow both need !important or the
+ * viewer’s own span rules win. */
+.workspace-leaf-content[data-type="pdf"] .textLayer .ir-extract-source,
+.pdf-container .textLayer .ir-extract-source {
   background-color: var(--text-highlight-bg, rgba(255, 208, 0, 0.35)) !important;
+  box-shadow: inset 0 0 0 100px var(--text-highlight-bg, rgba(255, 208, 0, 0.35));
   border-radius: 2px;
 }
 
-.workspace-leaf-content[data-type="pdf"] .textLayer .ir-extract-highlight {
+.workspace-leaf-content[data-type="pdf"] .textLayer .ir-extract-highlight,
+.pdf-container .textLayer .ir-extract-highlight {
   background-color: var(--text-highlight-bg, rgba(255, 208, 0, 0.55)) !important;
+  box-shadow: inset 0 0 0 100px var(--text-highlight-bg, rgba(255, 208, 0, 0.55));
   outline: 1px solid var(--text-accent);
 }
 

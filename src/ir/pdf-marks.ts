@@ -38,3 +38,23 @@ export function pdfMarksBySourcePath(
   }
   return out;
 }
+
+/**
+ * Which CSS classes a text-layer item (pdf.js `data-idx`) should get.
+ * Selection tuples are inclusive on both indices.
+ */
+export function pdfTextItemPaint(
+  idx: number,
+  marks: readonly PdfExtractMark[],
+  emphasizeId: string | null,
+): { source: boolean; focus: boolean } {
+  let source = false;
+  let focus = false;
+  for (const m of marks) {
+    const [beginIndex, , endIndex] = m.selection;
+    if (idx < beginIndex || idx > endIndex) continue;
+    source = true;
+    if (emphasizeId && m.elementId === emphasizeId) focus = true;
+  }
+  return { source, focus };
+}

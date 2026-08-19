@@ -1,8 +1,42 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pdfMarksBySourcePath } from "../src/ir/pdf-marks";
+import {
+  pdfMarksBySourcePath,
+  pdfTextItemPaint,
+} from "../src/ir/pdf-marks";
 import type { IrElement } from "../src/ir/model";
 import type { ElementId } from "../src/ir/ids";
+
+test("pdfTextItemPaint: inclusive index range, focus only the current card", () => {
+  const marks = [
+    {
+      elementId: "el_a",
+      page: 1,
+      selection: [2, 0, 4, 1] as [number, number, number, number],
+    },
+    {
+      elementId: "el_b",
+      page: 1,
+      selection: [10, 0, 10, 8] as [number, number, number, number],
+    },
+  ];
+  assert.deepEqual(pdfTextItemPaint(1, marks, "el_a"), {
+    source: false,
+    focus: false,
+  });
+  assert.deepEqual(pdfTextItemPaint(2, marks, "el_a"), {
+    source: true,
+    focus: true,
+  });
+  assert.deepEqual(pdfTextItemPaint(4, marks, "el_a"), {
+    source: true,
+    focus: true,
+  });
+  assert.deepEqual(pdfTextItemPaint(10, marks, "el_a"), {
+    source: true,
+    focus: false,
+  });
+});
 
 function extract(p: Omit<Partial<IrElement>, "id"> & { id: string }): IrElement {
   return {
