@@ -11,6 +11,8 @@ import {
 } from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
 import { resolveShowDivergencePicker } from "./src/ir/settings-resolve";
+import { isSpaceAfterReveal } from "./src/ir/review-keys";
+import { buildTextQuoteAnchor } from "./src/ir/cloze-marks";
 import { IR_TREE_VIEW_TYPE, IrTreeView } from "./src/tree-view";
 import { IR_SESSION_VIEW_TYPE, IrSessionView } from "./src/session-view";
 import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
@@ -76,7 +78,7 @@ import {
 import { promptSourceRelink } from "./src/relink-confirm-modal";
 import { promptSourceGone, type SourceGoneChoice } from "./src/source-gone-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
-import { buildExtractEvent, buildPromoteEvent } from "./src/ir/extract";
+import { buildExtractEvent, buildPdfExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
 import {
   IrDecorationCache,
@@ -85,6 +87,15 @@ import {
   pushIrDecorations,
   refreshIrDecorationCache,
 } from "./src/ir/extract-decorations";
+import { isPdfPath, formatPdfLinktext } from "./src/ir/pdf-fragment";
+import { buildPdfTopicEvent } from "./src/ir/pdf-topic";
+import { pdfMarksBySourcePath, type PdfExtractMark } from "./src/ir/pdf-marks";
+import { PdfHighlightPainter } from "./src/ir/pdf-decorations";
+import {
+  findPdfTextSelection,
+  type PdfTextSelection,
+  activeIrFile,
+} from "./src/ir/pdf-view";
 import {
   bodyOffsetsFromFullOffsets,
   fullOffsetsFromBodyOffsets,
@@ -258,6 +269,12 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private decorationCache = new IrDecorationCache();
 
+  /** Store-only PDF topics (`notePath` ends in .pdf). Sync after each reconcile. */
+  private irPdfPaths = new Set<string>();
+
+  private pdfHighlights?: PdfHighlightPainter;
+  private lastPdfMarks = new Map<string, PdfExtractMark[]>();
+
   async onload() {
     await this.loadSettings();
     const fs = new ObsidianVaultFs(
@@ -266,6 +283,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.store = new IrStore(fs, { conflict: "clock-order" });
     this.storeInit = this.runMigrationIfOwed(fs);
     this.addSettingTab(new IrSettingTab(this.app, this));
+    this.pdfHighlights = new PdfHighlightPainter(this.app);
 
     // Editor decoration extension (DESIGN §Q3). Registered before any extract
     // command so the first highlight after onload paints into a wired editor.
@@ -279,14 +297,16 @@ export default class IncrementalReadingPlugin extends Plugin {
     // Repaint when the workspace mounts a different file in a leaf — the new
     // editor's decoration field starts empty until we push.
     this.registerEvent(
-      this.app.workspace.on("file-open", () =>
-        pushIrDecorations(this.app, this.decorationCache),
-      ),
+      this.app.workspace.on("file-open", () => {
+        pushIrDecorations(this.app, this.decorationCache);
+        this.paintPdfHighlights();
+      }),
     );
     this.registerEvent(
-      this.app.workspace.on("layout-change", () =>
-        pushIrDecorations(this.app, this.decorationCache),
-      ),
+      this.app.workspace.on("layout-change", () => {
+        pushIrDecorations(this.app, this.decorationCache);
+        this.paintPdfHighlights();
+      }),
     );
     // Initial decoration paint runs once the store is ready, below.
     void this.refreshExtractDecorations();
@@ -432,7 +452,10 @@ export default class IncrementalReadingPlugin extends Plugin {
           isNeural,
           () => void this.refreshStatusBar(),
           () => void this.openIrActionsHub(),
-          (id) => void this.notifyTreeOfReviewSlot(id),
+          (id) => {
+            this.notifyTreeOfReviewSlot(id);
+            this.paintPdfHighlights();
+          },
           notifyWorkspaceFabSync,
           () => this.undoLastGrade(),
           (path) => this.decorationCache.rangesFor(path),
@@ -443,6 +466,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           (id, el) => this.applyIrDetachAnchor(id, el),
           () => void this.startReview(),
           emptyVault,
+          (opts) => this.extractFromPdfInReview(opts),
         );
       },
     );
@@ -553,11 +577,12 @@ export default class IncrementalReadingPlugin extends Plugin {
       name: "Mark current note as IR topic",
       icon: "book-open",
       hotkeys: [{ modifiers: ["Alt"], key: "t" }],
-      // checkCallback so the command only appears when there's a markdown
-      // note to act on, per Obsidian command-design guidance.
+      // Markdown notes and PDFs (store-only; PDFs have no YAML).
       checkCallback: (checking: boolean) => {
-        const file = this.app.workspace.getActiveFile();
-        if (!file || file.extension !== "md") return false;
+        const file = activeIrFile(this.app);
+        if (!file || (file.extension !== "md" && file.extension !== "pdf")) {
+          return false;
+        }
         if (!checking) void this.markActiveFileAsTopic(file);
         return true;
       },
@@ -573,6 +598,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "scissors",
       hotkeys: [{ modifiers: ["Alt"], key: "x" }],
       checkCallback: (checking) => {
+        const pdfSel = findPdfTextSelection(this.app);
+        if (pdfSel) {
+          if (!checking) void this.extractFromPdfSelection(pdfSel);
+          return true;
+        }
         const rv = this.getActiveReviewView();
         if (rv) {
           if (!checking) void rv.handleExtract();
@@ -596,6 +626,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "file-plus",
       hotkeys: [{ modifiers: ["Alt", "Shift"], key: "x" }],
       checkCallback: (checking) => {
+        const pdfSel = findPdfTextSelection(this.app);
+        if (pdfSel) {
+          if (!checking) {
+            void this.extractFromPdfSelection(pdfSel, { promote: true });
+          }
+          return true;
+        }
         const rv = this.getActiveReviewView();
         if (rv) {
           if (!checking) void this.extractSelectionToNoteFromReview(rv);
@@ -870,14 +907,17 @@ export default class IncrementalReadingPlugin extends Plugin {
     // deletes that happened while Obsidian was closed.
     this.registerEvent(
       this.app.vault.on("delete", (deleted) => {
-        if (!(deleted instanceof TFile) || deleted.extension !== "md") return;
+        if (!(deleted instanceof TFile)) return;
+        if (deleted.extension !== "md" && deleted.extension !== "pdf") return;
+        this.irPdfPaths.delete(deleted.path);
         this.enqueueSourceGone(deleted.path, deleted.basename);
       }),
     );
 
     this.registerEvent(
       this.app.vault.on("create", (created) => {
-        if (!(created instanceof TFile) || created.extension !== "md") return;
+        if (!(created instanceof TFile)) return;
+        if (created.extension !== "md" && created.extension !== "pdf") return;
         void this.maybeOfferRelink(created);
       }),
     );
@@ -898,7 +938,20 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu: Menu, file) => {
-        if (!(file instanceof TFile) || file.extension !== "md") return;
+        if (!(file instanceof TFile)) return;
+        if (file.extension === "pdf") {
+          if (!this.irPdfPaths.has(file.path)) {
+            menu.addItem((item) =>
+              item
+                .setTitle("Mark as IR topic")
+                .setIcon("book-open")
+                .onClick(() => void this.markActiveFileAsTopic(file)),
+            );
+          }
+          this.addMobileIrFileMenuNav(menu);
+          return;
+        }
+        if (file.extension !== "md") return;
         const irType = getIrType(this.app, file);
         if (!irType) {
           menu.addItem((item) =>
@@ -937,6 +990,20 @@ export default class IncrementalReadingPlugin extends Plugin {
             .onClick(() => void this.toggleDismiss(file)),
         );
         this.addMobileIrFileMenuNav(menu);
+      }),
+    );
+
+    this.registerEvent(
+      // pdf-menu is an untyped core event (same hook PDF++ uses).
+      this.app.workspace.on("pdf-menu" as "file-menu", (menu: Menu) => {
+        const sel = findPdfTextSelection(this.app);
+        if (!sel) return;
+        menu.addItem((item) =>
+          item
+            .setTitle("Extract selection")
+            .setIcon("scissors")
+            .onClick(() => void this.extractFromPdfSelection(sel)),
+        );
       }),
     );
   }
@@ -1050,6 +1117,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   onunload() {
+    this.pdfHighlights?.detach();
     this.irReviewSession = null;
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
@@ -1479,6 +1547,73 @@ export default class IncrementalReadingPlugin extends Plugin {
     await rv.handleExtract({ silent: true, promote: true });
   }
 
+  private async extractFromPdfInReview(opts?: {
+    promote?: boolean;
+  }): Promise<IrElement | undefined> {
+    const sel = findPdfTextSelection(this.app);
+    if (!sel) return undefined;
+    return this.extractFromPdfSelection(sel, opts);
+  }
+
+  private async extractFromPdfSelection(
+    sel: PdfTextSelection,
+    opts?: { promote?: boolean },
+  ): Promise<IrElement | undefined> {
+    if (!(await this.ensureIrSource(sel.file))) return;
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const reviewParent = this.getActiveReviewView()?.pdfExtractParentId(
+      sel.file.path,
+    );
+    const parentId =
+      reviewParent ??
+      (await this.resolveElementIdForFile(sel.file)) ??
+      elementIdForPath(sel.file.path);
+    const state = await this.store.load();
+    const parent = state.elements.get(parentId);
+    const now = Date.now();
+    try {
+      const ev = buildPdfExtractEvent({
+        sourcePath: sel.file.path,
+        text: sel.text,
+        pdf: { page: sel.page, selection: sel.selection },
+        parentId,
+        priority: parent?.priority ?? this.settings.defaultPriority,
+        elementId: newElementId(),
+        eventId: newEventId(),
+        device: await this.store.getDeviceId(),
+        lamport: now,
+        now,
+        schedule: topicStateToSchedule(
+          newTopicState(this.settings, new Date(now)),
+        ),
+      });
+      await this.store.appendEvent(ev);
+      await this.store.reconcile();
+      void this.refreshStatusBar();
+      const created = ev.payload.element as IrElement;
+      const promote =
+        opts?.promote ?? this.settings.extractCreatesStandaloneNote;
+      if (promote) {
+        await this.applyIrPromote(created.id, created);
+        return created;
+      }
+      this.getActiveReviewView()?.adoptElement(created);
+      new Notice(
+        `Extracted (anchored in "${sel.file.basename}", page ${sel.page}).`,
+      );
+      return created;
+    } catch (e) {
+      console.error("Incremental Reading: PDF extract failed", e);
+      new Notice(
+        "Incremental Reading: could not record the extract in the store. See the developer console.",
+      );
+      return undefined;
+    }
+  }
+
   /* ----------------------------------------------------------------- */
   /* Fast extract-authoring (paragraph / heading section / bulk)        */
   /* ----------------------------------------------------------------- */
@@ -1743,9 +1878,25 @@ export default class IncrementalReadingPlugin extends Plugin {
     try {
       await refreshIrDecorationCache(this.app, this.store, this.decorationCache);
       pushIrDecorations(this.app, this.decorationCache);
+      const state = await this.store.load();
+      this.irPdfPaths.clear();
+      for (const el of state.elements.values()) {
+        if (el.notePath && isPdfPath(el.notePath)) {
+          this.irPdfPaths.add(el.notePath);
+        }
+      }
+      this.lastPdfMarks = pdfMarksBySourcePath(state.elements.values());
+      this.paintPdfHighlights();
     } catch (e) {
       console.error("Incremental Reading: decoration refresh failed", e);
     }
+  }
+
+  private paintPdfHighlights(): void {
+    this.pdfHighlights?.refresh(
+      this.lastPdfMarks,
+      this.getActiveReviewView()?.getCurrentElementId() ?? null,
+    );
   }
 
   /**
@@ -1769,7 +1920,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       if (element.type !== "extract") continue;
       if (element.notePath !== undefined) continue; // promoted -> standalone
       const a = element.anchor;
-      if (!a || a.sourcePath !== sourcePath) continue;
+      if (!a || a.pdf || a.sourcePath !== sourcePath) continue;
       const r = resolveAnchor(a, body);
       if (r.status !== "ok") continue;
       out.push({ start: r.start, end: r.end });
@@ -1820,6 +1971,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     const hintR = await promptClozeHintInline(this.clozeHintHost());
     if (!hintR.ok) return;
     editor.setSelection(fromPos, toPos);
+    const fullBefore = editor.getValue();
+    const body = stripFrontmatter(fullBefore);
+    const off = this.bodyOffsetsForEditorSelection(editor);
     const result = await createCloze(
       this.app,
       source,
@@ -1828,6 +1982,15 @@ export default class IncrementalReadingPlugin extends Plugin {
       hintR.hint,
     );
     await this.openResult(result, "Cloze item created:");
+    if (result.file && off) {
+      await this.attachClozeSourceAnchor(
+        result.file,
+        source.path,
+        body,
+        off.start,
+        off.end,
+      );
+    }
   }
 
   /** Body-offset span of the editor's current selection, or null. */
@@ -1875,6 +2038,22 @@ export default class IncrementalReadingPlugin extends Plugin {
    * user has opted out and the source still isn't an IR element.
    */
   private async ensureIrSource(source: TFile): Promise<boolean> {
+    if (source.extension === "pdf") {
+      if (this.irPdfPaths.has(source.path)) return true;
+      if (await this.resolveElementIdForFile(source)) {
+        this.irPdfPaths.add(source.path);
+        return true;
+      }
+      if (!this.settings.autoMarkSourceAsTopic) {
+        new Notice(
+          `"${source.basename}" is not an IR topic. ` +
+            "Mark it as a topic first, or enable auto-mark in settings.",
+        );
+        return false;
+      }
+      await this.markPdfAsTopic(source, { silentIfExists: true });
+      return true;
+    }
     if (getIrType(this.app, source)) return true;
     if (!this.settings.autoMarkSourceAsTopic) {
       new Notice(
@@ -1895,8 +2074,10 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private canGoNeuralFromContext(): boolean {
     if (this.getActiveReviewView()?.getCurrentElementId()) return true;
-    const file = this.app.workspace.getActiveFile();
-    return !!(file && file.extension === "md" && getIrType(this.app, file));
+    const file = activeIrFile(this.app);
+    if (!file) return false;
+    if (file.extension === "pdf") return this.irPdfPaths.has(file.path);
+    return file.extension === "md" && !!getIrType(this.app, file);
   }
 
   private async startNeuralReviewFromActiveNote() {
@@ -1905,12 +2086,15 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.startNeuralReview(reviewing, null);
       return;
     }
-    const active = this.app.workspace.getActiveFile();
-    if (!active || active.extension !== "md") {
+    const active = activeIrFile(this.app);
+    if (!active || (active.extension !== "md" && active.extension !== "pdf")) {
       new Notice("Incremental Reading: no active note to start Neural Review from.");
       return;
     }
-    if (!getIrType(this.app, active)) {
+    if (
+      (active.extension === "md" && !getIrType(this.app, active)) ||
+      (active.extension === "pdf" && !this.irPdfPaths.has(active.path))
+    ) {
       new Notice(
         `"${active.basename}" is not in Incremental Reading. ` +
           "Mark it as a topic first, then Go neural from there.",
@@ -2211,7 +2395,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       target: elementId,
       payload: { priority: p },
     });
-    if (file) {
+    if (file && file.extension === "md") {
       await quietFrontmatterWrite(
         () => setPriority(this.app, file, p).then(() => undefined),
         "priority",
@@ -2239,7 +2423,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       target: elementId,
       payload: { dismissed },
     });
-    if (file) {
+    if (file && file.extension === "md") {
       await quietFrontmatterWrite(
         () => setDismissed(this.app, file, dismissed).then(() => undefined),
         "dismiss",
@@ -2338,6 +2522,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     element: IrElement,
   ): Promise<boolean> {
     if (!this.store || !element.anchor) return false;
+    if (element.anchor.pdf || isPdfPath(element.anchor.sourcePath)) {
+      return false;
+    }
 
     const sourceFile = this.app.vault.getAbstractFileByPath(
       element.anchor.sourcePath,
@@ -2736,7 +2923,16 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
       await this.app.vault.createFolder(folder);
     }
-    const body = (el.text ?? "").trim() + "\n";
+    const bodyText = (el.text ?? "").trim();
+    let body = bodyText + "\n";
+    if (el.anchor?.pdf) {
+      const link = formatPdfLinktext(
+        el.anchor.sourcePath,
+        el.anchor.pdf.page,
+        el.anchor.pdf.selection,
+      );
+      body += `\n[[${link}]]\n`;
+    }
     const file = await this.app.vault.create(notePath, body);
     const parentPath = el.anchor?.sourcePath;
     const parentFile = parentPath
@@ -2976,8 +3172,12 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     if (this.nuking) return;
     if (!this.store) return;
-    if (file.extension !== "md") return;
+    if (file.extension !== "md" && file.extension !== "pdf") return;
     if (oldPath === file.path) return;
+    if (file.extension === "pdf") {
+      this.irPdfPaths.delete(oldPath);
+      this.irPdfPaths.add(file.path);
+    }
     try {
       const events = await this.store.loadEvents();
       const state = await this.store.load();
@@ -3018,7 +3218,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       const state = await this.store.load();
       for (const path of state.tombstones.keys()) {
         const af = this.app.vault.getAbstractFileByPath(path);
-        if (af instanceof TFile && af.extension === "md") {
+        if (af instanceof TFile && (af.extension === "md" || af.extension === "pdf")) {
           await this.maybeOfferRelink(af);
         }
       }
@@ -3029,7 +3229,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async maybeOfferRelink(file: TFile): Promise<void> {
     if (this.nuking || !this.store) return;
-    if (file.extension !== "md") return;
+    if (file.extension !== "md" && file.extension !== "pdf") return;
     this.relinkQueue.push(file);
     if (this.relinkBusy) return;
     this.relinkBusy = true;
@@ -3193,11 +3393,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     const hubFile = mvForHub?.file ?? this.app.workspace.getActiveFile();
     for (const kind of sessionHubKinds({
       inReview: !!review,
-      hasMarkdownFile: hubFile?.extension === "md",
+      hasMarkdownFile:
+        hubFile?.extension === "md" || hubFile?.extension === "pdf",
       alreadyIr: !!(
         hubFile &&
-        hubFile.extension === "md" &&
-        getIrType(this.app, hubFile)
+        ((hubFile.extension === "md" && getIrType(this.app, hubFile)) ||
+          (hubFile.extension === "pdf" && this.irPdfPaths.has(hubFile.path)))
       ),
     })) {
       if (kind === "start-review") {
@@ -3498,11 +3699,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     const hintR = await promptClozeHintInline(this.clozeHintHost());
     if (!hintR.ok) return;
     editor.setSelection(fromPos, toPos);
-    // Editor is on the item note, not the parent — its offsets only mark the
-    // item itself (which is harmless but redundant). Skip source marking here
-    // because the parent's matching span needs text-based lookup, not editor
-    // offsets, and the user can re-cloze inside the parent if they want a
-    // visible mark on the source.
+    const sourceIsEditor = parentFile.path === file.path;
+    const fullBefore = sourceIsEditor ? editor.getValue() : "";
+    const body = sourceIsEditor ? stripFrontmatter(fullBefore) : "";
+    const off = sourceIsEditor
+      ? this.bodyOffsetsForEditorSelection(editor)
+      : null;
     const result = await createCloze(
       this.app,
       parentFile,
@@ -3511,6 +3713,15 @@ export default class IncrementalReadingPlugin extends Plugin {
       hintR.hint,
     );
     await this.openResult(result, "New cloze item created:");
+    if (result.file && off && sourceIsEditor) {
+      await this.attachClozeSourceAnchor(
+        result.file,
+        parentFile.path,
+        body,
+        off.start,
+        off.end,
+      );
+    }
   }
 
   private async splitClozeInActiveEditor(): Promise<void> {
@@ -3669,9 +3880,52 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.app.workspace.getLeaf(true).openFile(result.file);
   }
 
+  /** Record a text-quote anchor so source decorations can paint the cloze. */
+  private async attachClozeSourceAnchor(
+    itemFile: TFile,
+    sourcePath: string,
+    sourceBody: string,
+    selStart: number,
+    selEnd: number,
+  ): Promise<void> {
+    if (!this.store || selEnd <= selStart) return;
+    const id = await this.resolveElementIdForFile(itemFile);
+    if (!id) return;
+    const anchor = buildTextQuoteAnchor(
+      sourcePath,
+      sourceBody,
+      selStart,
+      selEnd,
+    );
+    try {
+      await this.store.appendEvent({
+        id: newEventId(),
+        ts: Date.now(),
+        lamport: Date.now(),
+        device: await this.store.getDeviceId(),
+        kind: "anchor-repaired",
+        target: id,
+        payload: { anchor },
+      });
+      await this.store.reconcile();
+    } catch (e) {
+      console.error("Incremental Reading: recording cloze source span failed", e);
+      return;
+    }
+    void this.refreshExtractDecorations();
+  }
+
   private async markActiveFileAsTopic(file?: TFile) {
-    const target = file ?? this.app.workspace.getActiveFile();
-    if (!target || target.extension !== "md") {
+    const target = file ?? activeIrFile(this.app);
+    if (!target) {
+      new Notice("Incremental Reading: no active Markdown note or PDF.");
+      return;
+    }
+    if (target.extension === "pdf") {
+      await this.markPdfAsTopic(target);
+      return;
+    }
+    if (target.extension !== "md") {
       new Notice("Incremental Reading: no active Markdown note.");
       return;
     }
@@ -3686,6 +3940,53 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (marked) {
       await this.recordElement(target);
       new Notice(`Marked "${target.basename}" as an IR topic.`);
+    }
+  }
+
+  /**
+   * PDFs have no frontmatter. Record a store-only topic whose `notePath` is
+   * the PDF. Idempotent: the id is path-derived, same as migration.
+   */
+  private async markPdfAsTopic(
+    file: TFile,
+    opts?: { silentIfExists?: boolean },
+  ): Promise<void> {
+    if (!this.store) {
+      new Notice("Incremental Reading: store is not ready.");
+      return;
+    }
+    const existing = await this.resolveElementIdForFile(file);
+    if (existing) {
+      this.irPdfPaths.add(file.path);
+      if (!opts?.silentIfExists) {
+        new Notice(`"${file.basename}" is already an IR topic.`);
+      }
+      return;
+    }
+    const now = Date.now();
+    try {
+      const ev = buildPdfTopicEvent({
+        path: file.path,
+        elementId: elementIdForPath(file.path),
+        eventId: newEventId(),
+        device: await this.store.getDeviceId(),
+        lamport: now,
+        now,
+        priority: this.settings.defaultPriority,
+        schedule: topicStateToSchedule(
+          newTopicState(this.settings, new Date(now)),
+        ),
+      });
+      await this.store.appendEvent(ev);
+      await this.store.reconcile();
+      this.irPdfPaths.add(file.path);
+      void this.refreshStatusBar();
+      new Notice(`Marked "${file.basename}" as an IR topic.`);
+    } catch (e) {
+      console.error("Incremental Reading: marking PDF as topic failed", e);
+      new Notice(
+        "Incremental Reading: could not record the PDF topic. See the developer console.",
+      );
     }
   }
 
@@ -3842,6 +4143,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (this.settings.showDivergencePicker !== resolved) {
       this.settings.showDivergencePicker = resolved;
       await this.saveSettings();
+    }
+    if (!isSpaceAfterReveal(this.settings.spaceAfterReveal)) {
+      this.settings.spaceAfterReveal = DEFAULT_SETTINGS.spaceAfterReveal;
     }
   }
 

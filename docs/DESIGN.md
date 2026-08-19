@@ -68,6 +68,34 @@ New notes inherit an allowlisted slice of the parent YAML (`tags`,
 *item* notes (already files, per the vault-reality note in section 1)
 inherit the same keys either way.
 
+### PDF sources
+
+**Decision 2026-08-19:** PDFs are first-class IR topics. They cannot carry
+YAML, so the topic is **store-only** (`notePath` is the `.pdf` path). Alt+T
+on an open PDF records that element (the core PDF viewer often leaves
+`getActiveFile()` empty, so the command reads the file from the active
+PDF leaf). Alt+X on a text selection creates an
+anchored extract whose locator is Obsidian's public fragment
+`#page=N&selection=beginIndex,beginOffset,endIndex,endOffset`, plus
+`quote.exact` as the verbatim review payload. The PDF file is never
+mutated (same §Q3 contract as markdown). Highlights are painted onto the
+built-in pdf.js text layer from the store.
+
+Cloze stays markdown-only: extract first, then cloze the extract. Scanned
+PDFs with no text layer cannot be extracted. Cross-page selection, OCR,
+area snapshots, and embedding a second pdf.js in the review leaf are out
+of v1. PDF++ is not required; a promoted extract's note body includes the
+wikilink fragment so PDF++ can see it if installed.
+
+Private viewer APIs (`view.viewer.child.getTextSelectionRangeStr`) are
+fenced in `src/ir/pdf-view.ts`. Obsidian updates can break that path; a
+`data-idx` DOM fallback exists. Do not spread those calls through
+`main.ts` / `review-view.ts`.
+
+The review side column cannot host the PDF. It offers **Open PDF** and
+auto-opens the native viewer at the extract's page (UI commitment #2
+exception, named in `docs/UI-COMMITMENTS.md`).
+
 ## 3. Graph (Obsidian Graph view)
 
 **Decision 2026-08-14:** Graph view is not a design constraint. SuperMemo
@@ -382,7 +410,11 @@ Sub-decisions locked alongside it:
   marks from notes and rewrites anchors is its own data-at-risk commit.
 - **Cloze parity.** Cloze creation also no longer wraps the source
   passage. The cloze item carries the `{{cN::…}}` syntax in its own
-  note, so the source has no further obligation.
+  note. Coverage highlights (`mark.ir-cloze-source`) reuse the extract
+  decoration pipeline (CM6, reading-view post-processor, review splice)
+  so already-clozed spans are visible on the topic like SuperMemo.
+  New clozes also store a text-quote `anchor` on the item. No second
+  viewer. PDFs stay extract-only.
 - **Bulk-extract idempotency** moves from "skip spans inside a body
   mark" to "skip spans that overlap any anchor already in the store
   for this source." See `main.ts existingExtractRangesForSource`.

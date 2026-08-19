@@ -215,6 +215,52 @@ test("buildTextEditedEvent + fold updates element.text without touching the anch
   assert.deepEqual(after!.anchor?.position, { start: 4, end: 9 });
 });
 
+test("buildPdfExtractEvent: pdf selector, no markdown position, verbatim text", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/extract.ts not implemented yet");
+
+  const ev = m.buildPdfExtractEvent({
+    sourcePath: "Papers/foo.pdf",
+    text: "  selected span  ",
+    pdf: { page: 3, selection: [16, 0, 16, 20] },
+    parentId: "el_parent" as ElementId,
+    priority: 50,
+    elementId: "el_pdf_ex" as ElementId,
+    eventId: "ev_pdf_ex" as EventId,
+    device: "dev_test" as DeviceId,
+    lamport: 8,
+    now: 1_700_000_000_000,
+  });
+  assert.equal(ev.kind, "element-created");
+  const el = ev.payload.element as IrElement;
+  assert.equal(el.type, "extract");
+  assert.equal(el.text, "selected span");
+  assert.equal(el.anchor?.sourcePath, "Papers/foo.pdf");
+  assert.equal(el.anchor?.quote.exact, "selected span");
+  assert.equal(el.anchor?.position, undefined);
+  assert.deepEqual(el.anchor?.pdf, { page: 3, selection: [16, 0, 16, 20] });
+});
+
+test("buildPdfExtractEvent: optional schedule attaches", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/extract.ts not implemented yet");
+  const sched = { due: 1, interval: 3, aFactor: 2 };
+  const el = m.buildPdfExtractEvent({
+    sourcePath: "a.pdf",
+    text: "x",
+    pdf: { page: 1, selection: [0, 0, 0, 1] },
+    parentId: "el_p" as ElementId,
+    priority: 50,
+    elementId: "el_x" as ElementId,
+    eventId: "ev_x" as EventId,
+    device: "dev_test" as DeviceId,
+    lamport: 1,
+    now: 1,
+    schedule: sched,
+  }).payload.element as IrElement;
+  assert.deepEqual(el.schedule, sched);
+});
+
 test("buildTextEditedEvent: deterministic", async (t) => {
   const m = await load();
   if (!m) return t.skip("src/ir/extract.ts not implemented yet");

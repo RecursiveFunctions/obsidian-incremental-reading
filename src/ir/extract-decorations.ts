@@ -9,6 +9,7 @@
  *
  * Reading view and the review pane are NOT covered by this module's CM6
  * path — see DESIGN §Q3. Reading view uses the post-processor below.
+ * Cloze coverage uses the same pipeline with `mark.ir-cloze-source`.
  * Legacy notes that still carry persisted
  * `<mark class="ir-extract-source">` chrome continue to render in those
  * surfaces because the CSS class is unchanged.
@@ -28,12 +29,17 @@ import {
   type Range as CmRange,
 } from "@codemirror/state";
 import type { IrStore } from "./store";
-import type { Anchor } from "./model";
+import type { Anchor, IrElement } from "./model";
 import { resolveAnchor } from "./anchor";
 import { readingViewNeedlePasses } from "./extract-reading-marks";
+import {
+  clozeRangesInBody,
+  type SourceMarkKind,
+} from "./cloze-marks";
 
 /** CSS class shared with pre-§Q3 inline marks so styles.css needs no change. */
 const EXTRACT_CLASS = "ir-extract-source";
+const CLOZE_CLASS = "ir-cloze-source";
 const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
 
 /**
@@ -43,11 +49,12 @@ const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
  * search the rendered DOM for. Storing both lets a single cache feed both
  * surfaces without re-resolving anchors per render.
  */
-interface CachedAnchor {
+export interface CachedAnchor {
   start: number;
   end: number;
   /** The extract element's `text` field: chrome stripped, ready to match. */
   text: string;
+  kind: SourceMarkKind;
 }
 
 /**
@@ -89,8 +96,6 @@ export async function refreshIrDecorationCache(
   cache: IrDecorationCache,
 ): Promise<void> {
   const state = await store.load();
-  // Group by sourcePath, carrying the element's stored text alongside the
-  // anchor so the reading-view processor can use it as the search needle.
   const byPath = new Map<
     string,
     Array<{ anchor: Anchor; text: string }>
@@ -99,24 +104,49 @@ export async function refreshIrDecorationCache(
     if (el.type !== "extract") continue;
     if (el.notePath !== undefined) continue; // promoted -> standalone note
     if (!el.anchor) continue;
+    if (el.anchor.pdf) continue; // painted by pdf-decorations, not CM6
     const bucket = byPath.get(el.anchor.sourcePath) ?? [];
     bucket.push({ anchor: el.anchor, text: el.text });
     byPath.set(el.anchor.sourcePath, bucket);
   }
 
+  const items = Array.from(state.elements.values()).filter(
+    (e: IrElement) => e.type === "item",
+  );
+  const paths = new Set<string>(byPath.keys());
+  for (const el of items) {
+    const p = el.anchor?.sourcePath;
+    if (p) paths.add(p);
+    if (el.notePath) {
+      /* item notes are not the source; parent path is resolved below */
+    }
+  }
+  for (const el of items) {
+    let cur: IrElement | undefined = el;
+    const seen = new Set<string>([el.id]);
+    while (cur?.parentId) {
+      if (seen.has(cur.parentId)) break;
+      seen.add(cur.parentId);
+      cur = state.elements.get(cur.parentId);
+      if (cur?.notePath) paths.add(cur.notePath);
+      if (cur?.anchor?.sourcePath) paths.add(cur.anchor.sourcePath);
+    }
+  }
+
   const next = new Map<string, CachedAnchor[]>();
-  for (const [path, entries] of byPath) {
+  for (const path of paths) {
     const file = app.vault.getAbstractFileByPath(path);
     if (!file || !("extension" in file) || file.extension !== "md") continue;
     const full = await app.vault.cachedRead(file as TFile);
     const body = stripFrontmatterPlain(full);
     const ranges: CachedAnchor[] = [];
-    for (const { anchor, text } of entries) {
+    for (const { anchor, text } of byPath.get(path) ?? []) {
       const r = resolveAnchor(anchor, body);
       if (r.status === "ok") {
-        ranges.push({ start: r.start, end: r.end, text });
+        ranges.push({ start: r.start, end: r.end, text, kind: "extract" });
       }
     }
+    ranges.push(...clozeRangesInBody(items, body, path, state.elements));
     if (ranges.length > 0) next.set(path, ranges);
   }
   cache.set(next);
@@ -152,6 +182,10 @@ function bodyStartInFull(full: string): number {
  */
 const irExtractMark = Decoration.mark({
   class: EXTRACT_CLASS,
+  tagName: "mark",
+});
+const irClozeMark = Decoration.mark({
+  class: CLOZE_CLASS,
   tagName: "mark",
 });
 
@@ -190,7 +224,7 @@ export function irExtractDecorationsExtension(): Extension {
  */
 function decorationsForView(
   view: EditorView,
-  ranges: ReadonlyArray<{ start: number; end: number }>,
+  ranges: ReadonlyArray<CachedAnchor>,
 ): DecorationSet {
   if (ranges.length === 0) return Decoration.none;
   const full = view.state.doc.toString();
@@ -200,7 +234,10 @@ function decorationsForView(
   for (const r of ranges) {
     const from = Math.max(0, Math.min(docLen, r.start + offset));
     const to = Math.max(from, Math.min(docLen, r.end + offset));
-    if (to > from) out.push(irExtractMark.range(from, to));
+    if (to > from) {
+      const mark = r.kind === "cloze" ? irClozeMark : irExtractMark;
+      out.push(mark.range(from, to));
+    }
   }
   out.sort((a, b) => a.from - b.from);
   return Decoration.set(out, true);
@@ -262,19 +299,26 @@ export function createIrExtractMarkdownPostProcessor(
     if (!path) return;
     const ranges = cache.rangesFor(path);
     if (ranges.length === 0) return;
-    for (const pass of readingViewNeedlePasses(ranges)) {
-      wrapNthOccurrenceInTextNode(el, pass.needle, pass.n);
+    for (const pass of readingViewNeedlePasses(
+      ranges.filter((r) => r.kind !== "cloze"),
+    )) {
+      wrapNthOccurrenceInTextNode(el, pass.needle, pass.n, EXTRACT_CLASS);
+    }
+    for (const pass of readingViewNeedlePasses(
+      ranges.filter((r) => r.kind === "cloze"),
+    )) {
+      wrapNthOccurrenceInTextNode(el, pass.needle, pass.n, CLOZE_CLASS);
     }
   };
 }
 
-function isInsideIrExtractMark(node: Node): boolean {
+function isInsideIrSourceMark(node: Node): boolean {
   let p: Node | null = node.parentNode;
   while (p) {
     if (
       p instanceof HTMLElement &&
       p.tagName === "MARK" &&
-      p.classList.contains(EXTRACT_CLASS)
+      (p.classList.contains(EXTRACT_CLASS) || p.classList.contains(CLOZE_CLASS))
     ) {
       return true;
     }
@@ -293,6 +337,7 @@ function wrapNthOccurrenceInTextNode(
   root: HTMLElement,
   needle: string,
   n: number,
+  cls: string,
 ): boolean {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let seen = 0;
@@ -305,13 +350,13 @@ function wrapNthOccurrenceInTextNode(
       const idx = text.indexOf(needle, searchFrom);
       if (idx === -1) break;
       if (seen === n) {
-        if (isInsideIrExtractMark(t)) return true;
+        if (isInsideIrSourceMark(t)) return true;
         const parent = t.parentNode;
         if (!parent) return false;
         const before = text.slice(0, idx);
         const after = text.slice(idx + needle.length);
         const mark = document.createElement("mark");
-        mark.className = EXTRACT_CLASS;
+        mark.className = cls;
         mark.textContent = needle;
         if (before) parent.insertBefore(document.createTextNode(before), t);
         parent.insertBefore(mark, t);

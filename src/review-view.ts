@@ -52,6 +52,7 @@ import { elementIdForPath, migrateNotes } from "./ir/migrate";
 import {
   clampPriority,
   isReadType,
+  type Anchor,
   type IrElement,
   type IrEventKind,
 } from "./ir/model";
@@ -76,6 +77,14 @@ import {
 } from "./review";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import { findExtractRange } from "./ir/extract-range";
+import { resolveAnchor } from "./ir/anchor";
+import { spacebarReviewAction, isSpaceAfterReveal } from "./ir/review-keys";
+import {
+  buildTextQuoteAnchor,
+  reviewSourceSplices,
+  type SourceMarkKind,
+  type SourceMarkRange,
+} from "./ir/cloze-marks";
 import {
   stripFrontmatter,
   saveBody,
@@ -105,6 +114,8 @@ import {
   isMobileEditViewportCompressed,
   resetMobileEditLayoutBaseline,
 } from "./ir/mobile-edit-layout";
+import { isPdfPath } from "./ir/pdf-fragment";
+import { getPdfPageForPath, openPdfAt } from "./ir/pdf-view";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -140,6 +151,8 @@ export class IrReviewView extends ItemView {
   private loadedSlotId: ElementId | null = null;
   /** True if the current slot's source note is missing from the vault. */
   private bodyMissing = false;
+  /** Open the PDF viewer once per slot so re-renders do not steal focus. */
+  private pendingPdfOpen = false;
 
   /** Mobile-only: parent source panel is open (default collapsed = zero layout space). */
   private mobileSourceExpanded = false;
@@ -222,15 +235,19 @@ export class IrReviewView extends ItemView {
       | null
     >,
     /**
-     * Resolved body-relative ranges of every extract anchored to the given
-     * source path. Used by the review side panel (§Q3) to highlight every
-     * sibling extract in the source context, not just the focused one. The
-     * host plugin reads this from the decoration cache, which is rebuilt
-     * after every reconcile, so the callback is cheap.
+     * Resolved body-relative ranges of every extract and cloze mark on the
+     * given source path. Used by the review side panel (§Q3) to highlight
+     * sibling extracts and already-clozed spans. The host plugin reads this
+     * from the decoration cache, which is rebuilt after every reconcile.
      */
     private readonly getSourceExtractRanges?: (
       path: string,
-    ) => ReadonlyArray<{ start: number; end: number }>,
+    ) => ReadonlyArray<{
+      start: number;
+      end: number;
+      text?: string;
+      kind?: SourceMarkKind;
+    }>,
     /**
      * Rebuild the host's decoration cache so a just-created extract is in
      * `getSourceExtractRanges` before the next `renderCard`. Without this
@@ -269,6 +286,13 @@ export class IrReviewView extends ItemView {
     private readonly startOutstandingDue?: () => void,
     /** First-run: collection is empty — show onboarding, do not detach. */
     private readonly emptyVault: boolean = false,
+    /**
+     * PDF extract from the open viewer (Alt+X while reviewing a PDF topic
+     * or extract). Returns undefined when nothing is selected in a PDF.
+     */
+    private readonly commitPdfExtract?: (opts?: {
+      promote?: boolean;
+    }) => Promise<IrElement | undefined>,
   ) {
     super(leaf);
   }
@@ -429,16 +453,25 @@ export class IrReviewView extends ItemView {
         return;
       }
 
-      // Space: reveal cloze or advance reading (only when not typing).
+      // Space: reading = Next; cloze = reveal, then configured grade.
       if (evt.key === " ") {
-        if (!slot || typing) return;
-        if (this.isReading(slot)) {
-          evt.preventDefault();
-          void this.next();
-        } else if (!this.revealed) {
-          evt.preventDefault();
+        if (!slot) return;
+        const action = spacebarReviewAction({
+          isReading: this.isReading(slot),
+          revealed: this.revealed,
+          typing,
+          spaceAfterReveal: isSpaceAfterReveal(this.settings.spaceAfterReveal)
+            ? this.settings.spaceAfterReveal
+            : "good",
+        });
+        if (action.kind === "none") return;
+        evt.preventDefault();
+        if (action.kind === "next") void this.next();
+        else if (action.kind === "reveal") {
           this.revealed = true;
           void this.renderCard();
+        } else if (action.kind === "grade") {
+          void this.grade(action.grade);
         }
         return;
       }
@@ -537,6 +570,17 @@ export class IrReviewView extends ItemView {
   /** Element id under review right now, or null if the queue is empty. */
   getCurrentElementId(): ElementId | null {
     return this.current?.id ?? null;
+  }
+
+  /**
+   * Parent for a new PDF extract: the card under review when it belongs to
+   * this PDF's tree, otherwise null so the host uses the PDF topic.
+   */
+  pdfExtractParentId(pdfPath: string): ElementId | null {
+    const slot = this.current;
+    if (!slot || !this.isReading(slot)) return null;
+    if (this.pdfSourcePath(slot) === pdfPath) return slot.id;
+    return null;
   }
 
   /**
@@ -748,6 +792,7 @@ export class IrReviewView extends ItemView {
   private canEdit(): boolean {
     const slot = this.current;
     if (!slot || this.bodyMissing) return false;
+    if (slot.file && isPdfPath(slot.file.path)) return false;
     // Anchored elements (no backing file) edit through a "text-edited" store
     // event; file-backed elements edit through `saveBody`. Both paths are
     // wired through `flushEdits`.
@@ -768,6 +813,7 @@ export class IrReviewView extends ItemView {
   private canMakeChild(): boolean {
     const slot = this.current;
     if (!slot || this.bodyMissing || !this.isReading(slot)) return false;
+    if (this.pdfSourcePath(slot)) return true;
     if (slot.file) return true;
     const body = slot.element.text?.trim() ?? "";
     if (!body) return false;
@@ -785,6 +831,7 @@ export class IrReviewView extends ItemView {
    * the user picks a span.
    */
   private canMakeClozeChild(): boolean {
+    if (this.current && this.pdfSourcePath(this.current)) return false;
     if (this.canMakeChild()) return true;
     const slot = this.current;
     if (!slot || this.bodyMissing) return false;
@@ -804,6 +851,14 @@ export class IrReviewView extends ItemView {
       cur = this.elementsById.get(cur.parentId);
     }
     return slot.element.anchor?.sourcePath ?? null;
+  }
+
+  /** Vault path of the PDF this card was extracted from, if any. */
+  private pdfSourcePath(slot: ReviewSlot): string | null {
+    if (slot.file && isPdfPath(slot.file.path)) return slot.file.path;
+    if (slot.element.anchor?.pdf) return slot.element.anchor.sourcePath;
+    const p = this.resolveProvenanceSourcePath(slot);
+    return p && isPdfPath(p) ? p : null;
   }
 
   /**
@@ -1105,7 +1160,13 @@ export class IrReviewView extends ItemView {
   private async ensureLoaded(slot: ReviewSlot): Promise<void> {
     if (this.loadedSlotId === slot.id) return;
     this.priorityMetaExpanded = false;
-    if (slot.file) {
+    this.pendingPdfOpen = true;
+    if (slot.file && isPdfPath(slot.file.path)) {
+      this.rawOnDisk = slot.element.text
+        ? stripExtractMarks(slot.element.text)
+        : "";
+      this.bodyMissing = false;
+    } else if (slot.file) {
       this.rawOnDisk = stripFrontmatter(
         await this.app.vault.cachedRead(slot.file),
       );
@@ -1146,12 +1207,36 @@ export class IrReviewView extends ItemView {
     highlightRange?: { start: number; end: number };
     /**
      * All OTHER extract anchor ranges in `raw` from the same source — i.e.
-     * siblings of the focused card. Each renders as `mark.ir-extract-source`
-     * so the user sees every passage they've extracted from this note while
-     * reviewing one of them.
+     * siblings of the focused card. Clozes use `ir-cloze-source`; extracts
+     * use `ir-extract-source`.
      */
-    siblingRanges: ReadonlyArray<{ start: number; end: number }>;
+    siblingRanges: ReadonlyArray<SourceMarkRange>;
+    pdf?: {
+      path: string;
+      page: number;
+      selection?: [number, number, number, number];
+    };
   } | null> {
+    const pdfPath = this.pdfSourcePath(slot);
+    if (pdfPath) {
+      const pdfSel = slot.element.anchor?.pdf;
+      const bm = getBookmark(this.bookmarks, slot.id);
+      return {
+        title: labelFor(
+          this.elementsById.get(
+            contextSourceParentId(slot.element, this.elementsById) ?? slot.id,
+          ) ?? slot.element,
+        ),
+        raw: "",
+        path: pdfPath,
+        siblingRanges: [],
+        pdf: {
+          path: pdfPath,
+          page: pdfSel?.page ?? bm?.page ?? 1,
+          selection: pdfSel?.selection,
+        },
+      };
+    }
     const pid = contextSourceParentId(slot.element, this.elementsById);
     if (!pid) return null;
     const parent = this.elementsById.get(pid);
@@ -1173,14 +1258,16 @@ export class IrReviewView extends ItemView {
     }
 
     const highlightRange = findExtractRange(slot.element, raw);
-    // Decoration cache stores body-relative resolved ranges; remove the
-    // focused card's own range so it isn't double-marked when we splice.
+    // Decoration cache stores body-relative resolved ranges; drop the
+    // focused extract so we can re-add it as the highlight class. Cloze
+    // marks that share those offsets stay — they paint as ir-cloze-source.
     const allRanges = path
-      ? (this.getSourceExtractRanges?.(path) ?? [])
+      ? this.sourceMarksForPath(path)
       : [];
     const siblingRanges = highlightRange
       ? allRanges.filter(
           (r) =>
+            r.kind === "cloze" ||
             !(
               r.start === highlightRange.start && r.end === highlightRange.end
             ),
@@ -1218,12 +1305,16 @@ export class IrReviewView extends ItemView {
       if (ta) charOffset = ta.selectionStart ?? 0;
     }
 
+    const pdfPath = this.pdfSourcePath(slot);
+    const pdfPage = pdfPath ? getPdfPageForPath(this.app, pdfPath) : null;
+
     this.bookmarks = setBookmark(this.bookmarks, {
       elementId: slot.id,
       line: charOffset,
       ch: 0,
       scrollTop,
       updatedAt: Date.now(),
+      ...(pdfPage != null ? { page: pdfPage } : {}),
     });
   }
 
@@ -1254,6 +1345,17 @@ export class IrReviewView extends ItemView {
         }
       }
     });
+  }
+
+  private maybeOpenPdfSource(slot: ReviewSlot): void {
+    if (!this.pendingPdfOpen) return;
+    this.pendingPdfOpen = false;
+    const path = this.pdfSourcePath(slot);
+    if (!path) return;
+    const pdf = slot.element.anchor?.pdf;
+    const bm = getBookmark(this.bookmarks, slot.id);
+    const page = pdf?.page ?? bm?.page ?? 1;
+    void openPdfAt(this.app, path, page, pdf?.selection);
   }
 
   private async persistBookmarks(): Promise<void> {
@@ -1333,6 +1435,10 @@ export class IrReviewView extends ItemView {
     if (!slot || this.bodyMissing) return;
     if (this.currentRaw === this.rawOnDisk) return;
     try {
+      if (slot.file && isPdfPath(slot.file.path)) {
+        this.rawOnDisk = this.currentRaw;
+        return;
+      }
       if (slot.file) {
         await saveBody(this.app, slot.file, this.currentRaw);
       } else {
@@ -1439,46 +1545,43 @@ export class IrReviewView extends ItemView {
             "Parent note text is hidden until you reveal this card so titles " +
             "and excerpts cannot spoil the answer.",
         });
+      } else if (sourceCtx.pdf) {
+        ctxScroll.createEl("p", {
+          cls: "ir-review-context-placeholder",
+          text:
+            "PDF source — extracts highlight in the built-in viewer. " +
+            "Select text there and press Alt+X. Cloze is markdown-only: " +
+            "extract first, then cloze the extract.",
+        });
+        const openBtn = ctxScroll.createEl("button", {
+          type: "button",
+          cls: "mod-cta ir-review-open-pdf",
+          text: `Open PDF (page ${sourceCtx.pdf.page})`,
+        });
+        const pdf = sourceCtx.pdf;
+        openBtn.addEventListener("click", () => {
+          void openPdfAt(this.app, pdf.path, pdf.page, pdf.selection);
+        });
       } else {
         const ctxBody = ctxScroll.createDiv({
           cls: "ir-review-context-markdown ir-review-body",
         });
         // §Q3 review-pane decorations: splice a `<mark>` for every extract
-        // anchored to this source. The focused card carries the legacy
-        // `ir-extract-highlight` class (preserves scroll-into-view CSS);
-        // siblings carry `ir-extract-source` (matches the editor decoration
-        // and the legacy persisted-mark CSS). Marks are spliced in descending
-        // start order so each splice never shifts a later one; siblings that
-        // overlap the focused range are skipped to avoid nested HTML.
+        // and cloze on this source. Clozes win overlapping bytes (no nested
+        // HTML). The focused card keeps `ir-extract-highlight` for scroll.
         const focused = sourceCtx.highlightRange;
-        const marks: Array<{
-          start: number;
-          end: number;
-          cls: "ir-extract-highlight" | "ir-extract-source";
-        }> = [];
+        const toPack: SourceMarkRange[] = [...sourceCtx.siblingRanges];
         if (focused) {
-          marks.push({ ...focused, cls: "ir-extract-highlight" });
+          toPack.push({
+            start: focused.start,
+            end: focused.end,
+            text: "",
+            kind: "extract",
+          });
         }
-        // Sort siblings by start ascending so the overlap walk below visits
-        // them in document order. The focused range goes in last and wins
-        // any conflict with a sibling at the same position.
-        const sortedSiblings = [...sourceCtx.siblingRanges].sort(
-          (a, b) => a.start - b.start,
+        const marks = reviewSourceSplices(toPack, focused).sort(
+          (a, b) => b.start - a.start,
         );
-        let lastEnd = -1;
-        for (const r of sortedSiblings) {
-          if (
-            focused &&
-            r.start < focused.end &&
-            focused.start < r.end
-          ) {
-            continue;
-          }
-          if (r.start < lastEnd) continue; // overlaps a prior accepted sibling
-          marks.push({ start: r.start, end: r.end, cls: "ir-extract-source" });
-          lastEnd = r.end;
-        }
-        marks.sort((a, b) => b.start - a.start);
         let ctxRaw = sourceCtx.raw;
         for (const m of marks) {
           ctxRaw =
@@ -1536,6 +1639,17 @@ export class IrReviewView extends ItemView {
 
       if (this.editing && this.canEdit()) {
         this.renderEditor(scroll);
+      } else if (
+        slot.file &&
+        isPdfPath(slot.file.path) &&
+        !this.currentRaw.trim()
+      ) {
+        scroll.createEl("p", {
+          cls: "ir-review-context-placeholder",
+          text:
+            "This topic is a PDF. Select text in the viewer and press Alt+X " +
+            "to extract. Scanned pages without a text layer cannot be extracted.",
+        });
       } else {
         await this.renderBody(scroll, this.currentRaw, isCloze);
       }
@@ -1550,7 +1664,10 @@ export class IrReviewView extends ItemView {
       resetMobileEditLayoutBaseline();
       this.renderMobileEditDock(host);
       this.attachMobileEditResizeObserver();
-      if (reading) this.restoreBookmark(slot);
+      if (reading) {
+        this.restoreBookmark(slot);
+        this.maybeOpenPdfSource(slot);
+      }
       requestAnimationFrame(() => {
         scroll
           .querySelector<HTMLTextAreaElement>(".ir-review-textarea")
@@ -1611,6 +1728,7 @@ export class IrReviewView extends ItemView {
           .addEventListener("click", () => void this.dismiss());
       }
       this.restoreBookmark(slot);
+      this.maybeOpenPdfSource(slot);
       this.ensureFocus();
       return;
     }
@@ -1684,7 +1802,14 @@ export class IrReviewView extends ItemView {
       prevGrade.addEventListener("click", () => void this.previous());
       this.renderEditToggle(bar);
       for (const { grade, label: gLabel, key } of GRADES) {
-        const text = Platform.isMobile ? gLabel : `${gLabel} (${key})`;
+        const spaceGrade = isSpaceAfterReveal(this.settings.spaceAfterReveal)
+          ? this.settings.spaceAfterReveal
+          : "good";
+        const spaceHint =
+          !Platform.isMobile && spaceGrade === grade ? ", Space" : "";
+        const text = Platform.isMobile
+          ? gLabel
+          : `${gLabel} (${key}${spaceHint})`;
         bar
           .createEl("button", {
             text,
@@ -2008,6 +2133,16 @@ export class IrReviewView extends ItemView {
             new Notice(`Incremental Reading: source "${sourcePath}" not found.`);
             return;
           }
+          if (isPdfPath(sourcePath)) {
+            const pdf = slot.element.anchor?.pdf;
+            void openPdfAt(
+              this.app,
+              sourcePath,
+              pdf?.page ?? 1,
+              pdf?.selection,
+            );
+            return;
+          }
           void this.app.workspace.getLeaf(false).openFile(file);
         });
     }
@@ -2206,35 +2341,32 @@ export class IrReviewView extends ItemView {
   }
 
   /**
-   * Splice `<mark class="ir-extract-source">` around every extract anchored
-   * to `path`. Mirrors the side-column logic but without a "focused" range —
-   * in the main column the body itself IS the source, so every anchor is a
-   * sibling. Overlapping anchors are kept in left-to-right precedence so the
-   * splice never produces nested HTML; the splice walks descending so each
-   * insertion leaves earlier offsets untouched.
+   * Splice extract and cloze marks into the main column. Overlaps cannot
+   * nest in HTML; clozes keep the shared bytes, extracts keep the rest.
    */
   private spliceMainColumnMarks(raw: string, path: string): string {
-    const ranges = this.getSourceExtractRanges?.(path) ?? [];
+    const ranges = this.sourceMarksForPath(path);
     if (ranges.length === 0) return raw;
-    const sorted = [...ranges].sort((a, b) => a.start - b.start);
-    const accepted: { start: number; end: number }[] = [];
-    let lastEnd = -1;
-    for (const r of sorted) {
-      if (r.start < lastEnd) continue;
-      accepted.push(r);
-      lastEnd = r.end;
-    }
-    accepted.sort((a, b) => b.start - a.start);
+    const marks = reviewSourceSplices(ranges).sort((a, b) => b.start - a.start);
     let out = raw;
-    for (const r of accepted) {
+    for (const m of marks) {
       out =
-        out.slice(0, r.start) +
-        `<mark class="ir-extract-source">` +
-        out.slice(r.start, r.end) +
+        out.slice(0, m.start) +
+        `<mark class="${m.cls}">` +
+        out.slice(m.start, m.end) +
         "</mark>" +
-        out.slice(r.end);
+        out.slice(m.end);
     }
     return out;
+  }
+
+  private sourceMarksForPath(path: string): SourceMarkRange[] {
+    return (this.getSourceExtractRanges?.(path) ?? []).map((r) => ({
+      start: r.start,
+      end: r.end,
+      text: r.text ?? "",
+      kind: r.kind ?? "extract",
+    }));
   }
 
   private renderEditor(parent: HTMLElement) {
@@ -2426,6 +2558,25 @@ export class IrReviewView extends ItemView {
   }): Promise<IrElement | undefined> {
     const slot = this.current;
     if (!slot || !this.canMakeChild()) return;
+    if (this.pdfSourcePath(slot)) {
+      const created = await this.commitPdfExtract?.({
+        promote: opts?.promote,
+      });
+      if (!created) {
+        new Notice(
+          "Incremental Reading: select text in the PDF, then Extract (Alt+X).",
+        );
+        return;
+      }
+      this.adoptElement(created);
+      if (!opts?.silent) {
+        this.flash(`Extracted · ${this.remainingInSession()} left`);
+      }
+      this.onChange?.();
+      await this.refreshDecorations?.();
+      await this.renderCard();
+      return created;
+    }
     const sel = this.resolveSelection();
     if (!sel.ok) {
       if (sel.renderedText?.trim()) {
@@ -2746,16 +2897,61 @@ export class IrReviewView extends ItemView {
     }
     if (created) {
       const latest = this.elementsById.get(created.id) ?? created;
-      this.adoptElement(latest);
+      await this.attachClozeSourceAnchor(latest, slot, sel);
+      const withAnchor = this.elementsById.get(latest.id) ?? latest;
+      this.adoptElement(withAnchor);
     }
     // Source remains pristine under DESIGN §Q3: the cloze item carries the
     // `{{cN::...}}` syntax in its own note and the queue records the new
     // element, so there is no source-mutation step here any more.
     await this.reloadCurrentRaw();
+    await this.refreshDecorations?.();
     await this.renderCard();
     if (result.file) {
       this.flash(`Cloze item created · ${this.remainingInSession()} left`);
     }
+  }
+
+  /**
+   * Record a text-quote anchor on a new cloze item so source decorations
+   * can paint the already-clozed span (SuperMemo coverage). Store-only
+   * extracts map the selection through the extract's own anchor.
+   */
+  private async attachClozeSourceAnchor(
+    item: IrElement,
+    slot: ReviewSlot,
+    sel: { start: number; end: number; text: string },
+  ): Promise<void> {
+    const anchor = await this.clozeAnchorForSelection(slot, sel);
+    if (!anchor) return;
+    await this.emit("anchor-repaired", item.id, { anchor });
+    this.elementsById.set(item.id, { ...item, anchor });
+  }
+
+  private async clozeAnchorForSelection(
+    slot: ReviewSlot,
+    sel: { start: number; end: number; text: string },
+  ): Promise<Anchor | null> {
+    if (sel.end <= sel.start) return null;
+    if (slot.file && !isPdfPath(slot.file.path)) {
+      return buildTextQuoteAnchor(
+        slot.file.path,
+        this.currentRaw,
+        sel.start,
+        sel.end,
+      );
+    }
+    const a = slot.element.anchor;
+    if (!a || a.pdf || isPdfPath(a.sourcePath)) return null;
+    const file = this.app.vault.getAbstractFileByPath(a.sourcePath);
+    if (!(file instanceof TFile)) return null;
+    const body = stripFrontmatter(await this.app.vault.cachedRead(file));
+    const r = resolveAnchor(a, body);
+    if (r.status !== "ok") return null;
+    const start = r.start + sel.start;
+    const end = r.start + sel.end;
+    if (end > r.end || start < r.start) return null;
+    return buildTextQuoteAnchor(a.sourcePath, body, start, end);
   }
 
   /**
@@ -2795,6 +2991,7 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (!slot) return;
     if (slot.file) {
+      if (isPdfPath(slot.file.path)) return;
       try {
         const body = stripFrontmatter(await this.app.vault.read(slot.file));
         this.currentRaw = body;

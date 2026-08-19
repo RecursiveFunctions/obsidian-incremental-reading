@@ -38,6 +38,13 @@ test("labelFor: notePath wins, .md stripped", () => {
   );
 });
 
+test("labelFor: .pdf stripped from topic basename", () => {
+  assert.equal(
+    labelFor(el({ id: "x", notePath: "Papers/Attention.pdf" })),
+    "Attention",
+  );
+});
+
 test("labelFor: falls back to first ~80 chars of text", () => {
   const long = "A".repeat(100);
   const out = labelFor(el({ id: "x", text: long }));

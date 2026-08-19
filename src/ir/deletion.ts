@@ -202,7 +202,7 @@ export function missingSourcePaths(
 
 export function titleFromSourcePath(path: string): string {
   const base = path.split("/").pop() ?? path;
-  return base.replace(/\.md$/i, "") || path;
+  return base.replace(/\.(md|pdf)$/i, "") || path;
 }
 
 /**

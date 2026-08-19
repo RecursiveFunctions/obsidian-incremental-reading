@@ -54,6 +54,12 @@ export interface IrSettings {
    * are grandfathered on — see resolveShowDivergencePicker.
    */
   showDivergencePicker: boolean;
+  /**
+   * After a cloze answer is revealed, Space grades this rating (Anki/SM
+   * muscle memory). First Space still reveals. Reading cards keep Space
+   * as Next. Off leaves Space as reveal-only.
+   */
+  spaceAfterReveal: "again" | "hard" | "good" | "easy" | "off";
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
@@ -71,6 +77,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   makeNotesWhenSourceDeleted: true,
   interleaveSimilarPriority: true,
   showDivergencePicker: false,
+  spaceAfterReveal: "good",
 };
 
 /** Fresh copy so restoring defaults cannot mutate the constant. */

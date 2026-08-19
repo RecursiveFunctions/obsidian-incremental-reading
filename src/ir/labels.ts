@@ -17,7 +17,7 @@ import { hasCloze, redactClozeAnswers } from "../cloze";
 export function labelFor(el: IrElement): string {
   if (el.notePath) {
     const base = el.notePath.split("/").pop() ?? el.notePath;
-    return base.replace(/\.md$/i, "");
+    return base.replace(/\.(md|pdf)$/i, "");
   }
   const text = stripExtractMarks(el.text).trim().replace(/\s+/g, " ");
   if (text.length === 0) return `(${el.type})`;

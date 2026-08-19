@@ -167,6 +167,16 @@ test("recentBookmarks: respects the n cap and treats non-finite as 'all'", async
   assert.equal(m.recentBookmarks(s, 0).length, 0);
 });
 
+test("setBookmark preserves optional page for PDF sources", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/bookmark.ts not implemented yet");
+  const b = { ...mkBookmark("el_pdf", 0, 0, 0, T0), page: 12 };
+  const next = m.setBookmark({}, b);
+  assert.deepEqual(m.getBookmark(next, "el_pdf"), b);
+  const md = mkBookmark("el_md", 3, 1, 40, T0);
+  assert.equal(m.getBookmark(m.setBookmark({}, md), "el_md").page, undefined);
+});
+
 test("mostRecentBookmark: returns null on empty, top entry otherwise", async (t) => {
   const m = await load();
   if (!m) return t.skip("src/ir/bookmark.ts not implemented yet");

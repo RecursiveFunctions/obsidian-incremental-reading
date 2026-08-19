@@ -146,12 +146,44 @@
   padding: 0 1px;
 }
 
+/* SuperMemo-style: already-clozed spans on the source (decoration-only). */
+.ir-review-body mark.ir-cloze-source,
+.ir-review-context-markdown mark.ir-cloze-source,
+.markdown-source-view mark.ir-cloze-source,
+.markdown-preview-view mark.ir-cloze-source {
+  background: color-mix(
+    in srgb,
+    var(--color-green, #4caf50) 28%,
+    transparent
+  );
+  border-radius: 2px;
+  padding: 0 1px;
+  text-decoration: underline;
+  text-decoration-color: var(--color-green, #4caf50);
+  text-underline-offset: 2px;
+}
+
 /* Extract highlight in the source column: marks where the current extract
  * was pulled from in the parent note (uses resolveAnchor or text search). */
 .ir-extract-highlight {
   background: var(--text-highlight-bg, rgba(255, 208, 0, 0.35));
   border-radius: 2px;
   padding: 0.05em 0;
+}
+
+/* PDF text-layer highlights (store-painted; the PDF file is never mutated). */
+.workspace-leaf-content[data-type="pdf"] .textLayer .ir-extract-source {
+  background-color: var(--text-highlight-bg, rgba(255, 208, 0, 0.35)) !important;
+  border-radius: 2px;
+}
+
+.workspace-leaf-content[data-type="pdf"] .textLayer .ir-extract-highlight {
+  background-color: var(--text-highlight-bg, rgba(255, 208, 0, 0.55)) !important;
+  outline: 1px solid var(--text-accent);
+}
+
+.ir-review-open-pdf {
+  margin: 0.5em 0.65em 0.75em;
 }
 
 .ir-review-context-placeholder {

@@ -1,5 +1,5 @@
 import { newElement, clampPriority } from "./model";
-import type { IrElement, IrEvent, ReadSchedule } from "./model";
+import type { IrElement, IrEvent, PdfSelector, ReadSchedule } from "./model";
 import type { ElementId, EventId, DeviceId } from "./ids";
 import { stripExtractMarks } from "./frontmatter-body";
 
@@ -51,6 +51,68 @@ export function buildExtractEvent(input: ExtractInput): IrEvent {
       suffix,
     },
     position: { start: input.selStart, end: input.selEnd },
+  };
+
+  const element: IrElement = {
+    ...newElement({
+      id: input.elementId,
+      type: "extract",
+      priority: clampPriority(input.priority),
+      parentId: input.parentId,
+      now: input.now,
+    }),
+    text,
+    anchor,
+    ...(input.schedule ? { schedule: input.schedule } : {}),
+  };
+
+  return {
+    id: input.eventId,
+    ts: input.now,
+    lamport: input.lamport,
+    device: input.device,
+    kind: "element-created",
+    target: input.elementId,
+    payload: { element },
+  };
+}
+
+export interface PdfExtractInput {
+  sourcePath: string;
+  text: string;
+  pdf: PdfSelector;
+  parentId: ElementId;
+  priority: number;
+  elementId: ElementId;
+  eventId: EventId;
+  device: DeviceId;
+  lamport: number;
+  now: number;
+  prefix?: string;
+  suffix?: string;
+  schedule?: ReadSchedule;
+}
+
+/**
+ * Anchored extract from a PDF text selection. No markdown body offsets —
+ * the locator is `anchor.pdf` (page + Obsidian selection tuple). `quote.exact`
+ * is the verbatim selected text so review still has a payload if the PDF
+ * is later missing. Prefix/suffix are optional; v1 often leaves them empty
+ * because the text layer does not give cheap page-wide context.
+ */
+export function buildPdfExtractEvent(input: PdfExtractInput): IrEvent {
+  const text = input.text.trim();
+  const anchor = {
+    sourcePath: input.sourcePath,
+    quote: {
+      exact: text,
+      prefix: input.prefix ?? "",
+      suffix: input.suffix ?? "",
+    },
+    pdf: {
+      page: input.pdf.page,
+      selection: input.pdf.selection,
+    },
   };
 
   const element: IrElement = {

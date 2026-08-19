@@ -32,8 +32,8 @@ Your data never leaves your vault because the code cannot send it.
 
 ## Getting started
 
-1. Open a markdown note you want to read incrementally.
-2. **Mark it as an IR topic** (`Alt+T`, or the note ⋯ menu on mobile).
+1. Open a markdown note or a PDF you want to read incrementally.
+2. **Mark it as an IR topic** (`Alt+T`, or the file ⋯ menu on mobile).
 3. **Start review** (`Alt+R`, the ribbon brain, or a click on the status bar). On a phone, tap the brain button in the corner.
 
 If you have no topics yet, Start review opens a pane that says so — mark a note (`Alt+T`), then start review (`Alt+R`). It does not just flash “nothing due.”
@@ -91,10 +91,10 @@ The SuperMemo-adjacent commands have default `Alt+…` bindings. Rebind or clear
 
 | | |
 |---|---|
-| `Alt+T` | Mark current note as an IR topic |
+| `Alt+T` | Mark the current note or PDF as an IR topic |
 | `Alt+R` | Start review (today's due queue) |
 | `Alt+N` | Go neural (from something already in IR) |
-| `Alt+X` | Extract selection (anchored, unless the setting is on) |
+| `Alt+X` | Extract selection (anchored, unless the setting is on). In a PDF, uses the viewer text selection. |
 | `Alt+Shift+X` | Extract once to a standalone note |
 | `Alt+Shift+P` | Promote the current anchored extract |
 | `Alt+Z` | Cloze selection (optional hint) |
@@ -109,7 +109,9 @@ The SuperMemo-adjacent commands have default `Alt+…` bindings. Rebind or clear
 | `Alt+B` | Import clipboard text as a topic |
 | `Alt+Shift+U` | IR quick actions (radial wheel) |
 
-In the **review tab:** `Space` / `Enter` advances a reading card, `[` is Previous, `L` / `D` later today / dismiss, `1`–`4` grade a revealed cloze, `Ctrl+Enter` (`Cmd+Enter` on macOS) is Next while the reading editor is focused. Escape closes a finished pass, or ends neural and offers outstanding due.
+In the **review tab:** `Space` / `Enter` advances a reading card. On a cloze, first `Space` reveals; after reveal, `Space` grades **Good** by default (Settings → Review → Space after cloze reveal). `[` is Previous, `L` / `D` later today / dismiss, `1`–`4` grade a revealed cloze, `Ctrl+Enter` (`Cmd+Enter` on macOS) is Next while the reading editor is focused. Escape closes a finished pass, or ends neural and offers outstanding due.
+
+Already-clozed spans paint on the source (green underline) next to extract highlights (yellow), in the editor, reading view, and review source column. The source file is not rewritten.
 
 ## Mobile
 
@@ -127,15 +129,17 @@ Pin these on the **mobile editor toolbar** (Settings → Mobile → Configure mo
 
 ## Settings
 
-Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, **Overload**, **Anki export**, **Danger zone**. **Restore defaults** at the top puts every control back to a new vault's values without touching notes or review history. Overload is the daily ceiling and priority cutoff for postpone. Extracts includes what happens when a source note is deleted (make orphan highlights into notes, or keep them as cards only). Danger zone can reset IR state (keep notes) or trash every IR note.
+Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, **Overload**, **Anki export**, **Danger zone**. **Restore defaults** at the top puts every control back to a new vault's values without touching notes or review history. Review includes how many items sit between reading cards, interleave, the scheduler divergence picker, and **Space after cloze reveal** (default Good). Overload is the daily ceiling and priority cutoff for postpone. Extracts includes what happens when a source note is deleted (make orphan highlights into notes, or keep them as cards only). Danger zone can reset IR state (keep notes) or trash every IR note.
 
 ## Roadmap
 
-**Shipped through 0.6.11** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
+**Shipped through 0.6.12** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
+
+PDF topics and extracts (Alt+T / Alt+X in the built-in viewer, store-painted highlights, review opens the file at the extract's page). Cloze stays markdown-only: extract first, then cloze the extract. Scanned PDFs with no text layer cannot be extracted. After a cloze reveal, Space grades Good by default; already-clozed spans paint on the source.
 
 ### Stretch
 
-- [ ] **PDF support.** Selection to extract from a PDF, with page references preserved.
+- [x] **PDF support.** Selection to extract from a PDF, with page references preserved. (Text-layer PDFs; no OCR / snapshots / page-split in v1.)
 - [ ] **Image occlusion** for visual cards.
 - [ ] **Browser extension** for one-click import of web pages into the IR queue.
 - [ ] **Full mobile parity.** The plugin is already mobile-eligible; remaining work is whatever a real device still gets wrong, especially on very small screens.

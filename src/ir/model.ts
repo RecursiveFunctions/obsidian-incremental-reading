@@ -51,12 +51,24 @@ export interface PositionSelector {
   end: number;
 }
 
+export interface PdfSelector {
+  /** 1-based page number, same as Obsidian `[[file.pdf#page=N]]`. */
+  page: number;
+  /**
+   * Obsidian text-layer range: beginIndex, beginOffset, endIndex, endOffset.
+   * Copied from the core "Copy link to selection" fragment.
+   */
+  selection: [number, number, number, number];
+}
+
 export interface Anchor {
-  /** Vault path of the note whose body the source text lives in. */
+  /** Vault path of the note or PDF whose body the source text lives in. */
   sourcePath: string;
   quote: TextQuoteSelector;
   position?: PositionSelector;
   blockId?: string;
+  /** Present when the source is a PDF. Markdown anchors leave this unset. */
+  pdf?: PdfSelector;
 }
 
 /**

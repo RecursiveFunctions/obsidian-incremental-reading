@@ -8,6 +8,10 @@ import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type IncrementalReadingPlugin from "../main";
 import { PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
 import { cloneDefaultSettings } from "./ir/settings-data";
+import {
+  isSpaceAfterReveal,
+  SPACE_AFTER_REVEAL_OPTIONS,
+} from "./ir/review-keys";
 
 export type { IrSettings } from "./ir/settings-data";
 export { cloneDefaultSettings, DEFAULT_SETTINGS } from "./ir/settings-data";
@@ -89,6 +93,26 @@ export class IrSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    new Setting(containerEl)
+      .setName("Space after cloze reveal")
+      .setDesc(
+        "After Space shows the answer, a second Space grades this rating " +
+          "(Anki/SuperMemo muscle memory). First Space still reveals. " +
+          "Reading cards keep Space as Next. Off leaves Space as reveal-only.",
+      )
+      .addDropdown((dropdown) => {
+        for (const opt of SPACE_AFTER_REVEAL_OPTIONS) {
+          dropdown.addOption(opt.value, opt.label);
+        }
+        const current = this.plugin.settings.spaceAfterReveal;
+        dropdown.setValue(isSpaceAfterReveal(current) ? current : "good");
+        dropdown.onChange(async (value) => {
+          if (!isSpaceAfterReveal(value)) return;
+          this.plugin.settings.spaceAfterReveal = value;
+          await this.plugin.saveSettings();
+        });
+      });
 
     containerEl.createEl("h3", { text: "Extracts" });
 

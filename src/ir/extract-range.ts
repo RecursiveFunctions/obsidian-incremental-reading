@@ -17,6 +17,7 @@ export function findExtractRange(
   el: IrElement,
   sourceRaw: string,
 ): { start: number; end: number } | undefined {
+  if (el.anchor?.pdf) return undefined;
   if (el.anchor) {
     const res = resolveAnchor(el.anchor, sourceRaw);
     if (res.status === "ok") return { start: res.start, end: res.end };

@@ -18,6 +18,8 @@ export interface Bookmark {
   ch: number;
   scrollTop: number;
   updatedAt: number;
+  /** 1-based PDF page when the source is a PDF. Absent on markdown bookmarks. */
+  page?: number;
 }
 
 /** A map of element IDs to their bookmarks, kept sorted for determinism. */

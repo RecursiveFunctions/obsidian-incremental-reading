@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.12] — 2026-08-19
+
+### Added
+
+- **PDF topics and extracts:** Alt+T on an open PDF queues it as a
+  store-only topic (PDFs have no YAML). Alt+X on a text selection in the
+  built-in viewer creates an anchored extract (page + selection fragment).
+  Highlights paint in the viewer from the store; the PDF file is never
+  written. Review opens the PDF at that page. Cloze stays markdown-only
+  (extract first). Scanned pages with no text layer cannot be extracted.
+
+- **Space after cloze reveal:** in review, the first Space still shows the
+  answer; the next Space grades Good by default. Settings → Review can
+  point it at Again / Hard / Easy, or turn it off (reveal only). Reading
+  cards keep Space as Next.
+
+- **Already-clozed spans** on a topic paint as a green underline
+  (`ir-cloze-source`) beside extract highlights, using the existing editor /
+  reading-view / review decoration pipeline — not a second viewer.
+
+### Fixed
+
+- **Alt+T on a PDF:** the core PDF viewer often has no `getActiveFile()`,
+  so the command now reads the file from the active PDF leaf.
+
 ## [0.6.11] — 2026-08-14
 
 ### Added
