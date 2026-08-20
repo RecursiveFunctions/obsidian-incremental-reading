@@ -91,6 +91,14 @@ import {
   stripExtractMarks,
 } from "./ir/frontmatter-body";
 import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY } from "./ir/selection-map";
+import {
+  canUseReviewLivePreview,
+  type ReviewEditorKind,
+} from "./ir/review-live-preview";
+import {
+  mountReviewLiveEditor,
+  type ReviewLiveEditor,
+} from "./ir/review-live-editor";
 import { promptClozeHintInline } from "./cloze-hint-bar";
 import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
 import {
@@ -132,8 +140,12 @@ export class IrReviewView extends ItemView {
   private index = 0;
   private revealed = false;
 
-  /** True when the body is shown as an editable textarea, not rendered. */
+  /** True when the body is shown as an editor (Live Preview, source, or textarea). */
   private editing = false;
+  /** Live Preview vs raw markdown. Ignored when the textarea fallback is used. */
+  private editKind: ReviewEditorKind = "live";
+  /** Nested Live Preview for vault-backed markdown; parked across re-renders. */
+  private liveEditor: ReviewLiveEditor | null = null;
   /** Per-card DOM host; `renderCard` empties this, not `contentEl`. */
   private cardHostEl?: HTMLElement;
   /** Mobile swipe hint overlay; sibling of `cardHostEl`, survives re-renders. */
@@ -540,6 +552,8 @@ export class IrReviewView extends ItemView {
       this.flashClearTimer = null;
     }
     this.captureBookmark();
+    await this.flushEdits();
+    this.teardownLiveEditorSync();
     this.swipeGestureCleanup?.();
     this.swipeGestureCleanup = undefined;
     this.mobileKeyboardCleanup?.();
@@ -775,9 +789,10 @@ export class IrReviewView extends ItemView {
     void this.grade(outcome.grade);
   }
 
-  /** Whether typing characters should go to a textarea, not to hotkeys. */
+  /** Whether typing characters should go to the editor, not to hotkeys. */
   private isTypingInInput(): boolean {
     const active = this.contentEl.ownerDocument.activeElement;
+    if (this.liveEditor?.contains(active)) return true;
     return (
       active instanceof HTMLTextAreaElement ||
       active instanceof HTMLInputElement
@@ -995,13 +1010,40 @@ export class IrReviewView extends ItemView {
     const items: { label: string; disabled?: boolean; run: () => void }[] =
       [];
     if (this.canEdit()) {
-      items.push({
-        label: this.editing ? "Preview" : "Edit",
-        run: () => {
-          this.editing = !this.editing;
-          void this.renderCard();
-        },
-      });
+      const liveOk = canUseReviewLivePreview(
+        this.current?.file,
+        Platform.isMobile,
+      );
+      if (this.editing) {
+        items.push({
+          label: "Preview",
+          run: () => this.exitEdit(),
+        });
+        if (liveOk) {
+          items.push(
+            this.editKind === "source"
+              ? {
+                  label: "Live Preview",
+                  run: () => this.enterEdit("live"),
+                }
+              : {
+                  label: "Source",
+                  run: () => this.enterEdit("source"),
+                },
+          );
+        }
+      } else {
+        items.push({
+          label: "Edit",
+          run: () => this.enterEdit("live"),
+        });
+        if (liveOk) {
+          items.push({
+            label: "Source",
+            run: () => this.enterEdit("source"),
+          });
+        }
+      }
     }
     items.push({
       label: this.labelWithHotkey("Previous", "["),
@@ -1032,13 +1074,40 @@ export class IrReviewView extends ItemView {
       run: () => void this.previous(),
     });
     if (this.canEdit()) {
-      items.push({
-        label: this.editing ? "Done editing" : "Edit",
-        run: () => {
-          this.editing = !this.editing;
-          void this.renderCard();
-        },
-      });
+      const liveOk = canUseReviewLivePreview(
+        this.current?.file,
+        Platform.isMobile,
+      );
+      if (this.editing) {
+        items.push({
+          label: "Done editing",
+          run: () => this.exitEdit(),
+        });
+        if (liveOk) {
+          items.push(
+            this.editKind === "source"
+              ? {
+                  label: "Live Preview",
+                  run: () => this.enterEdit("live"),
+                }
+              : {
+                  label: "Source",
+                  run: () => this.enterEdit("source"),
+                },
+          );
+        }
+      } else {
+        items.push({
+          label: "Edit",
+          run: () => this.enterEdit("live"),
+        });
+        if (liveOk) {
+          items.push({
+            label: "Source",
+            run: () => this.enterEdit("source"),
+          });
+        }
+      }
     }
     items.push({
       label: this.labelWithHotkey("Dismiss", "D"),
@@ -1186,9 +1255,11 @@ export class IrReviewView extends ItemView {
     this.currentRaw = this.rawOnDisk;
     this.loadedSlotId = slot.id;
     // Reading topics/extracts: start in rendered markdown (same pipeline as
-    // Preview). **Edit** or a click on the card body (outside links) opens the
-    // raw textarea. Extract/cloze from the preview use DOM selection → source
-    // offsets; if that map fails we switch to Edit and keep the selection.
+    // Preview). **Edit** or a click on the card body (outside links) opens
+    // Live Preview for vault notes. **Source** opens raw markdown. Store-only
+    // extracts and phones use a textarea. Extract/cloze from the preview use
+    // DOM selection → source offsets; if that map fails we switch to Source
+    // and keep the selection.
     this.editing = false;
   }
 
@@ -1299,10 +1370,16 @@ export class IrReviewView extends ItemView {
 
     let charOffset = 0;
     if (this.editing) {
-      const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
-        ".ir-review-textarea",
-      );
-      if (ta) charOffset = ta.selectionStart ?? 0;
+      const live = this.liveEditor;
+      if (live) {
+        const sel = live.getSelection();
+        charOffset = sel ? sel.start : live.getBody().length;
+      } else {
+        const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
+          ".ir-review-textarea",
+        );
+        if (ta) charOffset = ta.selectionStart ?? 0;
+      }
     }
 
     const pdfPath = this.pdfSourcePath(slot);
@@ -1335,13 +1412,18 @@ export class IrReviewView extends ItemView {
       if (scroll) scroll.scrollTop = bm.scrollTop;
 
       if (this.editing) {
-        const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
-          ".ir-review-textarea",
-        );
-        if (ta) {
-          const pos = Math.min(bm.line, ta.value.length);
-          ta.setSelectionRange(pos, pos);
-          ta.scrollTop = bm.scrollTop;
+        if (this.liveEditor) {
+          const pos = Math.min(bm.line, this.liveEditor.getBody().length);
+          this.liveEditor.setSelection(pos, pos);
+        } else {
+          const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
+            ".ir-review-textarea",
+          );
+          if (ta) {
+            const pos = Math.min(bm.line, ta.value.length);
+            ta.setSelectionRange(pos, pos);
+            ta.scrollTop = bm.scrollTop;
+          }
         }
       }
     });
@@ -1433,6 +1515,19 @@ export class IrReviewView extends ItemView {
     this.captureBookmark();
     const slot = this.current;
     if (!slot || this.bodyMissing) return;
+    if (this.liveEditor) {
+      this.currentRaw = this.liveEditor.getBody();
+      try {
+        await this.liveEditor.save();
+        this.rawOnDisk = this.currentRaw;
+      } catch (e) {
+        console.error("Incremental Reading: saving edits failed", e);
+        new Notice(
+          "Incremental Reading: could not save your edits. See the developer console.",
+        );
+      }
+      return;
+    }
     if (this.currentRaw === this.rawOnDisk) return;
     try {
       if (slot.file && isPdfPath(slot.file.path)) {
@@ -1467,6 +1562,11 @@ export class IrReviewView extends ItemView {
   }
 
   private async renderCard() {
+    this.parkLiveEditor();
+    if (!this.editing && this.liveEditor) {
+      await this.flushEdits();
+      this.teardownLiveEditorSync();
+    }
     const host = this.cardHostEl ?? this.contentEl;
     host.empty();
     this.syncMobileEditChrome();
@@ -1616,7 +1716,7 @@ export class IrReviewView extends ItemView {
     });
 
     if (mobileCompactEdit) {
-      this.renderEditor(scroll);
+      await this.renderEditor(scroll);
     } else {
       const label = reviewHeadlineLabel(slot.element, maskClozeChrome);
       const kind = reading ? "Reading" : "Review";
@@ -1638,7 +1738,7 @@ export class IrReviewView extends ItemView {
       }
 
       if (this.editing && this.canEdit()) {
-        this.renderEditor(scroll);
+        await this.renderEditor(scroll);
       } else if (
         slot.file &&
         isPdfPath(slot.file.path) &&
@@ -2337,6 +2437,7 @@ export class IrReviewView extends ItemView {
           return;
         }
         this.editing = true;
+        this.editKind = "live";
         void this.renderCard();
       });
     }
@@ -2371,7 +2472,51 @@ export class IrReviewView extends ItemView {
     }));
   }
 
-  private renderEditor(parent: HTMLElement) {
+  private parkLiveEditor(): void {
+    this.liveEditor?.hostEl.detach();
+  }
+
+  private teardownLiveEditorSync(): void {
+    if (!this.liveEditor) return;
+    this.liveEditor.destroy();
+    this.liveEditor = null;
+  }
+
+  private async attachLiveEditor(
+    parent: HTMLElement,
+    file: TFile,
+  ): Promise<boolean> {
+    if (this.liveEditor && this.liveEditor.filePath === file.path) {
+      parent.appendChild(this.liveEditor.hostEl);
+      await this.flushEdits();
+      await this.liveEditor.setKind(this.editKind);
+      return true;
+    }
+    this.teardownLiveEditorSync();
+    const mounted = await mountReviewLiveEditor(
+      this.app,
+      file,
+      this.leaf,
+      parent,
+      this.editKind,
+    );
+    if (!mounted) return false;
+    this.liveEditor = mounted;
+    return true;
+  }
+
+  private async renderEditor(parent: HTMLElement) {
+    const slot = this.current;
+    const file = slot?.file ?? null;
+    if (canUseReviewLivePreview(file, Platform.isMobile) && file) {
+      const ok = await this.attachLiveEditor(parent, file);
+      if (ok) {
+        const pending = this.pendingEditSelection;
+        this.pendingEditSelection = null;
+        if (pending) this.liveEditor?.setSelection(pending.start, pending.end);
+        return;
+      }
+    }
     const ta = parent.createEl("textarea", { cls: "ir-review-textarea" });
     ta.value = this.currentRaw;
     ta.spellcheck = true;
@@ -2436,24 +2581,64 @@ export class IrReviewView extends ItemView {
     }
   }
 
+  private enterEdit(kind: ReviewEditorKind): void {
+    this.editing = true;
+    this.editKind = kind;
+    void this.renderCard();
+  }
+
+  private exitEdit(): void {
+    this.editing = false;
+    void this.renderCard();
+  }
+
   private renderEditToggle(parent: HTMLElement) {
     if (!this.canEdit()) return;
     const slot = this.current;
     const reading = !!(slot && this.isReading(slot));
-    const label = this.editing
-      ? reading
-        ? "Preview"
-        : "Done editing"
-      : "Edit";
+    const liveOk = canUseReviewLivePreview(slot?.file, Platform.isMobile);
+
+    if (this.editing) {
+      parent
+        .createEl("button", {
+          text: reading ? "Preview" : "Done editing",
+          cls: "ir-review-edit-toggle",
+        })
+        .addEventListener("click", () => this.exitEdit());
+      if (liveOk) {
+        if (this.editKind === "source") {
+          parent
+            .createEl("button", {
+              text: "Live Preview",
+              cls: "ir-review-edit-toggle",
+            })
+            .addEventListener("click", () => this.enterEdit("live"));
+        } else {
+          parent
+            .createEl("button", {
+              text: "Source",
+              cls: "ir-review-edit-toggle",
+            })
+            .addEventListener("click", () => this.enterEdit("source"));
+        }
+      }
+      return;
+    }
+
     parent
       .createEl("button", {
-        text: label,
+        text: "Edit",
         cls: "ir-review-edit-toggle",
       })
-      .addEventListener("click", () => {
-        this.editing = !this.editing;
-        void this.renderCard();
-      });
+      .addEventListener("click", () => this.enterEdit("live"));
+    if (liveOk) {
+      parent
+        .createEl("button", {
+          text: "Source",
+          cls: "ir-review-edit-toggle",
+        })
+        .addEventListener("click", () => this.enterEdit("source"));
+    }
   }
 
   /**
@@ -2500,6 +2685,17 @@ export class IrReviewView extends ItemView {
     | { ok: true; text: string; start: number; end: number }
     | { ok: false; reason: string; renderedText?: string } {
     if (this.editing) {
+      if (this.liveEditor) {
+        this.currentRaw = this.liveEditor.getBody();
+        const live = this.liveEditor.getSelection();
+        if (!live) return { ok: false, reason: "Nothing selected." };
+        return {
+          ok: true,
+          text: live.text,
+          start: live.start,
+          end: live.end,
+        };
+      }
       const active = this.contentEl.ownerDocument.activeElement;
       if (!(active instanceof HTMLTextAreaElement)) {
         return { ok: false, reason: "Click into the editor first." };
@@ -2550,6 +2746,7 @@ export class IrReviewView extends ItemView {
       ? { start: located.start, end: located.end }
       : null;
     this.editing = true;
+    this.editKind = "source";
     await this.renderCard();
     this.flash(SWITCH_TO_EDIT_COPY);
   }

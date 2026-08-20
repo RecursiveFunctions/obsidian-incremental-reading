@@ -644,7 +644,7 @@
   line-height: var(--line-height-normal);
 }
 
-/* Rendered card body: click switches to the source editor (review-view). */
+/* Rendered card body: click switches to Live Preview (review-view). */
 .ir-review-main-body--click-to-edit {
   cursor: text;
 }
@@ -652,6 +652,29 @@
 .ir-review-main-body--click-to-edit:hover {
   box-shadow: inset 0 0 0 1px var(--background-modifier-border);
   border-radius: var(--radius-s);
+}
+
+.ir-review-live-editor {
+  position: relative;
+  width: 100%;
+  min-height: 24em;
+  margin-bottom: 1.5em;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+
+.ir-review-live-editor .workspace-split,
+.ir-review-live-editor .workspace-leaf,
+.ir-review-live-editor .workspace-leaf-content {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+
+.ir-review-live-editor .view-header,
+.ir-review-live-editor .workspace-tab-header-container {
+  display: none;
 }
 
 .ir-review-textarea {

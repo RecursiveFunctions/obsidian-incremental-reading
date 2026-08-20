@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.15] — 2026-08-20
+
+### Changed
+
+- **Review edit stays in Live Preview.** Clicking the card (or Edit) no
+  longer swaps the note into a raw source textarea. Vault notes open in
+  Obsidian's editing view in the card. **Source** still opens raw
+  markdown. Phone and store-only extracts still use the textarea.
+
 ## [0.6.14] — 2026-08-20
 
 ### Added

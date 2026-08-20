@@ -21,11 +21,13 @@
  * inline on every element, since reordering is a constant part of the flow.
  *
  * In-place editing and child-note creation are also first-class: topics and
- * extracts open as rendered markdown; **Edit** swaps in a textarea over the
- * preview. Text can be selected in either mode for extract/cloze (preview
- * selection maps back to the markdown source when possible), and edits
- * auto-save when the card advances. For cloze items, edit/extract/cloze are
- * gated until the answer is revealed, because the raw body is the answer.
+ * extracts open as rendered markdown; **Edit** (or a click on the card) opens
+ * Live Preview for vault notes. **Source** opens raw markdown. Store-only
+ * extracts and phones use a textarea. Text can be selected in either mode for
+ * extract/cloze (preview selection maps back to the markdown source when
+ * possible), and edits auto-save when the card advances. For cloze items,
+ * edit/extract/cloze are gated until the answer is revealed, because the raw
+ * body is the answer.
  */
 
 import type { App, TFile } from "obsidian";
