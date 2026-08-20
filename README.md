@@ -133,7 +133,7 @@ Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, 
 
 ## Roadmap
 
-**Shipped through 0.6.17** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
+**Shipped through 0.6.18** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
 
 PDF topics and extracts (Alt+T / Alt+X in the built-in viewer). Review splits the PDF beside the card and focuses it; extracts paint as yellow highlights on the text layer. Focus PDF keeps those marks (it no longer remounts the viewer). Cloze stays markdown-only: extract first, then cloze the extract. Scanned PDFs with no text layer cannot be extracted. After a cloze reveal, Space grades Good by default; already-clozed spans paint on the source. Right-click a folder to mark its unmarked notes and PDFs as topics. Review Edit uses Live Preview; Source is still there for raw markdown.
 

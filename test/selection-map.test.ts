@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, alignRenderedOffsetToRaw } from "../src/ir/selection-map";
+import { locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, alignRenderedOffsetToRaw, alignRawOffsetToRendered, previewScrollNeedle, uniqueIndex } from "../src/ir/selection-map";
 
 test("locateTextInBody: finds multi-line text when needle has newlines", () => {
   const raw = "intro\nfirst line here\nsecond line there\noutro";
@@ -39,6 +39,23 @@ test("alignRenderedOffsetToRaw: skips markdown markers", () => {
   const rel = rendered.indexOf("world") + 2;
   const inner = alignRenderedOffsetToRaw(rendered, raw, rel);
   assert.equal(raw.slice(inner, inner + 3), "rld");
+});
+
+test("alignRawOffsetToRendered: inverse of skipping markdown markers", () => {
+  const rendered = "Hello world folks";
+  const raw = "Hello **world** folks";
+  const rawOff = raw.indexOf("world") + 2;
+  const inner = alignRawOffsetToRendered(rendered, raw, rawOff);
+  assert.equal(rendered.slice(inner, inner + 3), "rld");
+});
+
+test("previewScrollNeedle: unique visible phrase after a caret", () => {
+  const raw = "Hello **world** folks and more words here";
+  const off = raw.indexOf("world");
+  const needle = previewScrollNeedle(raw, off);
+  assert.ok(needle);
+  assert.match(needle!, /world/);
+  assert.equal(uniqueIndex("Hello world folks and more words here", needle!), 6);
 });
 
 test("SWITCH_TO_EDIT_COPY is the user-facing preview-map fallback", () => {

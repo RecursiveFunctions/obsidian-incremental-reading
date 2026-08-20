@@ -90,7 +90,7 @@ import {
   saveBody,
   stripExtractMarks,
 } from "./ir/frontmatter-body";
-import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, caretOffsetInRendered, renderedPlainText } from "./ir/selection-map";
+import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, caretOffsetInRendered, renderedPlainText, previewScrollNeedle, uniqueIndex, alignRawOffsetToRendered, textPointAtTextOffset } from "./ir/selection-map";
 import {
   canUseReviewLivePreview,
   type ReviewEditorKind,
@@ -1366,6 +1366,10 @@ export class IrReviewView extends ItemView {
    * Snapshot the current scroll position and cursor for the active reading
    * slot. No-op for non-reading elements (items have no meaningful position
    * to resume). Returns silently when nothing is visible yet.
+   *
+   * The nested Live Preview scrolls inside CodeMirror, not `.ir-review-scroll`,
+   * so we keep the caret body-offset as the source of truth when the editor
+   * is mounted — including the Escape window after `editing` is already false.
    */
   private captureBookmark(): void {
     const slot = this.current;
@@ -1374,21 +1378,25 @@ export class IrReviewView extends ItemView {
     const scroll = this.contentEl.querySelector<HTMLElement>(
       ".ir-review-main-col .ir-review-scroll",
     );
-    const scrollTop = scroll?.scrollTop ?? 0;
-
-    let charOffset = 0;
-    if (this.editing) {
-      const live = this.liveEditor;
-      if (live) {
-        const sel = live.getSelection();
-        charOffset = sel ? sel.start : live.getBody().length;
-      } else {
-        const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
-          ".ir-review-textarea",
-        );
-        if (ta) charOffset = ta.selectionStart ?? 0;
-      }
+    const prev = getBookmark(this.bookmarks, slot.id);
+    let charOffset = prev?.line ?? 0;
+    const live = this.liveEditor;
+    if (live) {
+      charOffset = live.getCaretOffset();
+    } else {
+      const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
+        ".ir-review-textarea",
+      );
+      if (ta) charOffset = ta.selectionStart ?? 0;
     }
+
+    const measuredScroll = scroll?.scrollTop;
+    const scrollTop =
+      measuredScroll && measuredScroll > 0
+        ? measuredScroll
+        : live
+          ? (prev?.scrollTop ?? 0)
+          : (measuredScroll ?? prev?.scrollTop ?? 0);
 
     const pdfPath = this.pdfSourcePath(slot);
     const pdfPage = pdfPath ? getPdfPageForPath(this.app, pdfPath) : null;
@@ -1427,9 +1435,9 @@ export class IrReviewView extends ItemView {
       const scroll = this.contentEl.querySelector<HTMLElement>(
         ".ir-review-main-col .ir-review-scroll",
       );
-      if (scroll) scroll.scrollTop = bm.scrollTop;
 
       if (this.editing) {
+        if (scroll) scroll.scrollTop = bm.scrollTop;
         if (this.liveEditor) {
           const pos = Math.min(bm.line, this.liveEditor.getBody().length);
           this.liveEditor.setSelection(pos, pos);
@@ -1443,8 +1451,48 @@ export class IrReviewView extends ItemView {
             ta.scrollTop = bm.scrollTop;
           }
         }
+        return;
       }
+
+      if (bm.line > 0 && this.scrollPreviewToBodyOffset(scroll, bm.line)) {
+        return;
+      }
+      if (scroll) scroll.scrollTop = bm.scrollTop;
     });
+  }
+
+  /**
+   * Scroll the reading preview so `rawOffset` in the markdown body is in view.
+   * Editor `scrollTop` is not the same viewport as preview `scrollTop`.
+   */
+  private scrollPreviewToBodyOffset(
+    scroll: HTMLElement | null,
+    rawOffset: number,
+  ): boolean {
+    if (!scroll) return false;
+    const body = scroll.querySelector<HTMLElement>(".ir-review-main-body");
+    if (!body) return false;
+    const plain = body.textContent ?? "";
+    if (!plain) return false;
+
+    let renderedOff: number | null = null;
+    const needle = previewScrollNeedle(this.currentRaw, rawOffset);
+    if (needle) renderedOff = uniqueIndex(plain, needle);
+    if (renderedOff == null) {
+      renderedOff = alignRawOffsetToRendered(plain, this.currentRaw, rawOffset);
+    }
+    const point = textPointAtTextOffset(body, renderedOff);
+    if (!point) return false;
+    const el =
+      point.node.parentElement ??
+      (point.node.parentNode instanceof HTMLElement
+        ? point.node.parentNode
+        : null);
+    if (!el) return false;
+    const sRect = scroll.getBoundingClientRect();
+    const eRect = el.getBoundingClientRect();
+    scroll.scrollTop += eRect.top - sRect.top - Math.min(72, scroll.clientHeight * 0.2);
+    return true;
   }
 
   private placeEditorCaret(clickPos: number): void {
@@ -1596,6 +1644,10 @@ export class IrReviewView extends ItemView {
   }
 
   private async renderCard() {
+    const slotNow = this.current;
+    if (slotNow && this.loadedSlotId === slotNow.id) {
+      this.captureBookmark();
+    }
     this.parkLiveEditor();
     if (!this.editing && this.liveEditor) {
       await this.flushEdits();
@@ -2484,6 +2536,20 @@ export class IrReviewView extends ItemView {
         this.skipBookmarkCursor = caret != null;
         this.pendingEditSelection =
           caret != null ? { start: caret, end: caret } : null;
+        if (caret != null && slot) {
+          const scroller = body.closest(".ir-review-scroll");
+          const scrollTop =
+            scroller instanceof HTMLElement ? scroller.scrollTop : 0;
+          const prev = getBookmark(this.bookmarks, slot.id);
+          this.bookmarks = setBookmark(this.bookmarks, {
+            elementId: slot.id,
+            line: caret,
+            ch: 0,
+            scrollTop,
+            updatedAt: Date.now(),
+            ...(prev?.page != null ? { page: prev.page } : {}),
+          });
+        }
         this.editing = true;
         this.editKind = "live";
         void this.renderCard();

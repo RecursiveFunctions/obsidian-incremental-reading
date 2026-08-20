@@ -23,6 +23,7 @@ import {
 import {
   bodyOffsetsFromFullOffsets,
   fullOffsetsFromBodyOffsets,
+  bodyOffsetFromFullOffset,
   stripFrontmatter,
 } from "./frontmatter-body";
 import {
@@ -44,6 +45,8 @@ export interface ReviewLiveEditor {
   hostEl: HTMLElement;
   getBody(): string;
   getSelection(): { start: number; end: number; text: string } | null;
+  /** Collapsed caret as a body offset (frontmatter stripped). */
+  getCaretOffset(): number;
   setSelection(start: number, end: number): void;
   save(): Promise<void>;
   setKind(kind: ReviewEditorKind): Promise<void>;
@@ -117,6 +120,13 @@ export async function mountReviewLiveEditor(
         end: mapped.end,
         text: stripFrontmatter(full).slice(mapped.start, mapped.end),
       };
+    },
+    getCaretOffset: () => {
+      const mv = markdownViewOf(opened);
+      if (!mv) return 0;
+      const full = mv.editor.getValue();
+      const off = mv.editor.posToOffset(mv.editor.getCursor("head"));
+      return bodyOffsetFromFullOffset(full, off);
     },
     setSelection: (start, end) => {
       const mv = markdownViewOf(opened);

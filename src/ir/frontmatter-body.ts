@@ -55,6 +55,24 @@ export function bodyOffsetsFromFullOffsets(
   return { start, end };
 }
 
+/**
+ * Map a collapsed caret from a full-file offset onto the stripped body.
+ * Unlike {@link bodyOffsetsFromFullOffsets}, a caret may sit at the same
+ * index as start and end.
+ */
+export function bodyOffsetFromFullOffset(
+  fullFile: string,
+  offset: number,
+): number {
+  const fm = fullFile.match(FRONTMATTER_RE);
+  const fmLen = fm ? fm[0].length : 0;
+  const afterFm = fullFile.slice(fmLen);
+  const leadingWs = afterFm.length - afterFm.trimStart().length;
+  const trimmedLen = afterFm.trim().length;
+  const bodyStartInFull = fmLen + leadingWs;
+  return Math.max(0, Math.min(trimmedLen, offset - bodyStartInFull));
+}
+
 /** Inverse of {@link bodyOffsetsFromFullOffsets}. */
 export function fullOffsetsFromBodyOffsets(
   fullFile: string,

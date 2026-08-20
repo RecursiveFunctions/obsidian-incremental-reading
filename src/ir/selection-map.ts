@@ -148,6 +148,90 @@ export function alignRenderedOffsetToRaw(
 }
 
 /**
+ * Inverse of {@link alignRenderedOffsetToRaw}: a body offset in markdown
+ * `raw` mapped onto `rendered` (preview text without punctuation).
+ */
+export function alignRawOffsetToRendered(
+  rendered: string,
+  raw: string,
+  rawOff: number,
+): number {
+  const target = Math.max(0, Math.min(rawOff, raw.length));
+  let r = 0;
+  let w = 0;
+  while (w < target && w < raw.length) {
+    if (r >= rendered.length) return rendered.length;
+    const rc = rendered[r]!;
+    const wc = raw[w]!;
+    if (/\s/.test(rc) && /\s/.test(wc)) {
+      while (r < rendered.length && /\s/.test(rendered[r]!)) r += 1;
+      while (w < raw.length && /\s/.test(raw[w]!)) w += 1;
+      continue;
+    }
+    if (rc === wc) {
+      r += 1;
+      w += 1;
+      continue;
+    }
+    if (RAW_MARKUP.test(wc) && rc !== wc) {
+      w += 1;
+      continue;
+    }
+    r += 1;
+  }
+  return r;
+}
+
+/**
+ * Visible phrase around a raw caret, for finding that spot in preview
+ * `textContent` after leaving the editor.
+ */
+export function previewScrollNeedle(
+  raw: string,
+  offset: number,
+): string | null {
+  const pos = Math.max(0, Math.min(offset, raw.length));
+  const strip = (s: string) =>
+    s.replace(/[#*_`~[\]()!>+-]/g, "").replace(/\s+/g, " ").trim();
+  for (const width of [24, 40, 64]) {
+    const needle = strip(raw.slice(pos, Math.min(raw.length, pos + width)));
+    if (needle.length >= 12) return needle.slice(0, 48);
+  }
+  for (const width of [24, 40, 64]) {
+    const needle = strip(raw.slice(Math.max(0, pos - width), pos));
+    if (needle.length >= 12) return needle.slice(-48);
+  }
+  return null;
+}
+
+export function uniqueIndex(hay: string, needle: string): number | null {
+  if (!needle) return null;
+  const i = hay.indexOf(needle);
+  if (i === -1) return null;
+  if (hay.indexOf(needle, i + 1) !== -1) return null;
+  return i;
+}
+
+/** Text-node point at a `textContent` offset inside `root`. */
+export function textPointAtTextOffset(
+  root: HTMLElement,
+  offset: number,
+): { node: Text; offset: number } | null {
+  const target = Math.max(0, offset);
+  let pos = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const t = walker.currentNode as Text;
+    const len = t.length;
+    if (pos + len >= target) {
+      return { node: t, offset: Math.max(0, Math.min(target - pos, len)) };
+    }
+    pos += len;
+  }
+  return null;
+}
+
+/**
  * Map a caret in rendered preview text onto a body offset in markdown `raw`.
  */
 export function mapRenderedCaretToRaw(
