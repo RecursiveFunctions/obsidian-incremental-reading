@@ -48,6 +48,7 @@ import {
   type ObsidianDataAdapter,
 } from "./src/ir/obsidian-vault-fs";
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
+import { planOrphanRecoveries } from "./src/ir/orphan-notes";
 import { toAnkiTsv } from "./src/ir/anki-export";
 import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath } from "./src/ir/deletion";
 import {
@@ -3159,6 +3160,23 @@ export default class IncrementalReadingPlugin extends Plugin {
         if (moved) {
           const af = this.app.vault.getAbstractFileByPath(moved);
           if (af instanceof TFile) await this.handleSourceRename(af, path);
+        }
+      }
+      await this.restoreOrphanIrNotes();
+      const after = await this.store.load();
+      const leftover = missingSourcePaths(
+        Array.from(after.elements.values()),
+        after.tombstones.keys(),
+        (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile,
+      );
+      const existingNow = this.vaultFilePaths();
+      for (const path of leftover) {
+        const moved =
+          relocatedBySuffix(path, existingNow) ??
+          uniqueMovedPath(path, existingNow);
+        if (moved) {
+          const af = this.app.vault.getAbstractFileByPath(moved);
+          if (af instanceof TFile) await this.handleSourceRename(af, path);
           continue;
         }
         this.enqueueSourceGone(path, titleFromSourcePath(path));
@@ -3220,6 +3238,41 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
   }
 
+  /**
+   * Notes still marked `ir-type` whose path is not in the store — typical
+   * after a folder move was treated as a mass delete. Resurrect with the
+   * original element id when the log names the old path.
+   */
+  private async restoreOrphanIrNotes(): Promise<void> {
+    if (!this.store) return;
+    try {
+      const notes = this.enumerateIrNotes();
+      const state = await this.store.load();
+      const events = await this.store.loadEvents();
+      const plan = planOrphanRecoveries(
+        notes,
+        state.elements.values(),
+        events,
+        state.tombstones.keys(),
+        this.vaultFilePaths(),
+        Date.now(),
+        nextLamport(events),
+        await this.store.getDeviceId(),
+        () => newEventId(),
+      );
+      if (plan.events.length === 0) return;
+      await this.appendRelinkEvents(plan.events);
+      void this.refreshStatusBar();
+      void this.refreshExtractDecorations();
+      const n = plan.restored;
+      new Notice(
+        `Incremental Reading: restored ${n} note${n === 1 ? "" : "s"} that were still marked IR into the store.`,
+      );
+    } catch (e) {
+      console.error("Incremental Reading: orphan-note restore failed", e);
+    }
+  }
+
   private async applySourceGone(
     path: string,
     title: string,
@@ -3228,6 +3281,17 @@ export default class IncrementalReadingPlugin extends Plugin {
     quiet = false,
   ): Promise<void> {
     if (!this.store) return;
+    if (this.app.vault.getAbstractFileByPath(path) instanceof TFile) return;
+    const existing = this.vaultFilePaths();
+    const moved =
+      relocatedBySuffix(path, existing) ?? uniqueMovedPath(path, existing);
+    if (moved) {
+      const af = this.app.vault.getAbstractFileByPath(moved);
+      if (af instanceof TFile) {
+        await this.handleSourceRename(af, path);
+        return;
+      }
+    }
     const events = await this.store.loadEvents();
     const device = await this.store.getDeviceId();
     const now = Date.now();

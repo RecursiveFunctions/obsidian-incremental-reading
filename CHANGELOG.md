@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.21] — 2026-08-20
+
+### Fixed
+
+- **IR-marked notes missing from the store after a folder move.** A
+  folder rename used to delete those elements from `.ir/` while leaving
+  `ir-type` on the files. Load now puts them back under their original
+  ids (so parent links survive) instead of ignoring them.
+
 ## [0.6.20] — 2026-08-20
 
 ### Fixed

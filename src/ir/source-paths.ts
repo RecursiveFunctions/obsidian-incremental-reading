@@ -46,6 +46,27 @@ export function rewriteStoredPath(
 }
 
 /**
+ * Inverse of `relocatedBySuffix`: given the new path, find the unique
+ * old path it still ends with (`Archive/Papers/a.md` ← `Papers/a.md`).
+ * Several suffix hits: keep the longest (most specific) if it is unique.
+ */
+export function originalPathBySuffix(
+  newPath: string,
+  oldPaths: Iterable<string>,
+): string | null {
+  const hits: string[] = [];
+  for (const old of oldPaths) {
+    if (!old || old === newPath) continue;
+    if (newPath.endsWith(`/${old}`)) hits.push(old);
+  }
+  if (hits.length === 0) return null;
+  if (hits.length === 1) return hits[0]!;
+  hits.sort((a, b) => b.length - a.length);
+  if (hits[0]!.length > hits[1]!.length) return hits[0]!;
+  return null;
+}
+
+/**
  * If the file kept its relative path under a new parent
  * (`Papers/a.md` → `Archive/Papers/a.md`), return that unique hit.
  */

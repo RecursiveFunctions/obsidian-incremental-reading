@@ -4,6 +4,7 @@ import {
   basenameOf,
   dirnameOf,
   inferPrefixRewrite,
+  originalPathBySuffix,
   pathIsUnder,
   relocatedBySuffix,
   rewriteStoredPath,
@@ -40,6 +41,24 @@ test("rewriteStoredPath: folder rename does not eat sibling prefixes", () => {
   assert.equal(
     rewriteStoredPath("Papers/sub/b.md", "Papers", "Notes"),
     "Notes/sub/b.md",
+  );
+});
+
+test("originalPathBySuffix: inverse of a folder-prefix move", () => {
+  assert.equal(
+    originalPathBySuffix("Archive/Papers/a.md", [
+      "Papers/a.md",
+      "Papers/b.md",
+    ]),
+    "Papers/a.md",
+  );
+  assert.equal(
+    originalPathBySuffix("Archive/Papers/a.md", ["Elsewhere/a.md"]),
+    null,
+  );
+  assert.equal(
+    originalPathBySuffix("Archive/Papers/a.md", ["Papers/a.md", "a.md"]),
+    "Papers/a.md",
   );
 });
 
