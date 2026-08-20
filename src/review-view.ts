@@ -90,7 +90,7 @@ import {
   saveBody,
   stripExtractMarks,
 } from "./ir/frontmatter-body";
-import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY } from "./ir/selection-map";
+import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, caretOffsetInRendered, renderedPlainText } from "./ir/selection-map";
 import {
   canUseReviewLivePreview,
   type ReviewEditorKind,
@@ -201,6 +201,13 @@ export class IrReviewView extends ItemView {
   private resumeFromTop = new Set<ElementId>();
   /** After a failed preview-map, restore this range in the edit textarea. */
   private pendingEditSelection: { start: number; end: number } | null = null;
+  /**
+   * Body offset from click-to-edit. Survives `renderCard` so the nested
+   * editor can land the caret there instead of the start of the note.
+   */
+  private clickToEditCaret: number | null = null;
+  /** When true, resume-bookmark must not steal the click caret. */
+  private skipBookmarkCursor = false;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -1230,6 +1237,7 @@ export class IrReviewView extends ItemView {
     if (this.loadedSlotId === slot.id) return;
     this.priorityMetaExpanded = false;
     this.pendingPdfOpen = true;
+    this.skipBookmarkCursor = false;
     if (slot.file && isPdfPath(slot.file.path)) {
       this.rawOnDisk = slot.element.text
         ? stripExtractMarks(slot.element.text)
@@ -1397,15 +1405,25 @@ export class IrReviewView extends ItemView {
 
   /**
    * After the DOM for a reading slot has been painted, restore the
-   * previously-saved scroll position (and cursor when editing).
+   * previously-saved scroll position (and cursor when editing). A click
+   * into the preview wins over the bookmark so the caret stays where
+   * the user clicked.
    */
   private restoreBookmark(slot: ReviewSlot): void {
     if (!this.isReading(slot)) return;
     if (this.resumeFromTop.has(slot.id)) return;
+    if (this.skipBookmarkCursor) {
+      this.skipBookmarkCursor = false;
+      return;
+    }
     const bm = getBookmark(this.bookmarks, slot.id);
     if (!bm) return;
 
     requestAnimationFrame(() => {
+      if (this.skipBookmarkCursor) {
+        this.skipBookmarkCursor = false;
+        return;
+      }
       const scroll = this.contentEl.querySelector<HTMLElement>(
         ".ir-review-main-col .ir-review-scroll",
       );
@@ -1427,6 +1445,22 @@ export class IrReviewView extends ItemView {
         }
       }
     });
+  }
+
+  private placeEditorCaret(clickPos: number): void {
+    if (this.liveEditor) {
+      this.liveEditor.setSelection(clickPos, clickPos);
+      return;
+    }
+    const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
+      ".ir-review-textarea",
+    );
+    if (!ta) return;
+    const pos = Math.min(clickPos, ta.value.length);
+    ta.setSelectionRange(pos, pos);
+    const line = ta.value.slice(0, pos).split("\n").length;
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+    ta.scrollTop = Math.max(0, (line - 4) * lh);
   }
 
   private async maybeOpenPdfSource(slot: ReviewSlot): Promise<void> {
@@ -2436,11 +2470,64 @@ export class IrReviewView extends ItemView {
         ) {
           return;
         }
+        const sel = body.ownerDocument.getSelection();
+        if (
+          sel &&
+          !sel.isCollapsed &&
+          sel.anchorNode &&
+          body.contains(sel.anchorNode)
+        ) {
+          return;
+        }
+        const caret = this.rawOffsetFromPreviewClick(body, evt);
+        this.clickToEditCaret = caret;
+        this.skipBookmarkCursor = caret != null;
+        this.pendingEditSelection =
+          caret != null ? { start: caret, end: caret } : null;
         this.editing = true;
         this.editKind = "live";
         void this.renderCard();
       });
     }
+  }
+
+  /**
+   * Map a click in the rendered preview onto a markdown body offset.
+   */
+  private rawOffsetFromPreviewClick(
+    root: HTMLElement,
+    evt: MouseEvent,
+  ): number | null {
+    const doc = root.ownerDocument as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (
+        x: number,
+        y: number,
+      ) => { offsetNode: Node; offset: number } | null;
+    };
+    let container: Node | null = null;
+    let offset = 0;
+    if (typeof doc.caretRangeFromPoint === "function") {
+      const range = doc.caretRangeFromPoint(evt.clientX, evt.clientY);
+      if (!range) return null;
+      container = range.startContainer;
+      offset = range.startOffset;
+    } else if (typeof doc.caretPositionFromPoint === "function") {
+      const pos = doc.caretPositionFromPoint(evt.clientX, evt.clientY);
+      if (!pos) return null;
+      container = pos.offsetNode;
+      offset = pos.offset;
+    } else {
+      return null;
+    }
+    if (!container || !root.contains(container)) return null;
+    const renderedOff = caretOffsetInRendered(root, container, offset);
+    if (renderedOff === null) return null;
+    return mapRenderedCaretToRaw(
+      this.currentRaw,
+      renderedPlainText(root),
+      renderedOff,
+    );
   }
 
   /**
@@ -2513,6 +2600,17 @@ export class IrReviewView extends ItemView {
       if (ok) {
         const pending = this.pendingEditSelection;
         this.pendingEditSelection = null;
+        const click = this.clickToEditCaret;
+        this.clickToEditCaret = null;
+        if (click != null) {
+          const apply = () => this.placeEditorCaret(click);
+          apply();
+          requestAnimationFrame(() => {
+            apply();
+            requestAnimationFrame(apply);
+          });
+          return;
+        }
         if (pending) this.liveEditor?.setSelection(pending.start, pending.end);
         return;
       }
@@ -2568,6 +2666,12 @@ export class IrReviewView extends ItemView {
     } else {
       requestAnimationFrame(() => {
         ta.focus();
+        const click = this.clickToEditCaret;
+        this.clickToEditCaret = null;
+        if (click != null) {
+          this.placeEditorCaret(click);
+          return;
+        }
         const pending = this.pendingEditSelection;
         this.pendingEditSelection = null;
         if (pending) {

@@ -46,7 +46,7 @@ Review is one tab, not a popup that eats the rest of Obsidian.
 
 The bar at the top shows **Due** or **Neural**, and how many cards are left in this pass. Extract or cloze while you are in that tab and the new card is queued **right after the current one** — you see it in this session, not the next time you press Alt+R.
 
-Reading cards remember where you stopped (**Resumed from last time**, with **From the top** if you want that). The source sits beside the card; on a phone, **Source** lives on the session bar so it does not scroll away. Click the card (or **Edit**) to type in Live Preview. **Source** is raw markdown if you want that.
+Reading cards remember where you stopped (**Resumed from last time**, with **From the top** if you want that). The source sits beside the card; on a phone, **Source** lives on the session bar so it does not scroll away. Click the text to edit in Live Preview at that spot. **Source** is raw markdown if you want that.
 
 When the pass is finished, the tab stays on **Session complete**. Alt+R starts whatever is still due; Escape or Close leaves.
 
@@ -133,7 +133,7 @@ Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, 
 
 ## Roadmap
 
-**Shipped through 0.6.16** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
+**Shipped through 0.6.17** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
 
 PDF topics and extracts (Alt+T / Alt+X in the built-in viewer). Review splits the PDF beside the card and focuses it; extracts paint as yellow highlights on the text layer. Focus PDF keeps those marks (it no longer remounts the viewer). Cloze stays markdown-only: extract first, then cloze the extract. Scanned PDFs with no text layer cannot be extracted. After a cloze reveal, Space grades Good by default; already-clozed spans paint on the source. Right-click a folder to mark its unmarked notes and PDFs as topics. Review Edit uses Live Preview; Source is still there for raw markdown.
 

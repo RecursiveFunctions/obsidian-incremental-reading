@@ -99,6 +99,84 @@ export function rangeOffsetsInRendered(
   return { start, end: Math.min(end, plain.length) };
 }
 
+/** Collapsed caret offset in `renderedPlainText(root)`. */
+export function caretOffsetInRendered(
+  root: HTMLElement,
+  container: Node,
+  offset: number,
+): number | null {
+  const plain = renderedPlainText(root);
+  const pos = offsetAtBoundary(root, container, offset, plain);
+  if (pos === null) return null;
+  return Math.max(0, Math.min(pos, plain.length));
+}
+
+const RAW_MARKUP = /[#*_`~[\]()!>+-]/;
+
+/**
+ * Walk `rendered` and `raw` together, skipping markdown punctuation that
+ * preview does not show, so a caret in rendered text lands in the source.
+ */
+export function alignRenderedOffsetToRaw(
+  rendered: string,
+  raw: string,
+  rel: number,
+): number {
+  const target = Math.max(0, Math.min(rel, rendered.length));
+  let r = 0;
+  let w = 0;
+  while (r < target && w < raw.length) {
+    const rc = rendered[r]!;
+    const wc = raw[w]!;
+    if (/\s/.test(rc) && /\s/.test(wc)) {
+      while (r < rendered.length && /\s/.test(rendered[r]!)) r += 1;
+      while (w < raw.length && /\s/.test(raw[w]!)) w += 1;
+      continue;
+    }
+    if (rc === wc) {
+      r += 1;
+      w += 1;
+      continue;
+    }
+    if (RAW_MARKUP.test(wc) && rc !== wc) {
+      w += 1;
+      continue;
+    }
+    r += 1;
+  }
+  return w;
+}
+
+/**
+ * Map a caret in rendered preview text onto a body offset in markdown `raw`.
+ */
+export function mapRenderedCaretToRaw(
+  raw: string,
+  rendered: string,
+  caret: number,
+): number | null {
+  if (!raw) return 0;
+  if (!rendered) return 0;
+  const pos = Math.max(0, Math.min(caret, rendered.length));
+
+  for (const width of [16, 32, 48, 80]) {
+    const from = Math.max(0, pos - width);
+    const to = Math.min(rendered.length, pos + width);
+    const slice = rendered.slice(from, to);
+    if (!slice.trim()) continue;
+    const loc = locateTextInBody(raw, slice);
+    if (!loc) continue;
+    const rel = pos - from;
+    const inner = alignRenderedOffsetToRaw(slice, loc.text, rel);
+    return Math.max(loc.start, Math.min(loc.start + inner, loc.end));
+  }
+
+  const loc = locateTextInBody(raw, rendered);
+  if (!loc) return null;
+  const inner = alignRenderedOffsetToRaw(rendered, loc.text, pos);
+  return Math.max(loc.start, Math.min(loc.start + inner, loc.end));
+}
+
 /**
  * Locate `needle` in `raw` for highlighting / selection recovery.
  * Tries exact match first, then line-bridged match when the DOM collapsed

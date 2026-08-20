@@ -123,10 +123,10 @@ export async function mountReviewLiveEditor(
       if (!mv) return;
       const full = mv.editor.getValue();
       const { from, to } = fullOffsetsFromBodyOffsets(full, start, end);
-      mv.editor.setSelection(
-        mv.editor.offsetToPos(from),
-        mv.editor.offsetToPos(to),
-      );
+      const fromPos = mv.editor.offsetToPos(from);
+      const toPos = mv.editor.offsetToPos(to);
+      mv.editor.setSelection(fromPos, toPos);
+      mv.editor.scrollIntoView({ from: fromPos, to: toPos }, true);
       mv.editor.focus();
     },
     save: async () => {
