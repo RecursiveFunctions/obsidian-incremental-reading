@@ -33,6 +33,14 @@ test("source mode is not Live Preview", () => {
   assert.equal(isLivePreviewEditorState({ mode: "preview" }), false);
 });
 
+test("reviewEditorState keeps the file path from prev", () => {
+  const live = livePreviewEditorState({ file: "Papers/a.md" });
+  assert.equal(live.file, "Papers/a.md");
+  const src = sourceEditorState({ file: "Papers/a.md", mode: "preview" });
+  assert.equal(src.file, "Papers/a.md");
+  assert.equal(src.mode, "source");
+});
+
 test("canUseReviewLivePreview: desktop markdown only", () => {
   assert.equal(canUseReviewLivePreview({ extension: "md" }, false), true);
   assert.equal(canUseReviewLivePreview({ extension: "md" }, true), false);

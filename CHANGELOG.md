@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.16] — 2026-08-20
+
+### Fixed
+
+- **Review click-to-edit went blank.** The in-card Live Preview opened
+  without the note in view state, and the nested editor had no height.
+  Edit keeps the file and fills the card.
+
 ## [0.6.15] — 2026-08-20
 
 ### Changed

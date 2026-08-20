@@ -66,21 +66,12 @@ export async function mountReviewLiveEditor(
     split.getContainer = () => reviewLeaf.getContainer();
     hostEl.appendChild(split.containerEl);
     leaf = app.workspace.createLeafInParent(split, 0);
-    await leaf.openFile(file, {
-      state: reviewEditorState(kind),
-      active: false,
-    });
-    const vs = leaf.getViewState();
-    const prev =
-      vs.state && typeof vs.state === "object"
-        ? (vs.state as Record<string, unknown>)
-        : {};
-    if (!isReviewEditorState(prev, kind)) {
-      await leaf.setViewState({
-        ...vs,
-        state: reviewEditorState(kind, prev),
-      });
-    }
+    // Load the file first with no custom state. Passing `{ mode, source }`
+    // without `file` made MarkdownView open an empty buffer — the card
+    // went blank on click-to-edit.
+    await leaf.openFile(file, { active: false });
+    if (leaf.isDeferred) await leaf.loadIfDeferred();
+    await applyEditorKind(leaf, file.path, kind);
     hostEl.toggleClass("ir-review-live-editor--source", kind === "source");
     const mv = markdownViewOf(leaf);
     if (!mv) {
@@ -88,10 +79,15 @@ export async function mountReviewLiveEditor(
       hostEl.detach();
       return null;
     }
+    if (!mv.editor.getValue()) {
+      mv.setViewData(await app.vault.read(file), false);
+    }
     // Keep the review tab as the workspace leaf; only the inner editor
     // takes DOM focus so Space/Alt+X stay on the review keymap.
     app.workspace.setActiveLeaf(reviewLeaf, { focus: false });
+    leaf.onResize();
     mv.editor.focus();
+    requestAnimationFrame(() => leaf?.onResize());
   } catch (e) {
     console.error("Incremental Reading: review editor failed", e);
     leaf?.detach();
@@ -138,21 +134,10 @@ export async function mountReviewLiveEditor(
       if (mv) await mv.save();
     },
     setKind: async (nextKind) => {
-      const vs = opened.getViewState();
-      const prev =
-        vs.state && typeof vs.state === "object"
-          ? (vs.state as Record<string, unknown>)
-          : {};
       hostEl.toggleClass("ir-review-live-editor--source", nextKind === "source");
-      if (isReviewEditorState(prev, nextKind)) {
-        markdownViewOf(opened)?.editor.focus();
-        return;
-      }
-      await opened.setViewState({
-        ...vs,
-        state: reviewEditorState(nextKind, prev),
-      });
+      await applyEditorKind(opened, file.path, nextKind);
       app.workspace.setActiveLeaf(reviewLeaf, { focus: false });
+      opened.onResize();
       markdownViewOf(opened)?.editor.focus();
     },
     destroy: () => {
@@ -166,4 +151,22 @@ export async function mountReviewLiveEditor(
 function markdownViewOf(leaf: WorkspaceLeaf): MarkdownView | null {
   const view = leaf.view;
   return view instanceof MarkdownView ? view : null;
+}
+
+async function applyEditorKind(
+  leaf: WorkspaceLeaf,
+  filePath: string,
+  kind: ReviewEditorKind,
+): Promise<void> {
+  const vs = leaf.getViewState();
+  const prev =
+    vs.state && typeof vs.state === "object"
+      ? (vs.state as Record<string, unknown>)
+      : {};
+  if (isReviewEditorState(prev, kind) && prev.file === filePath) return;
+  await leaf.setViewState({
+    ...vs,
+    state: reviewEditorState(kind, { ...prev, file: filePath }),
+  });
+  if (leaf.isDeferred) await leaf.loadIfDeferred();
 }
