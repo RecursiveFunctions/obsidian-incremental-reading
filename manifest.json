@@ -1,7 +1,7 @@
 {
     "id": "incremental-reading",
     "name": "Incremental Reading",
-    "version": "0.6.14",
+    "version": "0.6.15",
     "minAppVersion": "1.5.0",
     "description": "SuperMemo-style incremental reading and spaced repetition for Obsidian, built on FSRS.",
     "author": "Ray (RecursiveFunctions)",
