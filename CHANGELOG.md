@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.19] — 2026-08-20
+
+### Fixed
+
+- **Reading position is shared across reader and editor.** Scroll, %
+  read, and resume use the same 0–1 progress in Live Preview and in
+  the rendered card, so Escape and Edit land where you were.
+
 ## [0.6.18] — 2026-08-20
 
 ### Fixed

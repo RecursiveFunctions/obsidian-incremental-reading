@@ -27,6 +27,10 @@ import {
   stripFrontmatter,
 } from "./frontmatter-body";
 import {
+  applyScrollProgress,
+  readScrollProgress,
+} from "./reading-progress";
+import {
   isReviewEditorState,
   reviewEditorState,
   type ReviewEditorKind,
@@ -47,7 +51,10 @@ export interface ReviewLiveEditor {
   getSelection(): { start: number; end: number; text: string } | null;
   /** Collapsed caret as a body offset (frontmatter stripped). */
   getCaretOffset(): number;
-  setSelection(start: number, end: number): void;
+  getScroller(): HTMLElement | null;
+  getScrollProgress(): number;
+  setScrollProgress(progress: number): void;
+  setSelection(start: number, end: number, opts?: { scroll?: boolean }): void;
   save(): Promise<void>;
   setKind(kind: ReviewEditorKind): Promise<void>;
   destroy(): void;
@@ -128,7 +135,17 @@ export async function mountReviewLiveEditor(
       const off = mv.editor.posToOffset(mv.editor.getCursor("head"));
       return bodyOffsetFromFullOffset(full, off);
     },
-    setSelection: (start, end) => {
+    getScroller: () =>
+      hostEl.querySelector<HTMLElement>(".cm-scroller"),
+    getScrollProgress: () => {
+      const el = hostEl.querySelector<HTMLElement>(".cm-scroller");
+      return el ? readScrollProgress(el) : 0;
+    },
+    setScrollProgress: (progress) => {
+      const el = hostEl.querySelector<HTMLElement>(".cm-scroller");
+      if (el) applyScrollProgress(el, progress);
+    },
+    setSelection: (start, end, opts) => {
       const mv = markdownViewOf(opened);
       if (!mv) return;
       const full = mv.editor.getValue();
@@ -136,7 +153,9 @@ export async function mountReviewLiveEditor(
       const fromPos = mv.editor.offsetToPos(from);
       const toPos = mv.editor.offsetToPos(to);
       mv.editor.setSelection(fromPos, toPos);
-      mv.editor.scrollIntoView({ from: fromPos, to: toPos }, true);
+      if (opts?.scroll !== false) {
+        mv.editor.scrollIntoView({ from: fromPos, to: toPos }, true);
+      }
       mv.editor.focus();
     },
     save: async () => {

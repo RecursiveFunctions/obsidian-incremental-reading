@@ -76,6 +76,12 @@ import {
   upsertAfterCurrent,
 } from "./review";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
+import {
+  applyScrollProgress,
+  formatReadLabel,
+  readScrollProgress,
+  scrollFits,
+} from "./ir/reading-progress";
 import { findExtractRange } from "./ir/extract-range";
 import { resolveAnchor } from "./ir/anchor";
 import { spacebarReviewAction, isSpaceAfterReveal } from "./ir/review-keys";
@@ -694,12 +700,11 @@ export class IrReviewView extends ItemView {
   }
 
   private syncMobileEditChrome(): void {
+    this.contentEl.toggleClass("ir-review--editing", this.editing);
     if (!Platform.isMobile) return;
     if (this.editing) {
-      this.contentEl.addClass("ir-review--editing");
       this.layoutMobileEditPane();
     } else {
-      this.contentEl.removeClass("ir-review--editing");
       this.detachMobileEditResizeObserver();
       this.clearMobileEditPaneLayout();
     }
@@ -1363,21 +1368,33 @@ export class IrReviewView extends ItemView {
 
 
   /**
+   * The scrollport that actually moves: CodeMirror while Live Preview is
+   * open, the textarea on phone/store-only, otherwise the reading pane.
+   */
+  private readingScroller(): HTMLElement | null {
+    const live = this.liveEditor?.getScroller();
+    if (live) return live;
+    const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
+      ".ir-review-textarea",
+    );
+    if (ta) return ta;
+    return this.contentEl.querySelector<HTMLElement>(
+      ".ir-review-main-col .ir-review-scroll",
+    );
+  }
+
+  /**
    * Snapshot the current scroll position and cursor for the active reading
    * slot. No-op for non-reading elements (items have no meaningful position
    * to resume). Returns silently when nothing is visible yet.
    *
-   * The nested Live Preview scrolls inside CodeMirror, not `.ir-review-scroll`,
-   * so we keep the caret body-offset as the source of truth when the editor
-   * is mounted — including the Escape window after `editing` is already false.
+   * Reader and editor use different scroll elements, so we store a 0–1
+   * `progress` fraction and apply it to whichever view is showing.
    */
   private captureBookmark(): void {
     const slot = this.current;
     if (!slot || !this.isReading(slot)) return;
 
-    const scroll = this.contentEl.querySelector<HTMLElement>(
-      ".ir-review-main-col .ir-review-scroll",
-    );
     const prev = getBookmark(this.bookmarks, slot.id);
     let charOffset = prev?.line ?? 0;
     const live = this.liveEditor;
@@ -1390,13 +1407,12 @@ export class IrReviewView extends ItemView {
       if (ta) charOffset = ta.selectionStart ?? 0;
     }
 
-    const measuredScroll = scroll?.scrollTop;
-    const scrollTop =
-      measuredScroll && measuredScroll > 0
-        ? measuredScroll
-        : live
-          ? (prev?.scrollTop ?? 0)
-          : (measuredScroll ?? prev?.scrollTop ?? 0);
+    const parked = !!(live && !live.hostEl.isConnected);
+    const scroller = parked ? null : this.readingScroller();
+    const progress = scroller
+      ? readScrollProgress(scroller)
+      : (prev?.progress ?? 0);
+    const scrollTop = scroller?.scrollTop ?? prev?.scrollTop ?? 0;
 
     const pdfPath = this.pdfSourcePath(slot);
     const pdfPage = pdfPath ? getPdfPageForPath(this.app, pdfPath) : null;
@@ -1406,6 +1422,7 @@ export class IrReviewView extends ItemView {
       line: charOffset,
       ch: 0,
       scrollTop,
+      progress,
       updatedAt: Date.now(),
       ...(pdfPage != null ? { page: pdfPage } : {}),
     });
@@ -1435,25 +1452,41 @@ export class IrReviewView extends ItemView {
       const scroll = this.contentEl.querySelector<HTMLElement>(
         ".ir-review-main-col .ir-review-scroll",
       );
+      const hasProgress = typeof bm.progress === "number";
 
       if (this.editing) {
-        if (scroll) scroll.scrollTop = bm.scrollTop;
-        if (this.liveEditor) {
-          const pos = Math.min(bm.line, this.liveEditor.getBody().length);
-          this.liveEditor.setSelection(pos, pos);
-        } else {
+        const apply = () => {
+          if (this.liveEditor) {
+            if (hasProgress) this.liveEditor.setScrollProgress(bm.progress!);
+            if (bm.line > 0) {
+              this.liveEditor.setSelection(bm.line, bm.line, { scroll: !hasProgress });
+            }
+            return;
+          }
           const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
             ".ir-review-textarea",
           );
           if (ta) {
-            const pos = Math.min(bm.line, ta.value.length);
-            ta.setSelectionRange(pos, pos);
-            ta.scrollTop = bm.scrollTop;
+            if (hasProgress) applyScrollProgress(ta, bm.progress!);
+            else ta.scrollTop = bm.scrollTop;
+            if (bm.line > 0) {
+              const pos = Math.min(bm.line, ta.value.length);
+              ta.setSelectionRange(pos, pos);
+            }
           }
-        }
+        };
+        apply();
+        requestAnimationFrame(() => {
+          apply();
+          requestAnimationFrame(apply);
+        });
         return;
       }
 
+      if (hasProgress && scroll) {
+        applyScrollProgress(scroll, bm.progress!);
+        return;
+      }
       if (bm.line > 0 && this.scrollPreviewToBodyOffset(scroll, bm.line)) {
         return;
       }
@@ -1552,38 +1585,45 @@ export class IrReviewView extends ItemView {
     const fill = track.createDiv({ cls: "ir-reading-doc-progress-fill" });
     const label = wrap.createSpan({ cls: "ir-reading-doc-progress-label" });
 
+    const scrollerOf = (): HTMLElement => this.readingScroller() ?? scroll;
+
     const update = () => {
-      const scrollable = scroll.scrollHeight - scroll.clientHeight;
-      if (scrollable <= 1) {
+      const el = scrollerOf();
+      const fits = scrollFits(el.scrollHeight, el.clientHeight);
+      if (fits) {
         wrap.addClass("ir-reading-doc-progress--fits");
         this.contentEl.addClass("ir-review--reading-fits");
         fill.style.width = "100%";
-        label.setText("Fits in view");
+        label.setText(formatReadLabel(1, true));
         return;
       }
       wrap.removeClass("ir-reading-doc-progress--fits");
       this.contentEl.removeClass("ir-review--reading-fits");
-      const pct = Math.max(
-        0,
-        Math.min(100, (scroll.scrollTop / scrollable) * 100),
-      );
-      fill.style.width = `${pct}%`;
-      label.setText(`${Math.round(pct)}% read`);
+      const progress = readScrollProgress(el);
+      fill.style.width = `${progress * 100}%`;
+      label.setText(formatReadLabel(progress, false));
     };
 
-    // Initial paint needs to wait for layout so scrollHeight is meaningful.
-    // restoreBookmark also fires after a frame, so a single rAF tick lines
-    // up the first measurement with the restored scrollTop.
-    requestAnimationFrame(update);
-
-    let raf = 0;
-    scroll.addEventListener("scroll", () => {
+    const onScroll = () => {
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
         update();
       });
+    };
+
+    // Initial paint needs to wait for layout so scrollHeight is meaningful.
+    // restoreBookmark also fires after a frame, so a second rAF tick lines
+    // up the first measurement with the restored scroll.
+    requestAnimationFrame(() => {
+      update();
+      requestAnimationFrame(update);
     });
+
+    let raf = 0;
+    scroll.addEventListener("scroll", onScroll);
+    const inner = this.readingScroller();
+    if (inner && inner !== scroll) inner.addEventListener("scroll", onScroll);
   }
 
   /**
@@ -2226,7 +2266,7 @@ export class IrReviewView extends ItemView {
     if (!this.isReading(slot)) return;
     if (this.resumeFromTop.has(slot.id)) return;
     const bm = getBookmark(this.bookmarks, slot.id);
-    if (!bm || (bm.scrollTop <= 0 && bm.line <= 0)) return;
+    if (!bm || (bm.scrollTop <= 0 && bm.line <= 0 && !(bm.progress && bm.progress > 0.02))) return;
     const row = parent.createDiv({ cls: "ir-review-resume" });
     row.createSpan({
       cls: "ir-review-resume-msg",
@@ -2244,6 +2284,7 @@ export class IrReviewView extends ItemView {
           ".ir-review-main-col .ir-review-scroll",
         );
         if (scroll) scroll.scrollTop = 0;
+        this.liveEditor?.setScrollProgress(0);
         const ta = this.contentEl.querySelector<HTMLTextAreaElement>(
           ".ir-review-textarea",
         );
@@ -2251,6 +2292,16 @@ export class IrReviewView extends ItemView {
           ta.setSelectionRange(0, 0);
           ta.scrollTop = 0;
         }
+        const prev = getBookmark(this.bookmarks, slot.id);
+        this.bookmarks = setBookmark(this.bookmarks, {
+          elementId: slot.id,
+          line: 0,
+          ch: 0,
+          scrollTop: 0,
+          progress: 0,
+          updatedAt: Date.now(),
+          ...(prev?.page != null ? { page: prev.page } : {}),
+        });
         row.remove();
       });
   }
@@ -2538,14 +2589,14 @@ export class IrReviewView extends ItemView {
           caret != null ? { start: caret, end: caret } : null;
         if (caret != null && slot) {
           const scroller = body.closest(".ir-review-scroll");
-          const scrollTop =
-            scroller instanceof HTMLElement ? scroller.scrollTop : 0;
+          const scrollEl = scroller instanceof HTMLElement ? scroller : null;
           const prev = getBookmark(this.bookmarks, slot.id);
           this.bookmarks = setBookmark(this.bookmarks, {
             elementId: slot.id,
             line: caret,
             ch: 0,
-            scrollTop,
+            scrollTop: scrollEl?.scrollTop ?? 0,
+            progress: scrollEl ? readScrollProgress(scrollEl) : prev?.progress,
             updatedAt: Date.now(),
             ...(prev?.page != null ? { page: prev.page } : {}),
           });

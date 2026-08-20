@@ -52,6 +52,14 @@ test("setBookmark adds a new entry and returns a new map (purity)", async (t) =>
   assert.deepEqual(m.getBookmark(next, "el_a"), b);
 });
 
+test("setBookmark keeps optional progress for reader/editor sync", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/bookmark.ts not implemented yet");
+  const b = { ...mkBookmark("el_a", 40, 0, 120, T0), progress: 0.42 };
+  const next = m.setBookmark({}, b);
+  assert.equal(m.getBookmark(next, "el_a").progress, 0.42);
+});
+
 test("setBookmark replaces an existing entry for the same elementId", async (t) => {
   const m = await load();
   if (!m) return t.skip("src/ir/bookmark.ts not implemented yet");

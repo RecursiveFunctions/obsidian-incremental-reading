@@ -390,8 +390,7 @@
 .ir-review--mobile.ir-review--editing .ir-priority-row,
 .ir-review--mobile.ir-review--editing .ir-review-progress-bar,
 .ir-review--mobile.ir-review--editing .ir-review-progress,
-.ir-review--mobile.ir-review--editing .ir-review-breadcrumb,
-.ir-review--mobile.ir-review--editing .ir-reading-doc-progress {
+.ir-review--mobile.ir-review--editing .ir-review-breadcrumb {
   display: none;
 }
 
@@ -663,6 +662,20 @@
   overflow: hidden;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
+}
+
+/* Same pane as the reader: CM scrolls inside so % read matches. */
+.ir-review--editing .ir-review-main-col .ir-review-scroll {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ir-review--editing .ir-review-live-editor {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 12em;
+  margin-bottom: 0;
 }
 
 /* Nested MarkdownView is wrapped in workspace-tabs. Stretch the whole

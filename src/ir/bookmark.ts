@@ -18,6 +18,12 @@ export interface Bookmark {
   ch: number;
   scrollTop: number;
   updatedAt: number;
+  /**
+   * 0–1 how far through the topic body. Shared between reader and editor
+   * because pixel `scrollTop` is not comparable across those viewports.
+   * Absent on bookmarks written before 0.6.19.
+   */
+  progress?: number;
   /** 1-based PDF page when the source is a PDF. Absent on markdown bookmarks. */
   page?: number;
 }
