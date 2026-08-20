@@ -7,6 +7,7 @@ import {
   Platform,
   Plugin,
   TFile,
+  TFolder,
   WorkspaceLeaf,
 } from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
@@ -78,6 +79,7 @@ import {
 import { promptSourceRelink } from "./src/relink-confirm-modal";
 import { promptSourceGone, type SourceGoneChoice } from "./src/source-gone-modal";
 import { planBulkImport } from "./src/ir/bulk-import";
+import { folderTopicCandidates } from "./src/ir/folder-topics";
 import { buildExtractEvent, buildPdfExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import { resolveAnchor } from "./src/ir/anchor";
 import {
@@ -138,6 +140,9 @@ import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
  * a 300-paragraph book chapter" mistake before it explodes the queue.
  */
 const BULK_EXTRACT_CONFIRM_THRESHOLD = 50;
+
+/** Folder "mark all as topics" asks before writing this many new frontmatters. */
+const FOLDER_TOPIC_CONFIRM_THRESHOLD = 10;
 
 /**
  * Machine-identifying string passed to `IrStore.init` so each physical
@@ -594,6 +599,18 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "mark-folder-as-ir-topics",
+      name: "Mark folder notes as IR topics",
+      icon: "book-open",
+      checkCallback: (checking) => {
+        const folder = this.folderForTopicCommand();
+        if (!folder) return false;
+        if (!checking) void this.markFolderAsTopics(folder);
+        return true;
+      },
+    });
+
     // SuperMemo parity: Alt+X extract, Alt+Z cloze. Defaults only; users
     // can rebind or clear them in Settings -> Hotkeys.
     // Uses checkCallback (not editorCheckCallback) so the hotkey also works
@@ -953,6 +970,15 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu: Menu, file) => {
+        if (file instanceof TFolder) {
+          menu.addItem((item) =>
+            item
+              .setTitle("Mark folder notes as IR topics")
+              .setIcon("book-open")
+              .onClick(() => void this.markFolderAsTopics(file)),
+          );
+          return;
+        }
         if (!(file instanceof TFile)) return;
         if (file.extension === "pdf") {
           if (!this.irPdfPaths.has(file.path)) {
@@ -3938,6 +3964,114 @@ export default class IncrementalReadingPlugin extends Plugin {
     void this.refreshExtractDecorations();
   }
 
+  /** File-explorer folder, or the folder of the active note (command palette). */
+  private folderForTopicCommand(): TFolder | null {
+    const file = this.app.workspace.getActiveFile();
+    if (file?.parent instanceof TFolder) return file.parent;
+    return null;
+  }
+
+  /**
+   * Mark every markdown note and PDF under `folder` as an IR topic.
+   * Skips notes already in IR (topic/extract/item). Nested folders included.
+   */
+  private async markFolderAsTopics(folder: TFolder): Promise<void> {
+    const skip = new Set<string>();
+    if (this.store) {
+      const state = await this.store.load();
+      for (const el of state.elements.values()) {
+        if (el.notePath) skip.add(el.notePath);
+      }
+    }
+    const refs = this.app.vault.getFiles().map((f) => ({
+      path: f.path,
+      extension: f.extension,
+    }));
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      if (getIrType(this.app, f)) skip.add(f.path);
+    }
+    const planned = folderTopicCandidates(refs, folder.path, skip);
+    if (planned.length === 0) {
+      new Notice(
+        `Incremental Reading: no unmarked notes in "${folder.name || "/"}".`,
+      );
+      return;
+    }
+    const needConfirm =
+      folder.path === "" ||
+      folder.path === "/" ||
+      planned.length > FOLDER_TOPIC_CONFIRM_THRESHOLD;
+    if (needConfirm) {
+      const ok = await this.confirmMarkFolderTopics(
+        folder.name || "/",
+        planned.length,
+      );
+      if (!ok) return;
+    }
+    let marked = 0;
+    for (const ref of planned) {
+      const abs = this.app.vault.getAbstractFileByPath(ref.path);
+      if (!(abs instanceof TFile)) continue;
+      if (abs.extension === "pdf") {
+        if (await this.markPdfAsTopic(abs, { silent: true })) marked += 1;
+        continue;
+      }
+      const did = await markAsTopic(this.app, abs, this.settings);
+      if (!did) continue;
+      await this.recordElement(abs, { skipReconcile: true });
+      marked += 1;
+    }
+    if (this.store) {
+      await this.store.reconcile().catch((e) => {
+        console.error(
+          "Incremental Reading: reconcile after folder topics failed",
+          e,
+        );
+      });
+      void this.refreshStatusBar();
+    }
+    const skipped = planned.length - marked;
+    const skipBit = skipped > 0 ? ` · ${skipped} skipped` : "";
+    new Notice(
+      `Marked ${marked} note${marked === 1 ? "" : "s"} in "${folder.name || "/"}" as IR topics${skipBit}.`,
+    );
+    const tree = this.getTreeView();
+    if (tree) void tree.refresh();
+  }
+
+  private async confirmMarkFolderTopics(
+    folderName: string,
+    count: number,
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const modal = new Modal(this.app);
+      modal.titleEl.setText(`Mark ${count} notes as IR topics?`);
+      modal.contentEl.createEl("p", {
+        text:
+          `This will mark every unmarked markdown note and PDF under "${folderName}" ` +
+          "(including nested folders) as an IR topic. Notes that are already " +
+          "topics, extracts, or items are left alone.",
+      });
+      const btns = modal.contentEl.createDiv({ cls: "modal-button-container" });
+      const cancel = btns.createEl("button", { text: "Cancel" });
+      const ok = btns.createEl("button", {
+        text: `Mark ${count}`,
+        cls: "mod-cta",
+      });
+      let resolved = false;
+      const done = (v: boolean) => {
+        if (resolved) return;
+        resolved = true;
+        modal.close();
+        resolve(v);
+      };
+      cancel.addEventListener("click", () => done(false));
+      ok.addEventListener("click", () => done(true));
+      modal.onClose = () => done(false);
+      modal.open();
+    });
+  }
+
   private async markActiveFileAsTopic(file?: TFile) {
     const target = file ?? activeIrFile(this.app);
     if (!target) {
@@ -3972,19 +4106,21 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private async markPdfAsTopic(
     file: TFile,
-    opts?: { silentIfExists?: boolean },
-  ): Promise<void> {
+    opts?: { silentIfExists?: boolean; silent?: boolean },
+  ): Promise<boolean> {
     if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
-      return;
+      if (!opts?.silent) {
+        new Notice("Incremental Reading: store is not ready.");
+      }
+      return false;
     }
     const existing = await this.resolveElementIdForFile(file);
     if (existing) {
       this.irPdfPaths.add(file.path);
-      if (!opts?.silentIfExists) {
+      if (!opts?.silent && !opts?.silentIfExists) {
         new Notice(`"${file.basename}" is already an IR topic.`);
       }
-      return;
+      return false;
     }
     const now = Date.now();
     try {
@@ -4004,12 +4140,18 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.store.reconcile();
       this.irPdfPaths.add(file.path);
       void this.refreshStatusBar();
-      new Notice(`Marked "${file.basename}" as an IR topic.`);
+      if (!opts?.silent) {
+        new Notice(`Marked "${file.basename}" as an IR topic.`);
+      }
+      return true;
     } catch (e) {
       console.error("Incremental Reading: marking PDF as topic failed", e);
-      new Notice(
-        "Incremental Reading: could not record the PDF topic. See the developer console.",
-      );
+      if (!opts?.silent) {
+        new Notice(
+          "Incremental Reading: could not record the PDF topic. See the developer console.",
+        );
+      }
+      return false;
     }
   }
 
@@ -4023,7 +4165,10 @@ export default class IncrementalReadingPlugin extends Plugin {
    * back atomically via `processFrontMatter`, which is reliable immediately
    * after creation where `metadataCache` may still be stale.
    */
-  private async recordElement(file: TFile): Promise<void> {
+  private async recordElement(
+    file: TFile,
+    opts?: { skipReconcile?: boolean },
+  ): Promise<void> {
     if (!this.store) return;
     try {
       let fm: Record<string, unknown> = {};
@@ -4037,6 +4182,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       for (const ev of events) {
         await this.store.appendEvent(ev);
       }
+      if (opts?.skipReconcile) return;
       await this.store.reconcile();
       void this.refreshStatusBar();
     } catch (e) {

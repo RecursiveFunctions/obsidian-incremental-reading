@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.14] — 2026-08-20
+
+### Added
+
+- **Folder → Mark folder notes as IR topics:** right-click a folder in
+  the file explorer (or the command palette while a note in that folder
+  is open). Nested markdown and PDFs are included; notes already in IR
+  are skipped. Confirms above 10 files, or for the vault root.
+
+### Fixed
+
+- **Focus PDF** no longer re-opens the file. Reloading remounted pdf.js
+  and dropped extract highlights. If the viewer is already open, the
+  button reveals it and turns the page in place.
+
 ## [0.6.13] — 2026-08-19
 
 ### Fixed

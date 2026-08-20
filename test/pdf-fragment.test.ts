@@ -7,6 +7,7 @@ import {
   isPdfPath,
   parsePdfFragment,
   pdfSelectionIsRange,
+  planPdfNavigation,
 } from "../src/ir/pdf-fragment";
 
 test("isPdfPath: extension only, case-insensitive", () => {
@@ -68,4 +69,20 @@ test("parsePdfFragment: rejects bad page or selection", () => {
 test("pdfSelectionIsRange: page-only placeholder is not a range", () => {
   assert.equal(pdfSelectionIsRange([0, 0, 0, 0]), false);
   assert.equal(pdfSelectionIsRange([16, 0, 16, 20]), true);
+});
+
+test("planPdfNavigation: reuse never deep-links (that remounts pdf.js)", () => {
+  assert.deepEqual(planPdfNavigation(true, 3, 3), { kind: "reveal" });
+  assert.deepEqual(planPdfNavigation(true, 3, 7), {
+    kind: "turn-page",
+    page: 7,
+  });
+  assert.deepEqual(planPdfNavigation(true, null, 2), {
+    kind: "turn-page",
+    page: 2,
+  });
+  assert.deepEqual(planPdfNavigation(false, null, 4), {
+    kind: "open",
+    fragment: "#page=4",
+  });
 });

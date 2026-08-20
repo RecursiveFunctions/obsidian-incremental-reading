@@ -33,7 +33,7 @@ Your data never leaves your vault because the code cannot send it.
 ## Getting started
 
 1. Open a markdown note or a PDF you want to read incrementally.
-2. **Mark it as an IR topic** (`Alt+T`, or the file ⋯ menu on mobile).
+2. **Mark it as an IR topic** (`Alt+T`, or the file ⋯ menu on mobile). Right-click a **folder** to mark every unmarked note and PDF in it (nested folders included).
 3. **Start review** (`Alt+R`, the ribbon brain, or a click on the status bar). On a phone, tap the brain button in the corner.
 
 If you have no topics yet, Start review opens a pane that says so — mark a note (`Alt+T`), then start review (`Alt+R`). It does not just flash “nothing due.”
@@ -87,7 +87,7 @@ The left ribbon has one IR icon: **Start IR review**. Everything else is in the 
 
 ## Keyboard
 
-The SuperMemo-adjacent commands have default `Alt+…` bindings. Rebind or clear them under Settings → Hotkeys. Other IR commands (resume last read, undo last grade, split cloze, extract paragraph / heading / bulk) have no default — assign one there if you want it.
+The SuperMemo-adjacent commands have default `Alt+…` bindings. Rebind or clear them under Settings → Hotkeys. Other IR commands (resume last read, undo last grade, split cloze, extract paragraph / heading / bulk, mark folder as topics) have no default — assign one there if you want it.
 
 | | |
 |---|---|
@@ -133,9 +133,9 @@ Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, 
 
 ## Roadmap
 
-**Shipped through 0.6.13** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
+**Shipped through 0.6.14** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
 
-PDF topics and extracts (Alt+T / Alt+X in the built-in viewer). Review splits the PDF beside the card and focuses it; extracts paint as yellow highlights on the text layer. Cloze stays markdown-only: extract first, then cloze the extract. Scanned PDFs with no text layer cannot be extracted. After a cloze reveal, Space grades Good by default; already-clozed spans paint on the source.
+PDF topics and extracts (Alt+T / Alt+X in the built-in viewer). Review splits the PDF beside the card and focuses it; extracts paint as yellow highlights on the text layer. Focus PDF keeps those marks (it no longer remounts the viewer). Cloze stays markdown-only: extract first, then cloze the extract. Scanned PDFs with no text layer cannot be extracted. After a cloze reveal, Space grades Good by default; already-clozed spans paint on the source. Right-click a folder to mark its unmarked notes and PDFs as topics.
 
 ### Stretch
 

@@ -64,3 +64,24 @@ export function pdfSelectionIsRange(
 ): boolean {
   return !(sel[0] === 0 && sel[1] === 0 && sel[2] === 0 && sel[3] === 0);
 }
+
+/**
+ * How to show a PDF page. Reusing an open viewer must not apply
+ * `#page=&selection=` — `openFile` remounts pdf.js and wipes IR's
+ * text-layer highlight classes.
+ */
+export type PdfNavigation =
+  | { kind: "reveal" }
+  | { kind: "turn-page"; page: number }
+  | { kind: "open"; fragment: string };
+
+export function planPdfNavigation(
+  alreadyOpen: boolean,
+  currentPage: number | null,
+  targetPage: number,
+): PdfNavigation {
+  const page = Math.max(1, Math.floor(targetPage));
+  if (!alreadyOpen) return { kind: "open", fragment: formatPdfFragment(page) };
+  if (currentPage === page) return { kind: "reveal" };
+  return { kind: "turn-page", page };
+}

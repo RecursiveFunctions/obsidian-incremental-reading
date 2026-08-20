@@ -16,6 +16,7 @@ import {
   formatPdfLinktext,
   parsePdfFragment,
   pdfSelectionIsRange,
+  planPdfNavigation,
 } from "./pdf-fragment";
 
 export const PDF_VIEW_TYPE = "pdf";
@@ -88,16 +89,24 @@ export function activeIrFile(app: App): TFile | null {
 }
 
 export function pdfContainerEl(view: unknown): HTMLElement | null {
-  const child = pdfChild(view);
-  if (child?.containerEl) return child.containerEl;
   const v = asPdfView(view);
-  return v?.contentEl ?? v?.containerEl ?? null;
+  // Prefer the view chrome: `viewer.child.containerEl` is replaced when
+  // the file is re-opened, and a MutationObserver on that node goes deaf.
+  return v?.contentEl ?? v?.containerEl ?? pdfChild(view)?.containerEl ?? null;
 }
 
 export function getPdfCurrentPage(view: unknown): number | null {
   const n = pdfChild(view)?.pdfViewer?.currentPageNumber;
   if (typeof n === "number" && Number.isInteger(n) && n >= 1) return n;
   return null;
+}
+
+/** Turn page in an already-mounted viewer. False if the private API is missing. */
+function turnPdfPage(view: unknown, page: number): boolean {
+  const viewer = pdfChild(view)?.pdfViewer;
+  if (!viewer) return false;
+  viewer.currentPageNumber = Math.max(1, Math.floor(page));
+  return true;
 }
 
 function pageElForNode(node: Node | null): HTMLElement | null {
@@ -215,23 +224,22 @@ export function getPdfPageForPath(app: App, path: string): number | null {
 }
 
 /**
- * Open (or reuse) the core PDF viewer at a page, optionally with a
- * selection highlight. Uses the public `openLinkText` fragment, not a
- * second pdf.js instance. Reveals the leaf so the viewer can take
- * keyboard/selection focus (review's ensureFocus is skipped for PDF cards).
- * Reuses an existing leaf for this file; otherwise splits so the review
- * pane stays on screen.
+ * Open (or reuse) the core PDF viewer at a page. Reveals the leaf so the
+ * viewer can take keyboard/selection focus. Reuses an existing leaf for
+ * this file without `openFile` — reloading remounts pdf.js and drops IR
+ * highlight classes. Otherwise splits so the review pane stays on screen.
+ *
+ * `selection` is kept for callers (extract deep-links) but is not applied
+ * as a `#selection=` fragment when the viewer is already open.
  */
 export async function openPdfAt(
   app: App,
   path: string,
   page: number,
-  selection?: [number, number, number, number],
+  _selection?: [number, number, number, number],
 ): Promise<WorkspaceLeaf | null> {
   const file = app.vault.getAbstractFileByPath(path);
   if (!file || !("extension" in file)) return null;
-  const sel = selection && pdfSelectionIsRange(selection) ? selection : undefined;
-  const subpath = formatPdfLinktext("", page, sel); // "#page=…"
   const leaves = app.workspace.getLeavesOfType(PDF_VIEW_TYPE);
   let leaf: WorkspaceLeaf | null = null;
   for (const l of leaves) {
@@ -240,14 +248,22 @@ export async function openPdfAt(
       break;
     }
   }
-  if (leaf) {
-    await leaf.openFile(file as TFile, { eState: { subpath } });
-  } else {
-    await app.workspace.openLinkText(`${path}${subpath}`, "", "split");
+  const plan = planPdfNavigation(
+    leaf != null,
+    leaf ? getPdfCurrentPage(leaf.view) : null,
+    page,
+  );
+  if (plan.kind === "open") {
+    await app.workspace.openLinkText(`${path}${plan.fragment}`, "", "split");
     leaf =
       app.workspace.getLeavesOfType(PDF_VIEW_TYPE).find(
         (l) => pdfFileFromView(l.view)?.path === path,
       ) ?? app.workspace.activeLeaf;
+  } else if (plan.kind === "turn-page" && leaf) {
+    if (!turnPdfPage(leaf.view, plan.page)) {
+      const subpath = formatPdfLinktext("", plan.page);
+      await leaf.openFile(file as TFile, { eState: { subpath } });
+    }
   }
   if (leaf) app.workspace.revealLeaf(leaf);
   return leaf;
