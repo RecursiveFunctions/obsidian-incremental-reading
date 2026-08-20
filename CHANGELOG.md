@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.20] — 2026-08-20
+
+### Fixed
+
+- **Folder rename/move no longer looks like a mass delete.** Stored
+  `notePath` / anchors follow the folder (and delete+create moves), so
+  IR does not prompt once per note.
+
+### Changed
+
+- **Source-gone prompt: do this for all.** When several sources are
+  missing at once, a checkbox applies the same choice to the rest.
+
 ## [0.6.19] — 2026-08-20
 
 ### Fixed

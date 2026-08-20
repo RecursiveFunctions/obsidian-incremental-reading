@@ -50,6 +50,15 @@ import {
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
 import { toAnkiTsv } from "./src/ir/anki-export";
 import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath } from "./src/ir/deletion";
+import {
+  basenameOf,
+  inferPrefixRewrite,
+  pathIsUnder,
+  relocatedBySuffix,
+  rewriteStoredPath,
+  sourcePathRewrites,
+  uniqueMovedPath,
+} from "./src/ir/source-paths";
 import { findLastUndoableGrade, nextLamport } from "./src/ir/log";
 import { mostRecentBookmark } from "./src/ir/bookmark";
 import { newCard, storedToCard, writeCardToFrontmatter } from "./src/fsrs";
@@ -261,6 +270,14 @@ export default class IncrementalReadingPlugin extends Plugin {
   /** Serialize source-gone prompts (live delete + load-time reconcile). */
   private sourceGoneBusy = false;
   private sourceGoneQueue: { path: string; title: string }[] = [];
+  private sourceGoneApplyAll: SourceGoneChoice | null = null;
+  /**
+   * Deletes that may actually be a folder move (Obsidian often fires
+   * delete+create, or only a folder-level rename). Settled after a quiet
+   * period so we can rewrite paths instead of prompting per file.
+   */
+  private pendingGone = new Map<string, { title: string }>();
+  private goneSettleTimer: number | null = null;
   private lastSourceDeletionUndo: {
     before: IrElement[];
     deletionEvents: IrEvent[];
@@ -934,15 +951,15 @@ export default class IncrementalReadingPlugin extends Plugin {
     // mobile (no keyboard, ribbon is hidden behind a swipe). Tapping the
     // three-dot button on a note surfaces this menu, so mark-as-topic,
     // priority, dismiss, and (on mobile) the full IR command set live here.
-    // Vault delete handler: when a source note disappears, prompt once
-    // (make notes / keep without notes / undo). Load-time reconcile catches
-    // deletes that happened while Obsidian was closed.
+    // Vault delete handler: a real delete is queued after a short settle so
+    // a folder move (delete+create, or folder-level rename) can rewrite
+    // stored paths instead of prompting once per file.
     this.registerEvent(
       this.app.vault.on("delete", (deleted) => {
         if (!(deleted instanceof TFile)) return;
         if (deleted.extension !== "md" && deleted.extension !== "pdf") return;
         this.irPdfPaths.delete(deleted.path);
-        this.enqueueSourceGone(deleted.path, deleted.basename);
+        this.notePendingGone(deleted.path, deleted.basename);
       }),
     );
 
@@ -950,17 +967,19 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.app.vault.on("create", (created) => {
         if (!(created instanceof TFile)) return;
         if (created.extension !== "md" && created.extension !== "pdf") return;
+        void this.tryMatchPendingGone(created);
         void this.maybeOfferRelink(created);
       }),
     );
 
-    // Vault rename handler: keep stored `notePath` / anchor `sourcePath` in
-    // sync when the user moves or renames a source note in Obsidian. Without
-    // this, the review surface treats the rename as a deletion and shows the
-    // "source no longer in the vault" banner. Also offers Q1 re-link when
-    // the new path matches a tombstone (restore-by-rename).
+    // File or folder. A folder rename does not always fire per-file rename.
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
+        this.clearPendingGoneUnder(oldPath);
+        if (file instanceof TFolder) {
+          void this.handleSourceRename(file, oldPath);
+          return;
+        }
         if (!(file instanceof TFile)) return;
         void this.handleSourceRename(file, oldPath).then(() =>
           this.maybeOfferRelink(file),
@@ -1162,6 +1181,10 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   onunload() {
+    if (this.goneSettleTimer != null) {
+      window.clearTimeout(this.goneSettleTimer);
+      this.goneSettleTimer = null;
+    }
     this.pdfHighlights?.detach();
     this.irReviewSession = null;
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
@@ -3011,6 +3034,81 @@ export default class IncrementalReadingPlugin extends Plugin {
     void this.drainSourceGoneQueue();
   }
 
+  private vaultFilePaths(): string[] {
+    return this.app.vault.getFiles().map((f) => f.path);
+  }
+
+  private notePendingGone(path: string, title: string): void {
+    if (this.nuking) return;
+    this.pendingGone.set(path, { title });
+    this.scheduleGoneSettle();
+  }
+
+  private clearPendingGoneUnder(oldPath: string): void {
+    for (const path of [...this.pendingGone.keys()]) {
+      if (pathIsUnder(path, oldPath)) this.pendingGone.delete(path);
+    }
+    this.scheduleGoneSettle();
+  }
+
+  private scheduleGoneSettle(): void {
+    if (this.goneSettleTimer != null) window.clearTimeout(this.goneSettleTimer);
+    this.goneSettleTimer = window.setTimeout(() => {
+      this.goneSettleTimer = null;
+      void this.settlePendingGone();
+    }, 500);
+  }
+
+  private async tryMatchPendingGone(file: TFile): Promise<void> {
+    if (this.nuking) return;
+    const pending = [...this.pendingGone.keys()];
+    const bySuffix = pending.filter((g) => file.path.endsWith(`/${g}`));
+    const match =
+      bySuffix.length === 1
+        ? bySuffix[0]!
+        : pending.filter((g) => basenameOf(g) === file.name).length === 1
+          ? pending.find((g) => basenameOf(g) === file.name)!
+          : null;
+    if (match) {
+      this.pendingGone.delete(match);
+      await this.handleSourceRename(file, match);
+    }
+    this.scheduleGoneSettle();
+  }
+
+  /**
+   * After deletes/creates go quiet: rewrite moved paths, then prompt for
+   * whatever is still actually gone.
+   */
+  private async settlePendingGone(): Promise<void> {
+    if (this.nuking || !this.store || this.pendingGone.size === 0) return;
+    const existing = this.vaultFilePaths();
+    const missing = [...this.pendingGone.keys()];
+    const prefix = inferPrefixRewrite(missing, existing);
+    if (prefix) {
+      await this.rewriteSourcePaths(prefix.from, prefix.to);
+      for (const gone of missing) {
+        if (pathIsUnder(gone, prefix.from)) this.pendingGone.delete(gone);
+      }
+    }
+    for (const [gone, meta] of [...this.pendingGone]) {
+      if (this.app.vault.getAbstractFileByPath(gone) instanceof TFile) {
+        this.pendingGone.delete(gone);
+        continue;
+      }
+      const moved =
+        relocatedBySuffix(gone, existing) ?? uniqueMovedPath(gone, existing);
+      if (moved) {
+        const af = this.app.vault.getAbstractFileByPath(moved);
+        this.pendingGone.delete(gone);
+        if (af instanceof TFile) await this.handleSourceRename(af, gone);
+        continue;
+      }
+      this.pendingGone.delete(gone);
+      this.enqueueSourceGone(gone, meta.title);
+    }
+  }
+
   private async drainSourceGoneQueue(): Promise<void> {
     if (this.sourceGoneBusy) return;
     this.sourceGoneBusy = true;
@@ -3020,10 +3118,12 @@ export default class IncrementalReadingPlugin extends Plugin {
         const next = this.sourceGoneQueue.shift();
         if (!next || seen.has(next.path)) continue;
         seen.add(next.path);
-        await this.offerSourceGone(next.path, next.title);
+        const remaining = 1 + this.sourceGoneQueue.length;
+        await this.offerSourceGone(next.path, next.title, remaining);
       }
     } finally {
       this.sourceGoneBusy = false;
+      this.sourceGoneApplyAll = null;
       if (this.sourceGoneQueue.length > 0) {
         await this.drainSourceGoneQueue();
       }
@@ -3034,7 +3134,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * Deletes that happened while Obsidian was closed never fire
    * vault.on("delete"). After store init, any path the collection still
    * names whose file is gone and which has no tombstone gets the same
-   * prompt as a live delete.
+   * prompt as a live delete — unless we can see it moved.
    */
   private async reconcileMissingSources(): Promise<void> {
     if (this.nuking || !this.store) return;
@@ -3045,7 +3145,22 @@ export default class IncrementalReadingPlugin extends Plugin {
         state.tombstones.keys(),
         (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile,
       );
-      for (const path of missing) {
+      const existing = this.vaultFilePaths();
+      const prefix = inferPrefixRewrite(missing, existing);
+      if (prefix) {
+        await this.rewriteSourcePaths(prefix.from, prefix.to);
+      }
+      const still = missing.filter(
+        (path) => !prefix || !pathIsUnder(path, prefix.from),
+      );
+      for (const path of still) {
+        const moved =
+          relocatedBySuffix(path, existing) ?? uniqueMovedPath(path, existing);
+        if (moved) {
+          const af = this.app.vault.getAbstractFileByPath(moved);
+          if (af instanceof TFile) await this.handleSourceRename(af, path);
+          continue;
+        }
         this.enqueueSourceGone(path, titleFromSourcePath(path));
       }
       await this.drainSourceGoneQueue();
@@ -3054,12 +3169,27 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
   }
 
-  private async offerSourceGone(path: string, title: string): Promise<void> {
+  private async offerSourceGone(
+    path: string,
+    title: string,
+    remaining: number,
+  ): Promise<void> {
     if (this.nuking || !this.store) return;
     try {
       const state = await this.store.load();
       if (state.tombstones.has(path)) return;
       if (this.app.vault.getAbstractFileByPath(path) instanceof TFile) return;
+
+      const existing = this.vaultFilePaths();
+      const moved =
+        relocatedBySuffix(path, existing) ?? uniqueMovedPath(path, existing);
+      if (moved) {
+        const af = this.app.vault.getAbstractFileByPath(moved);
+        if (af instanceof TFile) {
+          await this.handleSourceRename(af, path);
+          return;
+        }
+      }
 
       const elements = Array.from(state.elements.values());
       const affected = elements.filter(
@@ -3071,13 +3201,20 @@ export default class IncrementalReadingPlugin extends Plugin {
         .filter((e) => e.anchor?.sourcePath === path && e.notePath !== path)
         .map((e) => labelFor(e));
       const defaultPromote = this.settings.makeNotesWhenSourceDeleted;
-      const choice = await promptSourceGone(this.app, {
-        title,
-        path,
-        labels,
-        defaultPromote,
-      });
-      await this.applySourceGone(path, title, elements, choice);
+      const repeating = this.sourceGoneApplyAll != null;
+      let choice = this.sourceGoneApplyAll;
+      if (!choice) {
+        const result = await promptSourceGone(this.app, {
+          title,
+          path,
+          labels,
+          defaultPromote,
+          remaining,
+        });
+        choice = result.choice;
+        if (result.applyToAll) this.sourceGoneApplyAll = choice;
+      }
+      await this.applySourceGone(path, title, elements, choice, repeating);
     } catch (e) {
       console.error("Incremental Reading: source-gone handling failed", e);
     }
@@ -3088,6 +3225,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     title: string,
     elements: IrElement[],
     choice: SourceGoneChoice,
+    quiet = false,
   ): Promise<void> {
     if (!this.store) return;
     const events = await this.store.loadEvents();
@@ -3107,9 +3245,11 @@ export default class IncrementalReadingPlugin extends Plugin {
         () => newEventId(),
       );
       await this.appendRelinkEvents(tomb);
-      new Notice(
-        `Incremental Reading: remembered that “${title}” is gone. Tree unchanged.`,
-      );
+      if (!quiet) {
+        new Notice(
+          `Incremental Reading: remembered that “${title}” is gone. Tree unchanged.`,
+        );
+      }
       return;
     }
 
@@ -3146,7 +3286,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       deletionEvents: newEvents,
       promotedPaths,
     };
-    this.showSourceGoneNotice(choice, promotedPaths.length, title);
+    if (!quiet) this.showSourceGoneNotice(choice, promotedPaths.length, title);
   }
 
   private showSourceGoneNotice(
@@ -3210,44 +3350,50 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Vault-rename handler. Without this, renaming a source note leaves the
-   * stored `notePath` (and any anchor `sourcePath`) pointing at the old path,
-   * so review surfaces show "the source note for this element is no longer
-   * in the vault" even though the file still exists.
+   * Vault-rename handler. Without this, renaming a source note (or the
+   * folder that contains it) leaves stored `notePath` / `anchor.sourcePath`
+   * pointing at the old path, and review treats the move as a mass delete.
    */
   private async handleSourceRename(
-    file: TFile,
+    file: TFile | TFolder,
     oldPath: string,
   ): Promise<void> {
     if (this.nuking) return;
     if (!this.store) return;
-    if (file.extension !== "md" && file.extension !== "pdf") return;
+    if (file instanceof TFile) {
+      if (file.extension !== "md" && file.extension !== "pdf") return;
+    }
     if (oldPath === file.path) return;
-    if (file.extension === "pdf") {
-      this.irPdfPaths.delete(oldPath);
-      this.irPdfPaths.add(file.path);
+    await this.rewriteSourcePaths(oldPath, file.path);
+  }
+
+  private async rewriteSourcePaths(from: string, to: string): Promise<void> {
+    if (!this.store || from === to) return;
+    for (const p of [...this.irPdfPaths]) {
+      const next = rewriteStoredPath(p, from, to);
+      if (next) {
+        this.irPdfPaths.delete(p);
+        this.irPdfPaths.add(next);
+      }
     }
     try {
       const events = await this.store.loadEvents();
       const state = await this.store.load();
-      const affected = Array.from(state.elements.values()).filter(
-        (e) =>
-          e.notePath === oldPath || e.anchor?.sourcePath === oldPath,
-      );
-      if (affected.length === 0) return;
+      const rewrites = sourcePathRewrites(state.elements.values(), from, to);
+      if (rewrites.length === 0) return;
 
       const device = await this.store.getDeviceId();
       let lamport = nextLamport(events);
       const now = Date.now();
-      for (const el of affected) {
+      for (const rw of rewrites) {
         await this.store.appendEvent({
           id: newEventId(),
           ts: now,
           lamport,
           device,
           kind: "source-renamed",
-          target: el.id,
-          payload: { oldPath, newPath: file.path },
+          target: rw.elementId,
+          payload: { oldPath: rw.oldPath, newPath: rw.newPath },
         });
         lamport += 1;
       }
