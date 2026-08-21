@@ -9,11 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Escape while editing returns to reading mode.** In Live Preview /
-  Source edit, Escape was closing the IR review tab. It now exits edit
-  first; a second Escape (or Escape in reading mode) leaves IR.
+- **Visible drag-select in reading mode.** Obsidian disables text
+  selection app-wide (`user-select: none`); the review card now opts
+  back in and paints an accent-colored `::selection` so highlight →
+  extract is visible before Alt+X.
 
-## [0.6.22] — 2026-08-21
+## [0.6.23] — 2026-08-21
 
 ### Fixed
 

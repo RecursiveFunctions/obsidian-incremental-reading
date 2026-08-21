@@ -641,6 +641,22 @@
   min-height: 8em;
   margin-bottom: 1.5em;
   line-height: var(--line-height-normal);
+  /* Obsidian sets `body { user-select: none }`; ItemViews must opt back in
+   * or drag-to-extract has no visible selection (and often no selection). */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Active drag/click selection for extract/cloze — distinct from persisted
+ * extract marks (`--text-highlight-bg`). */
+.ir-review-body::selection,
+.ir-review-body *::selection {
+  background: color-mix(
+    in srgb,
+    var(--interactive-accent, #7c6af0) 48%,
+    transparent
+  );
+  color: var(--text-normal);
 }
 
 /* Rendered card body: double-click or Ctrl/Cmd-click opens Live Preview. */
