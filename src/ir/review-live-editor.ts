@@ -67,9 +67,20 @@ export async function mountReviewLiveEditor(
   reviewLeaf: WorkspaceLeaf,
   parent: HTMLElement,
   kind: ReviewEditorKind = "live",
+  onEscape?: () => void,
 ): Promise<ReviewLiveEditor | null> {
   const hostEl = parent.createDiv({ cls: "ir-review-live-editor" });
   let leaf: WorkspaceLeaf | null = null;
+  const escapeListener = (evt: KeyboardEvent): void => {
+    if (evt.key !== "Escape" || !onEscape) return;
+    // Capture before Obsidian/CM treat Escape as "close leaf".
+    evt.preventDefault();
+    evt.stopPropagation();
+    onEscape();
+  };
+  if (onEscape) {
+    hostEl.addEventListener("keydown", escapeListener, true);
+  }
   try {
     const split = new SplitCtor(app.workspace, "vertical");
     split.getRoot = () => reviewLeaf.getRoot();
@@ -170,6 +181,9 @@ export async function mountReviewLiveEditor(
       markdownViewOf(opened)?.editor.focus();
     },
     destroy: () => {
+      if (onEscape) {
+        hostEl.removeEventListener("keydown", escapeListener, true);
+      }
       opened.detach();
       hostEl.detach();
     },

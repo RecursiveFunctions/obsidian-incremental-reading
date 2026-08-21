@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Escape while editing returns to reading mode.** In Live Preview /
+  Source edit, Escape was closing the IR review tab. It now exits edit
+  first; a second Escape (or Escape in reading mode) leaves IR.
+
+## [0.6.22] — 2026-08-21
+
+### Fixed
+
 - **Reading mode: highlight and extract without entering edit.** Plain
   single-click no longer opens the in-card editor (that stole the
   selection before Alt+X). Drag-to-select stays in preview; double-click

@@ -102,6 +102,7 @@ import {
   canUseReviewLivePreview,
   type ReviewEditorKind,
 } from "./ir/review-live-preview";
+import { escapeReviewAction } from "./ir/review-escape";
 import {
   mountReviewLiveEditor,
   type ReviewLiveEditor,
@@ -414,34 +415,21 @@ export class IrReviewView extends ItemView {
     // resolves Escape before our textarea/contentEl listeners get a chance,
     // and unbound Escape can close the active leaf. Registering on the view's
     // scope makes Escape ours whenever the review view is focused.
+    // Live Preview also captures Escape on its host (see mountReviewLiveEditor)
+    // because the nested MarkdownView can win the scope race.
     const scope = new Scope(this.app.scope);
     this.scope = scope;
     scope.register([], "Escape", (evt) => {
-      if (this.sessionComplete || this.emptyVault) {
-        evt.preventDefault();
-        this.leaf.detach();
-        return false;
-      }
-      if (this.editing) {
-        evt.preventDefault();
-        this.editing = false;
-        void this.renderCard();
-        return false;
-      }
-      if (this.isNeural) {
-        evt.preventDefault();
-        this.endNeuralMode();
-        return false;
-      }
-      return;
+      evt.preventDefault();
+      this.handleEscapeKey();
+      return false;
     });
 
     this.registerDomEvent(this.contentEl, "keydown", (evt: KeyboardEvent) => {
-      if (evt.key === "Escape" && this.editing) {
+      if (evt.key === "Escape") {
         evt.preventDefault();
         evt.stopPropagation();
-        this.editing = false;
-        void this.renderCard();
+        this.handleEscapeKey();
         return;
       }
 
@@ -2747,6 +2735,7 @@ export class IrReviewView extends ItemView {
       this.leaf,
       parent,
       this.editKind,
+      () => this.handleEscapeKey(),
     );
     if (!mounted) return false;
     this.liveEditor = mounted;
@@ -2788,8 +2777,7 @@ export class IrReviewView extends ItemView {
       if (evt.key === "Escape") {
         evt.preventDefault();
         evt.stopPropagation();
-        this.editing = false;
-        void this.renderCard();
+        this.handleEscapeKey();
         return;
       }
       const slot = this.current;
@@ -2855,6 +2843,38 @@ export class IrReviewView extends ItemView {
   private exitEdit(): void {
     this.editing = false;
     void this.renderCard();
+  }
+
+  /**
+   * Escape: edit → reading; reading / done → leave IR; neural → end pass.
+   * Guarded so Scope + DOM + live-editor capture cannot exit-edit then
+   * immediately detach in the same keypress.
+   */
+  private escapeHandling = false;
+  private handleEscapeKey(): void {
+    if (this.escapeHandling) return;
+    this.escapeHandling = true;
+    try {
+      const action = escapeReviewAction({
+        sessionComplete: this.sessionComplete,
+        emptyVault: this.emptyVault,
+        editing: this.editing,
+        isNeural: this.isNeural,
+      });
+      if (action.kind === "exit-edit") {
+        this.exitEdit();
+        return;
+      }
+      if (action.kind === "end-neural") {
+        this.endNeuralMode();
+        return;
+      }
+      this.leaf.detach();
+    } finally {
+      queueMicrotask(() => {
+        this.escapeHandling = false;
+      });
+    }
   }
 
   private renderEditToggle(parent: HTMLElement) {
