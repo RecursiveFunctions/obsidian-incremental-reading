@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reading mode: highlight and extract without entering edit.** Plain
+  single-click no longer opens the in-card editor (that stole the
+  selection before Alt+X). Drag-to-select stays in preview; double-click
+  enters edit only when it did not create a selection (word-select stays
+  extractable). Ctrl/Cmd-click still jumps to Live Preview at the caret.
+  The Edit button is unchanged.
+
 ## [0.6.21] — 2026-08-20
 
 ### Fixed

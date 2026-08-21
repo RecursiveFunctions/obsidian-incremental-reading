@@ -97,6 +97,7 @@ import {
   stripExtractMarks,
 } from "./ir/frontmatter-body";
 import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, caretOffsetInRendered, renderedPlainText, previewScrollNeedle, uniqueIndex, alignRawOffsetToRendered, textPointAtTextOffset } from "./ir/selection-map";
+import { shouldEnterEditFromPreviewGesture } from "./ir/preview-edit-gesture";
 import {
   canUseReviewLivePreview,
   type ReviewEditorKind,
@@ -2559,53 +2560,96 @@ export class IrReviewView extends ItemView {
     );
     this.wireMarkdownLinks(body, renderSourcePath);
 
-    // Click (not mousedown) so drag-to-select in preview still works for
-    // extract/cloze; skip embedded controls so links and task checkboxes behave.
+    // Reading mode is for highlight → extract/cloze. Plain single-click and
+    // drag-select stay in preview. Enter the editor via double-click (when
+    // the gesture did not create a selection), Ctrl/Cmd-click, or Edit.
     if (slot && this.canEdit() && !this.editing) {
       body.addClass("ir-review-main-body--click-to-edit");
-      body.addEventListener("click", (evt: MouseEvent) => {
+      let downX = 0;
+      let downY = 0;
+      body.addEventListener("pointerdown", (evt: PointerEvent) => {
+        if (evt.button !== 0) return;
+        downX = evt.clientX;
+        downY = evt.clientY;
+      });
+      const previewControlSelector =
+        "a, button, input, select, textarea, iframe, video, audio";
+      const gestureMovedPx = (evt: MouseEvent): number =>
+        Math.hypot(evt.clientX - downX, evt.clientY - downY);
+      const tryEnterEdit = (
+        evt: MouseEvent,
+        opts: { forceEdit?: boolean },
+      ): void => {
         const el = evt.target as HTMLElement | null;
-        if (!el) return;
-        if (
-          el.closest(
-            "a, button, input, select, textarea, iframe, video, audio",
-          )
-        ) {
+        if (!el || el.closest(previewControlSelector)) return;
+        const movedPx = gestureMovedPx(evt);
+        const decide = (forceEdit: boolean): void => {
+          const sel = body.ownerDocument.getSelection();
+          const selectionCollapsed = !sel || sel.isCollapsed;
+          const selectionInBody = !!(
+            sel?.anchorNode && body.contains(sel.anchorNode)
+          );
+          if (
+            !shouldEnterEditFromPreviewGesture({
+              movedPx,
+              selectionCollapsed,
+              selectionInBody,
+              forceEdit,
+            })
+          ) {
+            return;
+          }
+          this.beginEditFromPreviewClick(body, evt, slot);
+        };
+        if (opts.forceEdit) {
+          decide(true);
           return;
         }
-        const sel = body.ownerDocument.getSelection();
-        if (
-          sel &&
-          !sel.isCollapsed &&
-          sel.anchorNode &&
-          body.contains(sel.anchorNode)
-        ) {
-          return;
-        }
-        const caret = this.rawOffsetFromPreviewClick(body, evt);
-        this.clickToEditCaret = caret;
-        this.skipBookmarkCursor = caret != null;
-        this.pendingEditSelection =
-          caret != null ? { start: caret, end: caret } : null;
-        if (caret != null && slot) {
-          const scroller = body.closest(".ir-review-scroll");
-          const scrollEl = scroller instanceof HTMLElement ? scroller : null;
-          const prev = getBookmark(this.bookmarks, slot.id);
-          this.bookmarks = setBookmark(this.bookmarks, {
-            elementId: slot.id,
-            line: caret,
-            ch: 0,
-            scrollTop: scrollEl?.scrollTop ?? 0,
-            progress: scrollEl ? readScrollProgress(scrollEl) : prev?.progress,
-            updatedAt: Date.now(),
-            ...(prev?.page != null ? { page: prev.page } : {}),
-          });
-        }
-        this.editing = true;
-        this.editKind = "live";
-        void this.renderCard();
+        // Let the browser finish word/paragraph selection from dblclick.
+        requestAnimationFrame(() => decide(false));
+      };
+      body.addEventListener("click", (evt: MouseEvent) => {
+        if (!(evt.metaKey || evt.ctrlKey)) return;
+        tryEnterEdit(evt, { forceEdit: true });
+      });
+      body.addEventListener("dblclick", (evt: MouseEvent) => {
+        if (evt.metaKey || evt.ctrlKey) return;
+        tryEnterEdit(evt, {});
       });
     }
+  }
+
+  /**
+   * Switch the reading card into the live editor, landing the caret near
+   * the preview click when the offset map succeeds.
+   */
+  private beginEditFromPreviewClick(
+    body: HTMLElement,
+    evt: MouseEvent,
+    slot: ReviewSlot,
+  ): void {
+    const caret = this.rawOffsetFromPreviewClick(body, evt);
+    this.clickToEditCaret = caret;
+    this.skipBookmarkCursor = caret != null;
+    this.pendingEditSelection =
+      caret != null ? { start: caret, end: caret } : null;
+    if (caret != null) {
+      const scroller = body.closest(".ir-review-scroll");
+      const scrollEl = scroller instanceof HTMLElement ? scroller : null;
+      const prev = getBookmark(this.bookmarks, slot.id);
+      this.bookmarks = setBookmark(this.bookmarks, {
+        elementId: slot.id,
+        line: caret,
+        ch: 0,
+        scrollTop: scrollEl?.scrollTop ?? 0,
+        progress: scrollEl ? readScrollProgress(scrollEl) : prev?.progress,
+        updatedAt: Date.now(),
+        ...(prev?.page != null ? { page: prev.page } : {}),
+      });
+    }
+    this.editing = true;
+    this.editKind = "live";
+    void this.renderCard();
   }
 
   /**
