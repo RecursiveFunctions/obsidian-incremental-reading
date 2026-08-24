@@ -136,14 +136,22 @@
   min-height: 0;
 }
 
-/* Persisted extract markers in note bodies (written when you extract). */
+/* Extract markers painted into reading view / IR review (decoration-only).
+ * Use a yellow mix that stays visible even when a theme sets
+ * --text-highlight-bg to transparent or near-background. */
 .ir-review-body mark.ir-extract-source,
 .ir-review-context-markdown mark.ir-extract-source,
 .markdown-source-view mark.ir-extract-source,
 .markdown-preview-view mark.ir-extract-source {
-  background: var(--text-highlight-bg, rgba(255, 208, 0, 0.35));
+  background: color-mix(
+    in srgb,
+    var(--color-yellow, #e6b800) 42%,
+    transparent
+  );
   border-radius: 2px;
   padding: 0 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 /* SuperMemo-style: already-clozed spans on the source (decoration-only). */
@@ -166,9 +174,15 @@
 /* Extract highlight in the source column: marks where the current extract
  * was pulled from in the parent note (uses resolveAnchor or text search). */
 .ir-extract-highlight {
-  background: var(--text-highlight-bg, rgba(255, 208, 0, 0.35));
+  background: color-mix(
+    in srgb,
+    var(--color-yellow, #e6b800) 55%,
+    transparent
+  );
   border-radius: 2px;
   padding: 0.05em 0;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 /* PDF text-layer highlights (store-painted; the PDF file is never mutated).

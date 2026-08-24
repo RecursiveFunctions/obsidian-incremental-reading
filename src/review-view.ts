@@ -91,6 +91,7 @@ import {
   type SourceMarkKind,
   type SourceMarkRange,
 } from "./ir/cloze-marks";
+import { paintIrSourceMarksInElement } from "./ir/extract-reading-marks";
 import {
   stripFrontmatter,
   saveBody,
@@ -1790,28 +1791,30 @@ export class IrReviewView extends ItemView {
           toPack.push({
             start: focused.start,
             end: focused.end,
-            text: "",
+            text: sourceCtx.raw.slice(focused.start, focused.end),
             kind: "extract",
           });
         }
         const marks = reviewSourceSplices(toPack, focused).sort(
-          (a, b) => b.start - a.start,
+          (a, b) => a.start - b.start,
         );
-        let ctxRaw = sourceCtx.raw;
-        for (const m of marks) {
-          ctxRaw =
-            ctxRaw.slice(0, m.start) +
-            `<mark class="${m.cls}">` +
-            ctxRaw.slice(m.start, m.end) +
-            "</mark>" +
-            ctxRaw.slice(m.end);
-        }
+        // Prefer clean markdown + DOM paint. HTML-in-source splicing is kept
+        // as a best-effort for themes that preserve raw <mark>, but Obsidian
+        // often strips those tags in ItemView renders — DOM paint is the
+        // reliable path for "already extracted" feedback.
         await MarkdownRenderer.render(
           this.app,
-          ctxRaw,
+          sourceCtx.raw,
           ctxBody,
           sourceCtx.path,
           this,
+        );
+        paintIrSourceMarksInElement(
+          ctxBody,
+          marks.map((m) => ({
+            text: sourceCtx.raw.slice(m.start, m.end),
+            cls: m.cls,
+          })),
         );
         this.wireMarkdownLinks(ctxBody, sourceCtx.path);
         if (sourceCtx.highlightRange) {
@@ -2502,19 +2505,12 @@ export class IrReviewView extends ItemView {
     isCloze: boolean,
   ): Promise<void> {
     const slot = this.current;
-    // §Q3 main-column decoration: paint extract anchors on the body the
-    // user is reviewing, so a topic-as-source shows where past extracts
-    // sit (the side column was already covered; the main column was
-    // missed in the §Q3 follow-up). Skip for cloze cards — the cloze
-    // transform produces HTML and offset math would corrupt it; cloze
-    // item bodies are not extract sources in practice either.
-    const decoratedRaw =
-      !isCloze && slot?.file
-        ? this.spliceMainColumnMarks(raw, slot.file.path)
-        : raw;
+    // Cloze cards still transform the body; extract highlights are painted
+    // onto the rendered DOM after MarkdownRenderer (DESIGN §Q3). Splicing
+    // <mark> into the markdown source is unreliable in ItemView renders.
     const shown =
       isCloze && !this.revealed
-        ? transformClozes(decoratedRaw, ({ hint }, inCodeSpan) => {
+        ? transformClozes(raw, ({ hint }, inCodeSpan) => {
             const hintPart = hint
               ? ` <span class="ir-cloze-hint">(${escapeClozeHtmlFragment(hint)})</span>`
               : "";
@@ -2522,11 +2518,11 @@ export class IrReviewView extends ItemView {
             return inCodeSpan ? `<code>${html}</code>` : html;
           })
         : isCloze
-          ? transformClozes(decoratedRaw, ({ answer }, inCodeSpan) => {
+          ? transformClozes(raw, ({ answer }, inCodeSpan) => {
               const html = `<mark class="ir-cloze-answer">${escapeClozeHtmlFragment(answer)}</mark>`;
               return inCodeSpan ? `<code>${html}</code>` : html;
             })
-          : decoratedRaw;
+          : raw;
     const body = parent.createEl("div", {
       cls: "ir-review-body ir-review-main-body",
     });
@@ -2546,6 +2542,19 @@ export class IrReviewView extends ItemView {
       renderSourcePath,
       this,
     );
+    // Topic (or file-backed extract) as source: show every anchored extract
+    // / cloze on this note so reading → extract has immediate visual feedback.
+    if (!isCloze && slot?.file) {
+      const ranges = this.sourceMarksForPath(slot.file.path);
+      paintIrSourceMarksInElement(
+        body,
+        ranges.map((r) => ({
+          text: r.text || raw.slice(r.start, r.end),
+          cls:
+            r.kind === "cloze" ? "ir-cloze-source" : "ir-extract-source",
+        })),
+      );
+    }
     this.wireMarkdownLinks(body, renderSourcePath);
 
     // Reading mode is for highlight → extract/cloze. Plain single-click and
@@ -2680,25 +2689,9 @@ export class IrReviewView extends ItemView {
   }
 
   /**
-   * Splice extract and cloze marks into the main column. Overlaps cannot
-   * nest in HTML; clozes keep the shared bytes, extracts keep the rest.
+   * Resolved extract/cloze ranges for a source path, for DOM painting and
+   * bulk-extract idempotency helpers.
    */
-  private spliceMainColumnMarks(raw: string, path: string): string {
-    const ranges = this.sourceMarksForPath(path);
-    if (ranges.length === 0) return raw;
-    const marks = reviewSourceSplices(ranges).sort((a, b) => b.start - a.start);
-    let out = raw;
-    for (const m of marks) {
-      out =
-        out.slice(0, m.start) +
-        `<mark class="${m.cls}">` +
-        out.slice(m.start, m.end) +
-        "</mark>" +
-        out.slice(m.end);
-    }
-    return out;
-  }
-
   private sourceMarksForPath(path: string): SourceMarkRange[] {
     return (this.getSourceExtractRanges?.(path) ?? []).map((r) => ({
       start: r.start,

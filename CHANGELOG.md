@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Extracted spans stay highlighted on the topic in IR reading view.**
+  After Alt+X (or Extract) while reading a topic, the pulled-out passage
+  is painted as `mark.ir-extract-source` on the card body and in Obsidian
+  reading view. Marks are applied to the rendered DOM (HTML-in-markdown
+  splicing was silently dropped by ItemView renders), needles normalize
+  markdown emphasis so `**bold**` still matches, and promoted
+  (standalone-note) extracts keep their source highlights. Extract mark
+  color no longer disappears when a theme sets `--text-highlight-bg` to
+  transparent.
+
 - **Visible drag-select in reading mode.** Obsidian disables text
   selection app-wide (`user-select: none`); the review card now opts
   back in and paints an accent-colored `::selection` so highlight →

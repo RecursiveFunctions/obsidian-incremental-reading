@@ -1991,9 +1991,10 @@ export default class IncrementalReadingPlugin extends Plugin {
     const out: Span[] = [];
     for (const [, element] of state.elements) {
       if (element.type !== "extract") continue;
-      if (element.notePath !== undefined) continue; // promoted -> standalone
+      // Include promoted extracts: their anchors still mark the source span.
       const a = element.anchor;
       if (!a || a.pdf || a.sourcePath !== sourcePath) continue;
+      if (element.anchorState === "detached") continue;
       const r = resolveAnchor(a, body);
       if (r.status !== "ok") continue;
       out.push({ start: r.start, end: r.end });

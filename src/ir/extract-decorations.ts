@@ -31,11 +31,15 @@ import {
 import type { IrStore } from "./store";
 import type { Anchor, IrElement } from "./model";
 import { resolveAnchor } from "./anchor";
-import { readingViewNeedlePasses } from "./extract-reading-marks";
+import {
+  paintIrSourceMarksInElement,
+} from "./extract-reading-marks";
 import {
   clozeRangesInBody,
   type SourceMarkKind,
 } from "./cloze-marks";
+
+export { paintIrSourceMarksInElement } from "./extract-reading-marks";
 
 /** CSS class shared with pre-§Q3 inline marks so styles.css needs no change. */
 const EXTRACT_CLASS = "ir-extract-source";
@@ -102,9 +106,12 @@ export async function refreshIrDecorationCache(
   >();
   for (const [, el] of state.elements) {
     if (el.type !== "extract") continue;
-    if (el.notePath !== undefined) continue; // promoted -> standalone note
+    // Promoted (standalone-note) extracts keep their anchors so the source
+    // topic can still show what was pulled out. Skip only when there is no
+    // markdown anchor left to paint.
     if (!el.anchor) continue;
     if (el.anchor.pdf) continue; // painted by pdf-decorations, not CM6
+    if (el.anchorState === "detached") continue;
     const bucket = byPath.get(el.anchor.sourcePath) ?? [];
     bucket.push({ anchor: el.anchor, text: el.text });
     byPath.set(el.anchor.sourcePath, bucket);
@@ -299,75 +306,17 @@ export function createIrExtractMarkdownPostProcessor(
     if (!path) return;
     const ranges = cache.rangesFor(path);
     if (ranges.length === 0) return;
-    for (const pass of readingViewNeedlePasses(
-      ranges.filter((r) => r.kind !== "cloze"),
-    )) {
-      wrapNthOccurrenceInTextNode(el, pass.needle, pass.n, EXTRACT_CLASS);
-    }
-    for (const pass of readingViewNeedlePasses(
-      ranges.filter((r) => r.kind === "cloze"),
-    )) {
-      wrapNthOccurrenceInTextNode(el, pass.needle, pass.n, CLOZE_CLASS);
-    }
+    paintIrSourceMarksInElement(
+      el,
+      ranges
+        .filter((r) => r.kind !== "cloze")
+        .map((r) => ({ text: r.text, cls: EXTRACT_CLASS })),
+    );
+    paintIrSourceMarksInElement(
+      el,
+      ranges
+        .filter((r) => r.kind === "cloze")
+        .map((r) => ({ text: r.text, cls: CLOZE_CLASS })),
+    );
   };
-}
-
-function isInsideIrSourceMark(node: Node): boolean {
-  let p: Node | null = node.parentNode;
-  while (p) {
-    if (
-      p instanceof HTMLElement &&
-      p.tagName === "MARK" &&
-      (p.classList.contains(EXTRACT_CLASS) || p.classList.contains(CLOZE_CLASS))
-    ) {
-      return true;
-    }
-    p = p.parentNode;
-  }
-  return false;
-}
-
-/**
- * Walk text nodes under `root` in document order; wrap the `n`-th occurrence
- * of `needle` (0-based, counting inside already-marked nodes so indices
- * match source order). Returns true on a hit or if that occurrence is
- * already inside an IR mark.
- */
-function wrapNthOccurrenceInTextNode(
-  root: HTMLElement,
-  needle: string,
-  n: number,
-  cls: string,
-): boolean {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let seen = 0;
-  let node: Node | null = walker.nextNode();
-  while (node) {
-    const t = node as Text;
-    const text = t.nodeValue ?? "";
-    let searchFrom = 0;
-    while (searchFrom < text.length) {
-      const idx = text.indexOf(needle, searchFrom);
-      if (idx === -1) break;
-      if (seen === n) {
-        if (isInsideIrSourceMark(t)) return true;
-        const parent = t.parentNode;
-        if (!parent) return false;
-        const before = text.slice(0, idx);
-        const after = text.slice(idx + needle.length);
-        const mark = document.createElement("mark");
-        mark.className = cls;
-        mark.textContent = needle;
-        if (before) parent.insertBefore(document.createTextNode(before), t);
-        parent.insertBefore(mark, t);
-        if (after) parent.insertBefore(document.createTextNode(after), t);
-        parent.removeChild(t);
-        return true;
-      }
-      seen += 1;
-      searchFrom = idx + 1;
-    }
-    node = walker.nextNode();
-  }
-  return false;
 }
