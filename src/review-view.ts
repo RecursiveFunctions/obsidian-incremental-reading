@@ -2611,20 +2611,18 @@ export class IrReviewView extends ItemView {
       });
       body.addEventListener("dblclick", (evt: MouseEvent) => {
         if (evt.metaKey || evt.ctrlKey) return;
-        // Double-clicking on a link would otherwise be swallowed by the
-        // preview-control guard inside `tryEnterEdit` (single click already
-        // follows the link; double-click on a link atom is dead space, and
-        // browsers don't word-select inside `<a>`). Bypass tryEnterEdit
-        // entirely for the link case so extracts whose whole body is a link
-        // are still reachable via double-click.
-        const target = evt.target as HTMLElement | null;
-        if (target?.closest("a")) {
-          evt.preventDefault();
-          body.ownerDocument.getSelection()?.removeAllRanges();
-          this.beginEditFromPreviewClick(body, evt, slot);
-          return;
-        }
-        tryEnterEdit(evt, {});
+        // Double-click on the review body is treated as an unambiguous
+        // "enter edit here" gesture, regardless of what the browser's
+        // default action was about to be (word-select on plain text,
+        // dead-atom on a link, etc.). The earlier design routed dblclick
+        // through `tryEnterEdit`, which then refused because dblclick had
+        // already word-selected inside the body — so the gesture never
+        // actually entered edit for an extract's plain prose. Bypass the
+        // gesture arbiter, drop any word-selection the browser just made,
+        // and land the caret where the user clicked.
+        evt.preventDefault();
+        body.ownerDocument.getSelection()?.removeAllRanges();
+        this.beginEditFromPreviewClick(body, evt, slot);
       });
     }
   }
