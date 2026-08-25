@@ -114,6 +114,7 @@ import {
   stripFrontmatter,
 } from "./src/ir/frontmatter-body";
 import {
+  expandSelectionAroundLinks,
   locateTextInBody,
   mapRenderedSelectionToRaw,
   SWITCH_TO_EDIT_COPY,
@@ -1564,6 +1565,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     const bodyBeforeExtract = stripFrontmatter(
       await this.app.vault.cachedRead(source),
     );
+    // Snap the selection out to whole markdown/wiki-link tokens so an
+    // anchored extract's quote never ends up as `data.tf](#dat`.
+    const { start: extractStart, end: extractEnd } = expandSelectionAroundLinks(
+      bodyBeforeExtract,
+      offsets.start,
+      offsets.end,
+    );
     const parentId =
       (await this.resolveElementIdForFile(source)) ??
       elementIdForPath(source.path);
@@ -1572,8 +1580,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       const ev = buildExtractEvent({
         sourcePath: source.path,
         sourceText: bodyBeforeExtract,
-        selStart: offsets.start,
-        selEnd: offsets.end,
+        selStart: extractStart,
+        selEnd: extractEnd,
         parentId,
         priority: getPriority(this.app, source, this.settings.defaultPriority),
         elementId: newElementId(),
@@ -2089,13 +2097,29 @@ export default class IncrementalReadingPlugin extends Plugin {
     editor: Editor,
     source: TFile,
   ): Promise<void> {
-    const answer = editor.getSelection().trim();
+    const initialAnswer = editor.getSelection().trim();
+    if (!initialAnswer) {
+      new Notice("Incremental Reading: nothing selected.");
+      return;
+    }
+    // Snap the raw offsets out to whole markdown/wiki-link tokens so wrapping
+    // `data.tf` inside `[data.tf](#datatf)` grabs the whole link, not just the
+    // label — otherwise `replaceSelection` produces `[{{c1::data.tf}}](#datatf)`.
+    const rawFullText = editor.getValue();
+    const rawFromOff = editor.posToOffset(editor.getCursor("from"));
+    const rawToOff = editor.posToOffset(editor.getCursor("to"));
+    const { start: fromOff, end: toOff } = expandSelectionAroundLinks(
+      rawFullText,
+      rawFromOff,
+      rawToOff,
+    );
+    const fromPos = editor.offsetToPos(fromOff);
+    const toPos = editor.offsetToPos(toOff);
+    const answer = rawFullText.slice(fromOff, toOff).trim();
     if (!answer) {
       new Notice("Incremental Reading: nothing selected.");
       return;
     }
-    const fromPos = editor.getCursor("from");
-    const toPos = editor.getCursor("to");
     const hintR = await promptClozeHintInline(this.clozeHintHost());
     if (!hintR.ok) return;
     editor.setSelection(fromPos, toPos);

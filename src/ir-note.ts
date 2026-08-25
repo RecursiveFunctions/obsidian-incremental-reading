@@ -20,6 +20,7 @@ import {
 } from "./topic";
 import { buildClozeBody, buildClozeFromText } from "./cloze";
 import { sanitizeExtractSelection } from "./ir/frontmatter-body";
+import { expandSelectionAroundLinks } from "./ir/selection-map";
 
 /**
  * Slash-only stand-in for Obsidian's `normalizePath`: collapse repeats,
@@ -288,10 +289,19 @@ export async function createCloze(
 ): Promise<IrNoteResult> {
   const anchor = editor.getCursor("from");
   const head = editor.getCursor("to");
-  const selStart = editor.posToOffset(anchor);
-  const selEnd = editor.posToOffset(head);
-  if (selEnd <= selStart) return { error: "Nothing selected." };
+  const rawStart = editor.posToOffset(anchor);
+  const rawEnd = editor.posToOffset(head);
+  if (rawEnd <= rawStart) return { error: "Nothing selected." };
 
+  // Snap out to whole markdown/wiki links so a selection inside
+  // `[data.tf](#datatf)` can't produce `[{{c1::data.tf}}](#datatf)` — the
+  // hidden answer would then include the link's URL syntax in a way the
+  // user never highlighted.
+  const { start: selStart, end: selEnd } = expandSelectionAroundLinks(
+    editor.getValue(),
+    rawStart,
+    rawEnd,
+  );
   const fromPos = editor.offsetToPos(selStart);
   const toPos = editor.offsetToPos(selEnd);
   const spanned: string[] = [];
@@ -325,7 +335,11 @@ export async function createClozeFromText(
   hint?: string,
 ): Promise<IrNoteResult> {
   if (selEnd <= selStart) return { error: "Nothing selected." };
-  const { body, answer } = buildClozeFromText(raw, selStart, selEnd, hint);
+  // Second-line defense: callers (review-view) already expand, but keep the
+  // guard here so any other call site gets the same "no cloze across link
+  // syntax" guarantee.
+  const { start, end } = expandSelectionAroundLinks(raw, selStart, selEnd);
+  const { body, answer } = buildClozeFromText(raw, start, end, hint);
   const trimmed = answer.trim();
   if (!trimmed) return { error: "Nothing selected." };
   return createChildNote(app, source, "item", body, trimmed, settings);

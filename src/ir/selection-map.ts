@@ -326,10 +326,79 @@ export function mapRenderedSelectionToRaw(
   const slice = rendered.slice(rOff.start, rOff.end);
   if (!slice.trim()) return null;
 
-  const exact = raw.indexOf(slice);
-  if (exact !== -1 && raw.indexOf(slice, exact + 1) === -1) {
-    return { start: exact, end: exact + slice.length, text: slice };
-  }
+  const hit = (() => {
+    const exact = raw.indexOf(slice);
+    if (exact !== -1 && raw.indexOf(slice, exact + 1) === -1) {
+      return { start: exact, end: exact + slice.length, text: slice };
+    }
+    return locateTextInBody(raw, slice);
+  })();
+  if (!hit) return null;
 
-  return locateTextInBody(raw, slice);
+  // The rendered plain text of `[data.tf](#datatf)` is just `data.tf`, so a
+  // preview selection of the visible label lands *inside* the `[...]` in raw
+  // and would splice link syntax across the extract/cloze boundary. Snap out
+  // to whole-link so callers get a clean token.
+  const snapped = expandSelectionAroundLinks(raw, hit.start, hit.end);
+  if (snapped.start === hit.start && snapped.end === hit.end) return hit;
+  return {
+    start: snapped.start,
+    end: snapped.end,
+    text: raw.slice(snapped.start, snapped.end),
+  };
+}
+
+// Markdown/wiki link tokens we refuse to split across an extract or cloze
+// boundary. `!?\[...\]\(...\)` covers `[label](url)` and `![alt](url)`;
+// `\[\[...\]\]` covers `[[wikilink]]` and `[[wikilink|alias]]`. Both patterns
+// forbid newlines and un-escaped closing brackets so a runaway match can't
+// swallow the rest of the note when the source has stray `[` characters.
+const LINK_PATTERNS: readonly RegExp[] = [
+  /!?\[[^\]\n]*\]\([^)\n]*\)/g,
+  /\[\[[^\]\n]+?\]\]/g,
+];
+
+/**
+ * If `[start, end]` straddles a markdown link, wikilink, or image token,
+ * expand outward so the whole token is inside the selection. A selection
+ * that already sits fully outside every link, or fully contains one, is
+ * returned unchanged. Splitting a link produces cloze/extract text like
+ * `[{{c1::data.tf}}](#datatf)` — valid markdown but the anchored extract
+ * quote becomes `data.tf](#dat`, which never round-trips. This is the guard.
+ */
+export function expandSelectionAroundLinks(
+  raw: string,
+  start: number,
+  end: number,
+): { start: number; end: number } {
+  if (end <= start) return { start, end };
+  let s = start;
+  let e = end;
+  // Fixed-point: expanding to swallow one link can pull the selection into
+  // an adjacent one (rare, but possible with back-to-back links). Loop
+  // until no pattern moves the bounds; capped so a pathological regex can't
+  // spin forever.
+  for (let guard = 0; guard < 8; guard += 1) {
+    let moved = false;
+    for (const re of LINK_PATTERNS) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(raw)) !== null) {
+        const L = m.index;
+        const R = L + m[0].length;
+        if (L >= e) break;
+        if (R <= s) continue;
+        if (s > L && s < R) {
+          s = L;
+          moved = true;
+        }
+        if (e > L && e < R) {
+          e = R;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  return { start: s, end: e };
 }

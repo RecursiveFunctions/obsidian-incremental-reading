@@ -161,6 +161,7 @@ export function fakeEditor(
     getSelection: () => selection,
     getCursor: (which: "from" | "to") => (which === "from" ? from : to),
     getLine: (n: number) => lines[n],
+    getValue: () => lines.join("\n"),
     posToOffset: (pos: { line: number; ch: number }) => lineOffset(lines, pos),
     offsetToPos: (offset: number) => offsetToLine(lines, offset),
   } as unknown as Editor;

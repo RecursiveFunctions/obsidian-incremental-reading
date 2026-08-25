@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, alignRenderedOffsetToRaw, alignRawOffsetToRendered, previewScrollNeedle, uniqueIndex } from "../src/ir/selection-map";
+import { locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, alignRenderedOffsetToRaw, alignRawOffsetToRendered, previewScrollNeedle, uniqueIndex, expandSelectionAroundLinks } from "../src/ir/selection-map";
 
 test("locateTextInBody: finds multi-line text when needle has newlines", () => {
   const raw = "intro\nfirst line here\nsecond line there\noutro";
@@ -60,4 +60,76 @@ test("previewScrollNeedle: unique visible phrase after a caret", () => {
 
 test("SWITCH_TO_EDIT_COPY is the user-facing preview-map fallback", () => {
   assert.match(SWITCH_TO_EDIT_COPY, /Switch to Edit/);
+});
+
+test("expandSelectionAroundLinks: leaves plain-text selections alone", () => {
+  const raw = "the quick brown fox";
+  const r = expandSelectionAroundLinks(raw, 4, 9);
+  assert.deepEqual(r, { start: 4, end: 9 });
+});
+
+test("expandSelectionAroundLinks: expands a label-interior selection to whole link", () => {
+  const raw = "see [data.tf](#datatf) for details";
+  const labelStart = raw.indexOf("data.tf");
+  const labelEnd = labelStart + "data.tf".length;
+  const r = expandSelectionAroundLinks(raw, labelStart, labelEnd);
+  assert.equal(raw.slice(r.start, r.end), "[data.tf](#datatf)");
+});
+
+test("expandSelectionAroundLinks: expands when selection straddles ]( boundary", () => {
+  const raw = "see [data.tf](#datatf) for details";
+  const mid = raw.indexOf("tf](");
+  const r = expandSelectionAroundLinks(raw, mid, mid + "tf](#dat".length);
+  assert.equal(raw.slice(r.start, r.end), "[data.tf](#datatf)");
+});
+
+test("expandSelectionAroundLinks: expands wikilinks with alias", () => {
+  const raw = "before [[Foo Bar|the Foo]] after";
+  const alias = raw.indexOf("the Foo");
+  const r = expandSelectionAroundLinks(raw, alias, alias + "the Foo".length);
+  assert.equal(raw.slice(r.start, r.end), "[[Foo Bar|the Foo]]");
+});
+
+test("expandSelectionAroundLinks: expands image links", () => {
+  const raw = "an ![alt text](img.png) image";
+  const alt = raw.indexOf("alt");
+  const r = expandSelectionAroundLinks(raw, alt, alt + "alt text".length);
+  assert.equal(raw.slice(r.start, r.end), "![alt text](img.png)");
+});
+
+test("expandSelectionAroundLinks: selection already containing a link stays put", () => {
+  const raw = "see [data.tf](#datatf) here";
+  const start = raw.indexOf("see");
+  const end = raw.indexOf("here") + "here".length;
+  const r = expandSelectionAroundLinks(raw, start, end);
+  assert.deepEqual(r, { start, end });
+});
+
+test("expandSelectionAroundLinks: selection ending exactly at ) is untouched", () => {
+  const raw = "prefix [x](y) suffix";
+  const start = raw.indexOf("prefix");
+  const end = raw.indexOf(")") + 1;
+  const r = expandSelectionAroundLinks(raw, start, end);
+  assert.deepEqual(r, { start, end });
+});
+
+test("expandSelectionAroundLinks: back-to-back links pulled in on both ends", () => {
+  const raw = "x [a](1) [b](2) y";
+  const inA = raw.indexOf("a");
+  const inB = raw.indexOf("b");
+  const r = expandSelectionAroundLinks(raw, inA, inB + 1);
+  assert.equal(raw.slice(r.start, r.end), "[a](1) [b](2)");
+});
+
+test("expandSelectionAroundLinks: empty or reversed selection is a no-op", () => {
+  const raw = "see [data.tf](#datatf)";
+  assert.deepEqual(expandSelectionAroundLinks(raw, 5, 5), { start: 5, end: 5 });
+  assert.deepEqual(expandSelectionAroundLinks(raw, 9, 5), { start: 9, end: 5 });
+});
+
+test("expandSelectionAroundLinks: unclosed [ in prose doesn't runaway across newlines", () => {
+  const raw = "loose [ bracket\nnext paragraph [ok](#ok) end";
+  const okStart = raw.indexOf("ok](");
+  const r = expandSelectionAroundLinks(raw, okStart, okStart + 2);
+  assert.equal(raw.slice(r.start, r.end), "[ok](#ok)");
 });

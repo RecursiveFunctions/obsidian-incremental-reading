@@ -97,7 +97,7 @@ import {
   saveBody,
   stripExtractMarks,
 } from "./ir/frontmatter-body";
-import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, caretOffsetInRendered, renderedPlainText, previewScrollNeedle, uniqueIndex, alignRawOffsetToRendered, textPointAtTextOffset } from "./ir/selection-map";
+import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, caretOffsetInRendered, renderedPlainText, previewScrollNeedle, uniqueIndex, alignRawOffsetToRendered, textPointAtTextOffset, expandSelectionAroundLinks } from "./ir/selection-map";
 import { shouldEnterEditFromPreviewGesture } from "./ir/preview-edit-gesture";
 import {
   canUseReviewLivePreview,
@@ -2611,6 +2611,19 @@ export class IrReviewView extends ItemView {
       });
       body.addEventListener("dblclick", (evt: MouseEvent) => {
         if (evt.metaKey || evt.ctrlKey) return;
+        // Double-clicking on a link would otherwise be swallowed by the
+        // preview-control guard inside `tryEnterEdit` (single click already
+        // follows the link; double-click on a link atom is dead space, and
+        // browsers don't word-select inside `<a>`). Bypass tryEnterEdit
+        // entirely for the link case so extracts whose whole body is a link
+        // are still reachable via double-click.
+        const target = evt.target as HTMLElement | null;
+        if (target?.closest("a")) {
+          evt.preventDefault();
+          body.ownerDocument.getSelection()?.removeAllRanges();
+          this.beginEditFromPreviewClick(body, evt, slot);
+          return;
+        }
         tryEnterEdit(evt, {});
       });
     }
@@ -2967,21 +2980,33 @@ export class IrReviewView extends ItemView {
         this.currentRaw = this.liveEditor.getBody();
         const live = this.liveEditor.getSelection();
         if (!live) return { ok: false, reason: "Nothing selected." };
+        // Same link-guard as the preview path: `[data.tf](#datatf)` must be
+        // extracted or clozed as one token so the anchor round-trips.
+        const snapped = expandSelectionAroundLinks(
+          this.currentRaw,
+          live.start,
+          live.end,
+        );
         return {
           ok: true,
-          text: live.text,
-          start: live.start,
-          end: live.end,
+          text: this.currentRaw.slice(snapped.start, snapped.end),
+          start: snapped.start,
+          end: snapped.end,
         };
       }
       const active = this.contentEl.ownerDocument.activeElement;
       if (!(active instanceof HTMLTextAreaElement)) {
         return { ok: false, reason: "Click into the editor first." };
       }
-      const start = active.selectionStart ?? 0;
-      const end = active.selectionEnd ?? 0;
-      if (end <= start) return { ok: false, reason: "Nothing selected." };
+      const rawStart = active.selectionStart ?? 0;
+      const rawEnd = active.selectionEnd ?? 0;
+      if (rawEnd <= rawStart) return { ok: false, reason: "Nothing selected." };
       this.currentRaw = active.value;
+      const { start, end } = expandSelectionAroundLinks(
+        active.value,
+        rawStart,
+        rawEnd,
+      );
       return {
         ok: true,
         text: active.value.slice(start, end),
