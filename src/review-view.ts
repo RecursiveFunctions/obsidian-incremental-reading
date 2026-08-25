@@ -2611,17 +2611,44 @@ export class IrReviewView extends ItemView {
       });
       body.addEventListener("dblclick", (evt: MouseEvent) => {
         if (evt.metaKey || evt.ctrlKey) return;
-        // Double-click on the review body is treated as an unambiguous
-        // "enter edit here" gesture, regardless of what the browser's
-        // default action was about to be (word-select on plain text,
-        // dead-atom on a link, etc.). The earlier design routed dblclick
-        // through `tryEnterEdit`, which then refused because dblclick had
-        // already word-selected inside the body — so the gesture never
-        // actually entered edit for an extract's plain prose. Bypass the
-        // gesture arbiter, drop any word-selection the browser just made,
-        // and land the caret where the user clicked.
+        // Double-click on the review body is an unambiguous "enter edit
+        // here" gesture. Preserve the browser's default word-select by
+        // translating it into raw-body offsets and carrying it through as
+        // `pendingEditSelection`, so the textarea / live editor lands with
+        // the same word selected. Alt+X and Alt+Z then extract or cloze
+        // that word via `resolveSelection`'s editing branch — no need to
+        // re-select in edit mode.
+        const doc = body.ownerDocument;
+        const domSel = doc.getSelection();
+        const hasWord =
+          !!domSel &&
+          !domSel.isCollapsed &&
+          domSel.rangeCount > 0 &&
+          !!domSel.anchorNode &&
+          body.contains(domSel.anchorNode);
+        const mapped = hasWord
+          ? mapRenderedSelectionToRaw(
+              this.currentRaw,
+              body,
+              domSel!.getRangeAt(0),
+            )
+          : null;
         evt.preventDefault();
-        body.ownerDocument.getSelection()?.removeAllRanges();
+        domSel?.removeAllRanges();
+        if (mapped) {
+          // Carry the word-selection into the editor. `clickToEditCaret`
+          // wins over `pendingEditSelection` in `renderEditor`, so clear
+          // it explicitly to let the range apply.
+          this.clickToEditCaret = null;
+          this.skipBookmarkCursor = true;
+          this.pendingEditSelection = { start: mapped.start, end: mapped.end };
+          this.editing = true;
+          this.editKind = "live";
+          void this.renderCard();
+          return;
+        }
+        // No mappable word-selection (link atom, whitespace, etc.):
+        // fall back to caret-at-click.
         this.beginEditFromPreviewClick(body, evt, slot);
       });
     }
