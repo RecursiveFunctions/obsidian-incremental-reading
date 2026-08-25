@@ -796,7 +796,11 @@ export class IrTreeView extends ItemView {
     this.focusedId = node.id;
     if (kind === "open-note") {
       this.cancelPendingClick();
-      if (titleTarget) void this.openNote(titleTarget, node.element);
+      // detail>=2 IS a double-click; the browser will also dispatch the
+      // dedicated `dblclick` event on the same row (which passes edit:true).
+      // Do the edit-mode open here too so a single openFile call reaches
+      // Obsidian, avoiding a preview-then-source flicker.
+      if (titleTarget) void this.openNote(titleTarget, node.element, { edit: true });
       return;
     }
     this.cancelPendingClick();
@@ -1449,8 +1453,16 @@ export class IrTreeView extends ItemView {
     });
     row.addEventListener("dblclick", (e) => {
       e.preventDefault();
+      e.stopPropagation();
+      // The click #2 that produced this dblclick already ran onRowClick with
+      // detail=2 and called openNote once, then queued... nothing (kind !=
+      // "reveal-or-open" once detail hits 2), so no timer to race with in
+      // practice — but keep the cancel to be defensive if that classifier
+      // ever grows a case. `edit: true` forces source mode so the double-
+      // click gesture reliably lands the caret in the note instead of
+      // reopening it in whatever mode the last-active leaf preferred.
       this.cancelPendingClick();
-      if (titleTarget) void this.openNote(titleTarget, node.element);
+      if (titleTarget) void this.openNote(titleTarget, node.element, { edit: true });
     });
 
     const notePath = node.element.notePath ?? "";
@@ -1890,6 +1902,7 @@ export class IrTreeView extends ItemView {
   private async openNote(
     path: string,
     element?: IrElement,
+    opts?: { edit?: boolean },
   ): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) {
@@ -1902,15 +1915,20 @@ export class IrTreeView extends ItemView {
     // own promoted note), find the extract's line/ch and pass it via eState
     // so Obsidian scrolls the viewport straight to the highlight instead of
     // dropping the user at the top of the file.
-    let openState: { eState: Record<string, unknown> } | undefined;
+    // `state.mode: "source"` forces the MarkdownView into edit mode (used by
+    // the row's double-click path) instead of whatever mode Obsidian would
+    // otherwise pick from the last-active leaf.
+    const openState: {
+      eState?: Record<string, unknown>;
+      state?: Record<string, unknown>;
+      active?: boolean;
+    } = {};
     if (element?.anchor && element.anchor.sourcePath === path) {
       try {
         const raw = await this.app.vault.cachedRead(file);
         const pos = findExtractEditorPosition(element, raw);
         if (pos) {
-          openState = {
-            eState: { line: pos.line, ch: pos.ch, scroll: pos.line },
-          };
+          openState.eState = { line: pos.line, ch: pos.ch, scroll: pos.line };
         }
       } catch (e) {
         console.error(
@@ -1919,7 +1937,17 @@ export class IrTreeView extends ItemView {
         );
       }
     }
+    if (opts?.edit) {
+      openState.state = { mode: "source" };
+      // Focus the opened editor so the user is instantly in the caret, not
+      // parked back on the tree row that fired the dblclick.
+      openState.active = true;
+    }
 
-    await this.app.workspace.getLeaf(false).openFile(file, openState);
+    const payload =
+      openState.eState || openState.state || openState.active
+        ? openState
+        : undefined;
+    await this.app.workspace.getLeaf(false).openFile(file, payload);
   }
 }
