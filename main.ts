@@ -442,6 +442,11 @@ export default class IncrementalReadingPlugin extends Plugin {
         this.paintPdfHighlights();
       }),
     );
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        this.paintPdfHighlights();
+      }),
+    );
     // Initial decoration paint runs once the store is ready, below.
     void this.refreshExtractDecorations();
 

@@ -303,7 +303,20 @@ export function subscribePdfTextLayer(
   const container = pdfContainerEl(view);
   if (container && typeof MutationObserver !== "undefined") {
     let timer: number | null = null;
-    const obs = new MutationObserver(() => {
+    const isOurs = (n: Node) =>
+      n instanceof HTMLElement && /(^|\s)ir-pdf-/.test(n.className);
+    const obs = new MutationObserver((records) => {
+      // The IR painter inserts/removes its own overlay layers; reacting to
+      // those would repaint forever.
+      if (
+        records.every(
+          (r) =>
+            Array.from(r.addedNodes).every(isOurs) &&
+            Array.from(r.removedNodes).every(isOurs),
+        )
+      ) {
+        return;
+      }
       if (timer != null) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = null;
@@ -315,6 +328,21 @@ export function subscribePdfTextLayer(
       if (timer != null) window.clearTimeout(timer);
       obs.disconnect();
     });
+  }
+  // Overlay rects are measured from the live layout: a viewer that is
+  // hidden (another tab active) measures 0×0, so repaint when it gets a
+  // real size (tab shown, zoom, window resize).
+  if (container && typeof ResizeObserver !== "undefined") {
+    let last = "";
+    const ro = new ResizeObserver((entries) => {
+      const e = entries[0];
+      const key = e ? `${Math.round(e.contentRect.width)}x${Math.round(e.contentRect.height)}` : "";
+      if (key === last) return;
+      last = key;
+      onRendered();
+    });
+    ro.observe(container);
+    cleanups.push(() => ro.disconnect());
   }
   if (cleanups.length === 0) return null;
   return () => {

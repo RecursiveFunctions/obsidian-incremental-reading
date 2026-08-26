@@ -2213,7 +2213,7 @@
 .ir-pdf-held-layer {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 2;
   pointer-events: none;
 }
 .ir-pdf-mark,

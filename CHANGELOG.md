@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **PDF highlights persist after extract.** The overlay painter was
+  re-triggering its own mutation observer (paint → mutate → paint), and
+  a viewer hidden behind another tab measured 0×0 rects. The observer
+  now ignores IR's own layers, and the painter re-runs when the viewer
+  gets a real size or becomes the active leaf.
+- **Extract from a PDF-sourced card's own text.** Selecting text on the
+  review card of a PDF extract and pressing `Alt+X` now extracts from the
+  card (child of that extract) instead of demanding a PDF viewer selection.
+
 - **Review card / reading view: extracts now highlight even when they
   cross bold, links, or code.** The painter falls back to a
   formatting-tolerant match that wraps every text node the extract

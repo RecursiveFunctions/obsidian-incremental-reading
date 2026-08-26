@@ -3145,7 +3145,14 @@ export class IrReviewView extends ItemView {
   }): Promise<IrElement | undefined> {
     const slot = this.current;
     if (!slot || !this.canMakeChild()) return;
-    if (this.pdfSourcePath(slot)) {
+    // A PDF-sourced card: if the user selected text *on the card* (the
+    // extract's own text), extract from that like any other card. Only a
+    // selection in the PDF viewer goes through the PDF path.
+    const cardHasSelection =
+      !slot.file &&
+      (this.resolveSelection().ok ||
+        (this.multiSelect?.pending.body(this.heldKey(slot)).length ?? 0) > 0);
+    if (this.pdfSourcePath(slot) && !cardHasSelection) {
       const created = await this.commitPdfExtract?.({
         promote: opts?.promote,
       });
