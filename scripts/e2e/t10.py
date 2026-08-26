@@ -1,0 +1,41 @@
+import sys, time, os; sys.path.insert(0, "/tmp")
+from obs import *
+def img_box(page):
+    return page.evaluate("""() => { const img = app.workspace.activeLeaf.view.contentEl.querySelector('.markdown-preview-view img'); if (!img) return null; img.scrollIntoView({block:'center'}); const b = img.getBoundingClientRect(); return {x:b.left,y:b.top,w:b.width,h:b.height}; }""")
+def menu_items(page): return page.evaluate("() => Array.from(document.querySelectorAll('.menu .menu-item-title')).map(e => e.textContent)")
+def click_menu(page, text): return page.evaluate("t => { const it = Array.from(document.querySelectorAll('.menu .menu-item')).find(e => e.textContent.includes(t)); if (!it) return false; it.click(); return true }", text)
+with sync_playwright() as pw:
+    b, page = connect(pw)
+    page.evaluate("() => app.workspace.detachLeavesOfType('ir-review-view')")
+    page.evaluate("async () => { const leaf = app.workspace.getLeaf('tab'); await leaf.openFile(app.vault.getAbstractFileByPath('Heart.md')); await leaf.setViewState({...leaf.getViewState(), state: {...leaf.getViewState().state, mode: 'preview'}}); }"); time.sleep(1.5)
+    bx = img_box(page); print("img", bx)
+    # --- F: extract image region via context menu + drag
+    page.mouse.click(bx['x']+bx['w']/2, bx['y']+bx['h']/2, button="right"); time.sleep(0.6)
+    print("menu:", menu_items(page)); shot(page, "40-image-context-menu")
+    print("click region:", click_menu(page, "Extract image region")); time.sleep(0.6)
+    x0, y0 = bx['x']+bx['w']*0.55, bx['y']+bx['h']*0.1; x1, y1 = bx['x']+bx['w']*0.98, bx['y']+bx['h']*0.45
+    page.mouse.move(x0, y0); page.mouse.down(); page.mouse.move((x0+x1)/2, (y0+y1)/2, steps=5); shot(page, "41-region-drag"); page.mouse.move(x1, y1, steps=5); page.mouse.up(); time.sleep(2.5)
+    print("notices:", notices(page)[-2:]); print("attachments:", sorted(os.listdir('/tmp/ir-vault/attachments')))
+    print("extracts:", page.evaluate("() => app.plugins.plugins['incremental-reading'].store.load().then(s => Array.from(s.elements.values()).filter(e => e.anchor && e.anchor.sourcePath==='Heart.md').map(e => ({text: e.text, q: e.anchor.quote.exact})))"))
+    shot(page, "42-after-region-extract")
+    # --- E: occlusion from the image
+    bx = img_box(page)
+    page.mouse.click(bx['x']+bx['w']/2, bx['y']+bx['h']/2, button="right"); time.sleep(0.6)
+    print("click occl:", click_menu(page, "Image occlusion cards")); time.sleep(2)
+    print("leaves:", page.evaluate("() => { const out=[]; app.workspace.iterateAllLeaves(l => out.push(l.view.getViewType())); return out }"))
+    st = page.evaluate("() => { const s = document.querySelector('.ir-occlusion-stage'); const b = s.getBoundingClientRect(); return {x:b.left,y:b.top,w:b.width,h:b.height} }"); print("stage", st)
+    for (ax,ay,bxx,by) in [(0.08,0.14,0.42,0.40),(0.58,0.14,0.92,0.40),(0.08,0.58,0.42,0.86)]:
+        page.mouse.move(st['x']+st['w']*ax, st['y']+st['h']*ay); page.mouse.down(); page.mouse.move(st['x']+st['w']*bxx, st['y']+st['h']*by, steps=6); page.mouse.up(); time.sleep(0.4)
+    page.keyboard.type("aorta"); time.sleep(0.3)
+    shot(page, "43-occlusion-editor")
+    page.keyboard.press("Enter"); time.sleep(3)
+    print("notices:", notices(page)[-2:]); print("vault md:", sorted(f for f in os.listdir('/tmp/ir-vault') if f.endswith('.md')))
+    occ = sorted(f for f in os.listdir('/tmp/ir-vault') if f.startswith('Occlusion'))
+    print(open('/tmp/ir-vault/'+occ[0]).read()[:400])
+    page.evaluate("async (p) => { const leaf = app.workspace.getLeaf('tab'); await leaf.openFile(app.vault.getAbstractFileByPath(p)); await leaf.setViewState({...leaf.getViewState(), state: {...leaf.getViewState().state, mode: 'preview'}}); }", occ[0]); time.sleep(2)
+    shot(page, "44-occlusion-note-reading-view")
+    print("queue:", custom_review(page, "e.type === 'item'")); time.sleep(1)
+    shot(page, "45-occlusion-review-hidden")
+    page.evaluate("() => app.workspace.getLeavesOfType('ir-review-view')[0].view.contentEl.focus()"); page.keyboard.press("Space"); time.sleep(1.5)
+    shot(page, "46-occlusion-review-revealed")
+    print("masks:", page.evaluate("() => Array.from(document.querySelectorAll('.ir-review-main-body .ir-occlusion-mask')).map(m => m.className + ' bg=' + getComputedStyle(m).backgroundColor + ' op=' + getComputedStyle(m).opacity)"))
