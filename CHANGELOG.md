@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Occlusion masks read as masks in the light theme** (accent-tinted
+  opaque fill; the editor's masks are no longer see-through).
+- **PDF-extract cards paint their child extracts** on the card body.
+
 - **PDF highlights persist after extract.** The overlay painter was
   re-triggering its own mutation observer (paint → mutate → paint), and
   a viewer hidden behind another tab measured 0×0 rects. The observer

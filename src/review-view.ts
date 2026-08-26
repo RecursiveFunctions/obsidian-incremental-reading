@@ -96,7 +96,10 @@ import {
   type SourceMarkKind,
   type SourceMarkRange,
 } from "./ir/cloze-marks";
-import { paintIrSourceMarksInElement } from "./ir/extract-reading-marks";
+import {
+  paintIrSourceMarksInElement,
+  type DomSourceMark,
+} from "./ir/extract-reading-marks";
 import {
   stripFrontmatter,
   saveBody,
@@ -2614,6 +2617,16 @@ export class IrReviewView extends ItemView {
             r.kind === "cloze" ? "ir-cloze-source" : "ir-extract-source",
         })),
       );
+    } else if (!isCloze && slot && !slot.file) {
+      // Store-only card (e.g. a PDF extract): its children are anchored
+      // in this card's own text, so paint them from the element tree.
+      const kids: DomSourceMark[] = [];
+      for (const e of this.elementsById.values()) {
+        if (e.parentId !== slot.id || !e.anchor) continue;
+        const text = e.anchor.quote.exact || e.text;
+        if (text.trim()) kids.push({ text, cls: "ir-extract-source" });
+      }
+      if (kids.length > 0) paintIrSourceMarksInElement(body, kids);
     }
     this.wireMarkdownLinks(body, renderSourcePath);
 

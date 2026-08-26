@@ -2245,24 +2245,20 @@
   opacity: 0.35;
 }
 
-/* Occlusion masks must actually hide pixels: solid fills, no translucency. */
-.ir-occlusion-mask--masked {
-  background: var(--background-secondary-alt, #3a3a3a);
+/* Occlusion masks must actually hide pixels: opaque fills that read as a
+ * mask in both light and dark themes (an accent-tinted pastel, never a
+ * translucent theme color). The tested mask is solid accent. */
+.ir-occlusion-mask--masked,
+.ir-occlusion-mask--editable {
+  background: color-mix(in srgb, var(--interactive-accent) 32%, var(--background-primary));
   opacity: 1;
-  border: 1px solid var(--background-modifier-border-focus);
-  color: var(--text-muted);
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 60%, var(--background-primary));
+  color: var(--text-normal);
 }
-.ir-occlusion-mask--masked.ir-occlusion-mask--active {
+.ir-occlusion-mask--masked.ir-occlusion-mask--active,
+.ir-occlusion-mask--selected {
   background: var(--interactive-accent);
   opacity: 1;
   border: 2px dashed var(--text-on-accent);
-  color: var(--text-on-accent);
-}
-.ir-occlusion-mask--editable {
-  background: var(--background-secondary-alt, #3a3a3a);
-  opacity: 0.95;
-}
-.ir-occlusion-mask--selected {
-  background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
