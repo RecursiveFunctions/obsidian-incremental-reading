@@ -26,15 +26,23 @@ export function pdfMarksBySourcePath(
     if (el.notePath !== undefined) continue;
     const pdf = el.anchor?.pdf;
     if (!pdf || !el.anchor) continue;
-    if (!pdfSelectionIsRange(pdf.selection)) continue;
     const path = el.anchor.sourcePath;
     const bucket = out.get(path) ?? [];
-    bucket.push({
-      elementId: el.id,
-      page: pdf.page,
-      selection: pdf.selection,
-    });
-    out.set(path, bucket);
+    // Multi-selection extracts paint every span; single ones paint the
+    // top-level selector (which equals their only span).
+    const spans =
+      pdf.segments && pdf.segments.length > 0
+        ? pdf.segments
+        : [{ page: pdf.page, selection: pdf.selection }];
+    for (const span of spans) {
+      if (!pdfSelectionIsRange(span.selection)) continue;
+      bucket.push({
+        elementId: el.id,
+        page: span.page,
+        selection: span.selection,
+      });
+    }
+    if (bucket.length > 0) out.set(path, bucket);
   }
   return out;
 }

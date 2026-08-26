@@ -24,6 +24,12 @@ export interface ExtractInput {
   contextLen?: number;
   /** When set, the extract enters the reading queue (same as a migrated extract note). */
   schedule?: ReadSchedule;
+  /**
+   * Stored text override. Multi-selection extracts (Ctrl + select) anchor
+   * on their first span but carry every span joined in `text`; the anchor
+   * still records only the first slice so relocation stays byte-exact.
+   */
+  textOverride?: string;
 }
 
 export function buildExtractEvent(input: ExtractInput): IrEvent {
@@ -33,7 +39,10 @@ export function buildExtractEvent(input: ExtractInput): IrEvent {
   // the raw slice so the anchor resolver matches the on-disk body byte for
   // byte (resolver does exact string compare, not normalize).
   const rawSlice = input.sourceText.slice(input.selStart, input.selEnd);
-  const text = stripExtractMarks(rawSlice);
+  const text =
+    input.textOverride !== undefined
+      ? input.textOverride
+      : stripExtractMarks(rawSlice);
   const prefix = input.sourceText.slice(
     Math.max(0, input.selStart - contextLen),
     input.selStart,
@@ -112,6 +121,10 @@ export function buildPdfExtractEvent(input: PdfExtractInput): IrEvent {
     pdf: {
       page: input.pdf.page,
       selection: input.pdf.selection,
+      ...(input.pdf.segments && input.pdf.segments.length > 0
+        ? { segments: input.pdf.segments }
+        : {}),
+      ...(input.pdf.rect ? { rect: input.pdf.rect } : {}),
     },
   };
 

@@ -71,6 +71,22 @@ If you delete a source note in Obsidian, the extracts stay and you get one promp
 
 If you restore that note, you are asked whether to attach the highlights again. Nothing is attached behind your back.
 
+## Multi-selection, images, and image occlusion
+
+**Hold Ctrl (Cmd on macOS) to build one extract from several spans**, the way SuperMemo Assistant does. Release each selection with the modifier down and it is *held* (painted with the highlight color); `Alt+X` then joins every held span plus the live one into a single extract, one paragraph per span, anchored on the first. Works in the PDF viewer (spans can sit on different pages; all of them paint as highlights), in the editor (it becomes a native multi-selection), in reading view, and on the review card. `Esc` or `Alt+Shift+C` drops the held spans.
+
+**Images from a PDF.** `Alt+Shift+I` in the viewer, then drag a rectangle on a page: the crop is saved as a PNG attachment and becomes an extract that embeds it (the page and rect are recorded on the anchor). `Alt+Shift+O` does the same drag but opens the occlusion editor on the crop.
+
+**Images in notes.** Right-click an image inside an IR topic or extract (or on the review card) → **Extract image (IR)** anchors an extract on the `![[...]]` markup, or **Image occlusion cards from this image** opens the editor. `Alt+O` (or the file menu) on an image file does the same; the cards are filed under the IR note that embeds the image, or a new topic note that does.
+
+**Image occlusion editor** is a workspace leaf, not a modal: drag to draw masks, click a mask to select it, type an optional label. `Del` removes, `Tab` cycles, arrows nudge, `M` toggles the mode, `Enter` creates one item card per mask, `Esc` closes. Modes: **Hide all, guess one** (every mask covered, one tested) or **Hide one, show rest** (Settings → Image occlusion default mode). Each card is an ordinary item note whose body is an `ir-occlusion` code block:
+
+```ir-occlusion
+{"image":"attachments/heart.png","mode":"hide-all","active":2,"rects":[{"n":1,"x":0.1,"y":0.2,"w":0.3,"h":0.1,"label":"aorta"},{"n":2,"x":0.5,"y":0.5,"w":0.2,"h":0.2}]}
+```
+
+The block renders as the masked image wherever Obsidian renders markdown (click the tested mask to peek in a normal note). In review the pane owns reveal (`Space`) and grading (`1`–`4`), exactly like a text cloze. Anki TSV export writes the block verbatim; Anki has no import for it.
+
 ## Neural review
 
 **Go neural** (`Alt+N`) is a second kind of session, not a replacement for today's due queue. It starts from the card you are reviewing, or from the IR note you have open — something already in IR. From a row in the element tree, use that row's menu. It then walks related material (children, wikilinks, tags). Grading still counts.
@@ -94,7 +110,11 @@ The SuperMemo-adjacent commands have default `Alt+…` bindings. Rebind or clear
 | `Alt+T` | Mark the current note or PDF as an IR topic |
 | `Alt+R` | Start review (today's due queue) |
 | `Alt+N` | Go neural (from something already in IR) |
-| `Alt+X` | Extract selection (anchored, unless the setting is on). In a PDF, uses the viewer text selection. |
+| `Alt+X` | Extract selection (anchored, unless the setting is on). In a PDF, uses the viewer text selection. Joins every span held with **Ctrl** (see below). |
+| `Alt+Shift+C` | Clear held (Ctrl) selections (`Esc` does too) |
+| `Alt+Shift+I` | Extract an image region from the open PDF (drag a rectangle) |
+| `Alt+Shift+O` | Image occlusion cards from a PDF region (drag a rectangle) |
+| `Alt+O` | Image occlusion cards from the open image file |
 | `Alt+Shift+X` | Extract once to a standalone note |
 | `Alt+Shift+P` | Promote the current anchored extract |
 | `Alt+Z` | Cloze selection (optional hint) |
@@ -140,7 +160,8 @@ PDF topics and extracts (Alt+T / Alt+X in the built-in viewer). Review splits th
 ### Stretch
 
 - [x] **PDF support.** Selection to extract from a PDF, with page references preserved. (Text-layer PDFs; no OCR / snapshots / page-split in v1.)
-- [ ] **Image occlusion** for visual cards.
+- [x] **Image occlusion** for visual cards (editor leaf, `ir-occlusion` blocks, one card per mask).
+- [x] **Ctrl multi-selection extracts** and **image extracts** from PDFs and notes (SuperMemo Assistant parity).
 - [ ] **Browser extension** for one-click import of web pages into the IR queue.
 - [ ] **Full mobile parity.** The plugin is already mobile-eligible; remaining work is whatever a real device still gets wrong, especially on very small screens.
 

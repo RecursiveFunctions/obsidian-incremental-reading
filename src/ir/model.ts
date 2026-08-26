@@ -56,9 +56,30 @@ export interface PdfSelector {
   page: number;
   /**
    * Obsidian text-layer range: beginIndex, beginOffset, endIndex, endOffset.
-   * Copied from the core "Copy link to selection" fragment.
+   * Copied from the core "Copy link to selection" fragment. `[0,0,0,0]` is
+   * the page-only placeholder (image-region extracts use it).
    */
   selection: [number, number, number, number];
+  /**
+   * Every span of a Ctrl multi-selection, in the order the user made
+   * them. The top-level page/selection duplicate the first span so older
+   * readers keep working; the painter highlights all of them.
+   */
+  segments?: PdfSegment[];
+  /** Region cropped out of the page for an image extract, normalized 0..1. */
+  rect?: NormalizedRect;
+}
+
+export interface PdfSegment {
+  page: number;
+  selection: [number, number, number, number];
+}
+
+export interface NormalizedRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface Anchor {

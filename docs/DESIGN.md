@@ -96,6 +96,43 @@ The review side column cannot host the PDF. It auto-opens the native
 viewer in a split, focuses it, and offers **Focus PDF** to bring it back
 (UI commitment #2 exception, named in `docs/UI-COMMITMENTS.md`).
 
+### Multi-selection, image regions, and occlusion
+
+**Decision 2026-08-26:** SuperMemo Assistant parity on top of the PDF
+model above, without a second anchoring scheme.
+
+- **Ctrl multi-select.** A pure `PendingSelections` set
+  (`src/ir/multi-select.ts`, dedupe by source + span) plus a DOM
+  controller that paints held ranges with `CSS.highlights`
+  (`multi-select-dom.ts`). One rule on every surface: the first span
+  carries the anchor, all spans join the stored `text`
+  (`ExtractInput.textOverride`). PDF anchors gain `pdf.segments` (every
+  span, any page); the painter highlights all of them, and the top-level
+  `page`/`selection` still equal the first span so older readers work. In
+  CodeMirror the hold is expressed as native multi-selection
+  (`setSelections`) and Extract reads `listSelections()`. In reading view
+  and the review card offsets are resolved at hold time
+  (`mapRenderedSelectionToRaw`) because the DOM re-renders before Extract.
+- **Image regions.** `pdf-rect-select.ts` draws a one-shot rectangle on a
+  `.page`; `pdf-canvas.ts` crops the rendered canvas to a PNG attachment
+  (public DOM only, private viewer API stays fenced in `pdf-view.ts`). The
+  extract is a normal PDF extract with the page-only placeholder selection
+  and `pdf.rect`; its text is the `![[crop.png]]` embed. Images inside
+  notes are extracted byte-exactly on their embed markup
+  (`image-embed.ts`), so decorations and relocation are unchanged.
+- **Occlusion.** Follows the cloze precedent: one item note per card, body
+  is a single `ir-occlusion` fenced JSON block (normalized rects, `active`
+  = tested rect, `mode` hide-all / hide-one; `src/ir/occlusion.ts`). A
+  code-block processor renders it everywhere; in the review pane the block
+  reads `.ir-review-revealed` on the card body so reveal stays with the
+  pane's Space/swipe/grade flow (`isClozeLike = hasCloze || hasOcclusion`).
+  Items need a markdown parent, so a PDF crop is promoted to a note first
+  (same "extract, then cloze the extract" rule). The editor is an
+  `ItemView` leaf (UI commitment #6) and keyboard-complete (#1).
+
+Known limits: paragraph breaks inside a PDF selection are not recoverable
+from the text layer; Anki export writes the occlusion block verbatim.
+
 ## 3. Graph (Obsidian Graph view)
 
 **Decision 2026-08-14:** Graph view is not a design constraint. SuperMemo
@@ -446,5 +483,6 @@ Reading-view limitations (worth knowing about, not bugs):
   accuracy-weighted blending, for IR throughput. Weighted blending / auto-pick
   by per-scheduler hit rate is logged as a post-v1 option (the "always-armed"
   variant section 5 anticipates), not v1.
-- Image occlusion, incremental video and audio: out of scope for v1, revisit.
+- Image occlusion: SHIPPED (see "Multi-selection, image regions, and
+  occlusion"). Incremental video and audio: still out of scope.
 - Sleep/circadian and Plan/day-structure subsystems: deliberately not pursued.

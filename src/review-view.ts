@@ -17,6 +17,10 @@ import {
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
+import { hasOcclusion } from "./ir/occlusion";
+import type { MultiSelectController } from "./ir/multi-select-dom";
+import { mergeWithLive, type BodyHeldSelection } from "./ir/multi-select";
+import { joinSelectionTexts } from "./ir/pdf-canvas";
 import {
   createClozeFromText,
   getIrType,
@@ -397,7 +401,7 @@ export class IrReviewView extends ItemView {
             const slot = this.current;
             if (!slot) return "reading";
             const reading = this.isReading(slot);
-            const isCloze = !reading && hasCloze(this.currentRaw);
+            const isCloze = !reading && this.isClozeLike(this.currentRaw);
             return reviewSwipeMode(reading, isCloze, this.revealed);
           },
           isBlocked: () =>
@@ -870,6 +874,58 @@ export class IrReviewView extends ItemView {
     return slot.element.anchor?.sourcePath ?? null;
   }
 
+  /** Cards with a hidden answer: text clozes and image occlusions. */
+  private isClozeLike(raw: string): boolean {
+    return hasCloze(raw) || hasOcclusion(raw);
+  }
+
+  /**
+   * Ctrl-multi-select controller, injected by the host plugin. Held spans
+   * are keyed by the slot id (`slot:<id>`) because their offsets index the
+   * card body, not a vault note.
+   */
+  multiSelect?: MultiSelectController;
+
+  private heldKey(slot: ReviewSlot): string {
+    return `slot:${slot.id}`;
+  }
+
+  /** Hold the current card-body selection (Ctrl+mouseup). */
+  holdCurrentSelection(): boolean {
+    const slot = this.current;
+    const ms = this.multiSelect;
+    if (!slot || !ms || this.editing || !this.canMakeChild()) return false;
+    if (this.pdfSourcePath(slot)) return false;
+    const sel = this.resolveSelection();
+    if (!sel.ok) return false;
+    const doc = this.contentEl.ownerDocument;
+    const live = doc.getSelection();
+    const range = live && live.rangeCount > 0 ? live.getRangeAt(0) : null;
+    return ms.hold(
+      {
+        kind: "body",
+        sourcePath: this.heldKey(slot),
+        text: sel.text,
+        start: sel.start,
+        end: sel.end,
+      },
+      range,
+    );
+  }
+
+  /** Nearest topic/extract note new child notes should be filed under. */
+  getPlacementFileForChildren(): TFile | null {
+    const slot = this.current;
+    return slot ? this.resolvePlacementFile(slot) : null;
+  }
+
+  /** Vault path used for link resolution / provenance of the current card. */
+  getProvenancePathForChildren(): string | null {
+    const slot = this.current;
+    if (!slot) return null;
+    return slot.file?.path ?? this.resolveProvenanceSourcePath(slot);
+  }
+
   /** Vault path of the PDF this card was extracted from, if any. */
   private pdfSourcePath(slot: ReviewSlot): string | null {
     if (slot.file && isPdfPath(slot.file.path)) return slot.file.path;
@@ -953,7 +1009,7 @@ export class IrReviewView extends ItemView {
     this.swipeCoachShownThisSession = true;
     const reading = this.isReading(slot);
     const clozeHint =
-      !reading && hasCloze(this.currentRaw) && !this.revealed;
+      !reading && this.isClozeLike(this.currentRaw) && !this.revealed;
     const text = reading
       ? "Swipe the card: ← previous · → or ↑ next"
       : clozeHint
@@ -1722,7 +1778,7 @@ export class IrReviewView extends ItemView {
 
     const columns = host.createDiv({ cls: "ir-review-columns" });
     const reading = this.isReading(slot);
-    const isCloze = !reading && hasCloze(this.currentRaw);
+    const isCloze = !reading && this.isClozeLike(this.currentRaw);
     const maskClozeChrome = !reading && isCloze && !this.revealed;
     const mobileCompactEdit =
       Platform.isMobile && this.editing && this.canEdit();
@@ -2526,6 +2582,9 @@ export class IrReviewView extends ItemView {
     const body = parent.createEl("div", {
       cls: "ir-review-body ir-review-main-body",
     });
+    // The `ir-occlusion` code-block processor reads this to decide whether
+    // the tested mask is uncovered (the pane owns reveal, not the mask).
+    body.toggleClass("ir-review-revealed", this.revealed);
     // For store-only anchored extracts, `slot.file` is null. Falling back
     // to the empty string strips the source path Obsidian uses to resolve
     // contextual wikilinks (`[[sample]]`), so they render as unresolved.
@@ -3104,15 +3163,29 @@ export class IrReviewView extends ItemView {
       await this.renderCard();
       return created;
     }
-    const sel = this.resolveSelection();
-    if (!sel.ok) {
-      if (sel.renderedText?.trim()) {
-        await this.switchToEditForExactSelection(sel.renderedText);
+    const held = this.multiSelect?.pending.body(this.heldKey(slot)) ?? [];
+    const liveRes = this.resolveSelection();
+    if (!liveRes.ok && held.length === 0) {
+      if (liveRes.renderedText?.trim()) {
+        await this.switchToEditForExactSelection(liveRes.renderedText);
         return;
       }
-      new Notice(`Incremental Reading: ${sel.reason}`);
+      new Notice(`Incremental Reading: ${liveRes.reason}`);
       return;
     }
+    const live: BodyHeldSelection | null = liveRes.ok
+      ? {
+          kind: "body",
+          sourcePath: this.heldKey(slot),
+          text: liveRes.text,
+          start: liveRes.start,
+          end: liveRes.end,
+        }
+      : null;
+    const spans = mergeWithLive(held, live);
+    const sel = spans[0]!;
+    const textOverride =
+      spans.length > 1 ? joinSelectionTexts(spans.map((s) => s.text)) : undefined;
     const sourcePath =
       slot.file?.path ?? this.resolveProvenanceSourcePath(slot);
     if (!sourcePath) {
@@ -3131,6 +3204,7 @@ export class IrReviewView extends ItemView {
         sourceText: bodyBeforeExtract,
         selStart: sel.start,
         selEnd: sel.end,
+        textOverride,
         parentId: slot.id,
         priority: slot.element.priority,
         elementId: newElementId(),
@@ -3149,8 +3223,13 @@ export class IrReviewView extends ItemView {
         await this.commitPromoteExtract(created.id, created);
       }
       this.adoptElement(created);
+      this.multiSelect?.clear();
       if (!opts?.silent) {
-        this.flash(`Extracted · ${this.remainingInSession()} left`);
+        this.flash(
+          spans.length > 1
+            ? `Extracted ${spans.length} spans · ${this.remainingInSession()} left`
+            : `Extracted · ${this.remainingInSession()} left`,
+        );
       }
       this.onChange?.();
     } catch (e) {

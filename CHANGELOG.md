@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Ctrl multi-selection extracts** (SuperMemo Assistant style). Hold
+  Ctrl/Cmd while releasing each selection to hold it (painted with the CSS
+  Custom Highlight API); one `Alt+X` joins every held span plus the live
+  one into a single extract, one paragraph per span, anchored on the
+  first. PDF spans may sit on different pages and all of them paint as
+  highlights (`anchor.pdf.segments`). Works in the PDF viewer, the editor
+  (becomes a native multi-selection), reading view, and the review card.
+  `Esc` / **Clear held selections** (`Alt+Shift+C`) drops them.
+- **Image extracts.** `Alt+Shift+I` drags a rectangle on a PDF page and
+  saves the crop as a PNG attachment extract (`anchor.pdf.rect`).
+  Right-click an embedded image in an IR note → **Extract image (IR)**
+  (anchored on the embed markup).
+- **Image occlusion cards.** New workspace-leaf editor (no modal): draw
+  masks, label them, pick hide-all / hide-one, `Enter` creates one item
+  card per mask. Entry points: `Alt+Shift+O` on a PDF region (the crop is
+  promoted to a note and the cards filed under it), right-click on an
+  embedded image, `Alt+O` / file menu on an image file. Cards are
+  `ir-occlusion` code blocks rendered by a code-block processor, so they
+  display in any note; the review pane reveals and grades them like text
+  clozes. New setting: **Image occlusion default mode**.
+
 ### Fixed
 
 - **Extracted spans stay highlighted on the topic in IR reading view.**

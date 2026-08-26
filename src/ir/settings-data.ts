@@ -60,6 +60,12 @@ export interface IrSettings {
    * as Next. Off leaves Space as reveal-only.
    */
   spaceAfterReveal: "again" | "hard" | "good" | "easy" | "off";
+  /**
+   * Default mask mode for new image-occlusion cards. "hide-all" masks every
+   * rect and tests one (Anki's hide-all-guess-one); "hide-one" masks only
+   * the tested rect so the others stay visible as context.
+   */
+  occlusionDefaultMode: "hide-all" | "hide-one";
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
@@ -78,6 +84,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   interleaveSimilarPriority: true,
   showDivergencePicker: false,
   spaceAfterReveal: "good",
+  occlusionDefaultMode: "hide-all",
 };
 
 /** Fresh copy so restoring defaults cannot mutate the constant. */

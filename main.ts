@@ -1,5 +1,6 @@
 import {
   Editor,
+  type EditorSelectionOrCaret,
   MarkdownView,
   Menu,
   Modal,
@@ -91,6 +92,30 @@ import { promptSourceGone, type SourceGoneChoice } from "./src/source-gone-modal
 import { planBulkImport } from "./src/ir/bulk-import";
 import { folderTopicCandidates } from "./src/ir/folder-topics";
 import { buildExtractEvent, buildPdfExtractEvent, buildPromoteEvent } from "./src/ir/extract";
+import {
+  IR_OCCLUSION_EDITOR_VIEW_TYPE,
+  IrOcclusionEditorView,
+} from "./src/occlusion-editor-view";
+import { cropPdfPage, joinSelectionTexts, pageLabel, pdfCropStem, pdfPageNumber } from "./src/ir/pdf-canvas";
+import { startPdfRectSelect } from "./src/ir/pdf-rect-select";
+import { MultiSelectController } from "./src/ir/multi-select-dom";
+import {
+  isMultiSelectModifier,
+  mergeWithLive,
+  type BodyHeldSelection,
+  type PdfHeldSelection,
+} from "./src/ir/multi-select";
+import {
+  OCCLUSION_LANG,
+  occlusionBodies,
+  occlusionNoteStem,
+  parseOcclusionJson,
+  type OcclusionMode,
+  type OcclusionRect,
+} from "./src/ir/occlusion";
+import { renderOcclusion } from "./src/ir/occlusion-render";
+import { findImageEmbedRange } from "./src/ir/image-embed";
+import type { NormalizedRect, PdfSelector } from "./src/ir/model";
 import { resolveAnchor } from "./src/ir/anchor";
 import {
   IrDecorationCache,
@@ -105,6 +130,8 @@ import { pdfMarksBySourcePath, type PdfExtractMark } from "./src/ir/pdf-marks";
 import { PdfHighlightPainter } from "./src/ir/pdf-decorations";
 import {
   findPdfTextSelection,
+  pdfContainerEl,
+  pdfFileFromView,
   type PdfTextSelection,
   activeIrFile,
 } from "./src/ir/pdf-view";
@@ -154,6 +181,30 @@ const BULK_EXTRACT_CONFIRM_THRESHOLD = 50;
 
 /** Folder "mark all as topics" asks before writing this many new frontmatters. */
 const FOLDER_TOPIC_CONFIRM_THRESHOLD = 10;
+
+const IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "svg",
+  "avif",
+]);
+
+function isImageFile(file: TFile): boolean {
+  return IMAGE_EXTENSIONS.has(file.extension.toLowerCase());
+}
+
+/** Slash-only folder normalization for generated-note placement. */
+function normalizePathForFolder(p: string): string {
+  return p
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/")
+    .replace(/^\/+|\/+$/g, "")
+    .trim();
+}
 
 /**
  * Machine-identifying string passed to `IrStore.init` so each physical
@@ -301,6 +352,18 @@ export default class IncrementalReadingPlugin extends Plugin {
   /** Survives the click that focuses review and collapses the PDF selection. */
   private lastPdfSelection: PdfTextSelection | null = null;
 
+  /**
+   * SuperMemo-style multi-selection: spans held with Ctrl+select (PDF text
+   * layer, reading view, review card) until the next Extract joins them.
+   */
+  private multiSelect = new MultiSelectController((n) =>
+    this.onHeldSelectionsChange(n),
+  );
+  /** Cancels an in-progress PDF rectangle-select mode. */
+  private pdfRectCancel: (() => void) | null = null;
+  /** Editor selections captured on Ctrl+mousedown so Ctrl+drag can add to them. */
+  private editorCtrlSnapshot: EditorSelectionOrCaret[] | null = null;
+
   async onload() {
     await this.loadSettings();
     const fs = new ObsidianVaultFs(
@@ -313,6 +376,42 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.registerDomEvent(document, "selectionchange", () => {
       const sel = findPdfTextSelection(this.app);
       if (sel) this.lastPdfSelection = sel;
+    });
+
+    // PDF regions + images + occlusion: editor leaf, card renderer, and the
+    // document-level listeners behind Ctrl-multi-select and the image menu.
+    this.registerView(
+      IR_OCCLUSION_EDITOR_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) => new IrOcclusionEditorView(leaf),
+    );
+    this.registerMarkdownCodeBlockProcessor(OCCLUSION_LANG, (src, el, ctx) =>
+      this.renderOcclusionBlock(src, el, ctx.sourcePath),
+    );
+    this.registerDomEvent(
+      document,
+      "mousedown",
+      (evt) => this.onDocumentMouseDown(evt),
+      true,
+    );
+    this.registerDomEvent(
+      document,
+      "mouseup",
+      (evt) => this.onDocumentMouseUp(evt),
+      true,
+    );
+    this.registerDomEvent(
+      document,
+      "contextmenu",
+      (evt) => this.onDocumentContextMenu(evt),
+      true,
+    );
+    this.registerDomEvent(document, "keydown", (evt) => {
+      // Esc drops held spans. Never preventDefault: Vim and Obsidian keep
+      // their own Esc semantics (UI commitment #1).
+      if (evt.key === "Escape" && this.multiSelect.size > 0) {
+        this.multiSelect.clear();
+        new Notice("Incremental Reading: held selections cleared.");
+      }
     });
 
     // Editor decoration extension (DESIGN §Q3). Registered before any extract
@@ -472,7 +571,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         this.irReviewSession = null;
         const queue = session?.queue ?? [];
         const elementsById = session?.elementsById ?? new Map<ElementId, IrElement>();
-        return new IrReviewView(
+        const view = new IrReviewView(
           leaf,
           this,
           this.settings,
@@ -498,6 +597,8 @@ export default class IncrementalReadingPlugin extends Plugin {
           emptyVault,
           (opts) => this.extractFromPdfInReview(opts),
         );
+        view.multiSelect = this.multiSelect;
+        return view;
       },
     );
 
@@ -642,10 +743,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       checkCallback: (checking) => {
         const pdfSel = findPdfTextSelection(this.app);
         if (pdfSel) this.lastPdfSelection = pdfSel;
-        if (pdfSel || this.lastPdfSelection) {
+        const heldPdf = this.heldPdfFile();
+        if (pdfSel || this.lastPdfSelection || heldPdf) {
           if (!checking) {
             void this.extractFromPdfSelection(
-              pdfSel ?? this.lastPdfSelection!,
+              pdfSel ?? this.lastPdfSelection,
             );
           }
           return true;
@@ -708,6 +810,58 @@ export default class IncrementalReadingPlugin extends Plugin {
       checkCallback: (checking) => {
         if (!this.canPromoteCurrentExtract()) return false;
         if (!checking) void this.promoteCurrentExtract();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "extract-pdf-region",
+      name: "Extract image region from PDF (drag a rectangle)",
+      icon: "crop",
+      hotkeys: [{ modifiers: ["Alt", "Shift"], key: "i" }],
+      checkCallback: (checking) => {
+        if (!this.activePdfLeafContainer()) return false;
+        if (!checking) void this.startPdfRegionCapture("extract");
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "occlusion-from-pdf-region",
+      name: "Image occlusion cards from PDF region (drag a rectangle)",
+      icon: "scan",
+      hotkeys: [{ modifiers: ["Alt", "Shift"], key: "o" }],
+      checkCallback: (checking) => {
+        if (!this.activePdfLeafContainer()) return false;
+        if (!checking) void this.startPdfRegionCapture("occlusion");
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "occlusion-from-image",
+      name: "Image occlusion cards from image",
+      icon: "scan",
+      hotkeys: [{ modifiers: ["Alt"], key: "o" }],
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || !isImageFile(file)) return false;
+        if (!checking) void this.occlusionFromImageFile(file);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "clear-held-selections",
+      name: "Clear held (Ctrl) selections",
+      icon: "eraser",
+      hotkeys: [{ modifiers: ["Alt", "Shift"], key: "c" }],
+      checkCallback: (checking) => {
+        if (this.multiSelect.size === 0) return false;
+        if (!checking) {
+          this.multiSelect.clear();
+          new Notice("Incremental Reading: held selections cleared.");
+        }
         return true;
       },
     });
@@ -1056,6 +1210,18 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
 
     this.registerEvent(
+      this.app.workspace.on("file-menu", (menu: Menu, file) => {
+        if (!(file instanceof TFile) || !isImageFile(file)) return;
+        menu.addItem((item) =>
+          item
+            .setTitle("Image occlusion cards from image")
+            .setIcon("scan")
+            .onClick(() => void this.occlusionFromImageFile(file)),
+        );
+      }),
+    );
+
+    this.registerEvent(
       // pdf-menu is an untyped core event (same hook PDF++ uses).
       this.app.workspace.on("pdf-menu" as "file-menu", (menu: Menu) => {
         const sel = findPdfTextSelection(this.app);
@@ -1188,6 +1354,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.goneSettleTimer = null;
     }
     this.pdfHighlights?.detach();
+    this.pdfRectCancel?.();
+    this.pdfRectCancel = null;
+    this.multiSelect.dispose();
+    this.app.workspace.detachLeavesOfType(IR_OCCLUSION_EDITOR_VIEW_TYPE);
     this.irReviewSession = null;
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
@@ -1426,12 +1596,34 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.switchMarkdownToSource(mv, range.toString());
       return;
     }
-    await this.extractMappedBodyRange(file, mapped, opts);
+    const held = this.multiSelect.pending.body(file.path);
+    const spans = mergeWithLive(held, {
+      kind: "body",
+      sourcePath: file.path,
+      text: mapped.text,
+      start: mapped.start,
+      end: mapped.end,
+    });
+    const first = spans[0]!;
+    await this.extractMappedBodyRange(
+      file,
+      {
+        start: first.start,
+        end: first.end,
+        text: first.text,
+        textOverride:
+          spans.length > 1
+            ? joinSelectionTexts(spans.map((s) => s.text))
+            : undefined,
+      },
+      opts,
+    );
+    this.multiSelect.clear();
   }
 
   private async extractMappedBodyRange(
     source: TFile,
-    mapped: { start: number; end: number; text: string },
+    mapped: { start: number; end: number; text: string; textOverride?: string },
     opts?: { promote?: boolean },
   ): Promise<void> {
     if (!(await this.ensureIrSource(source))) return;
@@ -1457,6 +1649,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         sourceText: bodyBeforeExtract,
         selStart: mapped.start,
         selEnd: mapped.end,
+        textOverride: mapped.textOverride,
         parentId,
         priority: getPriority(this.app, source, this.settings.defaultPriority),
         elementId: newElementId(),
@@ -1537,11 +1730,31 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: store is not ready.");
       return;
     }
-    const fromPos = editor.getCursor("from");
-    const toPos = editor.getCursor("to");
+    // Multi-cursor / Ctrl+select: every non-empty range joins the extract;
+    // the first (document order) carries the anchor.
+    const ranges = editor
+      .listSelections()
+      .map((r) => {
+        const a = editor.posToOffset(r.anchor);
+        const h = editor.posToOffset(r.head);
+        return { from: Math.min(a, h), to: Math.max(a, h) };
+      })
+      .filter((r) => r.to > r.from)
+      .sort((a, b) => a.from - b.from);
+    const first = ranges[0];
+    const fromPos = first ? editor.offsetToPos(first.from) : editor.getCursor("from");
+    const toPos = first ? editor.offsetToPos(first.to) : editor.getCursor("to");
     const fromOffset = editor.posToOffset(fromPos);
     const toOffset = editor.posToOffset(toPos);
     const rawSelection = editor.getRange(fromPos, toPos);
+    const joinedOverride =
+      ranges.length > 1
+        ? joinSelectionTexts(
+            ranges.map((r) =>
+              editor.getRange(editor.offsetToPos(r.from), editor.offsetToPos(r.to)),
+            ),
+          )
+        : undefined;
     // Shrink the range past surrounding whitespace so the wrap and the
     // ancestor-propagation text stay aligned and don't include stray spaces.
     const leadingWs = rawSelection.length - rawSelection.trimStart().length;
@@ -1582,6 +1795,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         sourceText: bodyBeforeExtract,
         selStart: extractStart,
         selEnd: extractEnd,
+        textOverride: joinedOverride,
         parentId,
         priority: getPriority(this.app, source, this.settings.defaultPriority),
         elementId: newElementId(),
@@ -1604,7 +1818,9 @@ export default class IncrementalReadingPlugin extends Plugin {
         return;
       }
       new Notice(
-        `Extracted (anchored in "${source.basename}", not a separate note).`,
+        ranges.length > 1
+          ? `Extracted ${ranges.length} spans as one extract (anchored in "${source.basename}").`
+          : `Extracted (anchored in "${source.basename}", not a separate note).`,
       );
     } catch (e) {
       console.error("Incremental Reading: anchored extract failed", e);
@@ -1628,14 +1844,70 @@ export default class IncrementalReadingPlugin extends Plugin {
     promote?: boolean;
   }): Promise<IrElement | undefined> {
     const sel = findPdfTextSelection(this.app) ?? this.lastPdfSelection;
-    if (!sel) return undefined;
+    if (!sel && !this.heldPdfFile()) return undefined;
     return this.extractFromPdfSelection(sel, opts);
   }
 
+  /** PDF that has spans held with Ctrl (only one PDF is held at a time). */
+  private heldPdfFile(): TFile | null {
+    const first = this.multiSelect.pending
+      .list()
+      .find((s): s is PdfHeldSelection => s.kind === "pdf");
+    if (!first) return null;
+    const af = this.app.vault.getAbstractFileByPath(first.pdfPath);
+    return af instanceof TFile ? af : null;
+  }
+
+  /**
+   * Alt+X on a PDF: the live (or last) selection plus every span held with
+   * Ctrl, joined into one extract anchored on the first span. `sel` may be
+   * null when only held spans exist.
+   */
   private async extractFromPdfSelection(
-    sel: PdfTextSelection,
+    sel: PdfTextSelection | null,
     opts?: { promote?: boolean },
   ): Promise<IrElement | undefined> {
+    const file = sel?.file ?? this.heldPdfFile();
+    if (!file) return undefined;
+    const live: PdfHeldSelection | null =
+      sel && sel.file.path === file.path
+        ? {
+            kind: "pdf",
+            pdfPath: file.path,
+            text: sel.text,
+            segments: [{ page: sel.page, selection: sel.selection }],
+          }
+        : null;
+    const spans = mergeWithLive(this.multiSelect.pending.pdf(file.path), live);
+    if (spans.length === 0) return undefined;
+    const segments = spans.map((s) => s.segments[0]!);
+    const first = segments[0]!;
+    const pdf: PdfSelector = {
+      page: first.page,
+      selection: first.selection,
+      ...(segments.length > 1 ? { segments } : {}),
+    };
+    const created = await this.commitPdfExtract(
+      file,
+      joinSelectionTexts(spans.map((s) => s.text)),
+      pdf,
+      opts,
+    );
+    if (created) {
+      this.multiSelect.clear();
+      document.getSelection()?.removeAllRanges();
+    }
+    return created;
+  }
+
+  /** Record a PDF-anchored extract (text selection or image crop). */
+  private async commitPdfExtract(
+    file: TFile,
+    text: string,
+    pdf: PdfSelector,
+    opts?: { promote?: boolean; noticeLabel?: string },
+  ): Promise<IrElement | undefined> {
+    const sel = { file, page: pdf.page };
     if (!(await this.ensureIrSource(sel.file))) return;
     if (!this.store) {
       new Notice("Incremental Reading: store is not ready.");
@@ -1654,8 +1926,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     try {
       const ev = buildPdfExtractEvent({
         sourcePath: sel.file.path,
-        text: sel.text,
-        pdf: { page: sel.page, selection: sel.selection },
+        text,
+        pdf,
         parentId,
         priority: parent?.priority ?? this.settings.defaultPriority,
         elementId: newElementId(),
@@ -1682,8 +1954,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.getActiveReviewView()?.adoptElement(created);
       await this.refreshExtractDecorations();
       this.lastPdfSelection = null;
+      const pages = (pdf.segments ?? [pdf]).map((g) => g.page);
       new Notice(
-        `Extracted (anchored in "${sel.file.basename}", page ${sel.page}).`,
+        opts?.noticeLabel ??
+          `Extracted (anchored in "${sel.file.basename}", ${pageLabel(pages)}${
+            pdf.segments && pdf.segments.length > 1
+              ? `, ${pdf.segments.length} spans`
+              : ""
+          }).`,
       );
       return created;
     } catch (e) {
@@ -4333,6 +4611,387 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.recordElement(target);
       new Notice(`Marked "${target.basename}" as an IR topic.`);
     }
+  }
+
+  /* ----------------------------------------------------------------- */
+  /* Ctrl multi-select, PDF regions, image extracts, image occlusion    */
+  /* ----------------------------------------------------------------- */
+
+  private onHeldSelectionsChange(n: number): void {
+    if (n <= 0) return;
+    new Notice(
+      `Incremental Reading: ${n} selection${n === 1 ? "" : "s"} held. Alt+X extracts them together; Esc clears.`,
+      3000,
+    );
+  }
+
+  /** Ctrl+mousedown in the editor: remember existing selections so the drag adds to them. */
+  private onDocumentMouseDown(evt: MouseEvent): void {
+    this.editorCtrlSnapshot = null;
+    if (!isMultiSelectModifier(evt)) return;
+    const target = evt.target as HTMLElement | null;
+    if (!target?.closest(".cm-editor")) return;
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!mv || mv.getMode() !== "source") return;
+    const sels = mv.editor.listSelections().filter(
+      (r) => mv.editor.posToOffset(r.anchor) !== mv.editor.posToOffset(r.head),
+    );
+    if (sels.length > 0) this.editorCtrlSnapshot = sels;
+  }
+
+  /**
+   * Ctrl+mouseup: hold the span the user just selected. Four surfaces:
+   * the editor (native multi-selection via `setSelections`), a PDF text
+   * layer, the review card body, and a note in reading view.
+   */
+  private onDocumentMouseUp(evt: MouseEvent): void {
+    if (!isMultiSelectModifier(evt) || evt.button !== 0) return;
+    const target = evt.target as HTMLElement | null;
+    const snapshot = this.editorCtrlSnapshot;
+    this.editorCtrlSnapshot = null;
+    // Let the browser / CodeMirror finish updating the selection first.
+    window.setTimeout(() => {
+      if (target?.closest(".cm-editor")) {
+        const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!mv || !snapshot) return;
+        const ed = mv.editor;
+        const cur = ed
+          .listSelections()
+          .filter((r) => ed.posToOffset(r.anchor) !== ed.posToOffset(r.head));
+        if (cur.length === 0) return;
+        const key = (r: EditorSelectionOrCaret) =>
+          [ed.posToOffset(r.anchor), ed.posToOffset(r.head ?? r.anchor)]
+            .sort((a, b) => a - b)
+            .join("-");
+        const merged: EditorSelectionOrCaret[] = [...snapshot];
+        for (const c of cur) {
+          if (!merged.some((m) => key(m) === key(c))) merged.push(c);
+        }
+        ed.setSelections(merged, merged.length - 1);
+        new Notice(
+          `Incremental Reading: ${merged.length} spans selected. Alt+X extracts them together.`,
+          3000,
+        );
+        return;
+      }
+      const pdf = findPdfTextSelection(this.app);
+      if (pdf) {
+        const held: PdfHeldSelection = {
+          kind: "pdf",
+          pdfPath: pdf.file.path,
+          text: pdf.text,
+          segments: [{ page: pdf.page, selection: pdf.selection }],
+        };
+        const sel = document.getSelection();
+        const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+        this.multiSelect.hold(held, range);
+        return;
+      }
+      const rv = this.getActiveReviewView();
+      if (rv && target && rv.containerEl.contains(target)) {
+        rv.holdCurrentSelection();
+        return;
+      }
+      const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (mv?.file && mv.getMode() === "preview") {
+        const file = mv.file;
+        const range = this.previewSelectionRange(mv);
+        const root = this.previewRoot(mv);
+        if (!range || !root) return;
+        void (async () => {
+          const raw = stripFrontmatter(await this.app.vault.cachedRead(file));
+          const mapped = mapRenderedSelectionToRaw(raw, root, range);
+          if (!mapped) {
+            new Notice(
+              "Incremental Reading: could not map that selection to the note body.",
+            );
+            return;
+          }
+          const held: BodyHeldSelection = {
+            kind: "body",
+            sourcePath: file.path,
+            text: mapped.text,
+            start: mapped.start,
+            end: mapped.end,
+          };
+          this.multiSelect.hold(held, range);
+        })();
+      }
+    }, 0);
+  }
+
+  /** Container of the active PDF leaf (for rectangle-select). */
+  private activePdfLeafContainer(): { container: HTMLElement; file: TFile } | null {
+    const leaf = this.app.workspace.activeLeaf;
+    if (!leaf) return null;
+    const file = pdfFileFromView(leaf.view);
+    const container = pdfContainerEl(leaf.view);
+    if (!file || !container) return null;
+    return { container, file };
+  }
+
+  /** Alt+Shift+I / Alt+Shift+O: drag a rectangle on a PDF page. */
+  private async startPdfRegionCapture(mode: "extract" | "occlusion"): Promise<void> {
+    const ctx = this.activePdfLeafContainer();
+    if (!ctx) {
+      new Notice("Incremental Reading: open a PDF first.");
+      return;
+    }
+    this.pdfRectCancel?.();
+    new Notice(
+      mode === "extract"
+        ? "Drag a rectangle on the page to extract it as an image. Esc cancels."
+        : "Drag a rectangle around the figure to occlude. Esc cancels.",
+      4000,
+    );
+    this.pdfRectCancel = startPdfRectSelect(ctx.container, {
+      onCancel: () => {
+        this.pdfRectCancel = null;
+      },
+      onDone: (page, rect) => {
+        this.pdfRectCancel = null;
+        void this.finishPdfRegionCapture(ctx.file, page, rect, mode);
+      },
+    });
+  }
+
+  private async finishPdfRegionCapture(
+    file: TFile,
+    page: HTMLElement,
+    rect: NormalizedRect,
+    mode: "extract" | "occlusion",
+  ): Promise<void> {
+    const png = await cropPdfPage(page, rect);
+    if (!png) {
+      new Notice(
+        "Incremental Reading: that page is not rendered yet. Scroll it into view and try again.",
+      );
+      return;
+    }
+    const pageN = pdfPageNumber(page);
+    const attachmentPath =
+      await this.app.fileManager.getAvailablePathForAttachment(
+        `${pdfCropStem(file.path, pageN)}.png`,
+        file.path,
+      );
+    const image = await this.app.vault.createBinary(attachmentPath, png);
+    const pdf: PdfSelector = { page: pageN, selection: [0, 0, 0, 0], rect };
+    if (mode === "extract") {
+      await this.commitPdfExtract(file, `![[${image.path}]]`, pdf, {
+        noticeLabel: `Extracted image from "${file.basename}" (p. ${pageN}) → ${image.path}`,
+      });
+      return;
+    }
+    // Occlusion cards are item notes, and items need a markdown parent
+    // (same rule as cloze: extract first, then cloze the extract). Promote
+    // the crop extract to a note and file the cards under it.
+    const created = await this.commitPdfExtract(file, `![[${image.path}]]`, pdf, {
+      promote: true,
+    });
+    const parentPath = created?.notePath;
+    const parent = parentPath
+      ? this.app.vault.getAbstractFileByPath(parentPath)
+      : null;
+    if (!(parent instanceof TFile)) {
+      new Notice(
+        "Incremental Reading: could not create a note for the crop; the image was saved.",
+      );
+      return;
+    }
+    await this.openOcclusionEditor(image, parent);
+  }
+
+  /** Command / file-menu entry: occlusion cards from a standalone image file. */
+  private async occlusionFromImageFile(image: TFile): Promise<void> {
+    // Prefer an IR note that embeds this image (the user's own context);
+    // otherwise make a topic note that embeds it and file the cards there.
+    let parent = this.findIrNoteEmbedding(image);
+    if (!parent) {
+      const folder = this.settings.extractFolder.trim()
+        ? normalizePathForFolder(this.settings.extractFolder)
+        : (image.parent?.path ?? "");
+      if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
+        await this.app.vault.createFolder(folder);
+      }
+      const path = uniqueMarkdownNotePath(this.app, folder, image.basename);
+      parent = await this.app.vault.create(path, `![[${image.path}]]\n`);
+      await markAsTopic(this.app, parent, this.settings);
+      await this.recordElement(parent);
+    }
+    await this.openOcclusionEditor(image, parent);
+  }
+
+  /** First topic/extract note whose body embeds `image`, if any. */
+  private findIrNoteEmbedding(image: TFile): TFile | null {
+    const resolved = this.app.metadataCache.resolvedLinks;
+    for (const srcPath of Object.keys(resolved)) {
+      if (!resolved[srcPath]?.[image.path]) continue;
+      const af = this.app.vault.getAbstractFileByPath(srcPath);
+      if (!(af instanceof TFile)) continue;
+      const t = getIrType(this.app, af);
+      if (t === "topic" || t === "extract") return af;
+    }
+    return null;
+  }
+
+  private async openOcclusionEditor(image: TFile, parent: TFile): Promise<void> {
+    const leaf = this.app.workspace.getLeaf(true);
+    await leaf.setViewState({ type: IR_OCCLUSION_EDITOR_VIEW_TYPE, active: true });
+    const view = leaf.view;
+    if (!(view instanceof IrOcclusionEditorView)) {
+      new Notice("Incremental Reading: could not open the occlusion editor.");
+      return;
+    }
+    view.startSession({
+      imagePath: image.path,
+      imageUrl: this.app.vault.getResourcePath(image),
+      parentLabel: parent.basename,
+      mode: this.settings.occlusionDefaultMode,
+      onCreate: (rects, mode) => this.createOcclusionCards(image, parent, rects, mode),
+    });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  private async createOcclusionCards(
+    image: TFile,
+    parent: TFile,
+    rects: OcclusionRect[],
+    mode: OcclusionMode,
+  ): Promise<void> {
+    const bodies = occlusionBodies({ image: image.path, mode, rects });
+    let made = 0;
+    for (const b of bodies) {
+      const result = await createIrItemChildNote(
+        this.app,
+        parent,
+        b.body,
+        occlusionNoteStem(image.path, b.n),
+        this.settings,
+      );
+      if (!result.file) {
+        new Notice(`Incremental Reading: ${result.error}`);
+        break;
+      }
+      await this.recordElement(result.file);
+      made += 1;
+    }
+    if (made > 0) {
+      new Notice(
+        `Created ${made} image occlusion card${made === 1 ? "" : "s"} under "${parent.basename}".`,
+      );
+      const tree = this.getTreeView();
+      if (tree) void tree.refresh();
+    }
+  }
+
+  /** `ir-occlusion` code block → masked image (reading view, review card). */
+  private renderOcclusionBlock(src: string, el: HTMLElement, sourcePath: string): void {
+    const spec = parseOcclusionJson(src.trim());
+    if (!spec) {
+      el.createEl("pre", { text: "Invalid ir-occlusion block." });
+      return;
+    }
+    const imageFile = this.app.metadataCache.getFirstLinkpathDest(
+      spec.image,
+      sourcePath,
+    );
+    if (!imageFile) {
+      el.createEl("p", {
+        cls: "ir-occlusion-editor-empty",
+        text: `Image not found: ${spec.image}`,
+      });
+      return;
+    }
+    const url = this.app.vault.getResourcePath(imageFile);
+    // Inside the review card the pane owns reveal state (Space / swipe);
+    // in a plain note the mask itself is the toggle.
+    const reviewBody = el.closest<HTMLElement>(".ir-review-main-body");
+    if (reviewBody) {
+      renderOcclusion(el, spec, url, {
+        revealed: reviewBody.classList.contains("ir-review-revealed"),
+        interactive: false,
+      });
+      return;
+    }
+    let revealed = false;
+    const paint = () =>
+      renderOcclusion(el, spec, url, {
+        revealed,
+        interactive: true,
+        onToggle: () => {
+          revealed = !revealed;
+          paint();
+        },
+      });
+    paint();
+  }
+
+  /** Right-click on an image inside an IR note / the review card → IR menu. */
+  private onDocumentContextMenu(evt: MouseEvent): void {
+    const target = evt.target as HTMLElement | null;
+    if (!(target instanceof HTMLImageElement)) return;
+    const embed = target.closest<HTMLElement>(".internal-embed[src]");
+    const link = embed?.getAttribute("src")?.split("#")[0]?.split("|")[0];
+    if (!link) return;
+
+    const rv = this.getActiveReviewView();
+    let source: TFile | null = null;
+    let fromPath = "";
+    if (rv && rv.containerEl.contains(target)) {
+      source = rv.getPlacementFileForChildren();
+      fromPath = rv.getProvenancePathForChildren() ?? source?.path ?? "";
+    } else {
+      const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (!mv?.file || !mv.containerEl.contains(target)) return;
+      const t = getIrType(this.app, mv.file);
+      if (t !== "topic" && t !== "extract") return;
+      source = mv.file;
+      fromPath = mv.file.path;
+    }
+    if (!source) return;
+    const image = this.app.metadataCache.getFirstLinkpathDest(link, fromPath);
+    if (!image || !isImageFile(image)) return;
+
+    evt.preventDefault();
+    evt.stopPropagation();
+    const parent = source;
+    const menu = new Menu();
+    menu.addItem((item) =>
+      item
+        .setTitle("Extract image (IR)")
+        .setIcon("image")
+        .onClick(() => void this.extractImageFromNote(parent, image)),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Image occlusion cards from this image")
+        .setIcon("scan")
+        .onClick(() => void this.openOcclusionEditor(image, parent)),
+    );
+    menu.showAtMouseEvent(evt);
+  }
+
+  /**
+   * Extract an embedded image as its own element, anchored byte-exactly on
+   * the `![[...]]` / `![](...)` markup in the note body so decorations and
+   * relocation work like any text extract.
+   */
+  private async extractImageFromNote(source: TFile, image: TFile): Promise<void> {
+    const body = stripFrontmatter(await this.app.vault.cachedRead(source));
+    const range =
+      findImageEmbedRange(body, image.path) ?? findImageEmbedRange(body, image.name);
+    if (!range) {
+      new Notice(
+        `Incremental Reading: could not find the embed for "${image.name}" in "${source.basename}".`,
+      );
+      return;
+    }
+    await this.extractMappedBodyRange(source, {
+      start: range.start,
+      end: range.end,
+      text: range.markup,
+    });
+    await this.refreshExtractDecorations();
   }
 
   /**

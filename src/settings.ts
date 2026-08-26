@@ -137,6 +137,24 @@ export class IrSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Image occlusion default mode")
+      .setDesc(
+        "Hide all, guess one: every mask stays covered and one is tested. " +
+          "Hide one: only the tested mask is covered; the rest show as context.",
+      )
+      .addDropdown((dd) =>
+        dd
+          .addOption("hide-all", "Hide all, guess one")
+          .addOption("hide-one", "Hide one, show rest")
+          .setValue(this.plugin.settings.occlusionDefaultMode)
+          .onChange(async (value) => {
+            this.plugin.settings.occlusionDefaultMode =
+              value === "hide-one" ? "hide-one" : "hide-all";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Generated notes folder")
       .setDesc(
         "Vault-relative folder for new extracts and cloze items. Leave " +
