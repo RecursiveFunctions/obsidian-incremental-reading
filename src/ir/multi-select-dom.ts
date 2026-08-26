@@ -8,6 +8,43 @@
 import { PendingSelections, type HeldSelection } from "./multi-select";
 
 export const HELD_HIGHLIGHT_NAME = "ir-held-selection";
+const HELD_LAYER_CLASS = "ir-pdf-held-layer";
+
+/**
+ * Held spans inside a pdf.js page get a real overlay (the text layer is
+ * nearly transparent, so `::highlight` is invisible there). Non-PDF
+ * surfaces keep the CSS Custom Highlight.
+ */
+function paintHeldPdfOverlays(ranges: ReadonlyArray<Range>): void {
+  document.querySelectorAll(`.${HELD_LAYER_CLASS}`).forEach((el) => el.remove());
+  for (const r of ranges) {
+    if (r.collapsed) continue;
+    const anc = r.commonAncestorContainer;
+    const el = anc instanceof HTMLElement ? anc : anc.parentElement;
+    const page = el?.closest<HTMLElement>(".page[data-page-number]");
+    if (!page) continue;
+    const pageBox = page.getBoundingClientRect();
+    if (pageBox.width === 0 || pageBox.height === 0) continue;
+    let layer = page.querySelector<HTMLElement>(`:scope > .${HELD_LAYER_CLASS}`);
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.className = HELD_LAYER_CLASS;
+      const textLayer = page.querySelector(":scope > .textLayer");
+      if (textLayer) page.insertBefore(layer, textLayer);
+      else page.appendChild(layer);
+    }
+    for (const b of Array.from(r.getClientRects())) {
+      if (b.width === 0 || b.height === 0) continue;
+      const d = document.createElement("div");
+      d.className = "ir-pdf-held-rect";
+      d.style.left = `${((b.left - pageBox.left) / pageBox.width) * 100}%`;
+      d.style.top = `${((b.top - pageBox.top) / pageBox.height) * 100}%`;
+      d.style.width = `${(b.width / pageBox.width) * 100}%`;
+      d.style.height = `${(b.height / pageBox.height) * 100}%`;
+      layer.appendChild(d);
+    }
+  }
+}
 
 interface HighlightLike {
   add(range: AbstractRange): unknown;
@@ -72,6 +109,7 @@ export class MultiSelectController {
   }
 
   private repaint(): void {
+    paintHeldPdfOverlays(this.ranges);
     const reg = highlightRegistry();
     if (!reg) return;
     if (this.ranges.length === 0) {
@@ -90,6 +128,7 @@ export class MultiSelectController {
   dispose(): void {
     this.pending.clear();
     this.ranges = [];
+    paintHeldPdfOverlays([]);
     highlightRegistry()?.delete(HELD_HIGHLIGHT_NAME);
   }
 }

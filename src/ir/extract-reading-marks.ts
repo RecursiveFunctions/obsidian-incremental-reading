@@ -9,6 +9,7 @@
  */
 
 import { normalizeForMatch } from "./anchor";
+import { Normalizer } from "./fuzzy-text";
 
 const MIN_NEEDLE = 4;
 
@@ -82,8 +83,71 @@ export function paintIrSourceMarksInElement(
     if (!needle) continue;
     const n = counts.get(needle) ?? 0;
     counts.set(needle, n + 1);
-    wrapNthOccurrenceInTextNode(root, needle, n, m.cls);
+    // Fast path: the whole needle sits in one text node. Otherwise the
+    // extract crosses inline formatting (bold, links, code) and we wrap
+    // each text-node slice it touches.
+    if (!wrapNthOccurrenceInTextNode(root, needle, n, m.cls)) {
+      wrapNthOccurrenceAcrossNodes(root, needle, n, m.cls);
+    }
   }
+}
+
+/**
+ * Formatting-tolerant variant: normalizes the concatenated text of every
+ * text node under `root` (same rules as the needle), finds the n-th
+ * occurrence, and wraps each touched text node's slice in its own
+ * `<mark>`. Returns true on a hit.
+ */
+export function wrapNthOccurrenceAcrossNodes(
+  root: HTMLElement,
+  needle: string,
+  n: number,
+  cls: string,
+): boolean {
+  const norm = new Normalizer<{ node: Text; offset: number }>();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node: Node | null = walker.nextNode();
+  while (node) {
+    const t = node as Text;
+    const text = t.nodeValue ?? "";
+    for (let i = 0; i < text.length; i++) {
+      norm.push(text[i]!, { node: t, offset: i });
+    }
+    node = walker.nextNode();
+  }
+  const idx = nthOccurrenceOffset(norm.text, needle, n);
+  if (idx === -1) return false;
+  const refs = norm.refs.slice(idx, idx + needle.length);
+  // Group consecutive refs by text node.
+  const slices: Array<{ node: Text; start: number; end: number }> = [];
+  for (const r of refs) {
+    const last = slices[slices.length - 1];
+    if (last && last.node === r.node) last.end = r.offset + 1;
+    else slices.push({ node: r.node, start: r.offset, end: r.offset + 1 });
+  }
+  let hit = false;
+  for (const sl of slices) {
+    if (isInsideIrSourceMark(sl.node)) {
+      hit = true;
+      continue;
+    }
+    const parent = sl.node.parentNode;
+    if (!parent) continue;
+    const text = sl.node.nodeValue ?? "";
+    const before = text.slice(0, sl.start);
+    const mid = text.slice(sl.start, sl.end);
+    const after = text.slice(sl.end);
+    if (!mid.trim()) continue;
+    const mark = document.createElement("mark");
+    mark.className = cls;
+    mark.textContent = mid;
+    if (before) parent.insertBefore(document.createTextNode(before), sl.node);
+    parent.insertBefore(mark, sl.node);
+    if (after) parent.insertBefore(document.createTextNode(after), sl.node);
+    parent.removeChild(sl.node);
+    hit = true;
+  }
+  return hit;
 }
 
 function isInsideIrSourceMark(node: Node): boolean {

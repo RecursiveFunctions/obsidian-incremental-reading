@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Review card / reading view: extracts now highlight even when they
+  cross bold, links, or code.** The painter falls back to a
+  formatting-tolerant match that wraps every text node the extract
+  touches.
+- **`Alt+X` in reading view never switches to edit mode.** When the
+  rendered selection cannot be mapped byte-exactly, a formatting-tolerant
+  match is used; if that also fails you get a notice, not the editor.
+- **PDF highlights are visible.** pdf.js keeps its text layer nearly
+  transparent, so class-based span highlights were invisible. Extract
+  marks (and Ctrl-held spans) now paint on their own overlay layer
+  between the canvas and the text layer.
+- **Focus PDF** activates and focuses the viewer leaf instead of only
+  revealing it.
+- **Image occlusion masks are opaque.** They previously used translucent
+  theme colors and read as highlights.
+
 ### Added
+
+- **Extract image region from an embedded image.** Right-click an image in
+  an IR note or on the review card → **Extract image region**; drag a
+  rectangle, the crop becomes a PNG attachment extract anchored on the
+  image's embed markup.
 
 - **Ctrl multi-selection extracts** (SuperMemo Assistant style). Hold
   Ctrl/Cmd while releasing each selection to hold it (painted with the CSS

@@ -265,7 +265,15 @@ export async function openPdfAt(
       await leaf.openFile(file as TFile, { eState: { subpath } });
     }
   }
-  if (leaf) app.workspace.revealLeaf(leaf);
+  if (leaf) {
+    // revealLeaf alone only scrolls a sidebar / switches a tab; the
+    // viewer still needs to be the *active* leaf for keyboard and
+    // selection focus, or "Focus PDF" visibly does nothing.
+    app.workspace.revealLeaf(leaf);
+    app.workspace.setActiveLeaf(leaf, { focus: true });
+    const container = pdfContainerEl(leaf.view);
+    container?.focus?.();
+  }
   return leaf;
 }
 

@@ -97,7 +97,10 @@ import {
   IrOcclusionEditorView,
 } from "./src/occlusion-editor-view";
 import { cropPdfPage, joinSelectionTexts, pageLabel, pdfCropStem, pdfPageNumber } from "./src/ir/pdf-canvas";
-import { startPdfRectSelect } from "./src/ir/pdf-rect-select";
+import {
+  startPdfRectSelect,
+  startRectSelectOnElement,
+} from "./src/ir/pdf-rect-select";
 import { MultiSelectController } from "./src/ir/multi-select-dom";
 import {
   isMultiSelectModifier,
@@ -115,6 +118,8 @@ import {
 } from "./src/ir/occlusion";
 import { renderOcclusion } from "./src/ir/occlusion-render";
 import { findImageEmbedRange } from "./src/ir/image-embed";
+import { fuzzyLocateInBody } from "./src/ir/fuzzy-text";
+import { cropImageBytes } from "./src/ir/image-crop";
 import type { NormalizedRect, PdfSelector } from "./src/ir/model";
 import { resolveAnchor } from "./src/ir/anchor";
 import {
@@ -1591,9 +1596,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     const body = stripFrontmatter(await this.app.vault.cachedRead(file));
-    const mapped = mapRenderedSelectionToRaw(body, root, range);
+    const mapped =
+      mapRenderedSelectionToRaw(body, root, range) ??
+      fuzzyLocateInBody(body, range.toString());
     if (!mapped) {
-      await this.switchMarkdownToSource(mv, range.toString());
+      new Notice(
+        "Incremental Reading: could not map that selection to the note text. Select a little more or less and try again.",
+      );
       return;
     }
     const held = this.multiSelect.pending.body(file.path);
@@ -4700,7 +4709,9 @@ export default class IncrementalReadingPlugin extends Plugin {
         if (!range || !root) return;
         void (async () => {
           const raw = stripFrontmatter(await this.app.vault.cachedRead(file));
-          const mapped = mapRenderedSelectionToRaw(raw, root, range);
+          const mapped =
+            mapRenderedSelectionToRaw(raw, root, range) ??
+            fuzzyLocateInBody(raw, range.toString());
           if (!mapped) {
             new Notice(
               "Incremental Reading: could not map that selection to the note body.",
@@ -4964,11 +4975,64 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
     menu.addItem((item) =>
       item
+        .setTitle("Extract image region (IR, drag a rectangle)")
+        .setIcon("crop")
+        .onClick(() => this.extractImageRegionFromNote(parent, image, target)),
+    );
+    menu.addItem((item) =>
+      item
         .setTitle("Image occlusion cards from this image")
         .setIcon("scan")
         .onClick(() => void this.openOcclusionEditor(image, parent)),
     );
     menu.showAtMouseEvent(evt);
+  }
+
+  /**
+   * Drag a rectangle on an embedded image; the crop becomes a PNG
+   * attachment and an extract anchored on the image's embed markup (so the
+   * source shows where it came from) whose text embeds the crop.
+   */
+  private extractImageRegionFromNote(
+    source: TFile,
+    image: TFile,
+    imgEl: HTMLElement,
+  ): void {
+    new Notice("Drag a rectangle on the image. Esc cancels.", 4000);
+    startRectSelectOnElement(imgEl, {
+      onDone: (rect) => {
+        void (async () => {
+          const bytes = await this.app.vault.readBinary(image);
+          const png = await cropImageBytes(bytes, image.extension, rect);
+          if (!png) {
+            new Notice("Incremental Reading: could not crop that image.");
+            return;
+          }
+          const path = await this.app.fileManager.getAvailablePathForAttachment(
+            `${image.basename} crop.png`,
+            source.path,
+          );
+          const crop = await this.app.vault.createBinary(path, png);
+          const body = stripFrontmatter(await this.app.vault.cachedRead(source));
+          const range =
+            findImageEmbedRange(body, image.path) ??
+            findImageEmbedRange(body, image.name);
+          if (!range) {
+            new Notice(
+              `Incremental Reading: saved ${crop.path}, but could not find the embed for "${image.name}" in "${source.basename}" to anchor on.`,
+            );
+            return;
+          }
+          await this.extractMappedBodyRange(source, {
+            start: range.start,
+            end: range.end,
+            text: range.markup,
+            textOverride: `![[${crop.path}]]`,
+          });
+          await this.refreshExtractDecorations();
+        })();
+      },
+    });
   }
 
   /**

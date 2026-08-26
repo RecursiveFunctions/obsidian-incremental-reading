@@ -18,6 +18,7 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 import { hasOcclusion } from "./ir/occlusion";
+import { fuzzyLocateInBody } from "./ir/fuzzy-text";
 import type { MultiSelectController } from "./ir/multi-select-dom";
 import { mergeWithLive, type BodyHeldSelection } from "./ir/multi-select";
 import { joinSelectionTexts } from "./ir/pdf-canvas";
@@ -3165,15 +3166,7 @@ export class IrReviewView extends ItemView {
     }
     const held = this.multiSelect?.pending.body(this.heldKey(slot)) ?? [];
     const liveRes = this.resolveSelection();
-    if (!liveRes.ok && held.length === 0) {
-      if (liveRes.renderedText?.trim()) {
-        await this.switchToEditForExactSelection(liveRes.renderedText);
-        return;
-      }
-      new Notice(`Incremental Reading: ${liveRes.reason}`);
-      return;
-    }
-    const live: BodyHeldSelection | null = liveRes.ok
+    let live: BodyHeldSelection | null = liveRes.ok
       ? {
           kind: "body",
           sourcePath: this.heldKey(slot),
@@ -3182,6 +3175,30 @@ export class IrReviewView extends ItemView {
           end: liveRes.end,
         }
       : null;
+    // Preview map failed (selection crosses bold / links / code): fall
+    // back to a formatting-tolerant match instead of dumping the user
+    // into edit mode. Extract must never change the view mode.
+    const renderedText = liveRes.ok ? "" : (liveRes.renderedText ?? "");
+    if (!live && renderedText.trim()) {
+      const f = fuzzyLocateInBody(this.currentRaw, renderedText);
+      if (f) {
+        live = {
+          kind: "body",
+          sourcePath: this.heldKey(slot),
+          text: f.text,
+          start: f.start,
+          end: f.end,
+        };
+      }
+    }
+    if (!live && held.length === 0) {
+      new Notice(
+        renderedText.trim()
+          ? "Incremental Reading: could not map that selection to the source text. Select a little more or less and try again."
+          : `Incremental Reading: ${liveRes.ok ? "Nothing selected." : liveRes.reason}`,
+      );
+      return;
+    }
     const spans = mergeWithLive(held, live);
     const sel = spans[0]!;
     const textOverride =

@@ -103,3 +103,72 @@ export function startPdfRectSelect(
   doc.addEventListener("keydown", onKey, true);
   return cleanup;
 }
+
+/**
+ * Same one-shot drag, but over a single element (an `<img>` in a note or
+ * on the review card). The overlay is fixed-positioned on top of the
+ * element's box because images cannot host children.
+ */
+export function startRectSelectOnElement(
+  target: HTMLElement,
+  handlers: { onDone: (rect: NormalizedRect) => void; onCancel?: () => void },
+): () => void {
+  const doc = target.ownerDocument;
+  const box = target.getBoundingClientRect();
+  const overlay = doc.body.createDiv({ cls: "ir-rect-overlay-fixed" });
+  overlay.style.left = `${box.left}px`;
+  overlay.style.top = `${box.top}px`;
+  overlay.style.width = `${box.width}px`;
+  overlay.style.height = `${box.height}px`;
+  const drawn = overlay.createDiv({ cls: "ir-pdf-rect-box" });
+  drawn.style.display = "none";
+  let sx = 0;
+  let sy = 0;
+  let dragging = false;
+  let active = true;
+
+  const norm = (x: number, y: number) => ({
+    x: (x - box.left) / Math.max(1, box.width),
+    y: (y - box.top) / Math.max(1, box.height),
+  });
+  const cleanup = () => {
+    if (!active) return;
+    active = false;
+    doc.removeEventListener("keydown", onKey, true);
+    overlay.remove();
+  };
+  const onKey = (evt: KeyboardEvent) => {
+    if (evt.key !== "Escape") return;
+    cleanup();
+    handlers.onCancel?.();
+  };
+  overlay.addEventListener("mousedown", (evt) => {
+    if (evt.button !== 0) return;
+    evt.preventDefault();
+    dragging = true;
+    sx = evt.clientX;
+    sy = evt.clientY;
+    drawn.style.display = "block";
+  });
+  overlay.addEventListener("mousemove", (evt) => {
+    if (!dragging) return;
+    const a = norm(sx, sy);
+    const b = norm(evt.clientX, evt.clientY);
+    drawn.style.left = `${Math.min(a.x, b.x) * 100}%`;
+    drawn.style.top = `${Math.min(a.y, b.y) * 100}%`;
+    drawn.style.width = `${Math.abs(b.x - a.x) * 100}%`;
+    drawn.style.height = `${Math.abs(b.y - a.y) * 100}%`;
+  });
+  overlay.addEventListener("mouseup", (evt) => {
+    if (!dragging) return;
+    dragging = false;
+    const a = norm(sx, sy);
+    const b = norm(evt.clientX, evt.clientY);
+    const rect = normalizeDragRect(a.x, a.y, b.x, b.y);
+    cleanup();
+    if (rect) handlers.onDone(rect);
+    else handlers.onCancel?.();
+  });
+  doc.addEventListener("keydown", onKey, true);
+  return cleanup;
+}
