@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ctrl/Cmd-drag multi-select no longer drops the review card into edit
+  mode.** Ctrl/Cmd-click used to force the reading card into the editor, so
+  every held span ended the drag in Live Preview (and the hold was lost when
+  the card re-rendered). Reading mode is now single-click-proof: only a
+  deliberate double-click, or Edit, leaves it.
+
 - **Occlusion masks read as masks in the light theme** (accent-tinted
   opaque fill; the editor's masks are no longer see-through).
 - **PDF-extract cards paint their child extracts** on the card body.
