@@ -171,6 +171,20 @@
   text-underline-offset: 2px;
 }
 
+/* Figures cannot carry a <mark>, so an extract / cloze whose span is an
+ * image flags the rendered element instead. */
+img.ir-source-image.ir-extract-source {
+  outline: 3px solid color-mix(in srgb, var(--color-yellow, #e6b800) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+img.ir-source-image.ir-cloze-source {
+  outline: 3px solid color-mix(in srgb, var(--color-green, #4caf50) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* Extract highlight in the source column: marks where the current extract
  * was pulled from in the parent note (uses resolveAnchor or text search). */
 .ir-extract-highlight {

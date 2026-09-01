@@ -1629,6 +1629,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           spans.length > 1
             ? joinSelectionTexts(spans.map((s) => s.text))
             : undefined,
+        spans: spans.map((s) => ({ start: s.start, end: s.end })),
       },
       opts,
     );
@@ -1637,7 +1638,13 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async extractMappedBodyRange(
     source: TFile,
-    mapped: { start: number; end: number; text: string; textOverride?: string },
+    mapped: {
+      start: number;
+      end: number;
+      text: string;
+      textOverride?: string;
+      spans?: ReadonlyArray<{ start: number; end: number }>;
+    },
     opts?: { promote?: boolean },
   ): Promise<void> {
     if (!(await this.ensureIrSource(source))) return;
@@ -1664,6 +1671,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         selStart: mapped.start,
         selEnd: mapped.end,
         textOverride: mapped.textOverride,
+        ...(mapped.spans ? { spans: mapped.spans } : {}),
         parentId,
         priority: getPriority(this.app, source, this.settings.defaultPriority),
         elementId: newElementId(),

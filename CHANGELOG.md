@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A Ctrl multi-selection now anchors every span, so the editor paints
+  all of them.** Markdown anchors recorded only the first span (PDF anchors
+  already kept `segments`), so Live Preview and source mode highlighted the
+  first slice of a multi-span extract and dropped the rest. Anchors gained
+  a `spans` list; the top-level quote still duplicates the first span, so
+  older elements and older readers are unaffected.
+- **Extracting or clozing a sentence that repeats in the note works, and
+  marks the twin you actually selected.** The locator refused ambiguous
+  matches, so the command failed outright; the painter then numbered marks
+  by arrival order, so it could highlight the first twin when you extracted
+  the second. The rendered offsets now say which occurrence was selected,
+  and the painter takes the occurrence from the source offsets. The
+  reading-view post-processor counts inside the block it was handed, and no
+  longer double-paints the review card.
+- **An extract or cloze whose span is a figure is now visible.** An image
+  contributes no text to match, so nothing was painted. The rendered
+  `<img>` is flagged instead (yellow outline for extracts, green for
+  clozes).
+
 - **Cloze and extract highlights now paint on text that is also a link.**
   The stored quote for a cloze on link text is the whole
   `[label](url)` (the selection is deliberately snapped out to the whole

@@ -75,6 +75,29 @@ export function hiddenLinkChrome(raw: string): boolean[] {
   return hidden;
 }
 
+/**
+ * How many times `needle` already occurred in `text` before `offset`,
+ * counted in normalized space and advancing one character at a time (the
+ * same walk the painter and `fuzzyLocateInBody` use).
+ */
+export function normalizedOccurrencesBefore(
+  text: string,
+  offset: number,
+  needle: string,
+): number {
+  const nn = normalizeNeedle(needle);
+  if (!nn) return 0;
+  const before = normalizeNeedle(text.slice(0, Math.max(0, offset)));
+  let n = 0;
+  let from = 0;
+  for (;;) {
+    const i = before.indexOf(nn, from);
+    if (i === -1) return n;
+    n += 1;
+    from = i + 1;
+  }
+}
+
 /** Normalized form of a needle (no refs needed). */
 export function normalizeNeedle(s: string): string {
   const n = new Normalizer<number>();
@@ -90,6 +113,7 @@ export function normalizeNeedle(s: string): string {
 export function fuzzyLocateInBody(
   raw: string,
   needle: string,
+  nth?: number,
 ): { start: number; end: number; text: string } | null {
   const nn = normalizeNeedle(needle);
   if (nn.length < 2) return null;
@@ -101,11 +125,24 @@ export function fuzzyLocateInBody(
     if (hidden[i]) continue;
     n.push(raw[i]!, i);
   }
-  const first = n.text.indexOf(nn);
-  if (first === -1) return null;
-  if (n.text.indexOf(nn, first + 1) !== -1) return null;
-  let start = n.refs[first]!;
-  let end = n.refs[first + nn.length - 1]! + 1;
+  // Without `nth` an ambiguous needle is refused rather than guessed. With
+  // it the caller already knows which occurrence it means (counted the same
+  // way on the rendered side), so pick that one.
+  let hit = -1;
+  if (nth === undefined) {
+    hit = n.text.indexOf(nn);
+    if (hit === -1) return null;
+    if (n.text.indexOf(nn, hit + 1) !== -1) return null;
+  } else {
+    let from = 0;
+    for (let k = 0; k <= nth; k += 1) {
+      hit = n.text.indexOf(nn, from);
+      if (hit === -1) return null;
+      from = hit + 1;
+    }
+  }
+  let start = n.refs[hit]!;
+  let end = n.refs[hit + nn.length - 1]! + 1;
   // Swallow the emphasis markers and link chrome that hug the match
   // (`**quick**`, `[label](url)`) so the anchored slice is whole markdown,
   // not a token cut mid-syntax.

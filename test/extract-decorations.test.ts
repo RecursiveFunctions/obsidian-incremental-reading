@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  imageTargetsInText,
   nthOccurrenceOffset,
+  occurrenceIndexInSource,
   readingViewNeedle,
   readingViewNeedleBlocks,
   readingViewNeedlePasses,
@@ -96,4 +98,32 @@ test("readingViewNeedle: flattens link syntax to what the renderer shows", () =>
   assert.equal(readingViewNeedle("see [[Notes|the notes]] later"), "see the notes later");
   assert.equal(readingViewNeedle("see [[Notes]] later"), "see Notes later");
   assert.equal(readingViewNeedle("figure ![alt text](img.png) here"), "figure here");
+});
+
+test("occurrenceIndexInSource: counts the twins before the span", () => {
+  const body = [
+    "Zeta says the tuning knob is repeated verbatim.",
+    "",
+    "Eta says the tuning knob is repeated verbatim.",
+  ].join("\n");
+  const needle = "the tuning knob is repeated verbatim.";
+  const first = body.indexOf(needle);
+  const second = body.indexOf(needle, first + 1);
+  assert.equal(occurrenceIndexInSource(body, first, needle), 0);
+  assert.equal(occurrenceIndexInSource(body, second, needle), 1);
+});
+
+test("occurrenceIndexInSource: counts through link chrome the renderer hides", () => {
+  const body = "see [the guide](https://x.y) then see the guide again";
+  const second = body.indexOf("the guide", 20);
+  assert.equal(occurrenceIndexInSource(body, second, "the guide"), 1);
+});
+
+test("imageTargetsInText: finds embeds and markdown images", () => {
+  assert.deepEqual(imageTargetsInText("text ![[figure.png]] more"), ["figure.png"]);
+  assert.deepEqual(imageTargetsInText("![[a.png|300]] and ![alt](sub/b.png)"), [
+    "a.png",
+    "sub/b.png",
+  ]);
+  assert.deepEqual(imageTargetsInText("no images here"), []);
 });

@@ -141,4 +141,52 @@ with sync_playwright() as pw:
     dismiss_modals(page); time.sleep(0.5)
     shot(page, "56-link-extract")
 
+    # 9. A sentence that repeats in the note: the extract used to fail to map
+    #    at all, and the painter marked whichever twin came first.
+    fresh_card(page)
+    sel = select_across(page, "the tuning knob", "in this note", nth=1)
+    cmd(page, "incremental-reading:extract-selection"); time.sleep(2)
+    st = stored_extracts(page)
+    ok &= check("repeated sentence extracts at all", bool(st) and same_words(st[0], sel), repr(st))
+    marked = page.evaluate("""() => Array.from(document.querySelectorAll('.ir-review-main-body p')).filter(p => p.querySelector('mark.ir-extract-source')).map(p => (p.textContent||'').slice(0, 4))""")
+    ok &= check("only the extracted twin is highlighted in the card", marked == ["Eta "], repr(marked))
+
+    # 10. Same note in reading view: the post-processor runs per block, so it
+    #     has to count occurrences inside the block it was handed.
+    page.evaluate("""async () => {
+      app.workspace.detachLeavesOfType('ir-review-view');
+      const leaf = app.workspace.getLeaf('tab');
+      await leaf.openFile(app.vault.getAbstractFileByPath('Reading.md'));
+      await leaf.setViewState({...leaf.getViewState(), state: {...leaf.getViewState().state, mode: 'preview'}});
+    }"""); time.sleep(2)
+    marked = page.evaluate("""() => Array.from(app.workspace.activeLeaf.view.contentEl.querySelectorAll('p')).filter(p => p.querySelector('mark.ir-extract-source')).map(p => (p.textContent||'').slice(0, 4))""")
+    ok &= check("only the extracted twin is highlighted in reading view", marked == ["Eta "], repr(marked))
+    shot(page, "57-duplicate-phrase")
+
+    # 11. A figure carries no text, so the painter flags the <img> itself.
+    fresh_card(page)
+    select_across(page, "Epsilon paragraph", "with its own text")
+    cmd(page, "incremental-reading:extract-selection"); time.sleep(2)
+    imgs = page.evaluate("() => Array.from(document.querySelectorAll('.ir-review-main-body img')).map(i => i.className)")
+    ok &= check("an embedded figure inside the extract is flagged", imgs == ["ir-extract-source ir-source-image"], repr(imgs))
+    shot(page, "58-image-extract")
+
+    # 12. Multi-span extract: every span is anchored, so the editor paints
+    #     all of them, not just the first.
+    fresh_card(page)
+    select_across(page, "Alpha paragraph", "curve in"); page.evaluate(CTRL_MOUSEUP); time.sleep(0.8)
+    select_across(page, "Gamma paragraph", "third block"); page.evaluate(CTRL_MOUSEUP); time.sleep(0.8)
+    cmd(page, "incremental-reading:extract-selection"); time.sleep(2.5)
+    spans = page.evaluate("() => app.plugins.plugins['incremental-reading'].store.load().then(s => Array.from(s.elements.values()).filter(e => e.type === 'extract').map(e => (e.anchor.spans || []).length))")
+    ok &= check("both spans are anchored", spans == [2], repr(spans))
+    page.evaluate("""async () => {
+      app.workspace.detachLeavesOfType('ir-review-view');
+      const leaf = app.workspace.getLeaf('tab');
+      await leaf.openFile(app.vault.getAbstractFileByPath('Reading.md'));
+      await leaf.setViewState({...leaf.getViewState(), state: {...leaf.getViewState().state, mode: 'source', source: false}});
+    }"""); time.sleep(2.5)
+    em = page.evaluate("() => Array.from(app.workspace.activeLeaf.view.contentEl.querySelectorAll('mark.ir-extract-source')).map(m => m.textContent.slice(0, 5))")
+    ok &= check("the editor paints both spans", len(em) == 2, repr(em))
+    shot(page, "59-editor-multispan")
+
     print("ALL PASS" if ok else "FAILURES ABOVE")

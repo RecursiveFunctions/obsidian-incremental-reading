@@ -97,6 +97,7 @@ import {
   type SourceMarkRange,
 } from "./ir/cloze-marks";
 import {
+  occurrenceIndexInSource,
   paintIrSourceMarksInElement,
   type DomSourceMark,
 } from "./ir/extract-reading-marks";
@@ -1870,10 +1871,14 @@ export class IrReviewView extends ItemView {
         );
         paintIrSourceMarksInElement(
           ctxBody,
-          marks.map((m) => ({
-            text: sourceCtx.raw.slice(m.start, m.end),
-            cls: m.cls,
-          })),
+          marks.map((m) => {
+            const text = sourceCtx.raw.slice(m.start, m.end);
+            return {
+              text,
+              cls: m.cls,
+              occurrence: occurrenceIndexInSource(sourceCtx.raw, m.start, text),
+            };
+          }),
         );
         this.wireMarkdownLinks(ctxBody, sourceCtx.path);
         if (sourceCtx.highlightRange) {
@@ -2610,11 +2615,16 @@ export class IrReviewView extends ItemView {
       const ranges = this.sourceMarksForPath(slot.file.path);
       paintIrSourceMarksInElement(
         body,
-        ranges.map((r) => ({
-          text: r.text || raw.slice(r.start, r.end),
-          cls:
-            r.kind === "cloze" ? "ir-cloze-source" : "ir-extract-source",
-        })),
+        ranges.map((r) => {
+          const text = r.text || raw.slice(r.start, r.end);
+          return {
+            text,
+            cls: r.kind === "cloze" ? "ir-cloze-source" : "ir-extract-source",
+            // Which twin to paint comes from the offsets, not from the
+            // order these ranges happen to arrive in.
+            occurrence: occurrenceIndexInSource(raw, r.start, text),
+          };
+        }),
       );
     } else if (!isCloze && slot && !slot.file) {
       // Store-only card (e.g. a PDF extract): its children are anchored
@@ -3194,6 +3204,7 @@ export class IrReviewView extends ItemView {
         selStart: sel.start,
         selEnd: sel.end,
         textOverride,
+        spans: spans.map((sp) => ({ start: sp.start, end: sp.end })),
         parentId: slot.id,
         priority: slot.element.priority,
         elementId: newElementId(),

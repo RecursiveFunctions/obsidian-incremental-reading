@@ -278,3 +278,46 @@ test("buildTextEditedEvent: deterministic", async (t) => {
     JSON.stringify(m.buildTextEditedEvent(args)),
   );
 });
+
+test("buildExtractEvent: a multi-span selection anchors every span", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/extract.ts not implemented yet");
+
+  const source = "Alpha line here.\n\nBeta line here.\n\nGamma line here.";
+  const spans = [
+    { start: source.indexOf("Alpha"), end: source.indexOf("Alpha") + 16 },
+    { start: source.indexOf("Gamma"), end: source.indexOf("Gamma") + 16 },
+  ];
+  const el = m.buildExtractEvent({
+    ...baseInput(),
+    sourceText: source,
+    selStart: spans[0]!.start,
+    selEnd: spans[0]!.end,
+    textOverride: "Alpha line here.\n\nGamma line here.",
+    spans,
+  }).payload.element as IrElement;
+
+  assert.equal(el.anchor?.spans?.length, 2);
+  assert.deepEqual(
+    el.anchor?.spans?.map((sp) => sp.quote.exact),
+    ["Alpha line here.", "Gamma line here."],
+  );
+  // The top-level quote still duplicates the first span for older readers.
+  assert.equal(el.anchor?.quote.exact, "Alpha line here.");
+  // Each span relocates on its own.
+  for (const sp of el.anchor?.spans ?? []) {
+    const r = resolveAnchor({ sourcePath: "Notes/Animals.md", quote: sp.quote }, source);
+    assert.equal(r.status, "ok");
+  }
+});
+
+test("buildExtractEvent: a single-span selection records no spans array", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/extract.ts not implemented yet");
+
+  const el = m.buildExtractEvent({
+    ...baseInput(),
+    spans: [{ start: 4, end: 9 }],
+  }).payload.element as IrElement;
+  assert.equal(el.anchor?.spans, undefined);
+});

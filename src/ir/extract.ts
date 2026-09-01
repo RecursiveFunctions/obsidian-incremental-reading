@@ -30,6 +30,12 @@ export interface ExtractInput {
    * still records only the first slice so relocation stays byte-exact.
    */
   textOverride?: string;
+  /**
+   * Every span of a multi-selection, `selStart`/`selEnd` included, in the
+   * order the user made them. Each is recorded on the anchor so all of them
+   * relocate and paint, not just the first.
+   */
+  spans?: ReadonlyArray<{ start: number; end: number }>;
 }
 
 export function buildExtractEvent(input: ExtractInput): IrEvent {
@@ -52,6 +58,13 @@ export function buildExtractEvent(input: ExtractInput): IrEvent {
     input.selEnd + contextLen,
   );
 
+  const quoteAt = (start: number, end: number) => ({
+    exact: input.sourceText.slice(start, end),
+    prefix: input.sourceText.slice(Math.max(0, start - contextLen), start),
+    suffix: input.sourceText.slice(end, end + contextLen),
+  });
+
+  const extraSpans = (input.spans ?? []).filter((s) => s.end > s.start);
   const anchor = {
     sourcePath: input.sourcePath,
     quote: {
@@ -60,6 +73,14 @@ export function buildExtractEvent(input: ExtractInput): IrEvent {
       suffix,
     },
     position: { start: input.selStart, end: input.selEnd },
+    ...(extraSpans.length > 1
+      ? {
+          spans: extraSpans.map((s) => ({
+            quote: quoteAt(s.start, s.end),
+            position: { start: s.start, end: s.end },
+          })),
+        }
+      : {}),
   };
 
   const element: IrElement = {

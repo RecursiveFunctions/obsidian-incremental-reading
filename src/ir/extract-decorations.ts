@@ -32,6 +32,7 @@ import type { IrStore } from "./store";
 import type { Anchor, IrElement } from "./model";
 import { resolveAnchor } from "./anchor";
 import {
+  occurrenceIndexInSource,
   paintIrSourceMarksInElement,
 } from "./extract-reading-marks";
 import {
@@ -148,9 +149,28 @@ export async function refreshIrDecorationCache(
     const body = stripFrontmatterPlain(full);
     const ranges: CachedAnchor[] = [];
     for (const { anchor, text } of byPath.get(path) ?? []) {
-      const r = resolveAnchor(anchor, body);
-      if (r.status === "ok") {
-        ranges.push({ start: r.start, end: r.end, text, kind: "extract" });
+      // A Ctrl multi-selection records every span it covered. Resolve each
+      // one so all of them paint, not just the span the top-level quote
+      // duplicates. Elements written before `spans` existed have none.
+      const parts =
+        anchor.spans && anchor.spans.length > 1
+          ? anchor.spans.map((sp) => ({
+              sourcePath: anchor.sourcePath,
+              quote: sp.quote,
+              ...(sp.position ? { position: sp.position } : {}),
+            }))
+          : [anchor];
+      for (const part of parts) {
+        const r = resolveAnchor(part, body);
+        if (r.status !== "ok") continue;
+        ranges.push({
+          start: r.start,
+          end: r.end,
+          // Per-span marks carry their own slice; a single-span extract
+          // keeps the element text (chrome already stripped).
+          text: parts.length > 1 ? part.quote.exact : text,
+          kind: "extract",
+        });
       }
     }
     ranges.push(...clozeRangesInBody(items, body, path, state.elements));
@@ -282,6 +302,34 @@ export function pushIrDecorations(
 /** Minimal post-processor context shape we depend on (avoids importing the type). */
 interface PostProcessorContext {
   sourcePath?: string;
+  /** Obsidian gives the source lines a rendered block came from. */
+  getSectionInfo?: (el: HTMLElement) => {
+    text: string;
+    lineStart: number;
+    lineEnd: number;
+  } | null;
+}
+
+/** Body-relative char range of the source lines a rendered block came from. */
+function blockBodyRange(
+  info: { text: string; lineStart: number; lineEnd: number } | null,
+): { start: number; end: number; body: string } | null {
+  if (!info) return null;
+  const lines = info.text.split("\n");
+  if (info.lineStart < 0 || info.lineEnd >= lines.length) return null;
+  let start = 0;
+  for (let i = 0; i < info.lineStart; i += 1) start += lines[i]!.length + 1;
+  let end = start;
+  for (let i = info.lineStart; i <= info.lineEnd; i += 1) {
+    end += lines[i]!.length + 1;
+  }
+  const offset = bodyStartInFull(info.text);
+  const body = stripFrontmatterPlain(info.text);
+  return {
+    start: start - offset,
+    end: Math.min(end - offset, body.length),
+    body,
+  };
 }
 
 /**
@@ -304,19 +352,42 @@ export function createIrExtractMarkdownPostProcessor(
   return (el, ctx) => {
     const path = ctx?.sourcePath;
     if (!path) return;
-    const ranges = cache.rangesFor(path);
-    if (ranges.length === 0) return;
-    paintIrSourceMarksInElement(
-      el,
-      ranges
-        .filter((r) => r.kind !== "cloze")
-        .map((r) => ({ text: r.text, cls: EXTRACT_CLASS })),
-    );
-    paintIrSourceMarksInElement(
-      el,
-      ranges
-        .filter((r) => r.kind === "cloze")
-        .map((r) => ({ text: r.text, cls: CLOZE_CLASS })),
-    );
+    // The IR review card renders through MarkdownRenderer, so this
+    // post-processor also fires on it. The card paints its own marks with
+    // note-wide occurrence knowledge; a second, block-blind pass here would
+    // add a mark on the wrong twin of a repeated quote.
+    if (el.closest(".ir-review-main-body, .ir-review-context-markdown")) return;
+    const all = cache.rangesFor(path);
+    if (all.length === 0) return;
+    // The post-processor runs per rendered block, so "the Nth occurrence"
+    // has to be counted inside this block. Without the section info we
+    // cannot tell which block this is: fall back to arrival order, which
+    // can paint the wrong twin when a quote repeats across blocks.
+    const block = blockBodyRange(ctx.getSectionInfo?.(el) ?? null);
+    const ranges = block
+      ? all
+          .filter((r) => r.start >= block.start && r.start < block.end)
+          .map((r) => ({
+            ...r,
+            occurrence: occurrenceIndexInSource(
+              block.body.slice(block.start),
+              r.start - block.start,
+              r.text,
+            ),
+          }))
+      : all.map((r) => ({ ...r, occurrence: undefined }));
+    const paint = (kind: SourceMarkKind, cls: string) =>
+      paintIrSourceMarksInElement(
+        el,
+        ranges
+          .filter((r) => (kind === "cloze" ? r.kind === "cloze" : r.kind !== "cloze"))
+          .map((r) => ({
+            text: r.text,
+            cls,
+            ...(r.occurrence === undefined ? {} : { occurrence: r.occurrence }),
+          })),
+      );
+    paint("extract", EXTRACT_CLASS);
+    paint("cloze", CLOZE_CLASS);
   };
 }

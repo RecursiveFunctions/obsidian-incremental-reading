@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   fuzzyLocateInBody,
   hiddenLinkChrome,
+  normalizedOccurrencesBefore,
   normalizeNeedle,
 } from "../src/ir/fuzzy-text";
 
@@ -54,4 +55,22 @@ test("fuzzyLocateInBody: a needle that is exactly the link label spans the whole
     raw.slice(hit.start, hit.end),
     "[the anchor guide](https://example.com/a)",
   );
+});
+
+test("normalizedOccurrencesBefore: counts twins in normalized space", () => {
+  const rendered = "Zeta says the knob turns\nEta says the knob turns";
+  const second = rendered.lastIndexOf("the knob turns");
+  assert.equal(normalizedOccurrencesBefore(rendered, 0, "the knob turns"), 0);
+  assert.equal(normalizedOccurrencesBefore(rendered, second, "the knob turns"), 1);
+});
+
+test("fuzzyLocateInBody: nth picks the twin instead of refusing", () => {
+  const raw = "Zeta says the knob turns here.\n\nEta says the knob turns here.";
+  assert.equal(fuzzyLocateInBody(raw, "the knob turns here"), null);
+  const second = fuzzyLocateInBody(raw, "the knob turns here", 1);
+  assert.ok(second);
+  assert.ok(second.start > raw.indexOf("Eta"));
+  const first = fuzzyLocateInBody(raw, "the knob turns here", 0);
+  assert.ok(first);
+  assert.ok(first.start < raw.indexOf("Eta"));
 });

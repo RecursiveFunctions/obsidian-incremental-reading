@@ -115,9 +115,66 @@ export function nthOccurrenceOffset(
   return -1;
 }
 
+/**
+ * Which occurrence of its own needle a stored span is, counted in the
+ * source body. The painter used to number marks by the order they arrived,
+ * so extracting the *second* "Paris" in a note highlighted the first one.
+ * Counting in the body (links flattened, whitespace collapsed, same rules
+ * as the needle) gives the index the DOM walk will land on.
+ */
+export function occurrenceIndexInSource(
+  body: string,
+  start: number,
+  text: string,
+): number {
+  const needle = readingViewNeedle(text);
+  if (!needle) return 0;
+  const before = normalizeForMatch(flattenLinksForMatch(body.slice(0, start)));
+  let n = 0;
+  let from = 0;
+  for (;;) {
+    const i = before.indexOf(needle, from);
+    if (i === -1) return n;
+    n += 1;
+    from = i + 1;
+  }
+}
+
+/**
+ * Image / embed targets in stored text, in source order. An extract or
+ * cloze whose span is only a figure has no text to match, so the painter
+ * flags the rendered `<img>` instead of wrapping a `<mark>`.
+ */
+export function imageTargetsInText(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/!\[\[([^\]\n]+)\]\]/g)) {
+    out.push((m[1] ?? "").split("|")[0]!.split("#")[0]!.trim());
+  }
+  for (const m of text.matchAll(/!\[[^\]\n]*\]\(([^)\n]*)\)/g)) {
+    out.push((m[1] ?? "").split("#")[0]!.trim());
+  }
+  return out.filter((t) => t.length > 0);
+}
+
+/** Basename of an embed target or an `<img>` src, for loose matching. */
+function imageBasename(target: string): string {
+  let decoded = target;
+  try {
+    decoded = decodeURIComponent(target);
+  } catch {
+    /* a stray % in the path: match on the raw form */
+  }
+  return (decoded.split("?")[0] ?? "").split("/").pop() ?? "";
+}
+
 export interface DomSourceMark {
   text: string;
   cls: string;
+  /**
+   * Occurrence of this needle to paint, from the source offsets. Without
+   * it the painter falls back to counting marks in arrival order.
+   */
+  occurrence?: number;
 }
 
 /**
@@ -143,9 +200,26 @@ export function paintIrSourceMarksInElement(
     if (wrapNthOccurrenceInTextNode(root, needle, n, cls)) return true;
     return wrapNthOccurrenceAcrossNodes(root, needle, n, cls);
   };
+  const paintImages = (text: string, cls: string): void => {
+    for (const target of imageTargetsInText(text)) {
+      const base = imageBasename(target);
+      if (!base) continue;
+      const hit = Array.from(root.querySelectorAll("img")).find(
+        (img) =>
+          !img.classList.contains(cls) &&
+          imageBasename(img.getAttribute("src") ?? "") === base,
+      );
+      hit?.classList.add(cls, "ir-source-image");
+    }
+  };
   for (const m of marks) {
+    // A figure contributes no text, so it is flagged on the element itself.
+    paintImages(m.text, m.cls);
     const needle = readingViewNeedle(m.text);
     if (!needle) continue;
+    if (m.occurrence !== undefined) {
+      counts.set(needle, m.occurrence);
+    }
     if (paint(needle, m.cls)) continue;
     // The extract covers more than one rendered block (multi-paragraph
     // selection, list, or a multi-span Ctrl-select extract whose spans are

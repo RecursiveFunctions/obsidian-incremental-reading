@@ -63,7 +63,7 @@ def custom_review(page, js_filter):
     }""", js_filter)
 
 
-JS_SELECT_ACROSS = """([a, b, sel]) => {
+JS_SELECT_ACROSS = """([a, b, sel, nthA]) => {
   // Several `.markdown-preview-view` roots exist at once (detached leaves,
   // the print pane); pick the one in the active leaf, then any visible one.
   const scope = app.workspace.activeLeaf?.view?.contentEl;
@@ -71,12 +71,18 @@ JS_SELECT_ACROSS = """([a, b, sel]) => {
     || Array.from(document.querySelectorAll(sel)).find(e => e.offsetParent !== null)
     || document.querySelector(sel);
   if (!body) return 'no root ' + sel;
-  const walk = (needle) => {
+  const walk = (needle, skip) => {
+    let left = skip || 0;
     const w = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-    let n; while ((n = w.nextNode())) { const i = (n.nodeValue||'').indexOf(needle); if (i !== -1) return [n, i]; }
+    let n; while ((n = w.nextNode())) {
+      const i = (n.nodeValue||'').indexOf(needle);
+      if (i === -1) continue;
+      if (left > 0) { left -= 1; continue; }
+      return [n, i];
+    }
     return null;
   };
-  const s = walk(a), e = walk(b);
+  const s = walk(a, nthA), e = walk(b, nthA);
   if (!s || !e) return 'not found ' + (!s ? a : b);
   const r = document.createRange();
   r.setStart(s[0], s[1]); r.setEnd(e[0], e[1] + b.length);
@@ -85,9 +91,13 @@ JS_SELECT_ACROSS = """([a, b, sel]) => {
   return sl.toString();
 }"""
 
-def select_across(page, a, b, root=".ir-review-main-body"):
-    """Select from the start of `a` to the end of `b` inside `root`."""
-    return page.evaluate(JS_SELECT_ACROSS, [a, b, root])
+def select_across(page, a, b, root=".ir-review-main-body", nth=0):
+    """Select from the start of `a` to the end of `b` inside `root`.
+
+    `nth` skips that many earlier text nodes containing the needles, for
+    notes where the same sentence appears in more than one block.
+    """
+    return page.evaluate(JS_SELECT_ACROSS, [a, b, root, nth])
 
 def card_marks(page):
     return page.evaluate("""() => Array.from(document.querySelectorAll('.ir-review-main-body mark.ir-extract-source')).map(m => m.textContent)""")

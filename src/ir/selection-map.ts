@@ -2,7 +2,10 @@
  * Map DOM / editor selections to offsets in a markdown note body (no YAML).
  */
 
-import { fuzzyLocateInBody } from "./fuzzy-text";
+import {
+  fuzzyLocateInBody,
+  normalizedOccurrencesBefore,
+} from "./fuzzy-text";
 
 /** Shown when a preview selection cannot be mapped onto source markdown. */
 export const SWITCH_TO_EDIT_COPY =
@@ -394,7 +397,12 @@ export function mapRenderedSelectionToRaw(
     // markdown by whitespace-tolerant search alone: `the anchor guide` is
     // stored as `[the anchor guide](https://…)`. The fuzzy pass drops the
     // link chrome from the raw side.
-    return locateTextInBody(raw, slice) ?? fuzzyLocateInBody(raw, slice);
+    //
+    // A sentence that repeats in the note is ambiguous to a plain search,
+    // which used to fail the whole extract. The rendered offsets say which
+    // occurrence the user selected, so pass that index down.
+    const nth = normalizedOccurrencesBefore(rendered, rOff.start, slice);
+    return locateTextInBody(raw, slice) ?? fuzzyLocateInBody(raw, slice, nth);
   })();
   if (!hit) return null;
 

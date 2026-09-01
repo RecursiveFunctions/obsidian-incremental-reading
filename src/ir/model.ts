@@ -82,12 +82,25 @@ export interface NormalizedRect {
   h: number;
 }
 
+/** One span of a markdown multi-selection, relocatable on its own. */
+export interface AnchorSpan {
+  quote: TextQuoteSelector;
+  position?: PositionSelector;
+}
+
 export interface Anchor {
   /** Vault path of the note or PDF whose body the source text lives in. */
   sourcePath: string;
   quote: TextQuoteSelector;
   position?: PositionSelector;
   blockId?: string;
+  /**
+   * Every span of a Ctrl multi-selection over markdown, in the order the
+   * user made them. The top-level `quote` / `position` duplicate the first
+   * span so older readers keep working; decorations paint all of them.
+   * The PDF equivalent is {@link PdfSelector.segments}.
+   */
+  spans?: AnchorSpan[];
   /** Present when the source is a PDF. Markdown anchors leave this unset. */
   pdf?: PdfSelector;
 }

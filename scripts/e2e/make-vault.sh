@@ -27,7 +27,21 @@ Gamma paragraph is here so the note has a third block to select across.
 
 Delta paragraph points at [the anchor guide](https://example.com/anchors)
 and at [[Notes]] for the rest of the argument.
+
+Epsilon paragraph shows ![[figure.png]] inline with its own text.
+
+Zeta paragraph says the tuning knob is repeated verbatim in this note.
+
+Eta paragraph says the tuning knob is repeated verbatim in this note.
 MD
+# 4x4 red PNG, for the image-embed cases.
+python3 - "$V/figure.png" <<'PY'
+import base64, sys
+open(sys.argv[1], "wb").write(base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAFElEQVR4nGP8z4AAT"
+    "BgYGBgYGBgYGAAZBgH/kFXzPAAAAABJRU5ErkJggg=="
+))
+PY
 cat > "$V/Notes.md" <<'MD'
 # Notes
 
