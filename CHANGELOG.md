@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reading view.** The painter only ever tried the whole extract as one
   needle. A list extract keeps the `- ` chrome the rendered DOM never
   shows, and a Ctrl multi-select extract stores its spans joined by a
-  blank line, so neither could match anything and both painted nothing —
-  the case where you cannot tell a span was already extracted and pull it
-  twice. The painter now falls back block by block, then line by line with
+  blank line, so neither could match anything and both painted nothing.
+  That is the case where you cannot tell a span was already extracted and
+  pull it twice. The painter now falls back block by block, then line by line with
   list / blockquote / heading chrome stripped.
 
 - **Ctrl/Cmd-drag multi-select no longer drops the review card into edit
