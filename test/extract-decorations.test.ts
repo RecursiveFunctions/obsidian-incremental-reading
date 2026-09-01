@@ -87,3 +87,13 @@ test("readingViewNeedleBlocks: a single plain paragraph needs no line fallback",
     { needle: "one plain paragraph", lines: [] },
   ]);
 });
+
+test("readingViewNeedle: flattens link syntax to what the renderer shows", () => {
+  assert.equal(
+    readingViewNeedle("[the anchor guide](https://example.com/anchors)"),
+    "the anchor guide",
+  );
+  assert.equal(readingViewNeedle("see [[Notes|the notes]] later"), "see the notes later");
+  assert.equal(readingViewNeedle("see [[Notes]] later"), "see Notes later");
+  assert.equal(readingViewNeedle("figure ![alt text](img.png) here"), "figure here");
+});

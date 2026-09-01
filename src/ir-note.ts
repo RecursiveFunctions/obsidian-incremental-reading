@@ -11,6 +11,7 @@
 
 import type { App, Editor, TFile } from "obsidian";
 import { IR_KEYS } from "./types";
+import { flattenLinksForMatch } from "./ir/extract-reading-marks";
 import { clampPriority, type IrType, PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
 import { newCard, writeCardToFrontmatter } from "./fsrs";
 import {
@@ -192,7 +193,9 @@ export async function setDismissed(
  * first words only, no Markdown noise, no characters illegal in a vault path.
  */
 function fileStem(text: string): string {
-  const cleaned = text
+  // Flatten links first: the raw `[label](https://…)` would otherwise put
+  // the whole URL in the note's filename.
+  const cleaned = flattenLinksForMatch(text)
     .replace(/\s+/g, " ")
     .replace(/[#*_`>\[\]()~]/g, "")
     .replace(/[\\/:*?"<>|]/g, "")

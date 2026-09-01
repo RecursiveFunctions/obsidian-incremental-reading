@@ -24,5 +24,13 @@ Gamma paragraph is here so the note has a third block to select across.
 
 - first bullet mentions the queue order
 - second bullet mentions the priority slider
+
+Delta paragraph points at [the anchor guide](https://example.com/anchors)
+and at [[Notes]] for the rest of the argument.
+MD
+cat > "$V/Notes.md" <<'MD'
+# Notes
+
+Supporting note so the wikilink in Reading.md resolves.
 MD
 echo "vault at $V"

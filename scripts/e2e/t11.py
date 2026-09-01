@@ -10,7 +10,7 @@ Two bugs this pins down (both fixed in 0.7.5):
 
   ./scripts/e2e/make-vault.sh && ./scripts/e2e/launch-obs.sh && python3 scripts/e2e/t11.py
 """
-import sys, time, shutil; sys.path.insert(0, "/tmp")
+import sys, time, shutil, os, glob; sys.path.insert(0, "/tmp")
 from obs import *
 
 CTRL_MOUSEUP = """() => {
@@ -20,9 +20,23 @@ CTRL_MOUSEUP = """() => {
 }"""
 
 def reset(page):
+    """Drop the store AND the notes earlier cases created, so runs repeat."""
     page.evaluate("() => app.plugins.disablePlugin('incremental-reading')"); time.sleep(1)
     shutil.rmtree('/tmp/ir-vault/.ir', ignore_errors=True)
+    for f in glob.glob('/tmp/ir-vault/*.md'):
+        if os.path.basename(f) not in ("Reading.md", "Notes.md"):
+            os.remove(f)
     page.evaluate("() => app.plugins.enablePlugin('incremental-reading')"); time.sleep(3)
+    # Deleting the notes earlier cases made raises "Source note is gone".
+    dismiss_modals(page); time.sleep(0.3)
+
+
+def cloze_marks(page):
+    return page.evaluate("() => Array.from(document.querySelectorAll('.ir-review-main-body mark.ir-cloze-source')).map(m => m.textContent)")
+
+
+def cloze_hint_ok(page):
+    return page.evaluate("""() => { const b = Array.from(document.querySelectorAll('.ir-hint-bar-btn')).find(b => b.textContent === 'OK'); if (!b) return 'no bar'; b.click(); return 'ok'; }""")
 
 def fresh_card(page):
     reset(page)
@@ -92,5 +106,39 @@ with sync_playwright() as pw:
     pv = page.evaluate("() => Array.from(app.workspace.activeLeaf.view.contentEl.querySelectorAll('mark.ir-extract-source')).map(m => m.textContent)")
     ok &= check("reading-view extract is highlighted", len(pv) > 0, repr(pv))
     shot(page, "55-reading-view-extract")
+
+    # 6. Cloze on text that is also a link: the stored quote is the whole
+    #    `[label](url)`, which no rendered text node contains.
+    fresh_card(page)
+    select_across(page, "the anchor", "anchor guide")
+    cmd(page, "incremental-reading:cloze-selection"); time.sleep(1)
+    cloze_hint_ok(page); time.sleep(2.5)
+    cm = cloze_marks(page)
+    ok &= check("cloze on link text is highlighted", cm == ["the anchor guide"], repr(cm))
+
+    # 7. Cloze on a wikilink.
+    fresh_card(page)
+    select_across(page, "Notes", "Notes")
+    cmd(page, "incremental-reading:cloze-selection"); time.sleep(1)
+    cloze_hint_ok(page); time.sleep(2.5)
+    cm = cloze_marks(page)
+    ok &= check("cloze on a wikilink is highlighted", cm == ["Notes"], repr(cm))
+
+    # 8. Extract across a link: used to fail to map at all, so nothing was
+    #    created and nothing was painted.
+    fresh_card(page)
+    select_across(page, "Delta paragraph", "anchor guide")
+    cmd(page, "incremental-reading:extract-selection"); time.sleep(2)
+    st = stored_extracts(page)
+    ok &= check(
+        "extract across a link is created with the link intact",
+        bool(st) and st[0] == "Delta paragraph points at [the anchor guide](https://example.com/anchors)",
+        repr(st),
+    )
+    ok &= check("extract across a link is highlighted", len(card_marks(page)) == 2, repr(card_marks(page)))
+    # The "source note is gone" modal lands a beat after reset deletes the
+    # notes earlier cases made; clear it so the shot shows the card.
+    dismiss_modals(page); time.sleep(0.5)
+    shot(page, "56-link-extract")
 
     print("ALL PASS" if ok else "FAILURES ABOVE")

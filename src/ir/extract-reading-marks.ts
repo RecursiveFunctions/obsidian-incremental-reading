@@ -14,14 +14,31 @@ import { Normalizer } from "./fuzzy-text";
 const MIN_NEEDLE = 4;
 
 /**
+ * Reduce markdown link syntax to what the renderer actually shows, so a
+ * needle built from stored text can match a rendered text node.
+ * `[label](url)` shows `label`, `[[note|alias]]` shows `alias`, and images
+ * / embeds show no text at all. Without this a cloze or extract on link
+ * text carries `](https://…)` in its needle and never matches anything.
+ */
+export function flattenLinksForMatch(text: string): string {
+  return text
+    .replace(/!\[\[[^\]\n]+\]\]/g, "")
+    .replace(/!\[[^\]\n]*\]\([^)\n]*\)/g, "")
+    .replace(/\[\[[^\]\n|]*\|([^\]\n]*)\]\]/g, "$1")
+    .replace(/\[\[([^\]\n]+)\]\]/g, "$1")
+    .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, "$1");
+}
+
+/**
  * Turn stored extract/cloze text into a needle that can match a rendered
- * preview text node. Markdown emphasis markers are stripped because the
- * reading view / MarkdownRenderer output no longer contains them.
+ * preview text node. Markdown emphasis markers and link syntax are stripped
+ * because the reading view / MarkdownRenderer output no longer contains them.
  */
 export function readingViewNeedle(text: string): string {
-  const normalized = normalizeForMatch(text);
+  const flat = flattenLinksForMatch(text);
+  const normalized = normalizeForMatch(flat);
   if (normalized.length >= MIN_NEEDLE) return normalized;
-  const trimmed = text.trim();
+  const trimmed = flat.trim();
   return trimmed.length >= MIN_NEEDLE ? trimmed : "";
 }
 

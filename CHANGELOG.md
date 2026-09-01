@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cloze and extract highlights now paint on text that is also a link.**
+  The stored quote for a cloze on link text is the whole
+  `[label](url)` (the selection is deliberately snapped out to the whole
+  link so the anchor round-trips), and no rendered text node contains that
+  string, so nothing was highlighted. Needles now flatten link syntax to
+  what the renderer shows: `[label](url)` to `label`, `[[note|alias]]` to
+  `alias`, images and embeds to nothing.
+- **Extracting or clozing a span that crosses a link works at all.** The
+  rendered selection `points at the anchor guide` could not be located in
+  the raw `points at [the anchor guide](https://…)`, so the command failed
+  with "could not map that selection" and created nothing. The fuzzy
+  locator now drops link chrome from the raw side and the mapper falls back
+  to it.
+- **Cloze note filenames no longer bake in the URL.** A cloze across a link
+  was named `... the anchor guidehttpsexample.coman.md`.
+
 - **Extracts captured a span shifted a few characters off what you
   selected, and the highlight followed the shift.** The rendered-text
   offset mapper counted text-node lengths while the rendered string also

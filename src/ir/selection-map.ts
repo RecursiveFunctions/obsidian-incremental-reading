@@ -2,6 +2,8 @@
  * Map DOM / editor selections to offsets in a markdown note body (no YAML).
  */
 
+import { fuzzyLocateInBody } from "./fuzzy-text";
+
 /** Shown when a preview selection cannot be mapped onto source markdown. */
 export const SWITCH_TO_EDIT_COPY =
   "Switch to Edit to extract the exact markdown.";
@@ -388,7 +390,11 @@ export function mapRenderedSelectionToRaw(
     if (exact !== -1 && raw.indexOf(slice, exact + 1) === -1) {
       return { start: exact, end: exact + slice.length, text: slice };
     }
-    return locateTextInBody(raw, slice);
+    // A selection that touches a link has no chance of matching raw
+    // markdown by whitespace-tolerant search alone: `the anchor guide` is
+    // stored as `[the anchor guide](https://…)`. The fuzzy pass drops the
+    // link chrome from the raw side.
+    return locateTextInBody(raw, slice) ?? fuzzyLocateInBody(raw, slice);
   })();
   if (!hit) return null;
 
