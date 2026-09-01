@@ -2633,7 +2633,14 @@ export class IrReviewView extends ItemView {
       for (const e of this.elementsById.values()) {
         if (e.parentId !== slot.id || !e.anchor) continue;
         const text = e.anchor.quote.exact || e.text;
-        if (text.trim()) kids.push({ text, cls: "ir-extract-source" });
+        if (!text.trim()) continue;
+        kids.push({
+          text,
+          // A clozed child is an item. It has to read green here like it
+          // does on a file-backed card, or the card cannot tell you what
+          // was extracted from what was clozed.
+          cls: e.type === "item" ? "ir-cloze-source" : "ir-extract-source",
+        });
       }
       if (kids.length > 0) paintIrSourceMarksInElement(body, kids);
     }

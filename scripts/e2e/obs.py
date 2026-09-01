@@ -107,3 +107,33 @@ def activate_review(page):
 
 def stored_extracts(page):
     return page.evaluate("() => app.plugins.plugins['incremental-reading'].store.load().then(s => Array.from(s.elements.values()).filter(e => e.type === 'extract').map(e => e.text))")
+
+
+def cloze_in_textarea(page, needle):
+    """Select `needle` in the store-only card's textarea and cloze it.
+
+    Focus and the call have to happen in one evaluate: the review view
+    reads `document.activeElement`, and focus does not survive between
+    CDP calls on the headless display.
+    """
+    return page.evaluate("""(needle) => {
+      const rv = app.workspace.getLeavesOfType('ir-review-view')[0].view;
+      const ta = document.querySelector('.ir-review-textarea');
+      if (!ta) return 'no textarea';
+      const s = ta.value.indexOf(needle);
+      if (s === -1) return 'missing';
+      ta.focus(); ta.setSelectionRange(s, s + needle.length);
+      rv.handleCloze();
+      return ta.value.slice(s, s + needle.length);
+    }""", needle)
+
+
+def click_button(page, label):
+    return page.evaluate(
+        "l => { const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === l); if (!b) return 'no ' + l; b.click(); return 'clicked'; }",
+        label,
+    )
+
+
+def leave_edit(page):
+    return page.evaluate("() => { const rv = app.workspace.getLeavesOfType('ir-review-view')[0].view; rv.editing = false; return rv.renderCard(); }")

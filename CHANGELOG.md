@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A cloze made on a store-only extract card was painted yellow, like an
+  extract.** Those cards have no note behind them, so the card paints its
+  children straight from the element tree, and that path hardcoded the
+  extract class for every child. Cloze children now read green there like
+  they do everywhere else, so the card tells you what was extracted from
+  what was clozed.
+
 - **A Ctrl multi-selection now anchors every span, so the editor paints
   all of them.** Markdown anchors recorded only the first span (PDF anchors
   already kept `segments`), so Live Preview and source mode highlighted the

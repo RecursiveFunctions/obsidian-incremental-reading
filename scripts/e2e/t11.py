@@ -189,4 +189,26 @@ with sync_playwright() as pw:
     ok &= check("the editor paints both spans", len(em) == 2, repr(em))
     shot(page, "59-editor-multispan")
 
+    # 13. Store-only extract card (no note behind it): its children are
+    #     painted from the element tree, which used to hardcode the extract
+    #     class, so a cloze came out yellow.
+    fresh_card(page)
+    select_across(page, "Alpha paragraph", "extract target")
+    cmd(page, "incremental-reading:extract-selection"); time.sleep(2.5)
+    custom_review(page, "e.type === 'extract' && !e.notePath"); activate_review(page); time.sleep(1)
+    click_button(page, "Edit"); time.sleep(2)
+    cloze_in_textarea(page, "spaced repetition and the forgetting curve"); time.sleep(1.2)
+    cloze_hint_ok(page); time.sleep(3)
+    leave_edit(page); time.sleep(2)
+    select_across(page, "plain prose", "realistic extract")
+    cmd(page, "incremental-reading:extract-selection"); time.sleep(2.5)
+    cls = page.evaluate("() => Array.from(document.querySelectorAll('.ir-review-main-body mark')).map(m => m.className)")
+    ok &= check(
+        "store-only card tells a cloze from an extract",
+        sorted(cls) == ["ir-cloze-source", "ir-extract-source"],
+        repr(cls),
+    )
+    dismiss_modals(page); time.sleep(0.5)
+    shot(page, "60-store-only-colours")
+
     print("ALL PASS" if ok else "FAILURES ABOVE")
