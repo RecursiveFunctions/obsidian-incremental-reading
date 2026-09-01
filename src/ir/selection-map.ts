@@ -27,18 +27,35 @@ const BLOCK_TAGS = new Set([
   "HR",
 ]);
 
-/** Walk rendered HTML into a plain string with `\n` between block elements. */
-export function renderedPlainText(root: HTMLElement): string {
-  const parts: string[] = [];
+/**
+ * The rendered plain text plus where each text node landed inside it.
+ *
+ * The two have to be built together. `renderedPlainText` inserts a `\n` at
+ * every block boundary and every `<br>`, so a text node's offset in that
+ * string is NOT the sum of the text-node lengths before it. Counting text
+ * nodes alone (what this module used to do) drifts by one character per
+ * boundary, which silently shifted every mapped selection: the extract
+ * stored a span a few characters off from what the user highlighted, and
+ * the reading-mode highlight was painted from that shifted text.
+ */
+interface RenderedIndex {
+  text: string;
+  offsets: Map<Text, number>;
+}
+
+function buildRenderedIndex(root: HTMLElement): RenderedIndex {
+  let text = "";
+  const offsets = new Map<Text, number>();
 
   const pushNewline = () => {
-    const last = parts[parts.length - 1];
-    if (last !== undefined && !last.endsWith("\n")) parts.push("\n");
+    if (text.length > 0 && !text.endsWith("\n")) text += "\n";
   };
 
   const walk = (node: Node): void => {
     if (node.nodeType === Node.TEXT_NODE) {
-      parts.push(node.textContent ?? "");
+      const t = node as Text;
+      offsets.set(t, text.length);
+      text += t.textContent ?? "";
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -54,35 +71,75 @@ export function renderedPlainText(root: HTMLElement): string {
   };
 
   walk(root);
-  return parts.join("").replace(/\n{3,}/g, "\n\n");
+  return collapseNewlineRuns(text, offsets);
+}
+
+/** `\n{3,}` -> `\n\n`, carrying the text-node offsets through the edit. */
+function collapseNewlineRuns(
+  text: string,
+  offsets: Map<Text, number>,
+): RenderedIndex {
+  if (!/\n{3,}/.test(text)) return { text, offsets };
+  let out = "";
+  const shift = new Array<number>(text.length + 1);
+  let run = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    shift[i] = out.length;
+    const c = text[i]!;
+    if (c === "\n") {
+      run += 1;
+      if (run <= 2) out += c;
+    } else {
+      run = 0;
+      out += c;
+    }
+  }
+  shift[text.length] = out.length;
+  const next = new Map<Text, number>();
+  for (const [node, off] of offsets) next.set(node, shift[off] ?? out.length);
+  return { text: out, offsets: next };
+}
+
+/** Walk rendered HTML into a plain string with `\n` between block elements. */
+export function renderedPlainText(root: HTMLElement): string {
+  return buildRenderedIndex(root).text;
+}
+
+/** Deepest last text node under `node`, for element-boundary end offsets. */
+function lastTextIn(node: Node): Text | null {
+  if (node.nodeType === Node.TEXT_NODE) return node as Text;
+  const kids = node.childNodes;
+  for (let i = kids.length - 1; i >= 0; i -= 1) {
+    const t = lastTextIn(kids[i]!);
+    if (t) return t;
+  }
+  return null;
 }
 
 function offsetAtBoundary(
-  root: HTMLElement,
   container: Node,
   offset: number,
-  plain: string,
+  index: RenderedIndex,
 ): number | null {
   if (container.nodeType === Node.TEXT_NODE) {
-    let pos = 0;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const t = walker.currentNode as Text;
-      if (t === container) return pos + offset;
-      pos += t.length;
-    }
-    return null;
+    const t = container as Text;
+    const base = index.offsets.get(t);
+    if (base === undefined) return null;
+    return base + Math.max(0, Math.min(offset, t.length));
   }
   if (container.nodeType === Node.ELEMENT_NODE) {
     const el = container as Element;
-    const child = el.childNodes[offset] ?? el.childNodes[offset - 1];
-    if (!child) {
-      if (offset === 0) return 0;
-      const last = el.childNodes[el.childNodes.length - 1];
-      if (!last) return null;
-      return offsetAtBoundary(root, last, last.textContent?.length ?? 0, plain);
-    }
-    return offsetAtBoundary(root, child, 0, plain);
+    const child = el.childNodes[offset];
+    if (child) return offsetAtBoundary(child, 0, index);
+    // Past the last child: the boundary is the END of what came before,
+    // not the start of it.
+    const prev =
+      el.childNodes[offset - 1] ?? el.childNodes[el.childNodes.length - 1];
+    if (!prev) return offset === 0 ? 0 : null;
+    const last = lastTextIn(prev);
+    if (!last) return null;
+    const base = index.offsets.get(last);
+    return base === undefined ? null : base + last.length;
   }
   return null;
 }
@@ -92,11 +149,11 @@ export function rangeOffsetsInRendered(
   root: HTMLElement,
   range: Range,
 ): { start: number; end: number } | null {
-  const plain = renderedPlainText(root);
-  const start = offsetAtBoundary(root, range.startContainer, range.startOffset, plain);
-  const end = offsetAtBoundary(root, range.endContainer, range.endOffset, plain);
+  const index = buildRenderedIndex(root);
+  const start = offsetAtBoundary(range.startContainer, range.startOffset, index);
+  const end = offsetAtBoundary(range.endContainer, range.endOffset, index);
   if (start === null || end === null || end <= start) return null;
-  return { start, end: Math.min(end, plain.length) };
+  return { start, end: Math.min(end, index.text.length) };
 }
 
 /** Collapsed caret offset in `renderedPlainText(root)`. */
@@ -105,10 +162,10 @@ export function caretOffsetInRendered(
   container: Node,
   offset: number,
 ): number | null {
-  const plain = renderedPlainText(root);
-  const pos = offsetAtBoundary(root, container, offset, plain);
+  const index = buildRenderedIndex(root);
+  const pos = offsetAtBoundary(container, offset, index);
   if (pos === null) return null;
-  return Math.max(0, Math.min(pos, plain.length));
+  return Math.max(0, Math.min(pos, index.text.length));
 }
 
 const RAW_MARKUP = /[#*_`~[\]()!>+-]/;

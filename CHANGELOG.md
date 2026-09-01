@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Extracts captured a span shifted a few characters off what you
+  selected, and the highlight followed the shift.** The rendered-text
+  offset mapper counted text-node lengths while the rendered string also
+  gets a newline at every block boundary and `<br>`, so a selection drifted
+  one character per boundary above it: the further down the note, the
+  bigger the miss. On a list it drifted far enough to swallow the `- `
+  bullet, and then no highlight painted at all.
+- **List and multi-span extracts now highlight in the review card and
+  reading view.** The painter only ever tried the whole extract as one
+  needle. A list extract keeps the `- ` chrome the rendered DOM never
+  shows, and a Ctrl multi-select extract stores its spans joined by a
+  blank line, so neither could match anything and both painted nothing —
+  the case where you cannot tell a span was already extracted and pull it
+  twice. The painter now falls back block by block, then line by line with
+  list / blockquote / heading chrome stripped.
+
 - **Ctrl/Cmd-drag multi-select no longer drops the review card into edit
   mode.** Ctrl/Cmd-click used to force the reading card into the editor, so
   every held span ended the drag in Live Preview (and the hold was lost when

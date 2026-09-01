@@ -61,3 +61,39 @@ def custom_review(page, js_filter):
       await new Promise(r => setTimeout(r, 1500));
       return pick.map(e => e.notePath || e.text.slice(0,20));
     }""", js_filter)
+
+
+JS_SELECT_ACROSS = """([a, b, sel]) => {
+  // Several `.markdown-preview-view` roots exist at once (detached leaves,
+  // the print pane); pick the one in the active leaf, then any visible one.
+  const scope = app.workspace.activeLeaf?.view?.contentEl;
+  const body = scope?.querySelector(sel)
+    || Array.from(document.querySelectorAll(sel)).find(e => e.offsetParent !== null)
+    || document.querySelector(sel);
+  if (!body) return 'no root ' + sel;
+  const walk = (needle) => {
+    const w = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    let n; while ((n = w.nextNode())) { const i = (n.nodeValue||'').indexOf(needle); if (i !== -1) return [n, i]; }
+    return null;
+  };
+  const s = walk(a), e = walk(b);
+  if (!s || !e) return 'not found ' + (!s ? a : b);
+  const r = document.createRange();
+  r.setStart(s[0], s[1]); r.setEnd(e[0], e[1] + b.length);
+  const sl = window.getSelection(); sl.removeAllRanges(); sl.addRange(r);
+  document.dispatchEvent(new Event('selectionchange'));
+  return sl.toString();
+}"""
+
+def select_across(page, a, b, root=".ir-review-main-body"):
+    """Select from the start of `a` to the end of `b` inside `root`."""
+    return page.evaluate(JS_SELECT_ACROSS, [a, b, root])
+
+def card_marks(page):
+    return page.evaluate("""() => Array.from(document.querySelectorAll('.ir-review-main-body mark.ir-extract-source')).map(m => m.textContent)""")
+
+def activate_review(page):
+    page.evaluate("() => { const l = app.workspace.getLeavesOfType('ir-review-view')[0]; app.workspace.setActiveLeaf(l, {focus:true}); l.view.contentEl.focus(); }")
+
+def stored_extracts(page):
+    return page.evaluate("() => app.plugins.plugins['incremental-reading'].store.load().then(s => Array.from(s.elements.values()).filter(e => e.type === 'extract').map(e => e.text))")

@@ -40,6 +40,45 @@ export function readingViewNeedlePasses(
   return out;
 }
 
+/**
+ * Markdown chrome the renderer eats at the head of a line: blockquote
+ * markers, list bullets, ordered-list numbers, heading hashes. Stored
+ * extract text keeps them; the rendered `<li>` / `<p>` does not.
+ */
+const BLOCK_CHROME_RE = /^[ \t]*(?:>[ \t]*)*(?:(?:[-*+]|\d+[.)])[ \t]+|#{1,6}[ \t]+)?/;
+
+/** One rendered block's worth of an extract, plus its per-line fallbacks. */
+export interface NeedleBlock {
+  /** Needle for the whole paragraph / list item. */
+  needle: string;
+  /** Per-line needles, block chrome stripped, for lists and hard breaks. */
+  lines: string[];
+}
+
+/**
+ * Split a stored extract into the needles that can actually match rendered
+ * HTML. A needle never spans two blocks: Obsidian builds the preview DOM
+ * with no whitespace between block elements, so the end of one paragraph
+ * and the start of the next concatenate with nothing between them, while
+ * the stored text has a blank line there. The same applies to a multi-span
+ * (Ctrl multi-select) extract, whose spans are joined with a blank line.
+ *
+ * Callers try the whole-extract needle first and fall back to these.
+ */
+export function readingViewNeedleBlocks(text: string): NeedleBlock[] {
+  const out: NeedleBlock[] = [];
+  for (const para of text.split(/\r?\n[ \t]*\r?\n/)) {
+    const needle = readingViewNeedle(para);
+    const lines: string[] = [];
+    for (const line of para.split(/\r?\n/)) {
+      const n = readingViewNeedle(line.replace(BLOCK_CHROME_RE, ""));
+      if (n && n !== needle && !lines.includes(n)) lines.push(n);
+    }
+    if (needle || lines.length > 0) out.push({ needle, lines });
+  }
+  return out;
+}
+
 /** Offset of the `n`-th (0-based) occurrence of `needle` in `haystack`. */
 export function nthOccurrenceOffset(
   haystack: string,
@@ -78,16 +117,30 @@ export function paintIrSourceMarksInElement(
   marks: ReadonlyArray<DomSourceMark>,
 ): void {
   const counts = new Map<string, number>();
-  for (const m of marks) {
-    const needle = readingViewNeedle(m.text);
-    if (!needle) continue;
+  const paint = (needle: string, cls: string): boolean => {
     const n = counts.get(needle) ?? 0;
     counts.set(needle, n + 1);
     // Fast path: the whole needle sits in one text node. Otherwise the
     // extract crosses inline formatting (bold, links, code) and we wrap
     // each text-node slice it touches.
-    if (!wrapNthOccurrenceInTextNode(root, needle, n, m.cls)) {
-      wrapNthOccurrenceAcrossNodes(root, needle, n, m.cls);
+    if (wrapNthOccurrenceInTextNode(root, needle, n, cls)) return true;
+    return wrapNthOccurrenceAcrossNodes(root, needle, n, cls);
+  };
+  for (const m of marks) {
+    const needle = readingViewNeedle(m.text);
+    if (!needle) continue;
+    if (paint(needle, m.cls)) continue;
+    // The extract covers more than one rendered block (multi-paragraph
+    // selection, list, or a multi-span Ctrl-select extract whose spans are
+    // stored joined by a blank line). No single needle can match across a
+    // block boundary, so paint block by block, then line by line.
+    for (const block of readingViewNeedleBlocks(m.text)) {
+      if (block.needle && block.needle !== needle) {
+        if (paint(block.needle, m.cls)) continue;
+      }
+      for (const line of block.lines) {
+        if (line !== needle) paint(line, m.cls);
+      }
     }
   }
 }

@@ -1,5 +1,7 @@
 #!/bin/bash
-pgrep -x Xvfb >/dev/null || { nohup Xvfb :99 -ac -screen 0 1600x1000x24 >/tmp/xvfb.log 2>&1 & sleep 3; }
+# Check the :99 socket, not "any Xvfb": other tools park their own Xvfb on
+# a different display and would make a bare pgrep pass while :99 is dead.
+[ -e /tmp/.X11-unix/X99 ] || { nohup Xvfb :99 -ac -screen 0 1600x1000x24 >/tmp/xvfb.log 2>&1 & sleep 3; }
 mkdir -p /tmp/obs-ud /tmp/shots
 python3 - <<'PY'
 import json,time
