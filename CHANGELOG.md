@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The mobile FAB shows how many elements are due.** Obsidian mobile has
+  no status bar, so the glanceable queue-load indicator had no mobile
+  implementation at all: the plugin was painting those numbers into an
+  element the platform never renders. The floating IR button now carries a
+  due-count badge that updates as you grade, postpone, and dismiss, and
+  disappears when the queue is clear. Desktop is unchanged.
 - **The four grade buttons look like four choices.** Again / Hard / Good /
   Easy carried their own CSS classes since the grade bar was written and
   nothing ever styled them, so they rendered as four identical grey

@@ -398,6 +398,34 @@ img.ir-source-image.ir-cloze-source {
   display: none;
 }
 
+/*
+ * Due-count badge (UI commitment #4 on mobile: Obsidian mobile has no status
+ * bar, so the FAB carries the number). Never intercepts taps — the whole FAB
+ * is the target, and a badge that swallowed a touch near the corner would
+ * feel like a dead spot.
+ */
+.ir-workspace-fab-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  border: 2px solid var(--background-primary);
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.ir-workspace-fab-badge.is-hidden {
+  display: none;
+}
+
 .ir-workspace-fab:active {
   transform: scale(0.96);
 }

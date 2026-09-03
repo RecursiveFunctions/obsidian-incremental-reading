@@ -13,12 +13,30 @@ import { irWorkspaceFabShouldShow } from "./ir/mobile-hub";
 import { layoutWorkspaceFab } from "./ir/mobile-viewport";
 
 const FAB_CLASS = "ir-workspace-fab";
+const BADGE_CLASS = "ir-workspace-fab-badge";
 
 let workspaceFabSync: (() => void) | null = null;
+let workspaceFabBadge: ((due: number) => void) | null = null;
 
 /** Call after review edit-mode toggles so the FAB repositions immediately. */
 export function notifyWorkspaceFabSync(): void {
   workspaceFabSync?.();
+}
+
+/**
+ * Paint the due count on the workspace FAB (UI commitment #4 on mobile).
+ *
+ * Obsidian mobile has no status bar, so the glanceable queue-load indicator
+ * had no mobile implementation at all: `renderStatusBar` was painting into
+ * an element the platform never shows. The FAB is the only always-visible
+ * IR surface on a phone, so the count rides there.
+ *
+ * Push, not poll: the host plugin already recomputes the load on every
+ * mutation and calls this. The FAB's own 500 ms interval stays layout-only.
+ * No-op on desktop, where no FAB exists.
+ */
+export function setWorkspaceIrFabDue(due: number): void {
+  workspaceFabBadge?.(due);
 }
 
 export function registerWorkspaceIrFab(
@@ -36,6 +54,30 @@ export function registerWorkspaceIrFab(
   fab.setAttr("aria-label", "Incremental Reading");
   fab.setAttr("title", "Incremental Reading");
   setIcon(fab, "brain-circuit");
+
+  // Created after setIcon: setIcon replaces the element's children, so a
+  // badge added before it would be wiped out.
+  const badge = fab.createDiv({ cls: BADGE_CLASS });
+  badge.addClass("is-hidden");
+  let lastDue = 0;
+  const paintBadge = (due: number) => {
+    lastDue = due;
+    if (due <= 0) {
+      badge.addClass("is-hidden");
+      badge.setText("");
+      fab.setAttr("aria-label", "Incremental Reading");
+      fab.setAttr("title", "Incremental Reading");
+      return;
+    }
+    badge.removeClass("is-hidden");
+    badge.setText(due > 99 ? "99+" : String(due));
+    const label = `Incremental Reading · ${due} due`;
+    fab.setAttr("aria-label", label);
+    fab.setAttr("title", label);
+  };
+  workspaceFabBadge = paintBadge;
+  paintBadge(lastDue);
+
   const prepare = () => hooks.prepareOpenHub();
   fab.addEventListener(
     "pointerdown",
@@ -89,6 +131,7 @@ export function registerWorkspaceIrFab(
 
   return () => {
     workspaceFabSync = null;
+    workspaceFabBadge = null;
     if (vv) {
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);

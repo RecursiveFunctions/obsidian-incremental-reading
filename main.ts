@@ -174,6 +174,7 @@ import {
 import {
   notifyWorkspaceFabSync,
   registerWorkspaceIrFab,
+  setWorkspaceIrFabDue,
 } from "./src/ir-mobile-fab";
 import { sessionHubKinds } from "./src/ir/mobile-hub";
 import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
@@ -482,6 +483,9 @@ export default class IncrementalReadingPlugin extends Plugin {
           openHub: () => void this.openIrActionsHub(),
         }),
       );
+      // The FAB is built after the first status-bar refresh fired, so paint
+      // its badge now rather than leaving it blank until the next mutation.
+      void this.refreshStatusBar();
     }
 
     this.addRibbonIcon("brain-circuit", "Start IR review", () => {
@@ -1397,6 +1401,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       const state = await this.store.load();
       const events = await this.store.loadEvents();
       const load = computeLoad(state.elements.values(), events, Date.now());
+      // Mobile has no status bar; the FAB badge is the same number.
+      setWorkspaceIrFabDue(load.due);
       renderStatusBar(
         this.statusBarEl,
         load,
