@@ -203,6 +203,25 @@ export class IrReviewView extends ItemView {
   /** In-dock success line; survives the next renderCard until it fades. */
   private pendingFlash: string | null = null;
   private flashClearTimer: number | null = null;
+  /**
+   * The most recent reversible non-grade action in this session (Later
+   * today or Dismiss), with the element as it was before the action.
+   *
+   * Session-local on purpose. The log-based `undoLastGrade` path in the
+   * host plugin retracts a grade by appending `grade-undone`; there is no
+   * equivalent fold rule for `topic-advanced` or `dismiss-set`, so the
+   * reversal here appends a normal forward event carrying the snapshotted
+   * prior state. That is append-only and safe, but it only reads as
+   * "undo" while we still hold the snapshot, hence one level and no
+   * persistence across sessions.
+   */
+  private lastReversible: {
+    kind: "later" | "dismiss";
+    index: number;
+    slotId: ElementId;
+    prevElement: IrElement;
+    label: string;
+  } | null = null;
 
   /** Thin session chrome; sibling of cardHost so it survives card re-renders. */
   private sessionBarEl?: HTMLElement;
@@ -1120,6 +1139,12 @@ export class IrReviewView extends ItemView {
       label: this.labelWithHotkey("Dismiss", "D"),
       run: () => void this.dismiss(),
     });
+    if (this.canUndo()) {
+      items.push({
+        label: this.undoLabel(),
+        run: () => void this.tryUndoLast(),
+      });
+    }
     return items;
   }
 
@@ -1175,10 +1200,10 @@ export class IrReviewView extends ItemView {
       label: this.labelWithHotkey("Dismiss", "D"),
       run: () => void this.dismiss(),
     });
-    if (this.commitUndoLastGrade) {
+    if (this.canUndo()) {
       items.push({
-        label: "Undo last grade",
-        run: () => void this.tryUndoLastGrade(),
+        label: this.undoLabel(),
+        run: () => void this.tryUndoLast(),
       });
     }
     return items;
@@ -2008,6 +2033,14 @@ export class IrReviewView extends ItemView {
             cls: "ir-review-util-btn",
           })
           .addEventListener("click", () => void this.dismiss());
+        if (this.canUndo()) {
+          bar
+            .createEl("button", {
+              cls: "ir-review-undo ir-review-util-btn",
+              text: this.undoLabel(),
+            })
+            .addEventListener("click", () => void this.tryUndoLast());
+        }
       }
       this.restoreBookmark(slot);
       void this.maybeOpenPdfSource(slot).then(() => {
@@ -2107,13 +2140,13 @@ export class IrReviewView extends ItemView {
           cls: "ir-review-util-btn",
         })
         .addEventListener("click", () => void this.dismiss());
-      if (this.commitUndoLastGrade) {
+      if (this.canUndo()) {
         bar
           .createEl("button", {
             cls: "ir-review-undo ir-review-util-btn",
-            text: "Undo last grade",
+            text: this.undoLabel(),
           })
-          .addEventListener("click", () => void this.tryUndoLastGrade());
+          .addEventListener("click", () => void this.tryUndoLast());
       }
     }
     this.paintFlash();
@@ -2287,6 +2320,13 @@ export class IrReviewView extends ItemView {
     scroll.createEl("h3", {
       text: this.neuralEndedEarly ? "Neural session ended" : "Session complete",
     });
+    // The dock (and its flash line) is gone on this screen, so carry the last
+    // confirmation here instead of dropping it.
+    if (this.pendingFlash) {
+      const done = scroll.createDiv({ cls: "ir-review-flash" });
+      done.setAttr("role", "status");
+      done.setText(this.pendingFlash);
+    }
     if (!this.neuralEndedEarly) {
       const n = this.queue.length;
       scroll.createEl("p", {
@@ -2458,6 +2498,10 @@ export class IrReviewView extends ItemView {
     let el = dock.querySelector<HTMLElement>(".ir-review-flash");
     if (!el) {
       el = dock.createDiv({ cls: "ir-review-flash" });
+      // Announce confirmations that replace Notices, which the OS
+      // accessibility layer would otherwise never see.
+      el.setAttr("role", "status");
+      el.setAttr("aria-live", "polite");
       dock.prepend(el);
     }
     el.setText(this.pendingFlash);
@@ -2514,6 +2558,125 @@ export class IrReviewView extends ItemView {
       }
     }
     void this.renderCard();
+  }
+
+  /** Cards left after the one currently on screen. */
+  private remainingAfterCurrent(): number {
+    return Math.max(0, this.queue.length - this.index - 1);
+  }
+
+  /**
+   * Record a one-level session undo for Later today / Dismiss. Called after
+   * the forward write succeeds, so a failed action never leaves a
+   * reversal pointing at state that was never committed.
+   */
+  private rememberReversible(
+    kind: "later" | "dismiss",
+    slot: ReviewSlot,
+    prevElement: IrElement,
+  ): void {
+    this.lastReversible = {
+      kind,
+      index: this.index,
+      slotId: slot.id,
+      prevElement,
+      label: labelFor(prevElement),
+    };
+  }
+
+  /** True when Undo has anything to do (session action or logged grade). */
+  private canUndo(): boolean {
+    return this.lastReversible !== null || !!this.commitUndoLastGrade;
+  }
+
+  /**
+   * Undo affordance shared by the dock button, the mobile overflow menu and
+   * the command palette. Prefers the session action (Later today / Dismiss)
+   * because it is always the more recent of the two: `lastReversible` is
+   * cleared the moment a grade lands.
+   */
+  private async tryUndoLast(): Promise<void> {
+    if (this.lastReversible) {
+      await this.undoLastReversible();
+      return;
+    }
+    await this.tryUndoLastGrade();
+  }
+
+  /** Label for the Undo control, so the user knows what it will take back. */
+  private undoLabel(): string {
+    if (!this.lastReversible) return "Undo last grade";
+    return this.lastReversible.kind === "later"
+      ? "Undo later today"
+      : "Undo dismiss";
+  }
+
+  /**
+   * Reverse the last Later today / Dismiss by appending a forward event that
+   * carries the snapshotted prior state, then rewind the cursor to the card
+   * so the user can act on it again.
+   *
+   * Why append rather than retract: the fold has no `*-undone` rule for
+   * `topic-advanced` or `dismiss-set`, and inventing one would change how
+   * every historical log replays. Writing the prior value forward keeps the
+   * log append-only and the fold unchanged.
+   */
+  private async undoLastReversible(): Promise<void> {
+    const undo = this.lastReversible;
+    if (!undo) return;
+    this.lastReversible = null;
+
+    const slot = this.queue[undo.index];
+    const restored = undo.prevElement;
+    const file = slot?.file;
+
+    try {
+      if (undo.kind === "dismiss") {
+        await this.emit("dismiss-set", undo.slotId, { dismissed: false });
+        if (file) {
+          await quietFrontmatterWrite(
+            () => setDismissed(this.app, file, false).then(() => undefined),
+            "dismiss-undone",
+          );
+        }
+      } else {
+        const prior = scheduleToTopicState(restored.schedule);
+        await this.emit("topic-advanced", undo.slotId, {
+          schedule: restored.schedule,
+        });
+        if (file && prior) {
+          await quietFrontmatterWrite(async () => {
+            await this.app.fileManager.processFrontMatter(file, (f) => {
+              writeTopicToFrontmatter(f, prior);
+            });
+          }, "later-undone");
+        }
+      }
+    } catch (err) {
+      console.error("Incremental Reading: undo failed", err);
+      new Notice("Incremental Reading: could not undo that.");
+      return;
+    }
+
+    if (slot) {
+      slot.element = restored;
+      this.elementsById.set(undo.slotId, restored);
+    }
+    this.onChange?.();
+    this.flash(
+      undo.kind === "later"
+        ? `Restored "${undo.label}" to its earlier due time`
+        : `Restored "${undo.label}"`,
+    );
+
+    // Rewind to the card we just put back, so Undo lands you on the thing
+    // you undid instead of leaving it behind in the queue.
+    this.index = undo.index;
+    this.revealed = false;
+    this.editing = false;
+    this.loadedSlotId = null;
+    this.sessionComplete = false;
+    await this.renderCard();
   }
 
   /**
@@ -3685,6 +3848,9 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (!slot) return;
     await this.flushEdits();
+    // A grade is newer than any pending Later/Dismiss snapshot, and the
+    // logged `grade-undone` path owns undo from here.
+    this.lastReversible = null;
 
     const next = schedule(storedToCard(slot.element.card), g);
     const stored = cardToStored(next);
@@ -3814,6 +3980,7 @@ export class IrReviewView extends ItemView {
         aFactor: this.settings.topicAFactor,
       } as TopicState);
     const postponed = laterToday(cur);
+    const prevElement = slot.element;
     await this.emit("topic-advanced", slot.id, {
       schedule: topicStateToSchedule(postponed),
     });
@@ -3828,6 +3995,8 @@ export class IrReviewView extends ItemView {
         });
       }, "later");
     }
+    this.rememberReversible("later", slot, prevElement);
+    this.flash(`Later today · ${this.remainingAfterCurrent()} left`);
     this.advance();
   }
 
@@ -3835,6 +4004,7 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (!slot) return;
     await this.flushEdits();
+    const prevElement = slot.element;
     await this.emit("dismiss-set", slot.id, { dismissed: true });
     slot.element = { ...slot.element, dismissed: true };
     if (slot.file) {
@@ -3843,9 +4013,11 @@ export class IrReviewView extends ItemView {
         "dismiss",
       );
     }
-    if (this.index + 1 < this.queue.length) {
-      this.flash(`Dismissed · ${this.queue.length - this.index - 1} left`);
-    }
+    this.rememberReversible("dismiss", slot, prevElement);
+    // Unconditional: on the last card `advance()` swaps in the session-complete
+    // screen, which renders the pending flash itself, so the confirmation is
+    // no longer swallowed when you dismiss the thing you were finishing on.
+    this.flash(`Dismissed · ${this.remainingAfterCurrent()} left`);
     this.advance();
   }
 }
