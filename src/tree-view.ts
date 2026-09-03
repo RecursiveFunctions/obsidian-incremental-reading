@@ -11,6 +11,7 @@ import {
 import type { LogState } from "./ir/log";
 import { recentBookmarks, type Bookmark } from "./ir/bookmark";
 import { labelFor } from "./ir/labels";
+import { promptConfirm } from "./confirm-modal";
 import { IrStore } from "./ir/store";
 import {
   buildTree,
@@ -1167,13 +1168,15 @@ export class IrTreeView extends ItemView {
   private async bulkDelete(ids: ElementId[]): Promise<void> {
     if (!this.commitDelete) return;
     if (ids.length === 0) return;
-    if (
-      !confirm(
-        `Delete ${ids.length} selected element${ids.length !== 1 ? "s" : ""}? Their children will be reparented.`,
-      )
-    ) {
-      return;
-    }
+    const plural = ids.length !== 1;
+    const okToDelete = await promptConfirm(this.app, {
+      title: `Delete ${ids.length} selected element${plural ? "s" : ""}?`,
+      body: `Their children will be reparented. ${
+        plural ? "These elements" : "This element"
+      } leave the queue; the notes behind them are not trashed.`,
+      ctaText: `Delete ${ids.length}`,
+    });
+    if (!okToDelete) return;
     const state = await this.store.load();
     let ok = 0;
     let fail = 0;
@@ -1813,11 +1816,17 @@ export class IrTreeView extends ItemView {
           .onClick(() => {
             const childCount = node.children.length;
             const deleteLabel = this.rowLabel(node.element);
-            const msg = childCount > 0
-              ? `Delete "${deleteLabel}"? Its ${childCount} child${childCount !== 1 ? "ren" : ""} will be reparented to its parent.`
-              : `Delete "${deleteLabel}"?`;
-            if (!confirm(msg)) return;
             void (async () => {
+              const okToDelete = await promptConfirm(this.app, {
+                title: `Delete "${deleteLabel}"?`,
+                body:
+                  childCount > 0
+                    ? `Its ${childCount} child${
+                        childCount !== 1 ? "ren" : ""
+                      } will be reparented to its parent. The note behind this element is not trashed.`
+                    : "The note behind this element is not trashed.",
+              });
+              if (!okToDelete) return;
               try {
                 await this.commitDelete!(elId, node.element.parentId);
               } catch (err) {
