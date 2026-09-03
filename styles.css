@@ -802,6 +802,53 @@ img.ir-source-image.ir-cloze-source {
   justify-content: flex-end;
 }
 
+/*
+ * Grade buttons (UI commitment #3: theme variables only, no hardcoded hex).
+ *
+ * Again / Hard / Good / Easy are four separate decisions and used to render
+ * as four identical grey buttons. The tint is deliberately restrained: label
+ * color plus a 2px bottom border in the grade color, not a filled button.
+ * Full colored fills fight community themes, and the accent fill is already
+ * spoken for by `mod-cta` (Show answer / Next).
+ *
+ * Color is never the only signal: every grade button also carries its label
+ * and, on desktop, its hotkey, so the meaning survives a colorblind reader,
+ * a high-contrast theme, and a forced-colors mode.
+ */
+.ir-review-grade-btn {
+  border-bottom: 2px solid transparent;
+}
+
+.ir-review-grade-btn--again {
+  color: var(--color-red);
+  border-bottom-color: var(--color-red);
+}
+
+.ir-review-grade-btn--hard {
+  color: var(--color-orange);
+  border-bottom-color: var(--color-orange);
+}
+
+.ir-review-grade-btn--good {
+  color: var(--color-green);
+  border-bottom-color: var(--color-green);
+}
+
+.ir-review-grade-btn--easy {
+  color: var(--color-blue);
+  border-bottom-color: var(--color-blue);
+}
+
+/*
+ * "Show answer" is a grade-bar-sized mod-cta button that also carries
+ * .ir-review-grade-btn; the accent fill owns its text color, so don't let a
+ * modifier tint override it.
+ */
+.ir-review-grade-btn.mod-cta {
+  color: var(--text-on-accent);
+  border-bottom-color: transparent;
+}
+
 /* Obsidian mobile app: larger tap targets, two-column grid, primary full-width. */
 .ir-review--mobile .ir-review-buttons {
   display: grid;
