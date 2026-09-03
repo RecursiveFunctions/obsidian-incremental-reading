@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The four grade buttons look like four choices.** Again / Hard / Good /
+  Easy carried their own CSS classes since the grade bar was written and
+  nothing ever styled them, so they rendered as four identical grey
+  buttons. Each now takes a label tint and a bottom border from Obsidian's
+  own color variables. Every button still shows its word and its hotkey, so
+  the meaning never rests on color alone.
+- **Later today and Dismiss can be undone.** Undo used to cover grades
+  only, which made a mis-tapped Dismiss a trip to the element tree. Both
+  actions now record a one-level session snapshot, and the dock's Undo
+  control reverses whichever happened last and rewinds to that card. The
+  reversal is appended to the log like any other event, so review history
+  stays append-only.
+- **Nothing due is a surface instead of a toast.** Starting review with
+  nothing due said "nothing due for review" and stopped, which never
+  answered when to come back. The review pane now opens on a panel with the
+  next due time, how many land tomorrow, how many land inside a week, and a
+  way through to the element tree. A restored review tab that finds an empty
+  queue shows the same panel instead of silently closing itself.
+
 ### Fixed
+
+- **Later today and Dismiss say something.** Later today wrote the new due
+  time and moved on in silence, so the card simply vanished; Dismiss
+  confirmed itself only when another card followed, which meant dismissing
+  the card you were finishing on said nothing at all. Both confirm now, and
+  the session-complete screen carries the last confirmation.
+- **Delete confirmations honor your theme.** Both tree delete paths used the
+  platform dialog, unthemed and with OS button order. They now use the same
+  in-plugin confirmation the Danger zone uses, and the copy says out loud
+  that the note behind the element is not trashed.
+- **Set IR priority works on mobile.** Obsidian mobile has no status bar, so
+  the priority prompt opened an input where nothing is rendered: it took
+  focus off-screen and cancelled itself, which read as the command doing
+  nothing. Priority editing now routes to the element tree's inline editor,
+  and a note that isn't in the tree yet says so.
+- **The swipe coach mark stops after three showings.** It only recorded
+  "seen" from inside a real swipe, so anyone who taps the dock buttons got
+  an eight-second notice at the top of every session, forever.
 
 - **A cloze made on a store-only extract card was painted yellow, like an
   extract.** Those cards have no note behind them, so the card paints its
