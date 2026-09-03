@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   computeLoad,
+  computeUpcoming,
+  describeNextDue,
   endOfDayMs,
   formatLoad,
   formatLoadTooltip,
@@ -293,4 +295,77 @@ test("computeLoad: dismissed mercy-postponed is ignored", () => {
     NOW,
   );
   assert.equal(load.postponed, 0);
+});
+
+// --- computeUpcoming / describeNextDue (nothing-due panel) ---
+
+test("computeUpcoming: nextDueMs is the soonest future due", () => {
+  const up = computeUpcoming(
+    [
+      item({ id: "a", dueMs: NOW + 5 * DAY }),
+      item({ id: "b", dueMs: NOW + 2 * 60 * 60 * 1000 }),
+      item({ id: "c", dueMs: NOW - DAY }),
+    ],
+    NOW,
+  );
+  assert.equal(up.nextDueMs, NOW + 2 * 60 * 60 * 1000);
+});
+
+test("computeUpcoming: past-due and dismissed elements never set nextDueMs", () => {
+  const up = computeUpcoming(
+    [
+      item({ id: "a", dueMs: NOW - DAY }),
+      item({ id: "b", dueMs: NOW + DAY, dismissed: true }),
+    ],
+    NOW,
+  );
+  assert.equal(up.nextDueMs, undefined);
+  assert.equal(up.dueTomorrow, 0);
+  assert.equal(up.due7d, 0);
+});
+
+test("computeUpcoming: dueTomorrow counts only the next calendar day", () => {
+  const endToday = endOfDayMs(NOW);
+  const up = computeUpcoming(
+    [
+      // later today: not tomorrow
+      item({ id: "a", dueMs: endToday - 1000 }),
+      // tomorrow morning and tomorrow night: both count
+      item({ id: "b", dueMs: endToday + 60 * 60 * 1000 }),
+      item({ id: "c", dueMs: endOfDayMs(endToday + 1) - 1000 }),
+      // day after: does not
+      item({ id: "d", dueMs: endOfDayMs(endToday + 1) + 60 * 60 * 1000 }),
+    ],
+    NOW,
+  );
+  assert.equal(up.dueTomorrow, 2);
+});
+
+test("computeUpcoming: due7d is every future due inside seven days", () => {
+  const up = computeUpcoming(
+    [
+      item({ id: "a", dueMs: NOW + 60 * 60 * 1000 }),
+      item({ id: "b", dueMs: NOW + 6 * DAY }),
+      item({ id: "c", dueMs: NOW + 8 * DAY }),
+      item({ id: "d", dueMs: NOW - 60 * 60 * 1000 }),
+    ],
+    NOW,
+  );
+  assert.equal(up.due7d, 2);
+});
+
+test("describeNextDue: minutes, today, tomorrow, weekday, far future", () => {
+  assert.equal(describeNextDue(NOW + 30 * 1000, NOW), "in under a minute");
+  assert.equal(describeNextDue(NOW + 20 * 60 * 1000, NOW), "in 20 min");
+  assert.match(describeNextDue(NOW + 3 * 60 * 60 * 1000, NOW), /^today 13:00/);
+  const tomorrow9 = new Date(2026, 4, 20, 9, 0, 0, 0).getTime();
+  assert.equal(describeNextDue(tomorrow9, NOW), "tomorrow 09:00");
+  // 2026-05-19 is a Tuesday, so +3 days is Friday.
+  const friday = new Date(2026, 4, 22, 8, 30, 0, 0).getTime();
+  assert.equal(describeNextDue(friday, NOW), "Fri 08:30");
+  assert.equal(describeNextDue(NOW + 30 * DAY, NOW), "in 30 days");
+});
+
+test("describeNextDue: a due time already past reads as now", () => {
+  assert.equal(describeNextDue(NOW - 1000, NOW), "now");
 });

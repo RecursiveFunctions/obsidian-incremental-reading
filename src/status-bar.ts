@@ -86,6 +86,81 @@ export function lastDueChangeKind(
   return out;
 }
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function hhmm(d: Date): string {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(
+    d.getMinutes(),
+  ).padStart(2, "0")}`;
+}
+
+/**
+ * Human phrasing for the next due time, in the user's local day terms.
+ *
+ * Formats by hand rather than via `toLocaleString` so the output is
+ * deterministic under test and identical on every install; the review pane
+ * is not the place to discover that a device's ICU data is missing.
+ */
+export function describeNextDue(nextDueMs: number, now: number): string {
+  const diff = nextDueMs - now;
+  if (diff <= 0) return "now";
+  if (diff < 60 * 1000) return "in under a minute";
+  if (diff < 60 * 60 * 1000) {
+    const mins = Math.round(diff / (60 * 1000));
+    return `in ${mins} min`;
+  }
+  const then = new Date(nextDueMs);
+  const endToday = endOfDayMs(now);
+  const endTomorrow = endOfDayMs(endToday + 1);
+  if (nextDueMs <= endToday) {
+    const hours = Math.round(diff / (60 * 60 * 1000));
+    return `today ${hhmm(then)} (in ${hours} h)`;
+  }
+  if (nextDueMs <= endTomorrow) return `tomorrow ${hhmm(then)}`;
+  if (diff < 7 * DAY_MS) return `${WEEKDAYS[then.getDay()]} ${hhmm(then)}`;
+  const days = Math.round(diff / DAY_MS);
+  return `in ${days} days`;
+}
+
+/** What is coming, for the "nothing due right now" panel. */
+export interface UpcomingLoad {
+  /** Soonest future due time across non-dismissed elements, if any. */
+  nextDueMs?: number;
+  /** Due after end-of-today but on or before end-of-tomorrow. */
+  dueTomorrow: number;
+  /** Due after `now` and within seven days. */
+  due7d: number;
+}
+
+/**
+ * Forward-looking counts for the review pane's nothing-due state.
+ *
+ * Deliberately separate from `computeLoad`: that one answers "what is
+ * waiting for me" for the always-on status bar, this one answers "when do I
+ * come back" and only runs when a review start finds an empty queue. Pure
+ * (elements + now in, counts out) so it tests without Obsidian.
+ */
+export function computeUpcoming(
+  elements: Iterable<IrElement>,
+  now: number,
+): UpcomingLoad {
+  const endToday = endOfDayMs(now);
+  const endTomorrow = endOfDayMs(endToday + 1);
+  const in7d = now + 7 * DAY_MS;
+  let nextDueMs: number | undefined;
+  let dueTomorrow = 0;
+  let due7d = 0;
+  for (const el of elements) {
+    if (el.dismissed) continue;
+    const d = dueOf(el);
+    if (d === undefined || d <= now) continue;
+    if (nextDueMs === undefined || d < nextDueMs) nextDueMs = d;
+    if (d > endToday && d <= endTomorrow) dueTomorrow += 1;
+    if (d <= in7d) due7d += 1;
+  }
+  return { nextDueMs, dueTomorrow, due7d };
+}
+
 export function computeLoad(
   elements: Iterable<IrElement>,
   events: Iterable<IrEvent>,

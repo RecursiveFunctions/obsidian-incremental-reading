@@ -62,6 +62,7 @@ import {
   type IrEventKind,
 } from "./ir/model";
 import { scheduleToTopicState, topicStateToSchedule } from "./ir/queue-adapter";
+import { describeNextDue, type UpcomingLoad } from "./status-bar";
 import {
   ancestorBreadcrumbLabel,
   ancestorChain,
@@ -229,6 +230,12 @@ export class IrReviewView extends ItemView {
   private sessionComplete = false;
   /** Esc ended neural mid-pass (distinct copy from finishing the queue). */
   private neuralEndedEarly = false;
+  /**
+   * A restored leaf found no queue AND no elements at all. Same surface as
+   * the first-run `emptyVault` pane; separate flag because `emptyVault` is
+   * a constructor fact and this one is discovered in `onOpen`.
+   */
+  private emptyCollectionRestore = false;
   /** Frozen label of the first card (neural seed / session identity). */
   private sessionSeedLabel = "";
   /** Latest source-context availability, for the mobile Source chip. */
@@ -348,6 +355,19 @@ export class IrReviewView extends ItemView {
     private readonly commitPdfExtract?: (opts?: {
       promote?: boolean;
     }) => Promise<IrElement | undefined>,
+    /**
+     * Set when review started with a non-empty collection and an empty due
+     * queue: render the nothing-due panel instead of toasting and bailing.
+     */
+    private nothingDue: UpcomingLoad | null = null,
+    /**
+     * Forward-looking counts, recomputed when a restored leaf finds an
+     * empty queue. `null` means the collection itself is empty, which is
+     * the first-run path (`emptyVault`), not the nothing-due path.
+     */
+    private readonly getUpcoming?: () => Promise<UpcomingLoad | null>,
+    /** Reveal the IR element tree from the nothing-due panel. */
+    private readonly openTreeFromIdlePane?: () => void,
   ) {
     super(leaf);
   }
@@ -382,8 +402,13 @@ export class IrReviewView extends ItemView {
         this.elementsById = restored.elementsById;
         this.isNeural = restored.isNeural;
       } else {
-        window.setTimeout(() => this.leaf.detach(), 0);
-        return;
+        // A restored leaf with nothing due used to detach itself on a
+        // timeout, so the tab the user reopened Obsidian to just vanished.
+        // Explain instead: nothing due, and when to come back.
+        this.nothingDue = this.nothingDue ?? (await this.getUpcoming?.()) ?? null;
+        if (!this.nothingDue) {
+          this.emptyCollectionRestore = true;
+        }
       }
     }
 
@@ -1773,12 +1798,20 @@ export class IrReviewView extends ItemView {
     this.syncMobileEditChrome();
 
     const slot = this.current;
-    if (this.emptyVault) {
+    if (this.isEmptyCollection()) {
       this.hasSourceContext = false;
       this.contentEl.removeClass("ir-review-has-context");
       this.onSlotChange?.(null);
       this.paintSessionBar();
       this.renderEmptyCollection(host);
+      return;
+    }
+    if (this.nothingDue && !slot) {
+      this.hasSourceContext = false;
+      this.contentEl.removeClass("ir-review-has-context");
+      this.onSlotChange?.(null);
+      this.paintSessionBar();
+      this.renderNothingDue(host, this.nothingDue);
       return;
     }
     if (this.sessionComplete) {
@@ -2216,25 +2249,39 @@ export class IrReviewView extends ItemView {
         : Math.round((this.index / this.queue.length) * 100);
     const pct = this.sessionComplete ? 100 : donePct;
 
+    // Idle panes (no collection / nothing due) get their own chip + label so
+    // the bar never reads "0 left" as if a session were running.
+    const idleChip = this.isEmptyCollection()
+      ? "IR"
+      : this.nothingDue && !this.current
+        ? "Clear"
+        : null;
+    const idleLabel = this.isEmptyCollection()
+      ? "No topics yet"
+      : this.nothingDue && !this.current
+        ? "Nothing due"
+        : null;
+    const idleAria = this.isEmptyCollection()
+      ? "No Incremental Reading topics yet"
+      : this.nothingDue && !this.current
+        ? "Nothing due for review right now"
+        : null;
+
     const row = bar.createDiv({ cls: "ir-review-session-row" });
     const chip = row.createSpan({
       cls: this.isNeural
         ? "ir-review-mode-chip ir-review-mode-chip--neural"
         : "ir-review-mode-chip ir-review-mode-chip--due",
-      text: this.emptyVault
-        ? "IR"
-        : this.sessionComplete
-          ? "Done"
-          : this.isNeural
-            ? "Neural"
-            : "Due",
+      text:
+        idleChip ??
+        (this.sessionComplete ? "Done" : this.isNeural ? "Neural" : "Due"),
     });
     chip.setAttr("aria-hidden", "true");
     row.createSpan({
       cls: "ir-review-session-label",
-      text: this.emptyVault
-        ? "No topics yet"
-        : this.sessionComplete
+      text:
+        idleLabel ??
+        (this.sessionComplete
           ? this.neuralEndedEarly
             ? "Neural session ended"
             : "Session complete"
@@ -2242,13 +2289,12 @@ export class IrReviewView extends ItemView {
             ? this.sessionSeedLabel
               ? `${remaining} left · ${this.sessionSeedLabel}`
               : `${remaining} left`
-            : `${remaining} left`,
+            : `${remaining} left`),
     });
     bar.setAttr(
       "aria-label",
-      this.emptyVault
-        ? "No Incremental Reading topics yet"
-        : sessionBarLabel({
+      idleAria ??
+        sessionBarLabel({
             done: this.sessionComplete,
             isNeural: this.isNeural,
             remaining,
@@ -2311,6 +2357,64 @@ export class IrReviewView extends ItemView {
     });
     scroll
       .createEl("button", { text: "Close", cls: "mod-cta" })
+      .addEventListener("click", () => this.leaf.detach());
+  }
+
+  /**
+   * Nothing is due right now, but the collection is not empty.
+   *
+   * This used to be a Notice and an early return, which answered "why did
+   * nothing happen" but not "when do I come back" — the question the user
+   * actually has. Panel, not modal (UI commitment #6), and the tab stays
+   * open so Alt+R is not a dead keystroke.
+   *
+   * Deliberately not here: an ahead-of-schedule queue. Pulling future
+   * cards forward is a scheduler decision with its own semantics, not a
+   * consolation prize for an empty queue.
+   */
+  private renderNothingDue(host: HTMLElement, info: UpcomingLoad): void {
+    const scroll = host.createDiv({ cls: "ir-review-scroll" });
+    scroll.createEl("h3", { text: "Nothing due right now" });
+
+    if (info.nextDueMs !== undefined) {
+      scroll.createEl("p", {
+        text: `Next up: ${describeNextDue(info.nextDueMs, Date.now())}.`,
+      });
+    } else {
+      scroll.createEl("p", {
+        text: "Nothing is scheduled ahead either. Extract something, or restore a dismissed element from the tree.",
+      });
+    }
+
+    if (info.dueTomorrow > 0 || info.due7d > 0) {
+      const parts: string[] = [];
+      if (info.dueTomorrow > 0) {
+        parts.push(
+          info.dueTomorrow === 1
+            ? "1 due tomorrow"
+            : `${info.dueTomorrow} due tomorrow`,
+        );
+      }
+      if (info.due7d > 0) {
+        parts.push(`${info.due7d} in the next 7 days`);
+      }
+      scroll.createEl("p", {
+        cls: "ir-review-complete-hint",
+        text: parts.join(" · "),
+      });
+    }
+
+    scroll.createEl("p", {
+      cls: "ir-review-complete-hint",
+      text: "Escape or Close leaves this tab.",
+    });
+
+    const row = scroll.createDiv({ cls: "ir-review-buttons" });
+    row
+      .createEl("button", { text: "Open element tree (Alt+I)", cls: "mod-cta" })
+      .addEventListener("click", () => this.openTreeFromIdlePane?.());
+    row
+      .createEl("button", { text: "Close" })
       .addEventListener("click", () => this.leaf.detach());
   }
 
@@ -2558,6 +2662,11 @@ export class IrReviewView extends ItemView {
       }
     }
     void this.renderCard();
+  }
+
+  /** True when there is no collection to review (first run or restore). */
+  private isEmptyCollection(): boolean {
+    return this.emptyVault || this.emptyCollectionRestore;
   }
 
   /** Cards left after the one currently on screen. */

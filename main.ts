@@ -41,8 +41,10 @@ import { openPriorityPrompt } from "./src/priority-prompt";
 import { IrStore, META } from "./src/ir/store";
 import {
   computeLoad,
+  computeUpcoming,
   disposeStatusBar,
   renderStatusBar,
+  type UpcomingLoad,
 } from "./src/status-bar";
 import {
   ObsidianVaultFs,
@@ -279,7 +281,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * prepared". A missing session (e.g. workspace restored an IR review leaf
    * from an older build) yields an empty queue; the view shows a recovery UI.
    */
-  private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; emptyVault?: boolean; } | null = null;
+  private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; emptyVault?: boolean; nothingDue?: UpcomingLoad; } | null = null;
 
   /**
    * The store, constructed once the layout exists (after a migration, or
@@ -578,6 +580,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         const session = this.irReviewSession;
         const isNeural = session?.isNeural ?? false;
         const emptyVault = session?.emptyVault ?? false;
+        const nothingDue = session?.nothingDue ?? null;
         this.irReviewSession = null;
         const queue = session?.queue ?? [];
         const elementsById = session?.elementsById ?? new Map<ElementId, IrElement>();
@@ -606,6 +609,9 @@ export default class IncrementalReadingPlugin extends Plugin {
           () => void this.startReview(),
           emptyVault,
           (opts) => this.extractFromPdfInReview(opts),
+          nothingDue,
+          () => this.computeReviewUpcoming(),
+          () => void this.openTreeView(),
         );
         view.multiSelect = this.multiSelect;
         return view;
@@ -1532,6 +1538,19 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (queue.length === 0) return null;
     this.beginReviewSession();
     return { queue, elementsById: state.elements, isNeural: false };
+  }
+
+  /**
+   * Forward-looking counts for the review pane's nothing-due panel, used
+   * when a restored leaf finds an empty queue. `null` means the collection
+   * itself is empty, which is the first-run pane instead.
+   */
+  private async computeReviewUpcoming(): Promise<UpcomingLoad | null> {
+    if (!this.store) return null;
+    await this.storeInit;
+    const state = await this.store.load();
+    if (state.elements.size === 0) return null;
+    return computeUpcoming(state.elements.values(), Date.now());
   }
 
   private markdownViewHasSelection(mv: MarkdownView): boolean {
@@ -2585,7 +2604,24 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.settings.interleaveSimilarPriority,
     );
     if (queue.length === 0) {
-      new Notice("Incremental Reading: nothing due for review.");
+      // Nothing due, but the collection is not empty: open the review pane
+      // on its nothing-due panel so the user gets the next due time and the
+      // week's load instead of a toast that answers nothing.
+      this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
+      this.irReviewSession = {
+        queue: [],
+        elementsById: state.elements,
+        nothingDue: computeUpcoming(state.elements.values(), Date.now()),
+      };
+      try {
+        const leaf = this.app.workspace.getLeaf("tab");
+        await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
+        this.app.workspace.revealLeaf(leaf);
+      } catch (e) {
+        this.irReviewSession = null;
+        console.error("Incremental Reading: opening review view failed", e);
+        new Notice("Incremental Reading: nothing due for review.");
+      }
       return;
     }
 
