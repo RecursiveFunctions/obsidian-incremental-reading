@@ -76,9 +76,11 @@ Steps:
      frontmatter (same `quietFrontmatterWrite` wrappers the forward
      paths use).
    - Reuse the existing Undo affordances: the desktop "Undo last grade"
-     button and mobile overflow "Undo" become "Undo" and prefer
-     `lastReversible` when it is newer than the last grade. `Z`
-     stays the key.
+     button and mobile overflow entry take the label of whatever is
+     reversible and prefer `lastReversible` when it is newer than the
+     last grade. No hotkey: `undo-last-grade` deliberately ships without
+     a default binding (Ctrl+Z belongs to the editor, Alt+Z is Cloze),
+     so this rides the same buttons.
    - After undo, step the cursor back to the restored card (the
      `tryUndoLastGrade` cursor logic at ~2488 is the template).
 4. Accessibility rider (2 lines): give `.ir-review-flash` a
@@ -237,3 +239,39 @@ Then: patch bump, tag, release, same dance.
    0.6.29 (`git worktree list`); most others are prunable. Commit on a
    branch or push `HEAD:main`; don't yank the worktrees mid-flight
    without checking the cursor lane is idle.
+
+---
+
+## Status: SHIPPED 2026-09-03
+
+| Phase | Commit | Release |
+|---|---|---|
+| A grade-button CSS | `4591389` | 0.7.9 |
+| B later/dismiss feedback + session undo | `bcad3e5` | 0.7.9 |
+| C nothing-due panel | `bbff96e` | 0.7.9 |
+| D themed delete confirms | `742eb60` | 0.7.9 |
+| E mobile priority prompt + swipe coach | `456a569` | 0.7.9 |
+| F FAB due badge | `12b6498` | 0.7.10 |
+
+Deltas from the brief as written:
+
+- **Phase B has no hotkey.** The brief said "`Z` stays the key"; there was
+  never a bare-`Z` binding to keep (see the note above). Undo rides the
+  dock button and the mobile overflow entry, and the reading dock gained
+  an Undo control it never had, since Later today only happens there.
+- **Phase C also covers the first-run restore case.** A restored leaf with
+  no elements at all now shows the empty-collection pane instead of
+  detaching; the brief only named the nothing-due case.
+- **Phase E1 changed the file-menu caller too.** "Set IR priority" from the
+  file menu went straight to the status-bar prompt, so it was broken on
+  mobile in the same way; both callers now route through
+  `openTreeAndFocusPriorityEditor`.
+- **624 tests** (up from 618): 6 new for `computeUpcoming` /
+  `describeNextDue`.
+
+Still open from the 2026-09-03 audit, in rough value order: stats forecast
+and heatmap, first-run onboarding (no in-plugin cheat sheet for ~25
+hotkeys; the radial's `EMPTY_HELP_LINES` is unreachable), terminology
+unification (element / item / card, four names for postpone), a broader
+aria-live and focus-management pass, tree reparent from touch or keyboard,
+and debouncing the tree filter input.
