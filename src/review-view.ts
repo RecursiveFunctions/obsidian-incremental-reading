@@ -146,6 +146,14 @@ import { getPdfPageForPath, openPdfAt } from "./ir/pdf-view";
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
 const IR_SWIPE_LEGEND_KEY = "incremental-reading:swipe-legend-seen";
+/**
+ * How many times the swipe coach mark may ever fire for a user who never
+ * swipes. `IR_SWIPE_LEGEND_KEY` is only written once an actual swipe lands,
+ * so a mobile user who taps the dock buttons was getting an 8-second Notice
+ * at the top of every single session, forever.
+ */
+const IR_SWIPE_COACH_COUNT_KEY = "incremental-reading:swipe-coach-shown";
+const IR_SWIPE_COACH_MAX_SHOWS = 3;
 
 const GRADES: { grade: Grade; label: string; key: string }[] = [
   { grade: "again", label: "Again", key: "1" },
@@ -1055,6 +1063,9 @@ export class IrReviewView extends ItemView {
       return;
     }
     this.swipeCoachShownThisSession = true;
+    const shown = this.readSwipeCoachShows();
+    if (shown >= IR_SWIPE_COACH_MAX_SHOWS) return;
+    this.writeSwipeCoachShows(shown + 1);
     const reading = this.isReading(slot);
     const clozeHint =
       !reading && this.isClozeLike(this.currentRaw) && !this.revealed;
@@ -1064,6 +1075,29 @@ export class IrReviewView extends ItemView {
         ? "Swipe the card: ← previous · → next · ↑ show answer"
         : "Swipe the card: ← Again · ↓ Hard · → Good · ↑ Easy";
     new Notice(`Incremental Reading: ${text}`, 8000);
+  }
+
+  /**
+   * Lifetime coach-mark show count. Best-effort: a blocked or missing
+   * localStorage degrades to "show it again", which is the old behavior and
+   * strictly better than throwing inside a render path.
+   */
+  private readSwipeCoachShows(): number {
+    try {
+      const raw = window.localStorage.getItem(IR_SWIPE_COACH_COUNT_KEY);
+      const n = raw === null ? 0 : Number.parseInt(raw, 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private writeSwipeCoachShows(n: number): void {
+    try {
+      window.localStorage.setItem(IR_SWIPE_COACH_COUNT_KEY, String(n));
+    } catch {
+      // Same as above: no persistence, no crash.
+    }
   }
 
   private renderHubButton(parent: HTMLElement): void {

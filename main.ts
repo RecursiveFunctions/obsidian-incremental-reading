@@ -1206,12 +1206,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             .setTitle("Set IR priority")
             .setIcon("sliders-horizontal")
             .onClick(() => {
-              const cur = getPriority(
-                this.app,
-                file,
-                this.settings.defaultPriority,
-              );
-              this.promptPriority(file, cur);
+              void this.openTreeAndFocusPriorityEditor(file);
             }),
         );
         const dismissed = isDismissed(this.app, file);
@@ -2757,6 +2752,11 @@ export default class IncrementalReadingPlugin extends Plugin {
    * Alt+P: reveal the IR tree and open the inline `pNN` editor for the active
    * note when it maps to a store element; otherwise fall back to the
    * status-bar prompt (SCOPE-MODAL-REMOVAL.md).
+   *
+   * Mobile has no status bar, so the fallback prompt renders into an element
+   * Obsidian never shows: the input took focus off-screen and cancelled on
+   * blur, which read as "Alt+P does nothing". On mobile the tree editor is
+   * the only working surface, so say what to do instead of pretending.
    */
   private async openTreeAndFocusPriorityEditor(file: TFile): Promise<void> {
     const current = getPriority(
@@ -2770,6 +2770,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (view instanceof IrTreeView) {
       const ok = await view.revealPriorityEditorForNotePath(file.path);
       if (ok) return;
+    }
+    if (Platform.isMobile) {
+      new Notice(
+        "Incremental Reading: this note is not in the element tree yet. " +
+          "Review or extract from it once, then set priority from its tree row.",
+      );
+      return;
     }
     this.promptPriority(file, current);
   }
@@ -3131,8 +3138,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     return { targetId: target.target, targetLabel };
   }
 
+  /**
+   * Status-bar priority prompt. Desktop only: `statusBarEl` exists on mobile
+   * but is never rendered, so callers route through
+   * `openTreeAndFocusPriorityEditor` and this stays the desktop fallback.
+   */
   private promptPriority(file: TFile, current: number): void {
-    if (!this.statusBarEl) {
+    if (!this.statusBarEl || Platform.isMobile) {
       new Notice("Incremental Reading: status bar is not available.");
       return;
     }
