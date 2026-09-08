@@ -269,9 +269,42 @@ Deltas from the brief as written:
 - **624 tests** (up from 618): 6 new for `computeUpcoming` /
   `describeNextDue`.
 
-Still open from the 2026-09-03 audit, in rough value order: stats forecast
-and heatmap, first-run onboarding (no in-plugin cheat sheet for ~25
-hotkeys; the radial's `EMPTY_HELP_LINES` is unreachable), terminology
-unification (element / item / card, four names for postpone), a broader
-aria-live and focus-management pass, tree reparent from touch or keyboard,
-and debouncing the tree filter input.
+## Follow-on releases (2026-09-08)
+
+The rest of the audit backlog, shipped as two more patches.
+
+**0.7.11** — stats view rebuilt (7-day forecast with overdue counted
+separately, due-by-type, grade spread, refresh button, honest sparkline
+scaling and day labels); `Alt+H` help panel listing review keys, tree
+keys, every registered command with its default binding, and a
+vocabulary section that states the priority polarity in the UI at last;
+first-run pane teaches the loop in three steps; tree move mode (`X`
+pick up, `V` drop, `Move to…` context entry, `Move…` in the selection
+toolbar, per-row **Move here** buttons) so reparenting exists on touch
+and keyboard, not just HTML5 drag; tree filter debounced at 150 ms.
+
+**0.7.12** — accessibility: review-pane live region announcing each
+card, tree `aria-expanded` / `aria-selected` / `aria-level` and
+`role=group` on nested lists, radial wheel as a real dialog (focus in,
+Tab cycle, focus restored) with a ring radius that grows with entry
+count instead of overlapping, no hardcoded font sizes left in
+`styles.css`, and image clozes outlined dashed so they differ from
+image extracts by more than hue.
+
+Notable implementation points:
+
+- `formatHotkey` and `radialRadius` live in the pure core
+  (`src/ir/hotkeys.ts`, `src/ir/mobile-viewport.ts`) because anything
+  importing `obsidian` **values** cannot be loaded by the test runner.
+  Type-only imports are fine.
+- The help panel's command list is generated from `irCommands`, a
+  wrapper around `addCommand`, so it cannot drift. The in-review and
+  in-tree key lists are hardcoded with pointers to their handlers,
+  because those keys are not commands.
+
+Still open from the 2026-09-03 audit: a calendar/streak heatmap and
+retention trend in stats, and terminology unification (element / item /
+card used interchangeably; four names for postpone across five
+surfaces). The terminology sweep is deliberately unstarted: it rewrites
+user-facing copy across every view, and the vocabulary section in the
+new help panel is the cheaper half of the fix.
