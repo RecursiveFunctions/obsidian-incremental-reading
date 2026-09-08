@@ -156,3 +156,80 @@ test("gradeSpark: 14 days, today in last bucket, older excluded", async (t) => {
   assert.equal(spark[12], 1);
   assert.equal(spark[0], 0);
 });
+
+// --- forecast / dueByType / gradeBreakdown (stats view v2) ---
+
+test("forecast: buckets future dues by local day, overdue kept separate", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/stats.ts not implemented yet");
+  const now = new Date(2026, 4, 19, 15, 0, 0, 0).getTime();
+  const today = m.startOfLocalDayMs(now);
+  const fc = m.forecast(
+    [
+      withCard("el_overdue", now - DAY),
+      withCard("el_today_later", now + 60 * 60 * 1000),
+      withCard("el_tomorrow", today + DAY + 60 * 60 * 1000),
+      withCard("el_tomorrow2", today + DAY + 2 * 60 * 60 * 1000),
+      withSchedule("el_day6", today + 6 * DAY + 1000),
+      withCard("el_beyond", today + 9 * DAY),
+    ],
+    now,
+    7,
+  );
+  assert.equal(fc.byDay.length, 7);
+  assert.equal(fc.byDay[0], 1, "later today");
+  assert.equal(fc.byDay[1], 2, "tomorrow");
+  assert.equal(fc.byDay[6], 1, "day 6");
+  assert.equal(fc.overdue, 1);
+  assert.equal(fc.windowTotal, 4, "beyond the window is not counted");
+});
+
+test("forecast: dismissed and unscheduled elements are invisible", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/stats.ts not implemented yet");
+  const now = new Date(2026, 4, 19, 15, 0, 0, 0).getTime();
+  const today = m.startOfLocalDayMs(now);
+  const fc = m.forecast(
+    [
+      withCard("el_dismissed", today + DAY, true),
+      newElement({
+        id: "el_bare" as ElementId,
+        type: "extract",
+        priority: 50,
+        now: 0,
+      }),
+    ],
+    now,
+    7,
+  );
+  assert.equal(fc.windowTotal, 0);
+  assert.equal(fc.overdue, 0);
+});
+
+test("dueByType: splits due elements by type, skips future and dismissed", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/stats.ts not implemented yet");
+  const byType = m.dueByType(world(), NOW);
+  assert.equal(byType.item, 2);
+  assert.equal(byType.topic, 1);
+  assert.equal(byType.extract, 0);
+});
+
+test("gradeBreakdown: counts each grade inside the window only", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/stats.ts not implemented yet");
+  const b = m.gradeBreakdown(
+    [
+      { ts: NOW - 100, grade: 1 },
+      { ts: NOW - 100, grade: 2 },
+      { ts: NOW - 100, grade: 3 },
+      { ts: NOW - 100, grade: 3 },
+      { ts: NOW - 100, grade: 4 },
+      { ts: NOW - 5 * DAY, grade: 3 },
+      { ts: NOW + DAY, grade: 3 },
+    ],
+    WINDOW_START,
+    NOW,
+  );
+  assert.deepEqual(b, { again: 1, hard: 1, good: 2, easy: 1 });
+});

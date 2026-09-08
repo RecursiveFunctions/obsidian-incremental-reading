@@ -1653,6 +1653,130 @@ img.ir-source-image.ir-cloze-source {
   background: var(--background-modifier-hover);
 }
 
+/*
+ * Stats view. The view previously borrowed the tree's header class and had
+ * no rules of its own for the body or sections; everything below is
+ * theme-variable only (UI commitment #3).
+ */
+.ir-stats-view {
+  padding: 0 0.5em 1em;
+}
+
+.ir-stats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  padding: 0.25em 0.25em 0;
+}
+
+.ir-stats-header h4 {
+  margin: 0.6em 0;
+}
+
+.ir-stats-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ir-stats-refresh:hover {
+  color: var(--text-normal);
+}
+
+.ir-stats-refresh svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ir-stats-section {
+  margin-top: 1.4em;
+}
+
+.ir-stats-section-title {
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 0.4em;
+}
+
+.ir-stats-note {
+  margin-top: 0.5em;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+/*
+ * Seven-day forecast. Count above the bar, weekday below: the number is the
+ * answer and the bar is only the shape, so the chart still reads on a narrow
+ * sidebar and without color vision.
+ */
+.ir-stats-forecast {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  margin-top: 0.3em;
+}
+
+.ir-stats-forecast-col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ir-stats-forecast-count {
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.ir-stats-forecast-track {
+  width: 100%;
+  height: 3.2em;
+  display: flex;
+  align-items: flex-end;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+}
+
+.ir-stats-forecast-bar {
+  width: 100%;
+  min-height: 2px;
+  background: var(--interactive-accent);
+  border-radius: 2px;
+}
+
+.ir-stats-forecast-bar.is-empty {
+  min-height: 0;
+}
+
+.ir-stats-forecast-day {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.ir-stats-spark-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.25em;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
 .ir-stats-table {
   width: 100%;
   border-collapse: collapse;
@@ -1697,9 +1821,16 @@ img.ir-source-image.ir-cloze-source {
 .ir-stats-spark-bar {
   flex: 1 1 0;
   min-width: 4px;
+  min-height: 2px;
   background: var(--interactive-accent);
   border-radius: 1px 1px 0 0;
   opacity: 0.85;
+}
+
+/* A zero day is a flat baseline tick, not a short bar that reads as data. */
+.ir-stats-spark-bar.is-empty {
+  min-height: 1px;
+  background: var(--background-modifier-border);
 }
 
 /* Status bar queue-load indicator (UI commitment #4). Sits in Obsidian's
