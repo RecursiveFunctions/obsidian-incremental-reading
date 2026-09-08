@@ -1,4 +1,5 @@
 import {
+  type Command,
   Editor,
   type EditorSelectionOrCaret,
   MarkdownView,
@@ -18,6 +19,7 @@ import { buildTextQuoteAnchor } from "./src/ir/cloze-marks";
 import { IR_TREE_VIEW_TYPE, IrTreeView } from "./src/tree-view";
 import { IR_SESSION_VIEW_TYPE, IrSessionView } from "./src/session-view";
 import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
+import { IR_HELP_VIEW_TYPE, IrHelpView } from "./src/help-view";
 import {
   IrNoteResult,
   applyInheritedFrontmatter,
@@ -282,6 +284,15 @@ export default class IncrementalReadingPlugin extends Plugin {
    * prepared". A missing session (e.g. workspace restored an IR review leaf
    * from an older build) yields an empty queue; the view shows a recovery UI.
    */
+  /**
+   * Every command this plugin registers, in registration order.
+   *
+   * The help view renders its shortcut list from this array rather than a
+   * hand-maintained copy, so a command added without a matching doc entry
+   * cannot go missing from the cheat sheet.
+   */
+  private readonly irCommands: Command[] = [];
+
   private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; emptyVault?: boolean; nothingDue?: UpcomingLoad; } | null = null;
 
   /**
@@ -492,7 +503,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       void this.startReview();
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "start-neural-review",
       name: "Go neural",
       icon: "network",
@@ -504,7 +515,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "start-review",
       name: "Start IR review",
       icon: "play-circle",
@@ -575,6 +586,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     );
 
+    this.registerView(
+      IR_HELP_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) => new IrHelpView(leaf, this.irCommands),
+    );
+
     this.registerView(IR_REVIEW_VIEW_TYPE, (leaf: WorkspaceLeaf) => {
         if (!this.store) {
           throw new Error(
@@ -616,13 +632,14 @@ export default class IncrementalReadingPlugin extends Plugin {
           nothingDue,
           () => this.computeReviewUpcoming(),
           () => void this.openTreeView(),
+          () => void this.openHelpView(),
         );
         view.multiSelect = this.multiSelect;
         return view;
       },
     );
 
-    this.addCommand({
+    this.irCommand({
       id: "open-tree-view",
       name: "Open IR element tree",
       icon: "list-tree",
@@ -630,7 +647,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       callback: () => void this.openTreeView(),
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "open-session-log",
       name: "Open IR session log",
       icon: "history",
@@ -638,7 +655,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       callback: () => void this.openSessionView(),
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "set-ir-priority",
       name: "Set IR priority of current element",
       icon: "sliders-horizontal",
@@ -655,7 +672,15 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
+      id: "open-help",
+      name: "IR help and keyboard shortcuts",
+      icon: "keyboard",
+      hotkeys: [{ modifiers: ["Alt"], key: "h" }],
+      callback: () => void this.openHelpView(),
+    });
+
+    this.irCommand({
       id: "export-anki-tsv",
       name: "Export IR items to Anki TSV",
       icon: "download",
@@ -663,7 +688,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       callback: () => void this.exportAnkiTsv(),
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "show-stats",
       name: "Show IR stats",
       icon: "bar-chart-3",
@@ -671,7 +696,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       callback: () => void this.openStatsView(),
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "mercy-postpone",
       name: "Postpone overdue elements (mercy)",
       icon: "clock",
@@ -679,14 +704,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       callback: () => void this.runMercy(),
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "resume-last-read",
       name: "Resume last read topic",
       icon: "bookmark",
       callback: () => void this.resumeReadingBookmark(),
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "undo-last-grade",
       name: "Undo last grade",
       icon: "undo-2",
@@ -708,7 +733,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "toggle-dismiss",
       name: "Dismiss / restore current IR element",
       icon: "ban",
@@ -723,7 +748,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "mark-as-ir-topic",
       name: "Mark current note as IR topic",
       icon: "book-open",
@@ -739,7 +764,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "mark-folder-as-ir-topics",
       name: "Mark folder notes as IR topics",
       icon: "book-open",
@@ -755,7 +780,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     // can rebind or clear them in Settings -> Hotkeys.
     // Uses checkCallback (not editorCheckCallback) so the hotkey also works
     // inside the IR review ItemView, which is not a MarkdownView.
-    this.addCommand({
+    this.irCommand({
       id: "extract-selection",
       name: "Extract selection",
       icon: "scissors",
@@ -789,7 +814,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     // DESIGN §2: extracts stay anchored by default. This command is the
     // explicit promotion-at-extract-time path (GitHub #1) so a standalone
     // note is opt-in, not the default.
-    this.addCommand({
+    this.irCommand({
       id: "extract-selection-to-note",
       name: "Extract selection to standalone note",
       icon: "file-plus",
@@ -822,7 +847,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "promote-extract-to-note",
       name: "Promote extract to standalone note",
       icon: "file-output",
@@ -834,7 +859,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "extract-pdf-region",
       name: "Extract image region from PDF (drag a rectangle)",
       icon: "crop",
@@ -846,7 +871,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "occlusion-from-pdf-region",
       name: "Image occlusion cards from PDF region (drag a rectangle)",
       icon: "scan",
@@ -858,7 +883,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "occlusion-from-image",
       name: "Image occlusion cards from image",
       icon: "scan",
@@ -871,7 +896,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "clear-held-selections",
       name: "Clear held (Ctrl) selections",
       icon: "eraser",
@@ -886,7 +911,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "cloze-selection",
       name: "Cloze selection into an IR item",
       icon: "brackets",
@@ -906,7 +931,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "ir-actions-hub",
       name: "IR quick actions (radial wheel)",
       icon: "layout-list",
@@ -915,7 +940,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       callback: () => void this.openIrActionsHub(),
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "ir-new-cloze-card-separate",
       name: "New cloze card (separate item from selection)",
       icon: "copy-plus",
@@ -929,7 +954,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "ir-split-cloze-items",
       name: "Split cloze into separate IR item notes",
       icon: "split",
@@ -946,7 +971,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     // skip the "select first" ceremony for the most common single-shot case,
     // and the three bulk commands turn list-style notes (e.g. an imported
     // glossary or fact list) into N anchored extracts in one keystroke.
-    this.addCommand({
+    this.irCommand({
       id: "ir-extract-paragraph-at-cursor",
       name: "Extract paragraph at cursor",
       icon: "pilcrow",
@@ -958,7 +983,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "ir-extract-heading-section-at-cursor",
       name: "Extract heading section at cursor",
       icon: "heading",
@@ -970,7 +995,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "ir-extract-every-blockquote",
       name: "Extract every blockquote (in selection or note)",
       icon: "quote",
@@ -982,7 +1007,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "ir-extract-every-list-item-in-selection",
       name: "Extract every list item in selection",
       icon: "list",
@@ -995,7 +1020,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "ir-extract-every-paragraph-in-selection",
       name: "Extract every paragraph in selection",
       icon: "align-left",
@@ -1008,7 +1033,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
+    this.irCommand({
       id: "bulk-import",
       name: "Import clipboard as IR topic",
       icon: "clipboard-paste",
@@ -1377,6 +1402,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_HELP_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     if (this.statusBarEl) {
       disposeStatusBar(this.statusBarEl);
@@ -3170,6 +3196,31 @@ export default class IncrementalReadingPlugin extends Plugin {
     }, () => {
       void this.refreshStatusBar();
     });
+  }
+
+  /** `addCommand`, remembering the command for the help view. */
+  private irCommand(command: Command): void {
+    this.irCommands.push(command);
+    this.addCommand(command);
+  }
+
+  /**
+   * Open (or reveal) the help view. Right sidebar, so it can sit beside the
+   * review pane while you learn the keys instead of replacing it.
+   */
+  private async openHelpView(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(IR_HELP_VIEW_TYPE);
+    if (existing.length > 0) {
+      this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf) {
+      new Notice("Incremental Reading: could not open the help view.");
+      return;
+    }
+    await leaf.setViewState({ type: IR_HELP_VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
   }
 
   private async openStatsView(): Promise<void> {
@@ -5478,6 +5529,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_HELP_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
 
     try {

@@ -376,6 +376,8 @@ export class IrReviewView extends ItemView {
     private readonly getUpcoming?: () => Promise<UpcomingLoad | null>,
     /** Reveal the IR element tree from the nothing-due panel. */
     private readonly openTreeFromIdlePane?: () => void,
+    /** Open the help / shortcuts panel from the first-run pane. */
+    private readonly openHelpFromIdlePane?: () => void,
   ) {
     super(leaf);
   }
@@ -2381,16 +2383,51 @@ export class IrReviewView extends ItemView {
     void this.renderCard();
   }
 
+  /**
+   * First run: nothing is in the collection yet.
+   *
+   * This is the screen a brand-new user reaches from the ribbon icon, and
+   * it used to be two sentences and a Close button, which assumes they
+   * already know what Alt+T does. Numbered steps and a way into the help
+   * panel, so the first screen can teach the loop instead of naming keys.
+   */
   private renderEmptyCollection(host: HTMLElement): void {
     const scroll = host.createDiv({ cls: "ir-review-scroll" });
-    scroll.createEl("h3", { text: "Incremental Reading" });
-    scroll.createEl("p", { text: EMPTY_COLLECTION_COPY });
+    scroll.createEl("h3", { text: "Nothing in Incremental Reading yet" });
+    scroll.createEl("p", {
+      text: "Incremental reading means reading a little of many things over time, pulling out the parts that matter, and turning those into cards.",
+    });
+
+    const steps = scroll.createEl("ol", { cls: "ir-review-steps" });
+    steps.createEl("li", {
+      text: "Open a note you want to read and press Alt+T to mark it a topic.",
+    });
+    steps.createEl("li", {
+      text: "Press Alt+R to start a review pass. Read a bit, then move on.",
+    });
+    steps.createEl("li", {
+      text: "Select a sentence worth keeping and press Alt+X to extract it, or Alt+Z to turn it into a cloze card.",
+    });
+
     scroll.createEl("p", {
       cls: "ir-review-complete-hint",
       text: "Escape or Close leaves this tab.",
     });
-    scroll
-      .createEl("button", { text: "Close", cls: "mod-cta" })
+
+    const row = scroll.createDiv({ cls: "ir-review-buttons" });
+    if (this.openHelpFromIdlePane) {
+      row
+        .createEl("button", {
+          text: "All shortcuts (Alt+H)",
+          cls: "mod-cta",
+        })
+        .addEventListener("click", () => this.openHelpFromIdlePane?.());
+    }
+    row
+      .createEl("button", {
+        text: "Close",
+        cls: this.openHelpFromIdlePane ? "" : "mod-cta",
+      })
       .addEventListener("click", () => this.leaf.detach());
   }
 

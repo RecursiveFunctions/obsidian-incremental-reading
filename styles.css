@@ -2482,3 +2482,85 @@ img.ir-source-image.ir-cloze-source {
   border: 2px dashed var(--text-on-accent);
   color: var(--text-on-accent);
 }
+
+/*
+ * Help / cheat-sheet panel (Alt+H). Definition list rather than a table so
+ * it reflows in a narrow sidebar: key on its own line above the description
+ * when there is no room to sit beside it.
+ */
+.ir-help-view {
+  padding: 0 0.8em 1.5em;
+  user-select: text;
+  /* Makes the @container query below resolve against the panel width. */
+  container-type: inline-size;
+}
+
+.ir-help-lede {
+  color: var(--text-muted);
+}
+
+.ir-help-section-title {
+  margin: 1.4em 0 0.4em;
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.ir-help-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35em 0.8em;
+  margin: 0;
+}
+
+.ir-help-list--term {
+  grid-template-columns: minmax(6em, auto) 1fr;
+}
+
+.ir-help-key {
+  margin: 0;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ir-help-list--term .ir-help-key {
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  white-space: normal;
+}
+
+.ir-help-desc {
+  margin: 0;
+  color: var(--text-normal);
+}
+
+.ir-help-note {
+  margin-top: 0.8em;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+/* Narrow sidebar: stack instead of squeezing the description to a sliver. */
+@container (max-width: 260px) {
+  .ir-help-list,
+  .ir-help-list--term {
+    grid-template-columns: 1fr;
+    gap: 0.1em;
+  }
+
+  .ir-help-desc {
+    margin-bottom: 0.5em;
+  }
+}
+
+/* First-run steps in the empty review pane. */
+.ir-review-steps {
+  margin: 0.4em 0 1em;
+  padding-left: 1.3em;
+  color: var(--text-normal);
+}
+
+.ir-review-steps li {
+  margin-bottom: 0.4em;
+}
