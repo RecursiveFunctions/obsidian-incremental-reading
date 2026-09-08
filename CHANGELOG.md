@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The stats view answers questions now.** It was five rows and a
+  sparkline. It gained a seven-day forecast (how much lands each day, with
+  overdue counted separately so a backlog does not flatten the rest of the
+  week), a due-now split by topic / extract / item, the window's grade
+  spread, and a refresh button. Retention says what it counts, Hard or
+  better, so nobody compares it to Anki's again-rate by accident. The
+  sparkline gained day labels, a peak caption and an axis, and short bars
+  are no longer floored at 8% of the chart, which used to make a one-review
+  day look nearly as tall as the busiest one.
+- **A help panel, on Alt+H.** The plugin registers thirty commands and
+  about twenty-five default bindings and had no in-app surface naming any
+  of them. The panel lists the in-review keys, the element-tree keys, every
+  command with its default binding, and a short vocabulary section that
+  finally states in the UI that priority runs 0 to 100 with lower meaning
+  more important, and how later-today, mercy postpone and dismiss differ.
+  The command list is generated from what the plugin actually registers, so
+  it cannot drift.
+- **The first review screen teaches the loop.** A brand-new user used to
+  land on two sentences and a Close button. It now walks the three steps
+  (mark a topic, review, extract or cloze) and offers the shortcut sheet.
+- **Move elements in the tree without a mouse.** Reparenting was HTML5
+  drag only, so it did not exist on touch and had no keyboard path. Pick an
+  element up with X, the Move to... context entry, or Move... in the
+  selection toolbar; every legal destination grows a Move here button;
+  drop with V, or send it to the root from the banner. Drag still works.
+
 - **The mobile FAB shows how many elements are due.** Obsidian mobile has
   no status bar, so the glanceable queue-load indicator had no mobile
   implementation at all: the plugin was painting those numbers into an
@@ -36,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The element tree stops re-rendering on every keystroke.** Typing in the
+  filter box ran a full render per character, which reloads the store and
+  reads every non-dismissed cloze note, then stole focus back afterwards.
+  It now waits until you stop typing.
 - **Later today and Dismiss say something.** Later today wrote the new due
   time and moved on in silence, so the card simply vanished; Dismiss
   confirmed itself only when another card followed, which meant dismissing
