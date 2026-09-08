@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The review pane, the element tree and the quick-actions wheel now talk
+  to assistive tech.** The review pane announces each card (position in the
+  pass, kind, label) through a polite live region; a card change used to be
+  a visual-only event. Tree rows carry expanded / selected / level state and
+  nested lists are marked as groups, so expand-collapse and multi-select
+  finally reach a screen reader. The wheel behaves like a dialog: it takes
+  focus when it opens, keeps Tab inside itself instead of letting focus walk
+  out behind the dimmed backdrop, and gives focus back when it closes.
+
 - **The stats view answers questions now.** It was five rows and a
   sparkline. It gained a seven-day forecast (how much lands each day, with
   overdue counted separately so a backlog does not flatten the rest of the
@@ -62,6 +71,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The quick-actions wheel stops overlapping itself.** Petals sit on the
+  ring's circumference at a fixed radius, so once there were enough actions
+  they collided and their labels became unreadable. The ring now grows with
+  the number of entries. Petal labels were also 8px; they are bigger now,
+  and no hardcoded font size remains anywhere in the stylesheet.
+- **An image cloze and an image extract no longer differ only by color.**
+  Extracts outline solid, clozes outline dashed. Text spans already carried
+  a second signal; images did not.
 - **The element tree stops re-rendering on every keystroke.** Typing in the
   filter box ran a full render per character, which reloads the store and
   reads every non-dismissed cloze note, then stole focus back afterwards.
