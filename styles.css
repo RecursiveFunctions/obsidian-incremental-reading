@@ -2564,3 +2564,48 @@ img.ir-source-image.ir-cloze-source {
 .ir-review-steps li {
   margin-bottom: 0.4em;
 }
+
+/*
+ * Tree move mode: reparenting without a mouse. The banner says what is in
+ * hand; every legal destination row grows a real button (tap target on
+ * mobile, Tab stop on desktop), and rows that would swallow their own
+ * subtree are dimmed rather than hidden so the tree keeps its shape.
+ */
+.ir-tree-move-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  margin: 0.4em 0 0.6em;
+  padding: 0.45em 0.6em;
+  border: 1px solid var(--interactive-accent);
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-hover);
+}
+
+.ir-tree-move-bar-count {
+  font-size: var(--font-ui-small);
+}
+
+.ir-tree-move-bar-actions {
+  display: flex;
+  gap: 0.4em;
+}
+
+.ir-tree-move-here {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: var(--font-ui-smaller);
+  min-height: 28px;
+  white-space: nowrap;
+}
+
+.ir-tree-row--moving {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.ir-tree-row--move-blocked {
+  opacity: 0.45;
+}

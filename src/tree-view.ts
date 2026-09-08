@@ -35,6 +35,9 @@ import { hasCloze, listClozeGroups, setClozeHint } from "./cloze";
 
 export const IR_TREE_VIEW_TYPE = "ir-tree-view";
 
+/** Long enough to swallow a fast typist's keystrokes, short enough to feel live. */
+const FILTER_DEBOUNCE_MS = 150;
+
 /** Persist priority to the append-only store + note frontmatter (dual-write). */
 export type CommitIrPriorityFn = (
   elementId: ElementId,
@@ -127,6 +130,17 @@ export class IrTreeView extends ItemView {
    * deleted between renders, so a stale id from a previous view of the
    * tree never lingers.
    */
+  /**
+   * Elements picked up for a move, or null when not moving.
+   *
+   * Reparenting was drag-only, which HTML5 drag makes a desktop-mouse
+   * feature: no touch equivalent (commitment #5 fails on a phone) and no
+   * keyboard equivalent (commitment #1). Move mode is the same operation
+   * as two discrete steps, so it works from a tap, a key, or both.
+   */
+  private moveSourceIds: string[] | null = null;
+  /** Pending debounced re-render for the filter box. */
+  private filterRenderTimer: number | null = null;
   private selectedIds: Set<string> = new Set();
   private selectionAnchorId: string | null = null;
 
@@ -199,7 +213,12 @@ export class IrTreeView extends ItemView {
     await this.render();
   }
 
-  async onClose(): Promise<void> {}
+  async onClose(): Promise<void> {
+    if (this.filterRenderTimer !== null) {
+      window.clearTimeout(this.filterRenderTimer);
+      this.filterRenderTimer = null;
+    }
+  }
 
   /**
    * Called by the review pane when the current slot changes. We expand
@@ -372,9 +391,18 @@ export class IrTreeView extends ItemView {
       placeholder: "Filter elements\u2026",
     });
     searchInput.value = this.filterText;
+    // Debounced: a full render reloads the store and reads every non-dismissed
+    // cloze note, so per-keystroke rendering re-read the whole collection on
+    // the way to typing one word (and then had to steal focus back).
     searchInput.addEventListener("input", () => {
       this.filterText = searchInput.value;
-      void this.render();
+      if (this.filterRenderTimer !== null) {
+        window.clearTimeout(this.filterRenderTimer);
+      }
+      this.filterRenderTimer = window.setTimeout(() => {
+        this.filterRenderTimer = null;
+        void this.render();
+      }, FILTER_DEBOUNCE_MS);
     });
     if (this.filterText) {
       requestAnimationFrame(() => {
@@ -497,7 +525,9 @@ export class IrTreeView extends ItemView {
     this.lastNodeIds = this.collectNodeIds(roots);
     this.lastRenderedRoots = roots;
 
-    if (this.selectedIds.size > 0) {
+    if (this.moveSourceIds) {
+      this.renderMoveBanner(body);
+    } else if (this.selectedIds.size > 0) {
       this.renderSelectionToolbar(body, state);
     }
 
@@ -877,6 +907,30 @@ export class IrTreeView extends ItemView {
       this.focusId(treeNavId(order, current, cmd.delta));
       return;
     }
+    if (cmd.kind === "move-cancel") {
+      if (!this.moveSourceIds) return;
+      this.moveSourceIds = null;
+      void this.render();
+      return;
+    }
+    if (cmd.kind === "move-pick") {
+      if (!this.commitReparent) return;
+      const picked =
+        this.selectedIds.size > 0
+          ? Array.from(this.selectedIds)
+          : current
+            ? [current]
+            : [];
+      if (picked.length === 0) return;
+      this.moveSourceIds = picked;
+      void this.render();
+      return;
+    }
+    if (cmd.kind === "move-drop") {
+      if (!this.moveSourceIds || !current) return;
+      void this.dropMoveOnto(current);
+      return;
+    }
     if (!current) return;
     const node = this.findRenderedNode(current);
     if (!node) return;
@@ -1025,6 +1079,88 @@ export class IrTreeView extends ItemView {
    * decide which buttons make sense — e.g. only show "Restore" if at least
    * one selected row is currently dismissed.
    */
+  /** Can `sourceId` become a child of `targetId` without eating itself? */
+  private canMoveOnto(sourceId: string, targetId: string | null): boolean {
+    if (targetId === null) return true;
+    if (sourceId === targetId) return false;
+    return !this.isDescendantOf(sourceId, targetId);
+  }
+
+  /**
+   * Finish a move: reparent everything picked up onto `targetId` (or to the
+   * root when null). Invalid sources are skipped rather than aborting the
+   * whole batch, since a multi-select can mix valid and invalid targets.
+   */
+  private async dropMoveOnto(targetId: string | null): Promise<void> {
+    const sources = this.moveSourceIds;
+    if (!sources || !this.commitReparent) return;
+    this.moveSourceIds = null;
+
+    let moved = 0;
+    let skipped = 0;
+    for (const id of sources) {
+      if (!this.canMoveOnto(id, targetId)) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        await this.commitReparent(
+          id as ElementId,
+          targetId as ElementId | null,
+        );
+        moved += 1;
+      } catch (err) {
+        console.error("Incremental Reading: move failed", err);
+        skipped += 1;
+      }
+    }
+    if (moved > 0) {
+      const where = targetId === null ? "to the root" : "into place";
+      new Notice(
+        `Incremental Reading: moved ${moved} element${moved === 1 ? "" : "s"} ${where}.` +
+          (skipped > 0 ? ` ${skipped} skipped.` : ""),
+      );
+    } else if (skipped > 0) {
+      new Notice(
+        "Incremental Reading: cannot move an element into its own subtree.",
+      );
+    }
+    this.selectedIds.clear();
+    this.selectionAnchorId = null;
+    void this.render();
+  }
+
+  /** Move-mode banner: what is in hand, and the two escape hatches. */
+  private renderMoveBanner(parent: HTMLElement): void {
+    const sources = this.moveSourceIds;
+    if (!sources) return;
+    const bar = parent.createDiv({ cls: "ir-tree-move-bar" });
+    bar.setAttr("role", "status");
+    bar.createSpan({
+      cls: "ir-tree-move-bar-count",
+      text:
+        sources.length === 1
+          ? "Moving 1 element. Pick a destination row."
+          : `Moving ${sources.length} elements. Pick a destination row.`,
+    });
+    const actions = bar.createDiv({ cls: "ir-tree-move-bar-actions" });
+    actions
+      .createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: "Make root",
+      })
+      .addEventListener("click", () => void this.dropMoveOnto(null));
+    actions
+      .createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: "Cancel",
+      })
+      .addEventListener("click", () => {
+        this.moveSourceIds = null;
+        void this.render();
+      });
+  }
+
   private renderSelectionToolbar(parent: HTMLElement, state: LogState): void {
     const ids = Array.from(this.selectedIds) as ElementId[];
     const els: IrElement[] = [];
@@ -1082,6 +1218,16 @@ export class IrTreeView extends ItemView {
           );
         }
         menu.showAtMouseEvent(e);
+      });
+    }
+    if (this.commitReparent) {
+      const btn = actions.createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: "Move\u2026",
+      });
+      btn.addEventListener("click", () => {
+        this.moveSourceIds = ids.slice();
+        void this.render();
       });
     }
     if (this.commitDelete) {
@@ -1555,6 +1701,30 @@ export class IrTreeView extends ItemView {
       row.createSpan({ cls: "ir-tree-dismissed-badge", text: "dismissed" });
     }
 
+    // Move mode: every legal destination grows a real button, so the move
+    // completes with a tap on a phone and a Tab-stop for a keyboard user.
+    // A row that would swallow its own subtree is marked, not hidden, so
+    // the tree does not appear to lose rows mid-move.
+    if (this.moveSourceIds) {
+      const sources = this.moveSourceIds;
+      const legal = sources.some((id) => this.canMoveOnto(id, node.id));
+      if (legal) {
+        const drop = row.createEl("button", {
+          cls: "ir-tree-move-here",
+          text: "Move here",
+        });
+        drop.addEventListener("click", (e) => {
+          e.stopPropagation();
+          void this.dropMoveOnto(node.id);
+        });
+      } else {
+        row.addClass("ir-tree-row--move-blocked");
+      }
+      if (sources.includes(node.id)) {
+        row.addClass("ir-tree-row--moving");
+      }
+    }
+
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1808,6 +1978,19 @@ export class IrTreeView extends ItemView {
     }
 
     if (this.commitDelete) {
+      if (this.commitReparent) {
+        menu.addItem((item) =>
+          item
+            .setTitle("Move to\u2026")
+            .setIcon("move")
+            .onClick(() => {
+              this.moveSourceIds = this.selectedIds.has(node.id)
+                ? Array.from(this.selectedIds)
+                : [node.id];
+              void this.render();
+            }),
+        );
+      }
       menu.addSeparator();
       menu.addItem((item) =>
         item

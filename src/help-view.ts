@@ -38,6 +38,20 @@ const REVIEW_KEYS: Array<[string, string]> = [
   ["Esc", "Leave the review tab."],
 ];
 
+/** Mirrors `treeKeyCommand` in `src/ir/tree-nav.ts`. */
+const TREE_KEYS: Array<[string, string]> = [
+  ["J / K, arrows", "Move the focus up and down the tree."],
+  ["Space", "Expand or collapse the focused element."],
+  ["Enter", "Start a review pass at the focused element."],
+  ["O", "Open the focused element's note."],
+  ["P", "Edit priority inline."],
+  ["D", "Dismiss or restore."],
+  ["M", "Postpone."],
+  ["X", "Pick the focused element (or the selection) up to move it."],
+  ["V", "Drop what you picked up onto the focused element."],
+  ["Esc", "Cancel a move."],
+];
+
 /** Concepts the UI assumes you already know. */
 const CONCEPTS: Array<[string, string]> = [
   [
@@ -108,6 +122,7 @@ export class IrHelpView extends ItemView {
     });
 
     this.section(c, "In a review session", REVIEW_KEYS, "kbd");
+    this.section(c, "In the element tree", TREE_KEYS, "kbd");
     this.section(
       c,
       "Commands",

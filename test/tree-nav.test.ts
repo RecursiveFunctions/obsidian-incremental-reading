@@ -61,6 +61,20 @@ test("tree keys: j/k and arrows move; Enter/o/p/d/m/Space are actions", () => {
   assert.equal(treeKeyCommand({ key: "j", altKey: true, ctrlKey: false, metaKey: false }), null);
 });
 
+test("tree keys: x picks up, v drops, Escape cancels a move", () => {
+  const none = { altKey: false, ctrlKey: false, metaKey: false };
+  assert.deepEqual(treeKeyCommand({ key: "x", ...none }), { kind: "move-pick" });
+  assert.deepEqual(treeKeyCommand({ key: "v", ...none }), { kind: "move-drop" });
+  assert.deepEqual(treeKeyCommand({ key: "Escape", ...none }), {
+    kind: "move-cancel",
+  });
+  // Modified keys stay out of the tree's hands so Obsidian keeps its own.
+  assert.equal(
+    treeKeyCommand({ key: "x", altKey: false, ctrlKey: true, metaKey: false }),
+    null,
+  );
+});
+
 test("reanchor banner shows for drifted and detached extracts", () => {
   assert.equal(shouldShowReanchorBanner("ok"), false);
   assert.equal(shouldShowReanchorBanner("needs-reanchor"), true);

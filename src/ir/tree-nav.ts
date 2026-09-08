@@ -54,7 +54,12 @@ export type TreeKeyCommand =
   | { kind: "priority" }
   | { kind: "dismiss" }
   | { kind: "postpone" }
-  | { kind: "toggle-collapse" };
+  | { kind: "toggle-collapse" }
+  /** Pick the focused element (or the selection) up for a keyboard move. */
+  | { kind: "move-pick" }
+  /** Drop what was picked up onto the focused element. */
+  | { kind: "move-drop" }
+  | { kind: "move-cancel" };
 
 export function treeKeyCommand(evt: {
   key: string;
@@ -86,6 +91,12 @@ export function treeKeyCommand(evt: {
       return { kind: "postpone" };
     case " ":
       return { kind: "toggle-collapse" };
+    case "x":
+      return { kind: "move-pick" };
+    case "v":
+      return { kind: "move-drop" };
+    case "Escape":
+      return { kind: "move-cancel" };
     default:
       return null;
   }
