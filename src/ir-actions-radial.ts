@@ -1,6 +1,8 @@
 import type { App } from "obsidian";
 import { Platform, setIcon } from "obsidian";
 
+import { radialRadius } from "./ir/mobile-viewport";
+
 export type IrHubEntry = {
   title: string;
   description?: string;
@@ -40,6 +42,14 @@ export function openIrRadialQuickMenu(
   const win = doc.defaultView ?? window;
 
   const root = app.workspace.containerEl.createDiv({ cls: "ir-radial-root" });
+  // Dialog semantics: the overlay covers the app behind a backdrop, so a
+  // screen reader (and Tab) must treat it as the whole world until it
+  // closes. Without this, Tab walked straight into the dimmed app.
+  root.setAttr("role", "dialog");
+  root.setAttr("aria-modal", "true");
+  root.setAttr("aria-label", "IR quick actions");
+  const previouslyFocused =
+    doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
   const backdrop = root.createDiv({ cls: "ir-radial-backdrop" });
   const disk = root.createDiv({ cls: "ir-radial-disk" });
   disk.style.left = `${origin.cx}px`;
@@ -73,6 +83,9 @@ export function openIrRadialQuickMenu(
     closed = true;
     win.removeEventListener("keydown", onKey, true);
     root.remove();
+    // Put the caret back where the user left it; an overlay that eats focus
+    // and never returns it strands keyboard users in the document body.
+    previouslyFocused?.focus?.();
   };
 
   const runEntry = (e: IrHubEntry) => {
@@ -87,7 +100,7 @@ export function openIrRadialQuickMenu(
 
   const orbit = disk.createDiv({ cls: "ir-radial-orbit" });
   const n = entries.length;
-  const R = Platform.isMobile ? 100 : 122;
+  const R = radialRadius(n, Platform.isMobile);
   for (let i = 0; i < n; i += 1) {
     const e = entries[i]!;
     const angle = (2 * Math.PI * i) / n - Math.PI / 2;
@@ -116,7 +129,28 @@ export function openIrRadialQuickMenu(
     });
   }
 
+  /** Focusables inside the overlay, in DOM order. */
+  const focusables = (): HTMLElement[] =>
+    Array.from(root.querySelectorAll<HTMLElement>("button:not([disabled])"));
+
   function onKey(evt: KeyboardEvent): void {
+    if (evt.key === "Tab") {
+      const items = focusables();
+      if (items.length === 0) return;
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      const active = doc.activeElement;
+      // Cycle within the overlay rather than letting Tab escape behind the
+      // backdrop, where every target is visually dimmed and unreachable.
+      if (evt.shiftKey && (active === first || !root.contains(active))) {
+        evt.preventDefault();
+        last.focus();
+      } else if (!evt.shiftKey && active === last) {
+        evt.preventDefault();
+        first.focus();
+      }
+      return;
+    }
     if (evt.key === "Escape") {
       evt.preventDefault();
       evt.stopPropagation();
@@ -136,4 +170,6 @@ export function openIrRadialQuickMenu(
     }
   }
   win.addEventListener("keydown", onKey, true);
+  // Land on the first action so the ring is usable without a pointer.
+  (focusables()[0] ?? closeBtn).focus();
 }

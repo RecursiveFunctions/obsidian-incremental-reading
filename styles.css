@@ -173,6 +173,9 @@
 
 /* Figures cannot carry a <mark>, so an extract / cloze whose span is an
  * image flags the rendered element instead. */
+/* Solid for extracts, dashed for clozes: text spans already carry a second
+ * signal (the cloze mark is underlined), but on an image the hue was the
+ * only difference between "pulled out of here" and "hidden here". */
 img.ir-source-image.ir-extract-source {
   outline: 3px solid color-mix(in srgb, var(--color-yellow, #e6b800) 70%, transparent);
   outline-offset: 2px;
@@ -180,7 +183,7 @@ img.ir-source-image.ir-extract-source {
 }
 
 img.ir-source-image.ir-cloze-source {
-  outline: 3px solid color-mix(in srgb, var(--color-green, #4caf50) 70%, transparent);
+  outline: 3px dashed color-mix(in srgb, var(--color-green, #4caf50) 80%, transparent);
   outline-offset: 2px;
   border-radius: 2px;
 }
@@ -2168,7 +2171,7 @@ img.ir-source-image.ir-cloze-source {
 }
 
 .ir-radial-center-hint {
-  font-size: 10px;
+  font-size: var(--font-ui-smaller);
   line-height: 1.35;
   color: var(--text-muted);
   text-align: left;
@@ -2176,7 +2179,7 @@ img.ir-source-image.ir-cloze-source {
 
 .ir-radial-center-hint--empty p {
   margin: 0.25em 0;
-  font-size: 10px;
+  font-size: var(--font-ui-smaller);
 }
 
 .ir-radial-close {
@@ -2189,8 +2192,11 @@ img.ir-source-image.ir-cloze-source {
   left: 50%;
   top: 50%;
   z-index: 2;
-  width: 56px;
-  height: 56px;
+  /* 64px, not 56: the label below was 8px to fit the old circle, which is
+   * under any reasonable legibility floor. Bigger circle, readable label,
+   * and a tap target that clears the 44px minimum with room to spare. */
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
   border: 2px solid var(--background-modifier-border);
   background: var(--background-primary);
@@ -2205,7 +2211,8 @@ img.ir-source-image.ir-cloze-source {
   pointer-events: auto;
 }
 
-.ir-radial-petal:hover {
+.ir-radial-petal:hover,
+.ir-radial-petal:focus-visible {
   border-color: var(--interactive-accent);
   background: var(--background-modifier-hover);
 }
@@ -2213,9 +2220,9 @@ img.ir-source-image.ir-cloze-source {
 .ir-radial-petal-key {
   position: absolute;
   top: 2px;
-  right: 4px;
-  font-size: 9px;
-  font-weight: 700;
+  right: 5px;
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
   color: var(--text-muted);
 }
 
@@ -2231,11 +2238,11 @@ img.ir-source-image.ir-cloze-source {
 }
 
 .ir-radial-petal-label {
-  font-size: 8px;
-  line-height: 1.1;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.15;
   text-align: center;
   color: var(--text-muted);
-  max-width: 52px;
+  max-width: 60px;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -2608,4 +2615,22 @@ img.ir-source-image.ir-cloze-source {
 
 .ir-tree-row--move-blocked {
   opacity: 0.45;
+}
+
+/*
+ * Visually hidden live region for the review pane. Off-screen rather than
+ * display:none, which would take it out of the accessibility tree and
+ * defeat the point.
+ */
+.ir-review-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }

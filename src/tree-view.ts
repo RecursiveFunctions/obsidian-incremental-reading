@@ -1543,13 +1543,17 @@ export class IrTreeView extends ItemView {
     return ids;
   }
 
-  private renderNode(parent: HTMLElement, node: TreeNode): void {
+  private renderNode(parent: HTMLElement, node: TreeNode, depth = 1): void {
     const li = parent.createEl("li", { cls: "ir-tree-node" });
 
     const row = li.createDiv({ cls: "ir-tree-row" });
     row.setAttribute("data-ir-tree-id", node.id);
     row.setAttribute("role", "treeitem");
     row.setAttribute("tabindex", this.focusedId === node.id ? "0" : "-1");
+    // Expand/collapse and multi-select are headline features of this view;
+    // without these three, none of it reaches assistive tech.
+    row.setAttribute("aria-level", String(depth));
+    row.setAttribute("aria-selected", String(this.selectedIds.has(node.id)));
     if (this.currentElementId && node.id === this.currentElementId) {
       row.addClass("ir-tree-row--current");
     }
@@ -1561,6 +1565,9 @@ export class IrTreeView extends ItemView {
     }
     const hasChildren = node.children.length > 0;
     const isCollapsed = this.rowIsCollapsed(node.id);
+    if (hasChildren) {
+      row.setAttribute("aria-expanded", String(!isCollapsed));
+    }
 
     if (hasChildren) {
       const toggle = row.createSpan({ cls: "ir-tree-toggle" });
@@ -1783,9 +1790,14 @@ export class IrTreeView extends ItemView {
     }
 
     if (hasChildren && !isCollapsed) {
-      const ul = li.createEl("ul", { cls: "ir-tree-children" });
+      // role=group is what makes a nested <ul> part of the tree rather than
+      // a second, sibling tree as far as assistive tech is concerned.
+      const ul = li.createEl("ul", {
+        cls: "ir-tree-children",
+        attr: { role: "group" },
+      });
       for (const child of node.children) {
-        this.renderNode(ul, child);
+        this.renderNode(ul, child, depth + 1);
       }
     }
   }

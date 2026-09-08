@@ -234,6 +234,8 @@ export class IrReviewView extends ItemView {
 
   /** Thin session chrome; sibling of cardHost so it survives card re-renders. */
   private sessionBarEl?: HTMLElement;
+  /** Visually hidden politeness region; announces the card under review. */
+  private liveRegionEl?: HTMLElement;
   /** True after the last card is graded/advanced; show complete state, don't detach. */
   private sessionComplete = false;
   /** Esc ended neural mid-pass (distinct copy from finishing the queue). */
@@ -431,6 +433,13 @@ export class IrReviewView extends ItemView {
     this.contentEl.addClass("ir-review-layout");
     this.sessionBarEl = this.contentEl.createDiv({
       cls: "ir-review-session-bar",
+    });
+    // Card changes are a visual-only event today: the pane re-renders and a
+    // screen reader is told nothing. One polite live region carries
+    // "card N of M" plus the element's label on every render.
+    this.liveRegionEl = this.contentEl.createDiv({
+      cls: "ir-review-live",
+      attr: { role: "status", "aria-live": "polite" },
     });
     this.cardHostEl = this.contentEl.createDiv({ cls: "ir-review-card-host" });
     if (Platform.isMobile) {
@@ -1867,6 +1876,7 @@ export class IrReviewView extends ItemView {
     }
 
     await this.ensureLoaded(slot);
+    this.announceSlot(slot);
 
     const sourceCtx = await this.loadSourceContext(slot);
     this.hasSourceContext = !!sourceCtx;
@@ -2738,6 +2748,20 @@ export class IrReviewView extends ItemView {
   /** True when there is no collection to review (first run or restore). */
   private isEmptyCollection(): boolean {
     return this.emptyVault || this.emptyCollectionRestore;
+  }
+
+  /**
+   * Announce the card under review. Kept separate from `flash()`: that is a
+   * transient confirmation of something you just did, this is the answer to
+   * "where am I", which a screen reader otherwise never hears.
+   */
+  private announceSlot(slot: ReviewSlot): void {
+    if (!this.liveRegionEl) return;
+    const position = `Card ${this.index + 1} of ${this.queue.length}`;
+    const kind = this.isReading(slot) ? "reading" : "item";
+    this.liveRegionEl.setText(
+      `${position}, ${kind}: ${labelFor(slot.element)}`,
+    );
   }
 
   /** Cards left after the one currently on screen. */

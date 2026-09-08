@@ -207,3 +207,20 @@ export function clampRadialOrigin(
     cy: Math.min(maxY, Math.max(minY, origin.cy)),
   };
 }
+
+/** Petal diameter in `styles.css`, plus the gap we want between petals. */
+const PETAL_PITCH_PX = 76;
+
+/**
+ * Ring radius for `n` radial petals.
+ *
+ * A fixed radius overlapped once the ring got busy: petals sit on the
+ * circumference, so past roughly a dozen entries they collided and their
+ * labels became unreadable. Grow the circle to fit instead, keeping the old
+ * radius as the floor so small rings look exactly as they always did.
+ */
+export function radialRadius(n: number, isMobile: boolean): number {
+  const base = isMobile ? 100 : 122;
+  if (n <= 1) return base;
+  return Math.max(base, Math.ceil((n * PETAL_PITCH_PX) / (2 * Math.PI)));
+}
