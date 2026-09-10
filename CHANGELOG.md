@@ -71,6 +71,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The help panel shows your keybindings, not the shipped defaults.** The
+  Commands list rendered whatever was registered at load, so it was wrong
+  for anyone who had ever rebound anything: change Extract to Ctrl+W and the
+  panel still said Alt+X. It now reports the key you will actually press,
+  including "no key" when you have cleared one, and re-reads itself when you
+  come back to the panel after visiting Settings. The review and element-tree
+  sections now say plainly that those keys belong to their panes and are
+  fixed, which is the honest answer for the parts of the sheet that Settings
+  does not govern.
+
 - **The quick-actions wheel stops overlapping itself.** Petals sit on the
   ring's circumference at a fixed radius, so once there were enough actions
   they collided and their labels became unreadable. The ring now grows with
