@@ -158,14 +158,11 @@ Restore defaults at the top returns every control to a new vault's values. It do
 
 FSRS handles grading. Turning on the scheduler divergence picker asks you to choose when FSRS and classic SM-2 disagree sharply about the next interval. New vaults leave it off.
 
-## Privacy and build
-
-This plugin reads your knowledge base, and Obsidian plugins are not sandboxed. They get filesystem and network access on the honor system. Rather than promise good behavior, the plugin is built so you can check:
-
-- **No network calls.** There is no `fetch`, `requestUrl`, `XMLHttpRequest`, or `WebSocket` anywhere in the source. Grep for them.
+## Privacy
+Built to work offline.
+- **No network calls.** There is no `fetch`, `requestUrl`, `XMLHttpRequest`, or `WebSocket` anywhere in the source.
 - **No telemetry**, which follows from the above.
 - **One runtime dependency**, [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), with a committed lockfile.
-- **A deterministic build.** `npm run build` produces a byte-identical `main.js` on the same toolchain, so you can build from source and compare hashes against the release.
 
 ## Roadmap
 
@@ -180,11 +177,11 @@ Planned:
 - [ ] Consistent vocabulary across views. The code currently uses element, item, and card for overlapping things.
 - [ ] Full mobile parity, meaning whatever a real device still gets wrong on small screens.
 
-Under consideration: a one-way export of the tree that SuperMemo could import. Scheduling would not transfer, since FSRS and SM-15/17/18 do not share parameters. Open an issue if that matters to you.
+Under consideration: a one-way export of the tree that SuperMemo could import. Scheduling would not transfer, since FSRS and SM-15/17/18 do not share parameters.
 
-Not planned: reimplementing SM-15/17/18, and importing `.kno` collection files.
+Not planned: reimplementing SM-15/17/18 (too much work; FSRS is 'good enough' tbh and I doubt reverse-engineered implementations are accurate) 
 
-The data model and the reasoning behind it are in [`docs/DESIGN.md`](docs/DESIGN.md).
+If you're interested in the design decisions I've made, check [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Installation
 
@@ -195,15 +192,13 @@ Install through BRAT while the plugin is in alpha.
 3. Install the latest release. If a tag was just pushed, wait for the Release workflow to go green first.
 4. Enable Incremental Reading under Community Plugins.
 
-Each release attaches `main.js`, `manifest.json`, and `styles.css`. BRAT downloads those three files. A branch ZIP will not work, because `main.js` is not in git. If BRAT reports a missing `main.js`, check that the release lists all three.
-
 Requires Obsidian 1.5.0 or newer. Desktop and mobile.
 
-This is alpha software. It is dogfooded daily in a real vault, but the store format may still change. Back up a vault you care about.
+This is alpha software. Expect breaking changes between updates. Personally I do actually use this in my own vault, but you may want to back yours up just in case.
 
 ## Development
 
-Requires Node.js 20 or newer and a throwaway vault.
+Requires Node.js 20 or newer and a vault.
 
 ```bash
 git clone https://github.com/RecursiveFunctions/obsidian-incremental-reading
