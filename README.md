@@ -1,231 +1,241 @@
 # Incremental Reading for Obsidian
 
-Read many sources in parallel, extract the important bits, and review them on a spaced schedule — SuperMemo-style incremental reading, inside Obsidian.
+Read many sources in parallel, pull the parts worth keeping out of them, and review those parts on a spaced schedule. SuperMemo-style incremental reading, in your vault.
 
-**Status:** Pre-release alpha (**0.6.11**). Install from **[GitHub Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases)** via [BRAT](#installation). A commit on `main` is not enough; BRAT reads the release assets.
+**Status:** alpha, currently 0.7.13. Install through [BRAT](#installation) from [GitHub Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases). A commit on `main` is not installable; BRAT reads the release assets.
 
-## What this is
+## What it is
 
-Incremental reading (IR) is a learning method from Piotr Wozniak's [SuperMemo](https://supermemo.guru). You keep a pile of articles in flight, pull passages into smaller pieces as you go, and see those pieces again when they are due.
+Incremental reading is a method from Piotr Wozniak's [SuperMemo](https://supermemo.guru). You keep many articles in flight at once, break passages out of them as you read, and see those pieces again when they come due.
 
-SuperMemo is Windows-only and stores knowledge in a proprietary format. Obsidian is where many people already keep notes, but its spaced-repetition plugins are flashcard tools: they do not model IR's element tree, extracts, or priority queue. This plugin is the IR workflow itself, in your vault.
+SuperMemo runs on Windows and keeps your knowledge in its own format. Obsidian's existing spaced-repetition plugins are flashcard tools: they schedule cards but have no element tree, no extracts, and no priority queue. This plugin implements the reading workflow itself against plain markdown files.
 
-## What makes this different
+## Concepts
 
-1. **A real element tree.** Source → extract → extract → cloze item, with a hierarchy you can browse. Anchored extracts stay in the source until you promote them. Cloze items (and extracts you promote) are notes.
-2. **Postpone that does not lie.** When the queue is too big, overflow is pushed by priority. The scheduler is not told you reviewed a card you only postponed.
-3. **FSRS scheduling, with an optional second opinion.** Grades follow [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler). If you turn on **Settings → Show scheduler divergence picker**, you can choose when FSRS and classic SM-2 disagree a lot about the next interval. New vaults leave that off.
-4. **Built to work on a phone.** SuperMemo does not. This plugin is meant to feel usable on Obsidian mobile as well as desktop.
-5. **A privacy property, not a privacy policy.** See below.
+The plugin uses three kinds of element, and they behave differently.
 
-## Security and trust
+| Element | What it is | How it is scheduled |
+|---|---|---|
+| Topic | Something you read: a note or a PDF | A reading schedule. You are never graded |
+| Extract | A span pulled out of a topic or another extract | Inherits a reading schedule, keeps a link to its source |
+| Item | A card you grade: a cloze or an image occlusion | FSRS |
 
-An incremental-reading plugin reads your knowledge base. Obsidian plugins are not sandboxed: they have filesystem and network access on the honor system.
+Every element carries a **priority** from 0 to 100, where **lower means more important**. Priority 0 floats to the top of the queue.
 
-This plugin takes the opposite stance and makes it checkable:
+Three ways to move work out of your way, which are all different:
 
-- No telemetry.
-- A one-command reproducible build, so the shipped bundle matches the public source.
-- A small, pinned, lockfile-committed dependency tree.
-
-Your data never leaves your vault because the code cannot send it.
+- **Later today** pushes a reading element back a few hours. It does not count as a review.
+- **Postpone (mercy)** bulk-pushes overdue elements when the queue has run away from you. Also not a review.
+- **Dismiss** takes an element out of the queue and leaves it in the tree. Reversible.
 
 ## Getting started
 
-1. Open a markdown note or a PDF you want to read incrementally.
-2. **Mark it as an IR topic** (`Alt+T`, or the file ⋯ menu on mobile). Right-click a **folder** to mark every unmarked note and PDF in it (nested folders included).
-3. **Start review** (`Alt+R`, the ribbon brain, or a click on the status bar). On a phone, tap the brain button in the corner.
+1. Open a markdown note or a PDF.
+2. Mark it as a topic with `Alt+T`, or the file menu on mobile. Right-clicking a folder marks every unmarked note and PDF inside it, nested folders included.
+3. Start review with `Alt+R`, the ribbon icon, or a click on the status bar. On a phone, tap the floating brain button.
 
-If you have no topics yet, Start review opens a pane that says so — mark a note (`Alt+T`), then start review (`Alt+R`). It does not just flash “nothing due.”
-
-A vault that already has IR material but nothing due today still says nothing is due.
+`Alt+H` opens a help panel listing every key and command. If you have no topics yet, Start review opens a pane that walks you through those three steps.
 
 ## A review session
 
-Review is one tab, not a popup that eats the rest of Obsidian.
+Review runs in one tab. The bar at the top shows the mode (Due or Neural) and how many cards are left in the pass.
 
-The bar at the top shows **Due** or **Neural**, and how many cards are left in this pass. Extract or cloze while you are in that tab and the new card is queued **right after the current one** — you see it in this session, not the next time you press Alt+R.
+Extract or cloze during review and the new card is queued right after the current one, so you see it in this session.
 
-Reading cards remember where you stopped (**Resumed from last time**, with **From the top** if you want that). The source sits beside the card; on a phone, **Source** lives on the session bar so it does not scroll away. Click the text to edit in Live Preview at that spot. **Source** is raw markdown if you want that.
+Reading cards remember where you stopped and say so, with an option to start from the top instead. The source note sits beside the card. On a phone, Source is a toggle on the session bar. Click the card text to edit in Live Preview at that spot; Source gives you raw markdown.
 
-When the pass is finished, the tab stays on **Session complete**. Alt+R starts whatever is still due; Escape or Close leaves.
+Grade buttons are color-coded and carry their own hotkey. Successful actions flash a line in the review dock; failures use a notice.
 
-Success (extract, cloze, dismiss, undo) flashes a line in the review dock. Failures still toast.
+**Undo** covers your last grade and your last Later today or Dismiss. It rewinds to the card it restored. Every reversal is written to the log as a new event, so review history stays append-only.
 
-If an extract's source has moved or disappeared, the card shows **Re-anchor / Detach / Open source** instead of hiding the problem in a menu.
+When the pass ends, the tab stays open on a completion screen. When nothing is due at all, review opens a panel showing the next due time, how many elements land tomorrow, and how many land inside a week.
 
-## Extracts and notes
+If an extract's source has moved or disappeared, the card offers Re-anchor, Detach, and Open source directly.
 
-Two kinds of extract; the menus say this in those words:
+## Extracts
 
-- **Anchored extract** (default): a highlight in the source. No new file.
-- **Standalone note**: a new markdown file. Turn on **Settings → Extract to standalone note**, or one-shot with `Alt+Shift+X`. `Alt+Shift+P` promotes an anchored extract later.
+There are two kinds, and the menus use these words:
 
-Only that default extract path skips a new file. Cloze items always get their own notes. Creating a cloze (`Alt+Z` or **Cloze** in review) offers an optional hint on a short inline bar — Enter confirms (empty = no hint), Escape cancels.
+- **Anchored extract**, the default. A highlight in the source. No new file.
+- **Standalone note.** A new markdown file. Turn on Settings, Extracts, Extract to standalone note, or do it once with `Alt+Shift+X`. `Alt+Shift+P` promotes an anchored extract later.
 
-Deletions use Anki-compatible markup: `{{c1::hidden text}}` or `{{c1::hidden text::hint}}`.
+Cloze items always get their own note. Creating one with `Alt+Z` offers an optional hint on an inline bar: Enter confirms, empty means no hint, Escape cancels. Deletions use Anki-compatible markup, `{{c1::hidden text}}` or `{{c1::hidden text::hint}}`.
 
-If you run Extract or Cloze from **Reading view** and the selection cannot be mapped onto the markdown, the note switches to **Edit** and keeps the selection when it can.
+Extract and cloze both work from Reading view. When a rendered selection cannot be mapped back onto the markdown, the note switches to Edit and keeps the selection where possible.
 
-If you delete a source note in Obsidian, the extracts stay and you get one prompt: make them notes, keep them as review cards only, or undo (tree unchanged). The same prompt appears on the next launch if the note vanished while Obsidian was closed. After you choose, a short Undo is offered.
+Extract and cloze highlights paint in the editor, in reading view, and in the review source column. Extracts are yellow, clozes are green and underlined. The source file is never rewritten to add them.
 
-If you restore that note, you are asked whether to attach the highlights again. Nothing is attached behind your back.
+Delete a source note and you get one prompt: turn the orphaned extracts into notes, keep them as review cards only, or undo. The same prompt appears at next launch if the note vanished while Obsidian was closed. Restore the note later and you are asked whether to reattach the highlights.
 
-## Multi-selection, images, and image occlusion
+### Multi-span, images, occlusion
 
-**Hold Ctrl (Cmd on macOS) to build one extract from several spans**, the way SuperMemo Assistant does. Release each selection with the modifier down and it is *held* (painted with the highlight color); `Alt+X` then joins every held span plus the live one into a single extract, one paragraph per span, anchored on the first. Works in the PDF viewer (spans can sit on different pages; all of them paint as highlights), in the editor (it becomes a native multi-selection), in reading view, and on the review card. `Esc` or `Alt+Shift+C` drops the held spans.
+Hold Ctrl (Cmd on macOS) to build one extract from several spans. Each selection you release with the modifier down is held and painted. `Alt+X` then joins every held span and the live one into a single extract, one paragraph per span, anchored on the first. This works in the PDF viewer with spans across different pages, in the editor, in reading view, and on the review card. `Esc` or `Alt+Shift+C` drops the held spans.
 
-**Images from a PDF.** `Alt+Shift+I` in the viewer, then drag a rectangle on a page: the crop is saved as a PNG attachment and becomes an extract that embeds it (the page and rect are recorded on the anchor). `Alt+Shift+O` does the same drag but opens the occlusion editor on the crop.
+`Alt+Shift+I` in the PDF viewer lets you drag a rectangle on a page. The crop is saved as a PNG attachment and becomes an extract that embeds it, with the page and rect recorded on the anchor. `Alt+Shift+O` does the same drag and opens the occlusion editor on the crop.
 
-**Images in notes.** Right-click an image inside an IR topic or extract (or on the review card) → **Extract image (IR)** anchors an extract on the `![[...]]` markup, or **Image occlusion cards from this image** opens the editor. `Alt+O` (or the file menu) on an image file does the same; the cards are filed under the IR note that embeds the image, or a new topic note that does.
+For images already in notes, right-click one inside a topic or extract and choose Extract image (IR) or Image occlusion cards from this image. `Alt+O` does the same for an open image file.
 
-**Image occlusion editor** is a workspace leaf, not a modal: drag to draw masks, click a mask to select it, type an optional label. `Del` removes, `Tab` cycles, arrows nudge, `M` toggles the mode, `Enter` creates one item card per mask, `Esc` closes. Modes: **Hide all, guess one** (every mask covered, one tested) or **Hide one, show rest** (Settings → Image occlusion default mode). Each card is an ordinary item note whose body is an `ir-occlusion` code block:
+The occlusion editor is a workspace leaf. Drag to draw masks, click one to select it, type an optional label. `Del` removes, `Tab` cycles, arrows nudge, `M` toggles the mode, `Enter` creates one card per mask, `Esc` closes. Two modes: hide all and guess one, or hide one and show the rest. Each card is an ordinary note whose body is an `ir-occlusion` block:
 
 ```ir-occlusion
 {"image":"attachments/heart.png","mode":"hide-all","active":2,"rects":[{"n":1,"x":0.1,"y":0.2,"w":0.3,"h":0.1,"label":"aorta"},{"n":2,"x":0.5,"y":0.5,"w":0.2,"h":0.2}]}
 ```
 
-The block renders as the masked image wherever Obsidian renders markdown (click the tested mask to peek in a normal note). In review the pane owns reveal (`Space`) and grading (`1`–`4`), exactly like a text cloze. Anki TSV export writes the block verbatim; Anki has no import for it.
+That block renders as the masked image anywhere Obsidian renders markdown. In review, `Space` reveals and `1` to `4` grade, the same as a text cloze. Anki TSV export writes the block verbatim; Anki cannot import it.
 
 ## Neural review
 
-**Go neural** (`Alt+N`) is a second kind of session, not a replacement for today's due queue. It starts from the card you are reviewing, or from the IR note you have open — something already in IR. From a row in the element tree, use that row's menu. It then walks related material (children, wikilinks, tags). Grading still counts.
+`Alt+N` starts a session from the card you are reviewing or the IR note you have open, then walks related material through children, wikilinks, and tags. Grades still count. A muted line on each card says how it got there: `via wikilink`, `via child of`, or `via tag`. Escape ends the neural pass and offers to start today's due queue.
 
-A muted line on the card says why it is here: `via wikilink ← Foo`, `via child of Bar`, or `via tag #dogs`. Escape (when you are not editing) ends the neural pass and offers **Start outstanding (Alt+R)** instead of closing the tab.
+## Views
 
-## The tree, the status bar, the log
+**Element tree** (`Alt+I`) shows the source to extract to item hierarchy. Keys: `j` and `k` or arrows to move, Enter to open or jump review, `o` to open the note, `p` to edit priority inline, `d` to dismiss, `m` to postpone, Space to fold.
 
-The **IR element tree** (`Alt+I`) is a keyboard home: `j`/`k` or arrows move, Enter opens or jumps review, `o` opens the note, `p` edits priority, `d` dismisses, `m` postpones, Space folds. Click a row to find it in an open review (or open the note); double-click always opens the note. The card you are reviewing keeps a **reviewing** chip.
+Move elements by dragging, or without a mouse: `x` picks up the focused element or the current selection, every legal destination row grows a Move here button, and `v` drops onto the focused row. The banner offers Make root, and Escape cancels. A row that would swallow its own subtree is dimmed.
 
-The **status bar** shows `due · postponed · +inflow/7d`. Click it to start review; right-click (or long-press) for the IR menu. **Stats** (`Alt+S`) refresh those counts when you open them. The **session log** (`Alt+L`) is this review pass — stamped when you actually start Alt+R or Alt+N — not everything since the plugin loaded. Click a row to jump that card or open the note.
+Click a row to locate it in an open review; double-click opens the note. The card under review keeps a chip.
 
-The left ribbon has one IR icon: **Start IR review**. Everything else is in the command palette, the status-bar menu, or the tree.
+**Stats** (`Alt+S`) shows total elements, how many are scheduled, what is due now split by type, and a seven-day forecast of what lands each day. Overdue is counted separately from the daily bars. Below that: reviews over the last thirty days, retention, the grade spread, and a fourteen-day sparkline. Retention counts Hard or better as a recall, and the panel says so.
+
+**Session log** (`Alt+L`) is the current pass, stamped when you start it. Click a row to jump to that card or open the note.
+
+**Help** (`Alt+H`) lists the review keys, the tree keys, every command with the binding you have actually assigned, and a short vocabulary section.
+
+**Status bar** shows due, postponed, and inflow over seven days. Click to start review, right-click for the IR menu.
 
 ## Keyboard
 
-The SuperMemo-adjacent commands have default `Alt+…` bindings. Rebind or clear them under Settings → Hotkeys. Other IR commands (resume last read, undo last grade, split cloze, extract paragraph / heading / bulk, mark folder as topics) have no default — assign one there if you want it.
+Commands with a default binding:
 
-| | |
+| Key | Command |
 |---|---|
-| `Alt+T` | Mark the current note or PDF as an IR topic |
-| `Alt+R` | Start review (today's due queue) |
-| `Alt+N` | Go neural (from something already in IR) |
-| `Alt+X` | Extract selection (anchored, unless the setting is on). In a PDF, uses the viewer text selection. Joins every span held with **Ctrl** (see below). |
-| `Alt+Shift+C` | Clear held (Ctrl) selections (`Esc` does too) |
-| `Alt+Shift+I` | Extract an image region from the open PDF (drag a rectangle) |
-| `Alt+Shift+O` | Image occlusion cards from a PDF region (drag a rectangle) |
-| `Alt+O` | Image occlusion cards from the open image file |
+| `Alt+T` | Mark the current note or PDF as a topic |
+| `Alt+R` | Start review |
+| `Alt+N` | Go neural |
+| `Alt+X` | Extract selection, joining any Ctrl-held spans |
+| `Alt+Z` | Cloze selection |
 | `Alt+Shift+X` | Extract once to a standalone note |
 | `Alt+Shift+P` | Promote the current anchored extract |
-| `Alt+Z` | Cloze selection (optional hint) |
-| `Alt+Shift+Z` | New cloze card (separate item from selection) |
-| `Alt+I` | Open the IR element tree |
-| `Alt+L` | Open this review's session log |
+| `Alt+Shift+Z` | New cloze card as a separate item |
+| `Alt+Shift+C` | Clear held Ctrl selections |
+| `Alt+Shift+I` | Extract an image region from the open PDF |
+| `Alt+Shift+O` | Occlusion cards from a PDF region |
+| `Alt+O` | Occlusion cards from the open image |
+| `Alt+I` | Element tree |
+| `Alt+L` | Session log |
 | `Alt+S` | Stats |
-| `Alt+P` | Set priority (opens the tree editor when it can) |
-| `Alt+M` | Postpone overload (mercy) |
+| `Alt+H` | Help and keyboard shortcuts |
+| `Alt+P` | Set priority |
+| `Alt+M` | Postpone overload |
 | `Alt+D` | Dismiss or restore |
 | `Alt+E` | Export items to Anki TSV |
 | `Alt+B` | Import clipboard text as a topic |
-| `Alt+Shift+U` | IR quick actions (radial wheel) |
+| `Alt+Shift+U` | Quick actions wheel |
 
-In the **review tab:** `Space` / `Enter` advances a reading card. On a cloze, first `Space` reveals; after reveal, `Space` grades **Good** by default (Settings → Review → Space after cloze reveal). `[` is Previous, `L` / `D` later today / dismiss, `1`–`4` grade a revealed cloze, `Ctrl+Enter` (`Cmd+Enter` on macOS) is Next while the reading editor is focused. Escape closes a finished pass, or ends neural and offers outstanding due.
+Nine more commands ship with no default binding: resume last read topic, undo last grade, split cloze into separate notes, mark folder notes as topics, and the bulk extract commands (paragraph at cursor, heading section, every blockquote, every list item, every paragraph). Assign keys under Settings, Hotkeys.
 
-Already-clozed spans paint on the source (green underline) next to extract highlights (yellow), in the editor, reading view, and review source column. The source file is not rewritten.
+Inside the review tab: `Space` advances a reading card, reveals a cloze, and then grades Good by default. `1` to `4` grade a revealed cloze. `[` goes back, `L` is later today, `D` dismisses, `Ctrl+Enter` advances a reading card while the editor is focused, `Escape` leaves.
+
+These review and tree keys belong to their panes and are fixed. They only fire while that pane has focus, and Settings, Hotkeys does not govern them. Everything in the table above is rebindable.
 
 ## Mobile
 
-On a phone, a **brain FAB** stays visible (file explorer included). It opens the same radial wheel, with **Start IR review** and **Open IR element tree** on the ring — including during a session. **Go neural** is on the ring while you are reviewing, or when the open note is already in IR. The note ⋯ menu still has the full command set.
+A floating brain button stays visible across the app, including the file explorer, and carries a badge with the number of elements due. It opens the quick actions wheel, which always has Start review and Open element tree, plus Go neural when the open note is in IR.
 
-In review, the dock keeps the primary actions (**Extract**, **Cloze**, **Next** / **Show answer** / grades). **⋯** is the rest for that card, not a fixed list: reading cards put Edit, Previous, Later today, and Dismiss there; an unrevealed cloze only has Previous; after the answer is showing, Previous, Edit, Dismiss, and Undo last grade. Priority and A-Factor collapse to a chip you tap to edit. Swipe the card to navigate and grade; a one-time legend explains the directions.
+In review, the dock keeps the primary actions and moves the rest behind an overflow menu whose contents depend on the card: reading cards get Edit, Previous, Later today, Dismiss and Undo, an unrevealed cloze gets Previous only. Priority and A-Factor collapse into a chip you tap to edit. Swipe the card to navigate and grade; a legend explains the directions and stops appearing after three sessions.
 
-Pin these on the **mobile editor toolbar** (Settings → Mobile → Configure mobile toolbar) if you extract from the editor:
+Priority editing on mobile goes through the tree's inline editor, since Obsidian mobile has no status bar.
 
-1. Extract selection
-2. Cloze to IR item
-3. Start IR review
-4. IR quick actions
-5. Mark note as IR topic
+If you extract from the editor, pin these to the mobile toolbar under Settings, Mobile, Configure mobile toolbar: Extract selection, Cloze to IR item, Start IR review, IR quick actions, Mark note as IR topic.
 
 ## Settings
 
-Settings are grouped the way the work is: **Review**, **Extracts**, **Topics**, **Overload**, **Anki export**, **Danger zone**. **Restore defaults** at the top puts every control back to a new vault's values without touching notes or review history. Review includes how many items sit between reading cards, interleave, the scheduler divergence picker, and **Space after cloze reveal** (default Good). Overload is the daily ceiling and priority cutoff for postpone. Extracts includes what happens when a source note is deleted (make orphan highlights into notes, or keep them as cards only). If many sources vanished at once, the prompt can apply that choice to all of them. Moving or renaming a folder updates IR paths instead of treating every note as deleted. Danger zone can reset IR state (keep notes) or trash every IR note.
+Six sections: Review, Extracts, Topics, Overload, Anki export, Danger zone.
+
+Review covers how many items sit between reading cards, interleaving, the scheduler divergence picker, and which grade Space applies after a cloze reveal. Overload sets the daily ceiling and the priority cutoff for postpone. Extracts covers standalone-note behavior and what happens when a source note is deleted. Danger zone can reset IR state while keeping your notes, or trash every IR note.
+
+Restore defaults at the top returns every control to a new vault's values. It does not touch notes or review history.
+
+FSRS handles grading. Turning on the scheduler divergence picker asks you to choose when FSRS and classic SM-2 disagree sharply about the next interval. New vaults leave it off.
+
+## Privacy and build
+
+This plugin reads your knowledge base, and Obsidian plugins are not sandboxed. They get filesystem and network access on the honor system. Rather than promise good behavior, the plugin is built so you can check:
+
+- **No network calls.** There is no `fetch`, `requestUrl`, `XMLHttpRequest`, or `WebSocket` anywhere in the source. Grep for them.
+- **No telemetry**, which follows from the above.
+- **One runtime dependency**, [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), with a committed lockfile.
+- **A deterministic build.** `npm run build` produces a byte-identical `main.js` on the same toolchain, so you can build from source and compare hashes against the release.
 
 ## Roadmap
 
-**Shipped through 0.6.21** — the daily loop: topics, anchored extracts and standalone notes, clozes with hints, interleaved due review, neural as a mode, a live session that keeps new extracts, a tree you can drive from the keyboard, postpone, status/stats/session log, mobile FAB (Start review stays on the ring mid-session), a prompt when a source note is gone or comes back, and Restore defaults in Settings.
+Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS scheduling, interleaved due review, neural sessions, priority queue and mercy postpone, the element tree with keyboard and touch reparenting, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
 
-PDF topics and extracts (Alt+T / Alt+X in the built-in viewer). Review splits the PDF beside the card and focuses it; extracts paint as yellow highlights on the text layer. Focus PDF keeps those marks (it no longer remounts the viewer). Cloze stays markdown-only: extract first, then cloze the extract. Scanned PDFs with no text layer cannot be extracted. After a cloze reveal, Space grades Good by default; already-clozed spans paint on the source. Right-click a folder to mark its unmarked notes and PDFs as topics. Review Edit uses Live Preview; Source is still there for raw markdown.
+PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be extracted, and cloze is markdown-only: extract from the PDF first, then cloze the extract.
 
-### Stretch
+Planned:
 
-- [x] **PDF support.** Selection to extract from a PDF, with page references preserved. (Text-layer PDFs; no OCR / snapshots / page-split in v1.)
-- [x] **Image occlusion** for visual cards (editor leaf, `ir-occlusion` blocks, one card per mask).
-- [x] **Ctrl multi-selection extracts** and **image extracts** from PDFs and notes (SuperMemo Assistant parity).
-- [ ] **Browser extension** for one-click import of web pages into the IR queue.
-- [ ] **Full mobile parity.** The plugin is already mobile-eligible; remaining work is whatever a real device still gets wrong, especially on very small screens.
+- [ ] Browser extension for one-click import of web pages.
+- [ ] Calendar heatmap and retention trend in stats.
+- [ ] Consistent vocabulary across views. The code currently uses element, item, and card for overlapping things.
+- [ ] Full mobile parity, meaning whatever a real device still gets wrong on small screens.
 
-### Under consideration
+Under consideration: a one-way export of the tree that SuperMemo could import. Scheduling would not transfer, since FSRS and SM-15/17/18 do not share parameters. Open an issue if that matters to you.
 
-- **SuperMemo-direction export.** A one-way dump of the tree SuperMemo could import. Scheduling would not transfer (FSRS and SM-15/17/18 do not share parameters). Open an issue if that would matter to you.
-
-### Not planned
-
-- Reimplementing the proprietary SM-15/17/18 algorithm. FSRS is good enough.
-- Importing `.kno` SuperMemo collection files. Revisit if demand is high.
+Not planned: reimplementing SM-15/17/18, and importing `.kno` collection files.
 
 The data model and the reasoning behind it are in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Installation
 
-**Beta (BRAT):** Testers install from **[GitHub Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases)**. Each version tag builds `main.js`, `manifest.json`, and `styles.css` and attaches them to that release. BRAT downloads those files. Installing from a random branch ZIP will not work — `main.js` is not in git.
+Install through BRAT while the plugin is in alpha.
 
 1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from Community Plugins and enable it.
-2. *Settings → BRAT → Add Beta plugin* → repository: **`RecursiveFunctions/obsidian-incremental-reading`**.
-3. Install the **latest matching release**. If a tag was just pushed, wait until the **Release** workflow is green, then update in BRAT.
-4. Enable **Incremental Reading** under Community Plugins.
+2. Settings, BRAT, Add Beta plugin, repository `RecursiveFunctions/obsidian-incremental-reading`.
+3. Install the latest release. If a tag was just pushed, wait for the Release workflow to go green first.
+4. Enable Incremental Reading under Community Plugins.
 
-Treat this as alpha: dogfooded in a real vault, mobile is much better than it was but not finished, and the store format may still change. Back up a vault you care about.
+Each release attaches `main.js`, `manifest.json`, and `styles.css`. BRAT downloads those three files. A branch ZIP will not work, because `main.js` is not in git. If BRAT reports a missing `main.js`, check that the release lists all three.
 
-If BRAT reports a missing **`main.js`**, the [Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases) page for that version must list those three files.
+Requires Obsidian 1.5.0 or newer. Desktop and mobile.
 
-**Stable:** From the Obsidian Community Plugins directory after the plugin meets submission requirements.
+This is alpha software. It is dogfooded daily in a real vault, but the store format may still change. Back up a vault you care about.
 
 ## Development
 
-Requirements: Node.js 20 or newer, and a throwaway Obsidian vault.
+Requires Node.js 20 or newer and a throwaway vault.
 
 ```bash
 git clone https://github.com/RecursiveFunctions/obsidian-incremental-reading
 cd obsidian-incremental-reading
 npm install
-npm run dev          # builds and watches; writes main.js next to manifest.json
+npm run dev          # builds and watches, writes main.js next to manifest.json
 ```
 
-Load it by symlinking the project into `<your-vault>/.obsidian/plugins/incremental-reading/`, then enable it under Settings → Community Plugins.
+Symlink the project into your test vault and enable it under Community Plugins:
 
 ```bash
-# from inside your test vault:
+# from inside your test vault
 mkdir -p .obsidian/plugins
 ln -s /absolute/path/to/obsidian-incremental-reading .obsidian/plugins/incremental-reading
 ```
 
-`npm run build` is a one-shot production build with type-checking. `npm test` is the headless suite. It does not cover the live review surface, hotkeys, or `processFrontMatter` against the real app.
+`npm run build` is a one-shot production build with type-checking. `npm test` runs 642 headless tests over the pure cores. Those tests do not cover the live review surface, hotkey dispatch, or `processFrontMatter` against the real app, so changes there need a real vault.
 
-Release mechanics (BRAT, tags, repair) are in [`docs/RELEASE.md`](docs/RELEASE.md).
+Release mechanics are in [`docs/RELEASE.md`](docs/RELEASE.md). UI rules the project holds itself to are in [`docs/UI-COMMITMENTS.md`](docs/UI-COMMITMENTS.md).
 
 ## Contributing
 
-The project is early. Design discussion, bug reports, code, docs, and testing in your own vault all help.
+Bug reports, design discussion, code, docs, and testing in your own vault all help.
 
-Open an issue before sending a PR for a new feature. The plugin stays close to SuperMemo's IR model instead of inventing parallel mechanics, so aligning on approach early saves rework.
+Open an issue before sending a PR for a new feature. The plugin stays close to SuperMemo's model instead of inventing parallel mechanics, so agreeing on approach early saves rework.
 
 ## Acknowledgments
 
 - [Piotr Wozniak](https://supermemo.guru) for inventing incremental reading and writing about it for decades.
-- The [FSRS team](https://github.com/open-spaced-repetition), in particular Jarrett Ye, for an open-source scheduler in SuperMemo's lineage.
-- The [Obsidian sample plugin](https://github.com/obsidianmd/obsidian-sample-plugin) and community developers whose code taught me the API.
+- The [FSRS team](https://github.com/open-spaced-repetition), in particular Jarrett Ye, for an open scheduler in SuperMemo's lineage.
+- The [Obsidian sample plugin](https://github.com/obsidianmd/obsidian-sample-plugin) and the community developers whose code taught me the API.
 
 ## License
 
-[MIT](LICENSE). Fully open source, every feature free, no paid tier, no telemetry, no server, and a build you can reproduce. There is no future version where the core is gated.
+[MIT](LICENSE). Every feature is free. There is no paid tier, no telemetry, and no server. There is no future version where the core is gated.
