@@ -18,11 +18,31 @@
  *   `src/review-view.ts` and change them here.
  */
 
-import { ItemView, WorkspaceLeaf, type Command } from "obsidian";
+import { ItemView, WorkspaceLeaf, type App, type Command } from "obsidian";
 
-import { formatHotkey } from "./ir/hotkeys";
+import {
+  effectiveHotkeys,
+  formatHotkeys,
+  qualifiedCommandId,
+  type HotkeyLookup,
+} from "./ir/hotkeys";
 
 export const IR_HELP_VIEW_TYPE = "ir-help-view";
+
+/** Must match manifest.json; Obsidian files hotkeys under `<id>:<command>`. */
+const PLUGIN_ID = "incremental-reading";
+
+/**
+ * Obsidian's hotkey manager, if this build still exposes it.
+ *
+ * Deliberately typed as a probe rather than cast: the panel degrades to the
+ * registered defaults if the internals move, which is the old behavior and
+ * strictly better than throwing inside a render.
+ */
+function hotkeyLookup(app: App): HotkeyLookup | undefined {
+  const mgr = (app as App & { hotkeyManager?: unknown }).hotkeyManager;
+  return mgr && typeof mgr === "object" ? (mgr as HotkeyLookup) : undefined;
+}
 
 /** Mirrors the review pane's keydown handler in `src/review-view.ts`. */
 const REVIEW_KEYS: Array<[string, string]> = [
@@ -106,6 +126,14 @@ export class IrHelpView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.render();
+    // Hotkeys are edited in Settings, which is a different leaf, so re-read
+    // them whenever this panel comes back to the foreground. Without this the
+    // sheet would show whatever was true when you first opened it.
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", (leaf) => {
+        if (leaf === this.leaf) this.render();
+      }),
+    );
   }
 
   async onClose(): Promise<void> {}
@@ -122,19 +150,39 @@ export class IrHelpView extends ItemView {
     });
 
     this.section(c, "In a review session", REVIEW_KEYS, "kbd");
+    c.createDiv({
+      cls: "ir-help-note",
+      text: "These keys belong to the review pane itself and are fixed. They only fire while the review pane has focus.",
+    });
+
     this.section(c, "In the element tree", TREE_KEYS, "kbd");
+    c.createDiv({
+      cls: "ir-help-note",
+      text: "Also fixed, and only while the element tree has focus.",
+    });
+
+    // Commands are the rebindable half, so show what the user will actually
+    // press, not what was registered. A sheet that reports defaults is wrong
+    // for anyone who has ever opened Settings, Hotkeys.
+    const lookup = hotkeyLookup(this.app);
     this.section(
       c,
       "Commands",
       this.commands.map((cmd): [string, string] => [
-        formatHotkey(cmd),
+        formatHotkeys(
+          effectiveHotkeys(
+            lookup,
+            qualifiedCommandId(PLUGIN_ID, cmd),
+            cmd.hotkeys,
+          ),
+        ),
         cmd.name,
       ]),
       "kbd",
     );
     c.createDiv({
       cls: "ir-help-note",
-      text: "Bindings shown are the defaults. Rebind any of them in Settings, Hotkeys, searching for Incremental Reading.",
+      text: "Commands work anywhere. Set or clear their keys in Settings, Hotkeys, searching for Incremental Reading.",
     });
     this.section(c, "Vocabulary", CONCEPTS, "term");
   }
