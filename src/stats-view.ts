@@ -230,9 +230,10 @@ export class IrStatsView extends ItemView {
     const { tier } = fitTier(revlog.report);
     if (tier === "none") {
       this.renderExclusions(out, revlog);
+      const n = revlog.report.includedCards;
       out.createDiv({
         cls: "ir-stats-note",
-        text: `${revlog.report.includedCards} usable cards; fitting needs 8.`,
+        text: `${n} usable card${n === 1 ? "" : "s"}; fitting needs 8.`,
       });
       return;
     }
