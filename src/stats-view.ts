@@ -1,7 +1,17 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 
 import { IrStore } from "./ir/store";
-import type { IrElement } from "./ir/model";
+import type { IrElement, IrEvent } from "./ir/model";
+import type { LogState } from "./ir/log";
+import type { IrSettings } from "./ir/settings-data";
+import {
+  EXCLUSION_LABELS,
+  extractRevlog,
+  fitTier,
+  type Revlog,
+} from "./ir/optimizer/revlog";
+import { evalCardsFor, fit, type FitResult } from "./ir/optimizer/fit";
+import { intervalDelta, meanLogLoss } from "./ir/optimizer/metrics";
 import {
   computeStats,
   dueByType,
@@ -20,12 +30,26 @@ const FORECAST_DAYS = 7;
 const DAY_MS = 86400000;
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+/** What the scheduler section needs from the host plugin. */
+export interface SchedulerHost {
+  settings: IrSettings;
+  saveSettings(): Promise<void>;
+  /** Rebuild the FSRS engine from the current settings. */
+  applyEngineConfig(): void;
+}
+
+/** Fixed fit seed: same log in, same parameters out, every run. */
+const FIT_SEED = 42;
+
 export class IrStatsView extends ItemView {
   private store: IrStore;
+  private host: SchedulerHost;
+  private fitCancelled = false;
 
-  constructor(leaf: WorkspaceLeaf, store: IrStore) {
+  constructor(leaf: WorkspaceLeaf, store: IrStore, host: SchedulerHost) {
     super(leaf);
     this.store = store;
+    this.host = host;
   }
 
   getViewType(): string {
@@ -102,6 +126,242 @@ export class IrStatsView extends ItemView {
     this.renderCounts(body, elements, stats, now);
     this.renderForecast(body, elements, now);
     this.renderReviewHistory(body, grades, stats, windowStart, now);
+    this.renderScheduler(body, events, state);
+  }
+
+  // --- Scheduler parameters (PLAN-OPTIMIZER.md stage 3) -------------------
+
+  private renderScheduler(
+    body: HTMLElement,
+    events: IrEvent[],
+    state: LogState,
+  ): void {
+    const s = this.host.settings;
+    const section = body.createDiv({ cls: "ir-stats-section" });
+    section.createDiv({ cls: "ir-stats-section-title", text: "Scheduler" });
+
+    const rows: Array<[string, string]> = [
+      [
+        "Parameters",
+        s.fsrsParams
+          ? `optimized ${new Date(s.fsrsParams.fittedAt).toISOString().slice(0, 10)}`
+          : "FSRS-6 defaults",
+      ],
+    ];
+    if (s.fsrsParams) {
+      rows.push([
+        "Fitted on",
+        `${s.fsrsParams.reviewCount} reviews${s.fsrsParams.lowData ? " · low data" : ""}`,
+      ]);
+      rows.push([
+        "Held-out log-loss",
+        s.fsrsParams.heldOutLogLoss.toFixed(4),
+      ]);
+    }
+    this.table(section, rows);
+
+    // Desired retention: the one FSRS knob the user owns.
+    const ret = section.createDiv({ cls: "ir-opt-retention" });
+    const retLabel = ret.createSpan({
+      text: `Desired retention: ${s.desiredRetention.toFixed(2)}`,
+    });
+    const slider = ret.createEl("input", {
+      attr: {
+        type: "range",
+        min: "0.70",
+        max: "0.97",
+        step: "0.01",
+        value: String(s.desiredRetention),
+        "aria-label": "Desired retention",
+      },
+    });
+    slider.addEventListener("input", () => {
+      retLabel.setText(`Desired retention: ${Number(slider.value).toFixed(2)}`);
+    });
+    slider.addEventListener("change", () => {
+      this.host.settings.desiredRetention = Number(slider.value);
+      void this.host.saveSettings().then(() => this.host.applyEngineConfig());
+    });
+
+    const actions = section.createDiv({ cls: "ir-opt-actions" });
+    const optimize = actions.createEl("button", {
+      cls: "mod-cta",
+      text: "Optimize from review log",
+    });
+    if (s.fsrsPreviousParams !== undefined) {
+      const revert = actions.createEl("button", { text: "Revert" });
+      revert.setAttr(
+        "title",
+        s.fsrsPreviousParams === null
+          ? "Back to the FSRS-6 defaults"
+          : "Back to the previous fitted parameters",
+      );
+      revert.addEventListener("click", () => void this.swapParams());
+    }
+    const out = section.createDiv({ cls: "ir-opt-out" });
+    optimize.addEventListener("click", () => {
+      optimize.disabled = true;
+      void this.runOptimize(out, events, state).finally(() => {
+        optimize.disabled = false;
+      });
+    });
+  }
+
+  /** Revert = swap active and previous, so it also un-reverts. */
+  private async swapParams(): Promise<void> {
+    const s = this.host.settings;
+    const prev = s.fsrsPreviousParams;
+    s.fsrsPreviousParams = s.fsrsParams ?? null;
+    s.fsrsParams = prev ?? undefined;
+    await this.host.saveSettings();
+    this.host.applyEngineConfig();
+    void this.render();
+  }
+
+  private async runOptimize(
+    out: HTMLElement,
+    events: IrEvent[],
+    state: LogState,
+  ): Promise<void> {
+    out.empty();
+    this.fitCancelled = false;
+
+    const revlog = extractRevlog(events, state);
+    const { tier } = fitTier(revlog.report);
+    if (tier === "none") {
+      this.renderExclusions(out, revlog);
+      out.createDiv({
+        cls: "ir-stats-note",
+        text: `${revlog.report.includedCards} usable cards; fitting needs 8.`,
+      });
+      return;
+    }
+
+    const progressWrap = out.createDiv({ cls: "ir-opt-progress" });
+    const progressText = progressWrap.createSpan({ text: "step 0" });
+    const track = progressWrap.createDiv({ cls: "ir-opt-progress-track" });
+    const bar = track.createDiv({ cls: "ir-opt-progress-bar" });
+    const cancel = progressWrap.createEl("button", { text: "Cancel" });
+    cancel.addEventListener("click", () => {
+      this.fitCancelled = true;
+    });
+
+    let result: FitResult | null = null;
+    const gen = fit(revlog.cards, { seed: FIT_SEED });
+    for (;;) {
+      const next = await gen.next();
+      if (next.done) {
+        result = next.value;
+        break;
+      }
+      if (this.fitCancelled) break;
+      const p = next.value;
+      progressText.setText(`step ${p.step}/${p.totalSteps}`);
+      bar.style.setProperty("width", `${(p.step / p.totalSteps) * 100}%`);
+      await new Promise(requestAnimationFrame);
+    }
+    progressWrap.remove();
+
+    if (!result) {
+      out.createDiv({ cls: "ir-stats-note", text: "Cancelled." });
+      return;
+    }
+    this.renderFitResult(out, revlog, result);
+  }
+
+  private renderFitResult(
+    out: HTMLElement,
+    revlog: Revlog,
+    result: FitResult,
+  ): void {
+    const s = this.host.settings;
+    const evalCards = evalCardsFor(revlog.cards, FIT_SEED);
+    // Score whatever is ACTIVE now on the same held-out cards the fit
+    // scored its candidate on; that is the bar Apply must clear.
+    const activeLoss = s.fsrsParams
+      ? meanLogLoss(evalCards, s.fsrsParams.w)
+      : result.defaultsHeldOutLoss;
+    const better = result.candidateHeldOutLoss < activeLoss;
+
+    const delta = better
+      ? intervalDelta(
+          revlog.cards,
+          s.fsrsParams?.w,
+          result.w,
+          s.desiredRetention,
+        )
+      : null;
+
+    const rows: Array<[string, string]> = [
+      [
+        "Usable",
+        `${revlog.report.includedReviews} reviews / ${revlog.report.includedCards} cards`,
+      ],
+      ["Candidate log-loss", result.candidateHeldOutLoss.toFixed(4)],
+      [
+        s.fsrsParams ? "Current log-loss" : "Current log-loss (defaults)",
+        activeLoss.toFixed(4),
+      ],
+    ];
+    if (delta) {
+      const sign = (d: number) => (d > 0 ? `+${d}` : String(d));
+      rows.push([
+        "Next interval",
+        `median ${sign(delta.medianDays)}d · ${delta.longer} longer / ${delta.shorter} shorter / ${delta.same} same`,
+      ]);
+    }
+    if (result.lowData) rows.push(["Confidence", "low (under 400 reviews)"]);
+    this.table(out, rows);
+    this.renderExclusions(out, revlog);
+
+    const actions = out.createDiv({ cls: "ir-opt-actions" });
+    if (better) {
+      const apply = actions.createEl("button", {
+        cls: "mod-cta",
+        text: "Apply",
+      });
+      apply.addEventListener("click", () => {
+        void this.applyParams(revlog, result);
+      });
+      const discard = actions.createEl("button", { text: "Discard" });
+      discard.addEventListener("click", () => out.empty());
+      out.createDiv({
+        cls: "ir-stats-note",
+        text: "Apply changes future scheduling only; no due date moves.",
+      });
+    } else {
+      out.createDiv({
+        cls: "ir-stats-note",
+        text: "No improvement over the current parameters. Nothing to apply.",
+      });
+      const dismiss = actions.createEl("button", { text: "Dismiss" });
+      dismiss.addEventListener("click", () => out.empty());
+    }
+  }
+
+  private async applyParams(revlog: Revlog, result: FitResult): Promise<void> {
+    const s = this.host.settings;
+    s.fsrsPreviousParams = s.fsrsParams ?? null;
+    s.fsrsParams = {
+      w: result.w,
+      fsrsVersion: 6,
+      fittedAt: Date.now(),
+      reviewCount: revlog.report.includedReviews,
+      heldOutLogLoss: result.candidateHeldOutLoss,
+      lowData: result.lowData,
+    };
+    await this.host.saveSettings();
+    this.host.applyEngineConfig();
+    void this.render();
+  }
+
+  private renderExclusions(out: HTMLElement, revlog: Revlog): void {
+    const nonZero = revlog.report.rows.filter((r) => r.count > 0);
+    if (nonZero.length === 0) return;
+    this.table(
+      out,
+      nonZero.map((r) => [EXCLUSION_LABELS[r.reason], String(r.count)]),
+    );
   }
 
   private renderCounts(

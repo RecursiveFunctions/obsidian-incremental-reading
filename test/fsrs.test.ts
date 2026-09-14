@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { generatorParameters } from "ts-fsrs";
 import {
+  configureEngine,
   gradeNumber,
   newCard,
   readCardFromFrontmatter,
@@ -74,4 +76,28 @@ test("gradeNumber maps to the FSRS 1-4 rating scale stats and the optimizer read
   assert.equal(gradeNumber("hard"), 2);
   assert.equal(gradeNumber("good"), 3);
   assert.equal(gradeNumber("easy"), 4);
+});
+
+test("configureEngine: custom weights change scheduling, invalid weights do not", () => {
+  const before = schedule(newCard(NOW), "good", NOW);
+
+  // Valid custom vector: halved initial stabilities must shorten the path.
+  const w = [...generatorParameters().w];
+  w[0] = 0.05; w[1] = 0.1; w[2] = 0.2; w[3] = 0.4;
+  assert.equal(configureEngine({ w }), true);
+  const custom = schedule(newCard(NOW), "good", NOW);
+  assert.notEqual(custom.stability, before.stability);
+
+  // Invalid vectors are rejected and leave the engine on defaults.
+  assert.equal(configureEngine({ w: w.slice(0, 20) }), false);
+  const fallback = schedule(newCard(NOW), "good", NOW);
+  assert.equal(fallback.stability, before.stability);
+  assert.equal(configureEngine({ w: [...w.slice(0, 20), NaN] }), false);
+
+  // Retention is clamped, not rejected.
+  assert.equal(configureEngine({ requestRetention: 5 }), true);
+
+  configureEngine({}); // restore defaults for other tests
+  const after = schedule(newCard(NOW), "good", NOW);
+  assert.equal(after.stability, before.stability);
 });

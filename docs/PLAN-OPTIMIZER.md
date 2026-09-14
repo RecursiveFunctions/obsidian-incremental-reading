@@ -221,9 +221,16 @@ on it.
   (full suite incl. oracle ~5 s), so the mobile budget is a non-issue.
   First oracle run: ours 0.1907, reference 0.1974, defaults 0.1989
   held-out log-loss on the synthetic learner.
-- **Stage 3 — plumbing + panel.** Settings fields, `configureEngine`,
-  stats section with exclusion table / preview / Apply / Revert /
-  desired-retention. Ships visible, no flag.
+- **Stage 3 — plumbing + panel (DONE 2026-09-14, 0.7.20).** Settings
+  fields, `configureEngine` (invalid stored w falls back to defaults
+  with a Notice), stats "Scheduler" section with exclusion table /
+  preview / Apply / Revert / desired-retention slider. Ships visible,
+  no flag. Deviations from the sketch: the Apply gate compares the
+  candidate against the CURRENTLY ACTIVE parameters (not just the
+  defaults) on the same eval set, via `evalCardsFor`; Revert is a swap,
+  so it also un-reverts; calibration bins are computed but not yet
+  plotted (a table row felt like noise; revisit with the heatmap
+  work).
 
 Release mechanics: stages ship as patch releases as they land
 (dark code in 1-2 is fine to ship). The version becomes 0.8.0 with

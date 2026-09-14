@@ -93,6 +93,20 @@ export function splitCards(
   return { train, heldOut };
 }
 
+/**
+ * The evaluation set the fit's held-out numbers refer to: the 20% split
+ * when it is big enough to mean anything, otherwise every card. The
+ * stats panel uses this to score the currently active parameters on the
+ * same cards the fit scored its candidate on.
+ */
+export function evalCardsFor(
+  cards: readonly RevlogCard[],
+  seed: number,
+): RevlogCard[] {
+  const { heldOut } = splitCards(cards, seed);
+  return heldOut.length >= 4 ? heldOut : [...cards];
+}
+
 function shuffle<T>(arr: T[], rand: () => number): void {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
@@ -148,7 +162,7 @@ export async function* fit(
   const split = splitCards(cards, seed);
   // Degenerate split (tiny or skewed data): evaluate against everything
   // rather than a meaningless handful.
-  const evalCards = split.heldOut.length >= 4 ? split.heldOut : cards;
+  const evalCards = evalCardsFor(cards, seed);
   const trainCards = split.train.length >= 4 ? split.train : cards;
   const trainP = prepare(trainCards);
   const evalP = prepare(evalCards);

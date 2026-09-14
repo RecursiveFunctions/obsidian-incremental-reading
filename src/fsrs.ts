@@ -41,9 +41,46 @@ export function gradeNumber(grade: Grade): number {
   return RATING[grade];
 }
 
-// One engine with default (unoptimized) parameters. Parameter optimization
-// from real review history is a later roadmap item.
-const engine = fsrs();
+// The one scheduling engine. Starts on FSRS-6 defaults; `configureEngine`
+// rebuilds it from fitted parameters and the desired-retention setting.
+let engine = fsrs();
+
+export interface EngineConfig {
+  /** 21 fitted FSRS-6 weights; omit for the defaults. */
+  w?: readonly number[];
+  /** Target recall probability; omit for the ts-fsrs default (0.9). */
+  requestRetention?: number;
+}
+
+/**
+ * Rebuild the scheduling engine. Returns false when `w` was present but
+ * invalid (wrong length, non-finite entries) — the engine then runs on
+ * defaults, because hand-edited plugin data must never brick grading.
+ * Retention is clamped to [0.7, 0.99].
+ */
+export function configureEngine(cfg: EngineConfig): boolean {
+  const params: { w?: number[]; request_retention?: number } = {};
+  let ok = true;
+  if (cfg.w !== undefined) {
+    const valid =
+      Array.isArray(cfg.w) &&
+      cfg.w.length === 21 &&
+      cfg.w.every((x) => typeof x === "number" && Number.isFinite(x));
+    if (valid) params.w = [...cfg.w];
+    else ok = false;
+  }
+  if (
+    cfg.requestRetention !== undefined &&
+    Number.isFinite(cfg.requestRetention)
+  ) {
+    params.request_retention = Math.min(
+      0.99,
+      Math.max(0.7, cfg.requestRetention),
+    );
+  }
+  engine = fsrs(params);
+  return ok;
+}
 
 /** Apply a grade to a card and return its rescheduled next state. */
 export function schedule(

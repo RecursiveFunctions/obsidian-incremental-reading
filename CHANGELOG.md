@@ -37,6 +37,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scheduler section in the stats view: optimize FSRS to your own
+  reviews.** Stats (Alt+S) gained a Scheduler section showing which
+  parameters are active (FSRS-6 defaults or a fit with its date, review
+  count and held-out log-loss) and a desired-retention slider
+  (0.70-0.97). "Optimize from review log" runs the fit with a progress
+  bar and Cancel, then shows the result before anything changes: usable
+  review/card counts, the exclusion table, candidate vs current
+  log-loss on the same held-out cards, and the next-interval shift
+  (median, how many cards get longer vs shorter). Apply archives the
+  previous parameters and takes effect from each card's next review; no
+  due date moves. Revert swaps back (and forward again, if you change
+  your mind). A candidate that does not beat the currently active
+  parameters cannot be applied. Invalid hand-edited parameters in
+  plugin data fall back to the defaults with a notice instead of
+  breaking grading.
+
 - **The optimizer engine (no UI yet).** The fit behind the upcoming
   "optimize scheduler parameters" feature is in the codebase and fully
   tested, with nothing user-visible until the stats panel lands. It

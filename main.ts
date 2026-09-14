@@ -71,7 +71,12 @@ import {
   formatDataReport,
 } from "./src/ir/optimizer/revlog";
 import { mostRecentBookmark } from "./src/ir/bookmark";
-import { newCard, storedToCard, writeCardToFrontmatter } from "./src/fsrs";
+import {
+  configureEngine,
+  newCard,
+  storedToCard,
+  writeCardToFrontmatter,
+} from "./src/fsrs";
 import { labelFor } from "./src/ir/labels";
 import { newElementId, newEventId } from "./src/ir/ids";
 import {
@@ -389,6 +394,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
+    this.applyEngineConfig();
     const fs = new ObsidianVaultFs(
       this.app.vault.adapter as unknown as ObsidianDataAdapter,
     );
@@ -586,7 +592,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             "Incremental Reading: store not ready for stats view.",
           );
         }
-        return new IrStatsView(leaf, this.store);
+        return new IrStatsView(leaf, this.store, this);
       },
     );
 
@@ -5433,6 +5439,23 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  /**
+   * Rebuild the FSRS engine from settings (fitted parameters + desired
+   * retention). Invalid stored parameters fall back to the defaults so
+   * hand-edited plugin data can never brick grading.
+   */
+  applyEngineConfig(): void {
+    const ok = configureEngine({
+      w: this.settings.fsrsParams?.w,
+      requestRetention: this.settings.desiredRetention,
+    });
+    if (!ok) {
+      new Notice(
+        "Incremental Reading: stored scheduler parameters are invalid; using FSRS-6 defaults.",
+      );
+    }
   }
 
   /**

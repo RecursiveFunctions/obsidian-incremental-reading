@@ -66,6 +66,34 @@ export interface IrSettings {
    * the tested rect so the others stay visible as context.
    */
   occlusionDefaultMode: "hide-all" | "hide-one";
+  /**
+   * FSRS target recall probability at review time (request_retention).
+   * Exposed in the stats panel's scheduler section.
+   */
+  desiredRetention: number;
+  /** Fitted FSRS-6 weights driving the scheduler. Absent = defaults. */
+  fsrsParams?: FittedParams;
+  /**
+   * One-deep revert slot: the parameter set active before the last
+   * Apply. `null` means "the defaults were active"; absent means no
+   * Apply has happened yet (no revert offered).
+   */
+  fsrsPreviousParams?: FittedParams | null;
+}
+
+/** A fitted FSRS parameter set, as persisted in plugin data. */
+export interface FittedParams {
+  /** 21 FSRS-6 weights. */
+  w: number[];
+  fsrsVersion: 6;
+  /** Epoch ms of the fit. */
+  fittedAt: number;
+  /** Rated reviews included in the fit. */
+  reviewCount: number;
+  /** Mean held-out log-loss of this vector at fit time. */
+  heldOutLogLoss: number;
+  /** Fit ran on under 400 rated reviews. */
+  lowData: boolean;
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
@@ -85,6 +113,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   showDivergencePicker: false,
   spaceAfterReveal: "good",
   occlusionDefaultMode: "hide-all",
+  desiredRetention: 0.9,
 };
 
 /** Fresh copy so restoring defaults cannot mutate the constant. */

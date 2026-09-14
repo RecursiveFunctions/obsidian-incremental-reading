@@ -136,3 +136,14 @@ test("intervalDelta: identical vectors produce zero change", () => {
   assert.equal(d.longer + d.shorter, 0);
   assert.equal(d.same, 30);
 });
+
+test("evalCardsFor matches the eval set the fit scored against", async () => {
+  const { evalCardsFor } = await import("../src/ir/optimizer/fit");
+  const cards = simulateRevlog(80, 14);
+  const r = await runFit(cards, { steps: 0, seed: 5 });
+  const evalSet = evalCardsFor(cards, 5);
+  assert.ok(
+    Math.abs(meanLogLoss(evalSet) - r.defaultsHeldOutLoss) < 1e-12,
+    "same cards, same defaults loss",
+  );
+});
