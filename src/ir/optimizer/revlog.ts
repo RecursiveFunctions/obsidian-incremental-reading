@@ -33,7 +33,7 @@ export interface RevlogCard {
  * the report and (later) the stats panel print.
  */
 export const EXCLUSION_LABELS = {
-  noRating: "No rating recorded (pre-0.7.15)",
+  noRating: "No rating recorded",
   undone: "Review undone",
   missingElement: "Element deleted",
   duplicate: "Duplicate event",
@@ -165,37 +165,33 @@ export function fitTier(report: ExclusionReport): {
 }
 
 const TIER_TEXT: Record<"none" | "pretrain" | "full", string> = {
-  none: "none. Needs at least 8 cards; a fit today returns the defaults.",
-  pretrain:
-    "initial stability only (4 of 21 parameters). A full fit needs 64 cards.",
-  full: "full 21-parameter fit.",
+  none: "none (needs 8+ cards)",
+  pretrain: "initial stability only (full fit needs 64+ cards)",
+  full: "full 21-parameter fit",
 };
 
 /**
- * The clipboard report behind "Copy optimizer data report". Plain
- * markdown, deterministic for a given revlog + date.
+ * The clipboard report behind "Copy optimizer data report". Data only;
+ * background (why reviews lack ratings, what the tiers mean) lives in the
+ * docs, not here. Deterministic for a given revlog + date.
  */
 export function formatDataReport(revlog: Revlog, now: number): string {
   const { report } = revlog;
   const { tier, lowData } = fitTier(report);
-  const n = (count: number, word: string) =>
-    `${count} ${word}${count === 1 ? "" : "s"}`;
 
   const lines: string[] = [
     "# Optimizer data report",
     "",
-    `- Date: ${new Date(now).toISOString().slice(0, 10)}`,
-    `- Usable: ${n(report.includedReviews, "rated review")} on ${n(report.includedCards, "card")}`,
-    `- Fit possible: ${TIER_TEXT[tier]}`,
+    "| | |",
+    "|---|---|",
+    `| Date | ${new Date(now).toISOString().slice(0, 10)} |`,
+    `| Usable reviews | ${report.includedReviews} |`,
+    `| Cards | ${report.includedCards} |`,
+    `| Fit possible | ${TIER_TEXT[tier]} |`,
   ];
   if (tier !== "none") {
     lines.push(
-      `- Confidence: ${lowData ? "low (under 400 rated reviews)" : "normal"}`,
-    );
-  }
-  if (report.overriddenIncluded > 0) {
-    lines.push(
-      `- ${n(report.overriddenIncluded, "review")} used the SM-2 divergence override. Included.`,
+      `| Confidence | ${lowData ? "low (under 400 reviews)" : "normal"} |`,
     );
   }
 
@@ -207,12 +203,6 @@ export function formatDataReport(revlog: Revlog, now: number): string {
     lines.push("| Reason | Count |", "|---|---|");
     for (const row of nonZero) {
       lines.push(`| ${EXCLUSION_LABELS[row.reason]} | ${row.count} |`);
-    }
-    if (nonZero.some((r) => r.reason === "noRating")) {
-      lines.push(
-        "",
-        "Rating logging started in 0.7.15. Earlier reviews have no rating and stay excluded.",
-      );
     }
   }
 
