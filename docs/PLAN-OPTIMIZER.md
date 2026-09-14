@@ -211,9 +211,16 @@ on it.
   `revlog.ts` (extraction, exclusion report, fit-tier statement,
   report formatter), `undoneEventIds` extracted from `log.ts`, tests,
   plus the command "Copy optimizer data report".
-- **Stage 2 — fit + oracle.** `forward.ts`, `fit.ts`, `metrics.ts`
-  (logLoss lives here, not stage 1: it needs the replay),
-  determinism/tier/golden tests, fsrs-rs-nodejs oracle in CI.
+- **Stage 2 — fit + oracle (DONE 2026-09-14, 0.7.19).** `forward.ts`,
+  `fit.ts`, `metrics.ts`, determinism/tier/golden/clamp tests,
+  fsrs-rs-nodejs oracle in CI. Findings that amended the plan:
+  ts-fsrs exports the FSRS-6 clamp table (`clipParameters`), so no
+  vendored bounds; oracle items must be prefix-per-review filtered to
+  `longTermReviewCnt() > 0` (unfiltered same-day-only items panic the
+  Rust side); measured speed beat the §Performance estimate by ~10x
+  (full suite incl. oracle ~5 s), so the mobile budget is a non-issue.
+  First oracle run: ours 0.1907, reference 0.1974, defaults 0.1989
+  held-out log-loss on the synthetic learner.
 - **Stage 3 — plumbing + panel.** Settings fields, `configureEngine`,
   stats section with exclusion table / preview / Apply / Revert /
   desired-retention. Ships visible, no flag.

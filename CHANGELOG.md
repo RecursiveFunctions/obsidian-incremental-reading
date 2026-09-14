@@ -37,6 +37,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The optimizer engine (no UI yet).** The fit behind the upcoming
+  "optimize scheduler parameters" feature is in the codebase and fully
+  tested, with nothing user-visible until the stats panel lands. It
+  tunes the 21 FSRS-6 weights to this vault's review log (Adam over
+  binary cross-entropy, numerical gradients, seeded and deterministic),
+  holds out 20% of cards it never trains on, and refuses to return a
+  candidate that predicts that held-out set worse than the stock
+  parameters. CI now compares it against the canonical Rust optimizer
+  (fsrs-rs) on synthetic review histories; the current run lands ahead
+  of the reference on held-out log-loss. The Rust binding is a dev-only
+  dependency: the shipped `main.js` contains no trace of it, and the
+  runtime dependency count stays at one.
+
 - **"Copy optimizer data report" command.** First piece of the local
   FSRS parameter optimizer (docs/PLAN-OPTIMIZER.md, stage 1). It reads
   the review log and puts a markdown report on the clipboard: how many
