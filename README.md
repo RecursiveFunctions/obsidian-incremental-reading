@@ -173,7 +173,6 @@ PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be ex
 Planned, in order:
 
 - [ ] Local FSRS optimizer over your own review log. It reports exactly which reviews it excluded and why, and previews the schedule changes before you apply them.
-- [ ] Consistent vocabulary across views. The code currently uses element, item, and card for overlapping things.
 - [ ] Community directory submission. The id `incremental-reading` is taken, so this includes a one-time plugin id and name change with a migration note for BRAT installs.
 - [ ] Enforce the privacy claims in CI: the build fails if any network API appears in the compiled `main.js`. Plus a `SECURITY.md`.
 - [ ] Full mobile parity, meaning whatever a real device still gets wrong on small screens.
