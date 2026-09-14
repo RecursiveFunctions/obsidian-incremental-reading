@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The scheduler is FSRS-6 now.** ts-fsrs moved from 4.7.1 to 5.4.2, which
+  upgrades the algorithm from FSRS-4.5 to FSRS-6 (21 trained parameters
+  instead of 17) with explicit learning steps (1m, 10m for new material,
+  10m after a lapse). Existing cards carry over as-is: stability and
+  difficulty keep their meaning and scale, and the one new piece of card
+  state, the learning-step index, is persisted under `ir-learning-steps`
+  and reads as 0 on notes written by older versions. A card that was
+  mid-learning-step when you upgraded restarts its minutes-scale steps
+  once; review-state cards are untouched. The dependency is now pinned
+  exact (`5.4.2`, no semver range), so a rebuild from the lockfile cannot
+  silently pick up a different scheduler.
+
 ### Added
 
 - **The review pane, the element tree and the quick-actions wheel now talk

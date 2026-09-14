@@ -62,6 +62,7 @@ export function writeCardToFrontmatter(
   fm[IR_KEYS.reps] = card.reps;
   fm[IR_KEYS.lapses] = card.lapses;
   fm[IR_KEYS.state] = card.state;
+  fm[IR_KEYS.learningSteps] = card.learning_steps;
   if (card.last_review) {
     fm[IR_KEYS.lastReview] = card.last_review.toISOString();
   } else {
@@ -102,6 +103,7 @@ export function readCardFromFrontmatter(
     reps: num(IR_KEYS.reps, base.reps),
     lapses: num(IR_KEYS.lapses, base.lapses),
     state: num(IR_KEYS.state, base.state) as State,
+    learning_steps: num(IR_KEYS.learningSteps, base.learning_steps),
   };
 
   const lr = fm[IR_KEYS.lastReview];
@@ -123,6 +125,7 @@ export function cardToStored(card: Card): StoredCard {
     reps: card.reps,
     lapses: card.lapses,
     state: card.state,
+    learningSteps: card.learning_steps,
   };
   if (card.last_review !== undefined) {
     result.lastReview = card.last_review.getTime();
@@ -145,6 +148,7 @@ export function storedToCard(s: StoredCard | null | undefined): Card {
   card.reps = s.reps;
   card.lapses = s.lapses;
   card.state = s.state as State;
+  card.learning_steps = s.learningSteps ?? 0;
   card.last_review =
     s.lastReview !== undefined ? new Date(s.lastReview) : undefined;
   return card;

@@ -43,4 +43,6 @@ export const IR_KEYS = {
   lapses: "ir-lapses",
   state: "ir-state",
   lastReview: "ir-last-review",
+  /** FSRS-6 learning-step index; older notes without it read as 0. */
+  learningSteps: "ir-learning-steps",
 } as const;

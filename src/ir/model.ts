@@ -128,6 +128,8 @@ export interface StoredCard {
   reps: number;
   lapses: number;
   state: number;
+  /** FSRS-6 learning-step index. Absent in pre-0.7.14 data; treat as 0. */
+  learningSteps?: number;
   lastReview?: number;
 }
 

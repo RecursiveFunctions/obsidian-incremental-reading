@@ -43,6 +43,6 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "ts-fsrs": "^4.4.4"
+    "ts-fsrs": "5.4.2"
   }
 }

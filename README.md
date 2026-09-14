@@ -162,20 +162,23 @@ FSRS handles grading. Turning on the scheduler divergence picker asks you to cho
 Built to work offline.
 - **No network calls.** There is no `fetch`, `requestUrl`, `XMLHttpRequest`, or `WebSocket` anywhere in the source.
 - **No telemetry**, which follows from the above.
-- **One runtime dependency**, [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), with a committed lockfile.
+- **One runtime dependency**, [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), pinned to an exact version with a committed lockfile.
 
 ## Roadmap
 
-Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS scheduling, interleaved due review, neural sessions, priority queue and mercy postpone, the element tree with keyboard and touch reparenting, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
+Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling, interleaved due review, neural sessions, priority queue and mercy postpone, the element tree with keyboard and touch reparenting, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
 
 PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be extracted, and cloze is markdown-only: extract from the PDF first, then cloze the extract.
 
-Planned:
+Planned, in order:
 
-- [ ] Browser extension for one-click import of web pages.
-- [ ] Calendar heatmap and retention trend in stats.
+- [ ] Local FSRS optimizer over your own review log. It reports exactly which reviews it excluded and why, and previews the schedule changes before you apply them.
 - [ ] Consistent vocabulary across views. The code currently uses element, item, and card for overlapping things.
+- [ ] Community directory submission. The id `incremental-reading` is taken, so this includes a one-time plugin id and name change with a migration note for BRAT installs.
+- [ ] Enforce the privacy claims in CI: the build fails if any network API appears in the compiled `main.js`. Plus a `SECURITY.md`.
 - [ ] Full mobile parity, meaning whatever a real device still gets wrong on small screens.
+- [ ] Calendar heatmap and retention trend in stats.
+- [ ] Browser extension for one-click import of web pages. Ships as a separate tool that writes markdown into the vault, so the plugin itself stays free of network code.
 
 Under consideration: a one-way export of the tree that SuperMemo could import. Scheduling would not transfer, since FSRS and SM-15/17/18 do not share parameters.
 
