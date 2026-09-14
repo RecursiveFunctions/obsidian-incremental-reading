@@ -177,6 +177,9 @@ hardcoded, for that reason.
 
 ## Delivery plan
 
+The implementation build order, module layout, test plan and milestones
+live in `PLAN-OPTIMIZER.md`; the phases below are the summary.
+
 1. **0.7.15 (done).** Revlog records ratings; loss of training data
    stops.
 2. **Optimizer core behind a lab flag.** Revlog extraction + exclusion
