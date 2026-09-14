@@ -233,7 +233,7 @@ export class IrStatsView extends ItemView {
       const n = revlog.report.includedCards;
       out.createDiv({
         cls: "ir-stats-note",
-        text: `${n} usable card${n === 1 ? "" : "s"}; fitting needs 8.`,
+        text: `${n} usable item${n === 1 ? "" : "s"}; fitting needs 8.`,
       });
       return;
     }
@@ -296,7 +296,7 @@ export class IrStatsView extends ItemView {
     const rows: Array<[string, string]> = [
       [
         "Usable",
-        `${revlog.report.includedReviews} reviews / ${revlog.report.includedCards} cards`,
+        `${revlog.report.includedReviews} reviews / ${revlog.report.includedCards} items`,
       ],
       ["Candidate log-loss", result.candidateHeldOutLoss.toFixed(4)],
       [

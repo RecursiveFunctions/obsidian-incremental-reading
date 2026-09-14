@@ -37,7 +37,7 @@ export const EXCLUSION_LABELS = {
   undone: "Review undone",
   missingElement: "Element deleted",
   duplicate: "Duplicate event",
-  shortCard: "Cards with under 2 reviews",
+  shortCard: "Items with under 2 reviews",
 } as const;
 
 export type ExclusionReason = keyof typeof EXCLUSION_LABELS;
@@ -165,8 +165,8 @@ export function fitTier(report: ExclusionReport): {
 }
 
 const TIER_TEXT: Record<"none" | "pretrain" | "full", string> = {
-  none: "none (needs 8+ cards)",
-  pretrain: "initial stability only (full fit needs 64+ cards)",
+  none: "none (needs 8+ items)",
+  pretrain: "initial stability only (full fit needs 64+ items)",
   full: "full 21-parameter fit",
 };
 
@@ -186,7 +186,7 @@ export function formatDataReport(revlog: Revlog, now: number): string {
     "|---|---|",
     `| Date | ${new Date(now).toISOString().slice(0, 10)} |`,
     `| Usable reviews | ${report.includedReviews} |`,
-    `| Cards | ${report.includedCards} |`,
+    `| Items | ${report.includedCards} |`,
     `| Fit possible | ${TIER_TEXT[tier]} |`,
   ];
   if (tier !== "none") {

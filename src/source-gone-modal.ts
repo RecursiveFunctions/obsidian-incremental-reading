@@ -75,7 +75,7 @@ class SourceGoneModal extends Modal {
     contentEl.createEl("p", {
       text:
         "Make them notes turns each orphaned highlight into its own file. " +
-        "Keep without notes leaves them as review cards only. " +
+        "Keep without notes leaves them in review with no note file. " +
         "Undo remembers the file is gone but does not change the tree — " +
         "restore the note from trash if you still want it.",
       cls: "setting-item-description",

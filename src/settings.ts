@@ -174,7 +174,7 @@ export class IrSettingTab extends PluginSettingTab {
       .setName("When a source note is deleted")
       .setDesc(
         "Highlights from that note can become their own files, or stay as " +
-          "review cards with no new file. You still get a choice each time; " +
+          "in review with no new file. You still get a choice each time; " +
           "this is the default if you close the prompt. On (default): make " +
           "them notes. Off: keep without notes.",
       )

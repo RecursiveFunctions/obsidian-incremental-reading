@@ -883,7 +883,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.irCommand({
       id: "occlusion-from-pdf-region",
-      name: "Image occlusion cards from PDF region (drag a rectangle)",
+      name: "Image occlusion items from PDF region (drag a rectangle)",
       icon: "scan",
       hotkeys: [{ modifiers: ["Alt", "Shift"], key: "o" }],
       checkCallback: (checking) => {
@@ -895,7 +895,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.irCommand({
       id: "occlusion-from-image",
-      name: "Image occlusion cards from image",
+      name: "Image occlusion items from image",
       icon: "scan",
       hotkeys: [{ modifiers: ["Alt"], key: "o" }],
       checkCallback: (checking) => {
@@ -952,7 +952,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.irCommand({
       id: "ir-new-cloze-card-separate",
-      name: "New cloze card (separate item from selection)",
+      name: "New cloze item (separate note from selection)",
       icon: "copy-plus",
       hotkeys: [{ modifiers: ["Alt", "Shift"], key: "z" }],
       editorCheckCallback: (checking, editor, view) => {
@@ -1135,7 +1135,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           );
           menu.addItem((item) =>
             item
-              .setTitle("New cloze card (separate item)")
+              .setTitle("New cloze item (separate note)")
               .setIcon("copy-plus")
               .onClick(() => void this.newClozeCardFromSelection(editor, file)),
           );
@@ -1271,7 +1271,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         if (!(file instanceof TFile) || !isImageFile(file)) return;
         menu.addItem((item) =>
           item
-            .setTitle("Image occlusion cards from image")
+            .setTitle("Image occlusion items from image")
             .setIcon("scan")
             .onClick(() => void this.occlusionFromImageFile(file)),
         );
@@ -3305,7 +3305,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const r = revlog.report;
     new Notice(
-      `Optimizer data report copied: ${r.includedReviews} usable review${r.includedReviews === 1 ? "" : "s"} across ${r.includedCards} card${r.includedCards === 1 ? "" : "s"}.`,
+      `Optimizer data report copied: ${r.includedReviews} usable review${r.includedReviews === 1 ? "" : "s"} across ${r.includedCards} item${r.includedCards === 1 ? "" : "s"}.`,
     );
   }
 
@@ -4242,7 +4242,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           this.runMarkdownHubAction(file, (ed, f) => this.clozeSelection(ed, f)),
       });
       out.push({
-        title: "New cloze card (separate item)",
+        title: "New cloze item (separate note)",
         description:
           "Creates a new FSRS item under the reading parent. On an IR item note, uses ir-parent instead of adding to the same file.",
         icon: "copy-plus",
@@ -4262,7 +4262,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         out.push({
           title: "Split cloze into separate item notes",
           description:
-            "One new note per {{cN::…}} group; each gets its own FSRS card. The original note is left unchanged.",
+            "One new note per {{cN::…}} group; each becomes its own item. The original note is left unchanged.",
           icon: "split",
           run: () => this.splitClozeInActiveEditor(),
         });
@@ -4414,7 +4414,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       ];
       if (typeof p !== "string" || !p.length) {
         new Notice(
-          "Incremental Reading: this item has no ir-parent; cannot place a sibling card.",
+          "Incremental Reading: this item has no ir-parent; cannot place a sibling item.",
         );
         return;
       }
@@ -4973,7 +4973,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.openOcclusionEditor(image, parent);
   }
 
-  /** Command / file-menu entry: occlusion cards from a standalone image file. */
+  /** Command / file-menu entry: occlusion items from a standalone image file. */
   private async occlusionFromImageFile(image: TFile): Promise<void> {
     // Prefer an IR note that embeds this image (the user's own context);
     // otherwise make a topic note that embeds it and file the cards there.
@@ -5049,7 +5049,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     if (made > 0) {
       new Notice(
-        `Created ${made} image occlusion card${made === 1 ? "" : "s"} under "${parent.basename}".`,
+        `Created ${made} image occlusion item${made === 1 ? "" : "s"} under "${parent.basename}".`,
       );
       const tree = this.getTreeView();
       if (tree) void tree.refresh();
@@ -5142,7 +5142,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
     menu.addItem((item) =>
       item
-        .setTitle("Image occlusion cards from this image")
+        .setTitle("Image occlusion items from this image")
         .setIcon("scan")
         .onClick(() => void this.openOcclusionEditor(image, parent)),
     );

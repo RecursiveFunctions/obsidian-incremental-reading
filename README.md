@@ -65,7 +65,7 @@ Extract and cloze both work from Reading view. When a rendered selection cannot 
 
 Extract and cloze highlights paint in the editor, in reading view, and in the review source column. Extracts are yellow, clozes are green and underlined. The source file is never rewritten to add them.
 
-Delete a source note and you get one prompt: turn the orphaned extracts into notes, keep them as review cards only, or undo. The same prompt appears at next launch if the note vanished while Obsidian was closed. Restore the note later and you are asked whether to reattach the highlights.
+Delete a source note and you get one prompt: turn the orphaned extracts into notes, keep them in review with no note file, or undo. The same prompt appears at next launch if the note vanished while Obsidian was closed. Restore the note later and you are asked whether to reattach the highlights.
 
 ### Multi-span, images, occlusion
 
@@ -73,9 +73,9 @@ Hold Ctrl (Cmd on macOS) to build one extract from several spans. Each selection
 
 `Alt+Shift+I` in the PDF viewer lets you drag a rectangle on a page. The crop is saved as a PNG attachment and becomes an extract that embeds it, with the page and rect recorded on the anchor. `Alt+Shift+O` does the same drag and opens the occlusion editor on the crop.
 
-For images already in notes, right-click one inside a topic or extract and choose Extract image (IR) or Image occlusion cards from this image. `Alt+O` does the same for an open image file.
+For images already in notes, right-click one inside a topic or extract and choose Extract image (IR) or Image occlusion items from this image. `Alt+O` does the same for an open image file.
 
-The occlusion editor is a workspace leaf. Drag to draw masks, click one to select it, type an optional label. `Del` removes, `Tab` cycles, arrows nudge, `M` toggles the mode, `Enter` creates one card per mask, `Esc` closes. Two modes: hide all and guess one, or hide one and show the rest. Each card is an ordinary note whose body is an `ir-occlusion` block:
+The occlusion editor is a workspace leaf. Drag to draw masks, click one to select it, type an optional label. `Del` removes, `Tab` cycles, arrows nudge, `M` toggles the mode, `Enter` creates one item per mask, `Esc` closes. Two modes: hide all and guess one, or hide one and show the rest. Each item is an ordinary note whose body is an `ir-occlusion` block:
 
 ```ir-occlusion
 {"image":"attachments/heart.png","mode":"hide-all","active":2,"rects":[{"n":1,"x":0.1,"y":0.2,"w":0.3,"h":0.1,"label":"aorta"},{"n":2,"x":0.5,"y":0.5,"w":0.2,"h":0.2}]}
@@ -116,7 +116,7 @@ Commands with a default binding:
 | `Alt+Z` | Cloze selection |
 | `Alt+Shift+X` | Extract once to a standalone note |
 | `Alt+Shift+P` | Promote the current anchored extract |
-| `Alt+Shift+Z` | New cloze card as a separate item |
+| `Alt+Shift+Z` | New cloze item in a separate note |
 | `Alt+Shift+C` | Clear held Ctrl selections |
 | `Alt+Shift+I` | Extract an image region from the open PDF |
 | `Alt+Shift+O` | Occlusion cards from a PDF region |

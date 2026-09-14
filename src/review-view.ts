@@ -2406,7 +2406,7 @@ export class IrReviewView extends ItemView {
     const scroll = host.createDiv({ cls: "ir-review-scroll" });
     scroll.createEl("h3", { text: "Nothing in Incremental Reading yet" });
     scroll.createEl("p", {
-      text: "Incremental reading means reading a little of many things over time, pulling out the parts that matter, and turning those into cards.",
+      text: "Incremental reading means reading a little of many things over time, pulling out the parts that matter, and turning the keepers into items.",
     });
 
     const steps = scroll.createEl("ol", { cls: "ir-review-steps" });
@@ -2417,7 +2417,7 @@ export class IrReviewView extends ItemView {
       text: "Press Alt+R to start a review pass. Read a bit, then move on.",
     });
     steps.createEl("li", {
-      text: "Select a sentence worth keeping and press Alt+X to extract it, or Alt+Z to turn it into a cloze card.",
+      text: "Select a sentence worth keeping and press Alt+X to extract it, or Alt+Z to turn it into a cloze item.",
     });
 
     scroll.createEl("p", {

@@ -1,7 +1,7 @@
 /**
  * Image occlusion editor: a workspace leaf (not a modal, UI commitment #6)
  * where the user draws masks over an image and turns each one into an IR
- * item card. Keyboard-first (commitment #1): Enter creates the cards,
+ * item card. Keyboard-first (commitment #1): Enter creates the items,
  * Delete/Backspace removes the selected mask, Escape closes, M toggles the
  * mode, arrows nudge the selected mask.
  *
@@ -164,9 +164,9 @@ export class IrOcclusionEditorView extends ItemView {
       this.session = null; // prevent onCancel from firing on detach
       this.leaf.detach();
     } catch (e) {
-      console.error("Incremental Reading: occlusion card creation failed", e);
+      console.error("Incremental Reading: occlusion item creation failed", e);
       new Notice(
-        "Incremental Reading: could not create the occlusion cards. See the developer console.",
+        "Incremental Reading: could not create the occlusion items. See the developer console.",
       );
       this.busy = false;
       if (this.createBtn) this.createBtn.disabled = false;
@@ -181,7 +181,7 @@ export class IrOcclusionEditorView extends ItemView {
       root.createEl("p", {
         cls: "ir-occlusion-editor-empty",
         text:
-          "No image loaded. Right-click an image in a note (or use “Image occlusion cards from image”) to start.",
+          "No image loaded. Right-click an image in a note (or use “Image occlusion items from image”) to start.",
       });
       return;
     }
@@ -237,7 +237,7 @@ export class IrOcclusionEditorView extends ItemView {
     cancelBtn.addEventListener("click", () => this.leaf.detach());
     const createBtn = btns.createEl("button", {
       cls: "mod-cta",
-      text: `Create ${this.rects.length} card${this.rects.length === 1 ? "" : "s"}`,
+      text: `Create ${this.rects.length} item${this.rects.length === 1 ? "" : "s"}`,
     });
     createBtn.disabled = this.rects.length === 0;
     createBtn.addEventListener("click", () => void this.create());
@@ -247,7 +247,7 @@ export class IrOcclusionEditorView extends ItemView {
       cls: "ir-occlusion-help",
       text: Platform.isMobile
         ? "Drag on the image to draw a mask. Tap a mask to select it."
-        : "Drag to draw a mask · click a mask to select · Del removes · Tab cycles · arrows nudge · M toggles mode · Enter creates the cards · Esc closes",
+        : "Drag to draw a mask · click a mask to select · Del removes · Tab cycles · arrows nudge · M toggles mode · Enter creates the items · Esc closes",
     });
 
     const stageWrap = root.createDiv({ cls: "ir-occlusion-stage-wrap" });

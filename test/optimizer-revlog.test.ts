@@ -222,11 +222,11 @@ test("report: zero-count reasons are omitted, non-zero rendered with labels", ()
   ];
   const text = formatDataReport(run(events), NOW);
   assert.match(text, /\| Usable reviews \| 2 \|/);
-  assert.match(text, /\| Cards \| 1 \|/);
+  assert.match(text, /\| Items \| 1 \|/);
   assert.match(text, /\| No rating recorded \| 1 \|/);
   assert.doesNotMatch(text, /Duplicate event/);
   assert.doesNotMatch(text, /Review undone/);
-  assert.match(text, /\| Fit possible \| none \(needs 8\+ cards\) \|/);
+  assert.match(text, /\| Fit possible \| none \(needs 8\+ items\) \|/);
   // Data only: no version-history prose, no divergence-override line.
   assert.doesNotMatch(text, /0\.7\.15/);
   assert.doesNotMatch(text, /override/i);

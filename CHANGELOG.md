@@ -35,6 +35,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also marked on the event (`overridden`), so the optimizer can account
   for it.
 
+### Changed
+
+- **One meaning per word, everywhere.** The UI used element, item, and
+  card interchangeably; now each has exactly one job, matching the
+  README's Concepts table. An **element** is anything scheduled (topic,
+  extract, or item). An **item** is the graded kind: a cloze or an
+  image occlusion. A **card** is only what the review pass puts on
+  screen ("Card 3 of 12"), never a stored thing. Renamed accordingly:
+  "New cloze item (separate note)", "Image occlusion items from
+  image/PDF region", the occlusion editor's "Create N items", and the
+  optimizer surfaces now count items instead of cards. Command ids are
+  unchanged, so existing hotkey bindings keep working.
+
 ### Added
 
 - **Scheduler section in the stats view: optimize FSRS to your own
