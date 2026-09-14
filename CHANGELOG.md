@@ -35,6 +35,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also marked on the event (`overridden`), so the optimizer can account
   for it.
 
+### Added
+
+- **The zero-network claim is now enforced by the build, and documented
+  in SECURITY.md.** `npm run build` ends with a gate that fails if the
+  compiled `main.js` contains any network-capable API (`fetch`,
+  `XMLHttpRequest`, `WebSocket`, `requestUrl`, `sendBeacon`,
+  `EventSource`, `new Image(`, `importScripts`, WebRTC) or any
+  `http(s)://` literal. The gate runs on every push and on every
+  release build, and is itself covered by tests. `SECURITY.md` states
+  the threat model, the grep command to verify your installed copy,
+  and the reproducible-build check: `npm ci && npm run build` from the
+  tag produces a `main.js` byte-identical to the release asset
+  (verified for 0.7.22, including across Node 18 and 20).
+
 ### Changed
 
 - **One meaning per word, everywhere.** The UI used element, item, and

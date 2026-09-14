@@ -159,8 +159,8 @@ Restore defaults at the top returns every control to a new vault's values. It do
 FSRS handles grading. Turning on the scheduler divergence picker asks you to choose when FSRS and classic SM-2 disagree sharply about the next interval. New vaults leave it off.
 
 ## Privacy
-Built to work offline.
-- **No network calls.** There is no `fetch`, `requestUrl`, `XMLHttpRequest`, or `WebSocket` anywhere in the source.
+Built to work offline. Full threat model, verification commands and reproducible-build instructions: [`SECURITY.md`](SECURITY.md).
+- **No network calls.** There is no `fetch`, `requestUrl`, `XMLHttpRequest`, or `WebSocket` anywhere in the source, and the build fails if one ever appears in the compiled `main.js`.
 - **No telemetry**, which follows from the above.
 - **One runtime dependency**, [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), pinned to an exact version with a committed lockfile.
 
@@ -174,7 +174,6 @@ Planned, in order:
 
 - [ ] Local FSRS optimizer over your own review log. It reports exactly which reviews it excluded and why, and previews the schedule changes before you apply them.
 - [ ] Community directory submission. The id `incremental-reading` is taken, so this includes a one-time plugin id and name change with a migration note for BRAT installs.
-- [ ] Enforce the privacy claims in CI: the build fails if any network API appears in the compiled `main.js`. Plus a `SECURITY.md`.
 - [ ] Full mobile parity, meaning whatever a real device still gets wrong on small screens.
 - [ ] Calendar heatmap and retention trend in stats.
 - [ ] Browser extension for one-click import of web pages. Ships as a separate tool that writes markdown into the vault, so the plugin itself stays free of network code.
