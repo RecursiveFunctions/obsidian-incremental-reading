@@ -190,7 +190,7 @@ live in `PLAN-OPTIMIZER.md`; the phases below are the summary.
 3. **Preview/apply UI in Stats.** Parameter storage in settings,
    engine construction from stored parameters (today `fsrs()` uses
    defaults only), revert path, forecast delta rendering.
-4. **Ship as 0.8.0 once dogfooded** (minor bump per release policy:
+4. **Ship as 0.8.0 once verified in real use** (minor bump per release policy:
    user-verified feature).
 
 Open questions carried into implementation:

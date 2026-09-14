@@ -205,14 +205,14 @@ releases; dark code is fine to ship).
 - **M1 — revlog + exclusions (patch release).** `revlog.ts`,
   `undoneEventIds` extraction from `log.ts`, `metrics.logLoss`, tests.
   User-visible early win: command "IR: Copy optimizer data report"
-  that puts the exclusion report + counts on the clipboard. Dogfoods
+  that puts the exclusion report + counts on the clipboard. Exercises
   the exclusion engine weeks before any fitting exists.
 - **M2 — fit + oracle (patch release, dark).** `forward.ts`, `fit.ts`,
   determinism/tier/golden tests, fsrs-rs-nodejs oracle in CI. No UI.
 - **M3 — plumbing + panel behind the lab flag (patch release).**
   Settings fields, `configureEngine`, stats section, Apply/Revert,
   desired-retention control. Flag default off.
-- **M4 — dogfood, then 0.8.0.** Real-vault use: at least one fit over
+- **M4 — real-vault verification, then 0.8.0.** Real-vault use: at least one fit over
   a month of post-0.7.15 history, Apply exercised, Revert exercised,
   mobile run-through. Then flag defaults on and the version is a
   minor bump (0.8.0), per the release policy that minor = user-
