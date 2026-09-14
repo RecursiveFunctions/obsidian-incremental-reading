@@ -130,7 +130,6 @@ interface FittedParams {
 fsrsParams?: FittedParams;         // active, absent = ts-fsrs defaults
 fsrsPreviousParams?: FittedParams; // one-deep revert slot
 desiredRetention: number;          // default 0.9, exposed in the panel
-optimizerPanel: boolean;           // lab flag, default false
 ```
 
 `src/fsrs.ts`: add `configureEngine(opts: { w?: number[];
