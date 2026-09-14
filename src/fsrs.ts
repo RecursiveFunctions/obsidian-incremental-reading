@@ -32,6 +32,15 @@ const RATING: Record<Grade, FsrsGrade> = {
   easy: Rating.Easy,
 };
 
+/**
+ * Numeric FSRS rating (1 Again, 2 Hard, 3 Good, 4 Easy) for persistence in
+ * `graded` event payloads. Stats and the future parameter optimizer read
+ * this; the review log is the plugin's revlog.
+ */
+export function gradeNumber(grade: Grade): number {
+  return RATING[grade];
+}
+
 // One engine with default (unoptimized) parameters. Parameter optimization
 // from real review history is a later roadmap item.
 const engine = fsrs();

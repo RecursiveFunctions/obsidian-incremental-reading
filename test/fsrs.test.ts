@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  gradeNumber,
   newCard,
   readCardFromFrontmatter,
   schedule,
@@ -66,4 +67,11 @@ test("every grade reschedules forward and counts the rep", () => {
     assert.equal(next.reps, 1);
     assert.equal(next.last_review?.getTime(), NOW.getTime());
   }
+});
+
+test("gradeNumber maps to the FSRS 1-4 rating scale stats and the optimizer read", () => {
+  assert.equal(gradeNumber("again"), 1);
+  assert.equal(gradeNumber("hard"), 2);
+  assert.equal(gradeNumber("good"), 3);
+  assert.equal(gradeNumber("easy"), 4);
 });

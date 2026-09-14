@@ -21,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exact (`5.4.2`, no semver range), so a rebuild from the lockfile cannot
   silently pick up a different scheduler.
 
+### Fixed
+
+- **Grades are recorded now, and retention finally measures something.**
+  Every grade writes the rating (1 Again through 4 Easy) into the `graded`
+  event, not just the rescheduled card. The stats view has been reading
+  that rating since it shipped, but no review ever wrote it, so retention,
+  the grade spread, and the review sparkline were computed over an empty
+  list. From this version they fill in as you review. Reviews graded on
+  older versions have no recorded rating and cannot appear retroactively;
+  they will be listed as excluded, with the reason, when the parameter
+  optimizer ships. Choosing the SM-2 interval in the divergence picker is
+  also marked on the event (`overridden`), so the optimizer can account
+  for it.
+
 ### Added
 
 - **The review pane, the element tree and the quick-actions wheel now talk

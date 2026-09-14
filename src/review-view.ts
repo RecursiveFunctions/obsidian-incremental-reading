@@ -40,6 +40,7 @@ import {
 import {
   Grade,
   cardToStored,
+  gradeNumber,
   schedule,
   storedToCard,
   writeCardToFrontmatter,
@@ -4069,15 +4070,25 @@ export class IrReviewView extends ItemView {
       return;
     }
 
-    await this.applyGrade(slot, next, stored);
+    await this.applyGrade(slot, next, stored, g);
   }
 
   private async applyGrade(
     slot: ReviewSlot,
     next: import("ts-fsrs").Card,
     stored: import("./ir/model").StoredCard,
+    g: Grade,
+    intervalOverridden = false,
   ) {
-    await this.emit("graded", slot.id, { card: stored });
+    // `grade` is the revlog: stats and the parameter optimizer need the
+    // rating itself, not just the resulting card. `overridden` marks a
+    // divergence-picker interval override so the optimizer can report it.
+    const payload: Record<string, unknown> = {
+      card: stored,
+      grade: gradeNumber(g),
+    };
+    if (intervalOverridden) payload.overridden = true;
+    await this.emit("graded", slot.id, payload);
     slot.element = { ...slot.element, card: stored };
     if (slot.file) {
       await quietFrontmatterWrite(async () => {
@@ -4105,7 +4116,7 @@ export class IrReviewView extends ItemView {
 
     const dock = this.contentEl.querySelector(".ir-review-dock");
     if (!dock) {
-      void this.applyGrade(slot, fsrsCard, fsrsStored);
+      void this.applyGrade(slot, fsrsCard, fsrsStored, g);
       return;
     }
 
@@ -4127,7 +4138,7 @@ export class IrReviewView extends ItemView {
       btn.addEventListener("click", () => {
         bar.remove();
         if (m.id === "FSRS") {
-          void this.applyGrade(slot, fsrsCard, fsrsStored);
+          void this.applyGrade(slot, fsrsCard, fsrsStored, g);
         } else {
           const overridden = {
             ...fsrsStored,
@@ -4135,7 +4146,7 @@ export class IrReviewView extends ItemView {
             scheduledDays: div.sm2IntervalDays,
           };
           const overriddenCard = storedToCard(overridden);
-          void this.applyGrade(slot, overriddenCard, overridden);
+          void this.applyGrade(slot, overriddenCard, overridden, g, true);
         }
       });
     }
