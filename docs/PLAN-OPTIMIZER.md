@@ -158,8 +158,10 @@ Per UI-COMMITMENTS: inline, no modal, keyboard reachable.
    intervals"), the low-data warning when flagged, and Apply /
    Discard. Apply archives current params to the revert slot,
    persists, calls `configureEngine`, and re-renders the header.
-4. Lab flag `optimizerPanel` (Settings → Review) gates the whole
-   section until M4.
+4. No lab flag. The panel ships visible: it is an explicit action that
+   changes nothing until Apply, refuses to apply a fit that loses to
+   the defaults, and has one-click revert. Those rails are automated;
+   a settings gate would add ceremony, not safety.
 
 ## CI oracle
 
@@ -197,30 +199,35 @@ replay as plain arithmetic instead of ts-fsrs objects — but only with
 a parity test pinning it to ts-fsrs output, since forward-pass drift
 is the failure mode the architecture forbids.
 
-## Milestones and ship gates
+## Build order (one continuous effort, no waiting periods)
 
-Each milestone lands on `main` green and ships per AGENTS.md (patch
-releases; dark code is fine to ship).
+The three stages below are a build order, not a schedule: they ship
+back to back as soon as each is green. Correctness is proven by the
+automated oracle in CI, not by a soak period. The only slow-moving
+input is the user's own post-0.7.15 review history, and the data
+tiers make the feature honest at any history size, so nothing waits
+on it.
 
-- **M1 — revlog + exclusions (patch release).** `revlog.ts`,
-  `undoneEventIds` extraction from `log.ts`, `metrics.logLoss`, tests.
-  User-visible early win: command "IR: Copy optimizer data report"
-  that puts the exclusion report + counts on the clipboard. Exercises
-  the exclusion engine weeks before any fitting exists.
-- **M2 — fit + oracle (patch release, dark).** `forward.ts`, `fit.ts`,
-  determinism/tier/golden tests, fsrs-rs-nodejs oracle in CI. No UI.
-- **M3 — plumbing + panel behind the lab flag (patch release).**
-  Settings fields, `configureEngine`, stats section, Apply/Revert,
-  desired-retention control. Flag default off.
-- **M4 — real-vault verification, then 0.8.0.** Real-vault use: at least one fit over
-  a month of post-0.7.15 history, Apply exercised, Revert exercised,
-  mobile run-through. Then flag defaults on and the version is a
-  minor bump (0.8.0), per the release policy that minor = user-
-  verified feature. README/changelog copy leads with the exclusion
-  report + preview, the two properties nobody else has.
+- **Stage 1 — revlog + exclusions.** `revlog.ts`, `undoneEventIds`
+  extraction from `log.ts`, `metrics.logLoss`, tests, plus the
+  command "IR: Copy optimizer data report" (exclusion report to
+  clipboard).
+- **Stage 2 — fit + oracle.** `forward.ts`, `fit.ts`,
+  determinism/tier/golden tests, fsrs-rs-nodejs oracle in CI.
+- **Stage 3 — plumbing + panel.** Settings fields, `configureEngine`,
+  stats section with exclusion table / preview / Apply / Revert /
+  desired-retention. Ships visible, no flag.
 
-Rough effort: M1 and M3 are each a focused session; M2 is the long
-pole (fit correctness + oracle tuning); M4 is calendar time, not work.
+Release mechanics: stages ship as patch releases as they land
+(dark code in 1-2 is fine to ship). The version becomes 0.8.0 with
+the release policy's meaning (minor = user-verified) the first time
+the user runs a fit and confirms the panel behaves; that is a
+version-number formality on an afternoon's check, not a testing
+phase. README/changelog copy then leads with the exclusion report +
+preview, the two properties nobody else has.
+
+Rough effort: stages 1 and 3 are each a focused session; stage 2 is
+the long pole (fit correctness + oracle tuning).
 
 ## Risks and their handles
 
@@ -232,8 +239,7 @@ pole (fit correctness + oracle tuning); M4 is calendar time, not work.
   the vault settings.
 - **Thin post-0.7.15 data for months** → tiers make the tool honest
   from day one (pretrain-only under 64 cards, lowData flag under 400
-  reviews); the M1 report command sets expectations before the fit
-  UI exists.
+  reviews); the data report command sets expectations early.
 - **fsrs-rs-nodejs platform gaps in CI/dev machines** → linux-x64
   covers GitHub CI; oracle test skips (with a loud console note, not
   a silent pass) when the native module fails to load.
