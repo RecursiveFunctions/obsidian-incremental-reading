@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **"Copy optimizer data report" command.** First piece of the local
+  FSRS parameter optimizer (docs/PLAN-OPTIMIZER.md, stage 1). It reads
+  the review log and puts a markdown report on the clipboard: how many
+  rated reviews are usable for training, what a fit could do with them
+  today (full 21-parameter fit, initial-stability only, or nothing yet),
+  and a table of everything excluded with the reason and count — undone
+  reviews, reviews of deleted elements, sync duplicates, cards with
+  fewer than two rated reviews, and reviews from before 0.7.15, which
+  never recorded a rating. Read-only; it schedules and changes nothing.
+
 - **The review pane, the element tree and the quick-actions wheel now talk
   to assistive tech.** The review pane announces each card (position in the
   pass, kind, label) through a polite live region; a card change used to be

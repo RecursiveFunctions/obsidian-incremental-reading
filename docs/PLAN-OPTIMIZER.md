@@ -207,11 +207,12 @@ input is the user's own post-0.7.15 review history, and the data
 tiers make the feature honest at any history size, so nothing waits
 on it.
 
-- **Stage 1 — revlog + exclusions.** `revlog.ts`, `undoneEventIds`
-  extraction from `log.ts`, `metrics.logLoss`, tests, plus the
-  command "IR: Copy optimizer data report" (exclusion report to
-  clipboard).
-- **Stage 2 — fit + oracle.** `forward.ts`, `fit.ts`,
+- **Stage 1 — revlog + exclusions (DONE 2026-09-14, 0.7.16).**
+  `revlog.ts` (extraction, exclusion report, fit-tier statement,
+  report formatter), `undoneEventIds` extracted from `log.ts`, tests,
+  plus the command "Copy optimizer data report".
+- **Stage 2 — fit + oracle.** `forward.ts`, `fit.ts`, `metrics.ts`
+  (logLoss lives here, not stage 1: it needs the replay),
   determinism/tier/golden tests, fsrs-rs-nodejs oracle in CI.
 - **Stage 3 — plumbing + panel.** Settings fields, `configureEngine`,
   stats section with exclusion table / preview / Apply / Revert /

@@ -27,25 +27,32 @@ export interface FoldOptions {
   conflict?: "conservative" | "clock-order";
 }
 
+/**
+ * Ids of grade events the user retracted via `grade-undone`. We keep both
+ * event kinds in the log (see `isReviewEvent`) but skip them in the fold so
+ * the element's `card` returns to its pre-grade state. Scoping by event id
+ * (not by element) means an undo on device A doesn't accidentally roll back
+ * an unrelated grade made on device B with a higher lamport — only the
+ * targeted event is removed from consideration. Exported because the
+ * optimizer's revlog extraction must void the same reviews the fold voids.
+ */
+export function undoneEventIds(events: IrEvent[]): Set<EventId> {
+  const undone = new Set<EventId>();
+  for (const ev of events) {
+    if (ev.kind === "grade-undone") {
+      const targetId = ev.payload.eventId as EventId | undefined;
+      if (targetId) undone.add(targetId);
+    }
+  }
+  return undone;
+}
+
 export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
   const elements = new Map<ElementId, IrElement>();
   const tombstones = new Map<string, SourceTombstone>();
   const conflictPolicy = opts?.conflict ?? "conservative";
 
-  // First pass: collect ids of grade events the user retracted via
-  // `grade-undone`. We keep both event kinds in the log (see
-  // `isReviewEvent`) but skip them in the fold so the element's `card`
-  // returns to its pre-grade state. Scoping by event id (not by element)
-  // means an undo on device A doesn't accidentally roll back an unrelated
-  // grade made on device B with a higher lamport — only the targeted
-  // event is removed from consideration.
-  const undoneEventIds = new Set<EventId>();
-  for (const ev of events) {
-    if (ev.kind === "grade-undone") {
-      const targetId = ev.payload.eventId as EventId | undefined;
-      if (targetId) undoneEventIds.add(targetId);
-    }
-  }
+  const undone = undoneEventIds(events);
 
   // Sort events by lamport, then by event id for deterministic ordering
   const sortedEvents = [...events].sort((a, b) => {
@@ -55,7 +62,7 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
 
   for (const event of sortedEvents) {
     if (event.kind === "grade-undone") continue;
-    if (undoneEventIds.has(event.id)) continue;
+    if (undone.has(event.id)) continue;
     const target = event.target;
     const element = elements.get(target);
 
@@ -265,17 +272,11 @@ export function nextLamport(events: IrEvent[]): number {
  * `IrStore.loadEvents()`.
  */
 export function findLastUndoableGrade(events: IrEvent[]): IrEvent | null {
-  const undoneEventIds = new Set<EventId>();
-  for (const ev of events) {
-    if (ev.kind === "grade-undone") {
-      const targetId = ev.payload.eventId as EventId | undefined;
-      if (targetId) undoneEventIds.add(targetId);
-    }
-  }
+  const undone = undoneEventIds(events);
   let best: IrEvent | null = null;
   for (const ev of events) {
     if (ev.kind !== "graded") continue;
-    if (undoneEventIds.has(ev.id)) continue;
+    if (undone.has(ev.id)) continue;
     if (best === null) {
       best = ev;
       continue;

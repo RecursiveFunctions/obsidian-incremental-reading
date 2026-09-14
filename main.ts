@@ -66,6 +66,10 @@ import {
   uniqueMovedPath,
 } from "./src/ir/source-paths";
 import { findLastUndoableGrade, nextLamport } from "./src/ir/log";
+import {
+  extractRevlog,
+  formatDataReport,
+} from "./src/ir/optimizer/revlog";
 import { mostRecentBookmark } from "./src/ir/bookmark";
 import { newCard, storedToCard, writeCardToFrontmatter } from "./src/fsrs";
 import { labelFor } from "./src/ir/labels";
@@ -1039,6 +1043,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "clipboard-paste",
       hotkeys: [{ modifiers: ["Alt"], key: "b" }],
       callback: () => void this.bulkImport(),
+    });
+
+    this.irCommand({
+      id: "optimizer-data-report",
+      name: "Copy optimizer data report",
+      icon: "clipboard-list",
+      callback: () => void this.copyOptimizerDataReport(),
     });
 
     this.registerEvent(
@@ -3263,6 +3274,32 @@ export default class IncrementalReadingPlugin extends Plugin {
     new Notice(
       `Incremental Reading: wrote ${itemCount} item` +
         `${itemCount === 1 ? "" : "s"} to ${outPath}.`,
+    );
+  }
+
+  /**
+   * Copy the optimizer data report to the clipboard: how many rated
+   * reviews are usable for FSRS parameter fitting, what a fit could do
+   * with them today, and what was excluded and why (PLAN-OPTIMIZER.md
+   * stage 1). Read-only over the event log; nothing is scheduled or
+   * written.
+   */
+  private async copyOptimizerDataReport(): Promise<void> {
+    if (!this.store) return;
+    await this.storeInit;
+    const events = await this.store.loadEvents();
+    const state = await this.store.load();
+    const revlog = extractRevlog(events, state);
+    const text = formatDataReport(revlog, Date.now());
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      new Notice("Incremental Reading: could not write to the clipboard.");
+      return;
+    }
+    const r = revlog.report;
+    new Notice(
+      `Optimizer data report copied: ${r.includedReviews} usable review${r.includedReviews === 1 ? "" : "s"} across ${r.includedCards} card${r.includedCards === 1 ? "" : "s"}.`,
     );
   }
 
