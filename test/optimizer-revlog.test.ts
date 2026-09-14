@@ -221,14 +221,15 @@ test("report: zero-count reasons are omitted, non-zero rendered with labels", ()
     graded("g2", "a", { grade: 3 }),
   ];
   const text = formatDataReport(run(events), NOW);
-  assert.match(text, /2 rated reviews across 1 cards/);
+  assert.match(text, /2 rated reviews on 1 card\b/);
   assert.match(
     text,
     new RegExp(EXCLUSION_LABELS.noRating.replace(/[()]/g, "\\$&")),
   );
   assert.doesNotMatch(text, /Duplicate event/);
-  assert.doesNotMatch(text, /undid this review/);
-  assert.match(text, /keep the FSRS-6 defaults/);
+  assert.doesNotMatch(text, /Review undone/);
+  assert.match(text, /a fit today returns the defaults/);
+  assert.match(text, /Rating logging started in 0\.7\.15/);
 });
 
 test("report is deterministic for the same input", () => {
@@ -244,6 +245,6 @@ test("report is deterministic for the same input", () => {
 
 test("empty log produces the calm empty report, not a crash", () => {
   const text = formatDataReport(run([]), NOW);
-  assert.match(text, /0 rated reviews across 0 cards/);
-  assert.match(text, /Nothing was excluded/);
+  assert.match(text, /0 rated reviews on 0 cards/);
+  assert.match(text, /## Excluded\n\nNone\./);
 });

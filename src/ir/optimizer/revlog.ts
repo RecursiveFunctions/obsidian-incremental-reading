@@ -33,11 +33,11 @@ export interface RevlogCard {
  * the report and (later) the stats panel print.
  */
 export const EXCLUSION_LABELS = {
-  noRating: "No recorded rating (graded before 0.7.15)",
-  undone: "You undid this review",
-  missingElement: "Element no longer exists",
-  duplicate: "Duplicate event (sync artifact)",
-  shortCard: "Card had fewer than 2 rated reviews",
+  noRating: "No rating recorded (pre-0.7.15)",
+  undone: "Review undone",
+  missingElement: "Element deleted",
+  duplicate: "Duplicate event",
+  shortCard: "Cards with under 2 reviews",
 } as const;
 
 export type ExclusionReason = keyof typeof EXCLUSION_LABELS;
@@ -165,10 +165,10 @@ export function fitTier(report: ExclusionReport): {
 }
 
 const TIER_TEXT: Record<"none" | "pretrain" | "full", string> = {
-  none: "Not enough data to fit anything yet; a run today would keep the FSRS-6 defaults.",
+  none: "none. Needs at least 8 cards; a fit today returns the defaults.",
   pretrain:
-    "Enough to fit initial stability only (the first 4 of 21 parameters); the rest would stay at the FSRS-6 defaults.",
-  full: "Enough for a full 21-parameter fit.",
+    "initial stability only (4 of 21 parameters). A full fit needs 64 cards.",
+  full: "full 21-parameter fit.",
 };
 
 /**
@@ -178,43 +178,42 @@ const TIER_TEXT: Record<"none" | "pretrain" | "full", string> = {
 export function formatDataReport(revlog: Revlog, now: number): string {
   const { report } = revlog;
   const { tier, lowData } = fitTier(report);
+  const n = (count: number, word: string) =>
+    `${count} ${word}${count === 1 ? "" : "s"}`;
 
   const lines: string[] = [
     "# Optimizer data report",
     "",
-    `Generated ${new Date(now).toISOString().slice(0, 10)} by Incremental Reading. All numbers come from the review log in this vault; nothing left your machine.`,
-    "",
-    `**Usable for training:** ${report.includedReviews} rated reviews across ${report.includedCards} cards.`,
-    "",
-    `**What a fit could do today:** ${TIER_TEXT[tier]}`,
+    `- Date: ${new Date(now).toISOString().slice(0, 10)}`,
+    `- Usable: ${n(report.includedReviews, "rated review")} on ${n(report.includedCards, "card")}`,
+    `- Fit possible: ${TIER_TEXT[tier]}`,
   ];
-  if (lowData && tier !== "none") {
+  if (tier !== "none") {
     lines.push(
-      "",
-      "Under 400 rated reviews, so a fit would be labeled low-confidence.",
+      `- Confidence: ${lowData ? "low (under 400 rated reviews)" : "normal"}`,
+    );
+  }
+  if (report.overriddenIncluded > 0) {
+    lines.push(
+      `- ${n(report.overriddenIncluded, "review")} used the SM-2 divergence override. Included.`,
     );
   }
 
   const nonZero = report.rows.filter((r) => r.count > 0);
-  lines.push("", "## Excluded, and why", "");
+  lines.push("", "## Excluded", "");
   if (nonZero.length === 0) {
-    lines.push("Nothing was excluded.");
+    lines.push("None.");
   } else {
     lines.push("| Reason | Count |", "|---|---|");
     for (const row of nonZero) {
       lines.push(`| ${EXCLUSION_LABELS[row.reason]} | ${row.count} |`);
     }
-    lines.push(
-      "",
-      "`No recorded rating` reviews predate version 0.7.15, which is when the plugin started writing the rating into the log. They can never join the training set; everything you review from 0.7.15 on counts.",
-    );
-  }
-
-  if (report.overriddenIncluded > 0) {
-    lines.push(
-      "",
-      `${report.overriddenIncluded} included review${report.overriddenIncluded === 1 ? "" : "s"} used an SM-2 interval override from the divergence picker. They still train (the rating and timing are real); listed for transparency.`,
-    );
+    if (nonZero.some((r) => r.reason === "noRating")) {
+      lines.push(
+        "",
+        "Rating logging started in 0.7.15. Earlier reviews have no rating and stay excluded.",
+      );
+    }
   }
 
   return lines.join("\n") + "\n";
