@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-09-15
+
+Everything from 0.7.14 through 0.7.25 plus this release: the FSRS-6
+upgrade, the recorded review log, and the full local parameter
+optimizer (fit engine, CI oracle against fsrs-rs, and the Scheduler
+panel in stats), now verified in real-vault use.
+
 ### Changed
 
 - **The scheduler is FSRS-6 now.** ts-fsrs moved from 4.7.1 to 5.4.2, which
