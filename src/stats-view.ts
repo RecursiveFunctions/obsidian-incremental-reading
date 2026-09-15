@@ -5,7 +5,6 @@ import type { IrElement, IrEvent } from "./ir/model";
 import type { LogState } from "./ir/log";
 import type { IrSettings } from "./ir/settings-data";
 import {
-  EXCLUSION_LABELS,
   extractRevlog,
   fitTier,
   type Revlog,
@@ -229,12 +228,11 @@ export class IrStatsView extends ItemView {
     const revlog = extractRevlog(events, state);
     const { tier } = fitTier(revlog.report);
     if (tier === "none") {
-      this.renderExclusions(out, revlog);
       const n = revlog.report.includedCards;
-      out.createDiv({
-        cls: "ir-stats-note",
-        text: `${n} usable item${n === 1 ? "" : "s"}; fitting needs 8.`,
+      out.createEl("p", {
+        text: `Not enough data: ${n} usable item${n === 1 ? "" : "s"} of the 8 needed.`,
       });
+      this.renderExclusions(out, revlog);
       return;
     }
 
@@ -356,13 +354,24 @@ export class IrStatsView extends ItemView {
     void this.render();
   }
 
+  /**
+   * One compact line, matching the stats idiom ("3 topic · 2 extract"),
+   * not a floating table: "Excluded: 65 no rating · 3 under 2 reviews".
+   */
   private renderExclusions(out: HTMLElement, revlog: Revlog): void {
+    const SHORT: Record<string, string> = {
+      noRating: "no rating",
+      undone: "undone",
+      missingElement: "element deleted",
+      duplicate: "duplicate",
+      shortCard: "under 2 reviews",
+    };
     const nonZero = revlog.report.rows.filter((r) => r.count > 0);
     if (nonZero.length === 0) return;
-    this.table(
-      out,
-      nonZero.map((r) => [EXCLUSION_LABELS[r.reason], String(r.count)]),
-    );
+    out.createDiv({
+      cls: "ir-stats-note",
+      text: `Excluded: ${nonZero.map((r) => `${r.count} ${SHORT[r.reason]}`).join(" · ")}`,
+    });
   }
 
   private renderCounts(
