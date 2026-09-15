@@ -1,5 +1,5 @@
 /**
- * Pure grouping of store extracts that live in a PDF. The painter in
+ * Pure grouping of ledger extracts that live in a PDF. The painter in
  * `pdf-decorations.ts` consumes this; tests do not need a pdf.js runtime.
  */
 

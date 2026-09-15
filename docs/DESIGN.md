@@ -3,13 +3,13 @@
 Architecture decisions for the incremental reading plugin, with rationale.
 These are locked for v1 unless a decision explicitly says otherwise.
 
-**Decision 2026-05-18:** Full structured-store model chosen (Option 1) over
+**Decision 2026-05-18:** Full structured-ledger model chosen (Option 1) over
 the hybrid. All element state, including extracts, leaves frontmatter for the
-plugin store; extracts become block-anchored with promotion. Chosen because
+plugin ledger; extracts become block-anchored with promotion. Chosen because
 extraction is aggressive (a session of highlights must not mint a file per
 span), no real data is at risk yet, and the rearchitecture is cheapest now
 while the code is unshipped. Two sub-questions it raises are still open, see
-"Open design questions" below. Q1 (anchor strategy) and Q2 (store granularity
+"Open design questions" below. Q1 (anchor strategy) and Q2 (ledger granularity
 and sync shape) are both resolved. The storage substrate (feature branch #1)
 is now unblocked.
 
@@ -38,7 +38,7 @@ graph node, so items and raw extracts must not be files — is **withdrawn**
 **Note (vault reality, 0.0.10):** IR *items* are still stored as normal
 Markdown notes so they remain portable (plain files, Anki-style cloze markup,
 other plugins can see them); FSRS state lives in frontmatter / the structured
-store. Cloze *markup* in the note body uses Anki-style `{{cN::answer}}` with
+ledger. Cloze *markup* in the note body uses Anki-style `{{cN::answer}}` with
 optional `{{cN::answer::hint}}` for SuperMemo-style hints during review.
 
 ## 2. Extracts
@@ -71,7 +71,7 @@ inherit the same keys either way.
 ### PDF sources
 
 **Decision 2026-08-19:** PDFs are first-class IR topics. They cannot carry
-YAML, so the topic is **store-only** (`notePath` is the `.pdf` path). Alt+T
+YAML, so the topic is **ledger-only** (`notePath` is the `.pdf` path). Alt+T
 on an open PDF records that element (the core PDF viewer often leaves
 `getActiveFile()` empty, so the command reads the file from the active
 PDF leaf). Alt+X on a text selection creates an
@@ -79,7 +79,7 @@ anchored extract whose locator is Obsidian's public fragment
 `#page=N&selection=beginIndex,beginOffset,endIndex,endOffset`, plus
 `quote.exact` as the verbatim review payload. The PDF file is never
 mutated (same §Q3 contract as markdown). Highlights are painted onto the
-built-in pdf.js text layer from the store.
+built-in pdf.js text layer from the ledger.
 
 Cloze stays markdown-only: extract first, then cloze the extract. Scanned
 PDFs with no text layer cannot be extracted. Cross-page selection, OCR,
@@ -230,7 +230,7 @@ sequence differs.
 - Graph: `parentId` tree (child 0.16, sibling 0.26–0.5, root parent 0.40)
   plus vault wikilinks/backlinks (0.05) and shared tags (0.01, skipped
   when a tag has more than 40 IR members). Unmarked notes may relay once
-  so A → Bridge.md → B still connects. Store-only extracts have no note
+  so A → Bridge.md → B still connects. Ledger-only extracts have no note
   path, so they enter the walk only via the tree (not as wikilink targets).
 - Walk: SuperMemo CombinePriority, a few layers, cap 200, wikilink degree
   12 at expansion time. Per-session RNG shuffles each layer by weight
@@ -242,7 +242,7 @@ sequence differs.
 
 ## Open design questions (decide before implementation)
 
-These are expensive to reverse once the store exists and users have real
+These are expensive to reverse once the ledger exists and users have real
 data. They must be answered before feature branch #1 (the storage substrate)
 is written, not defaulted by the first implementation.
 
@@ -267,14 +267,14 @@ Two principles are locked alongside it:
 - **Never silently re-point.** A failed or ambiguous relocation degrades to a
   visible "needs re-anchor" state on the extract, never a confident wrong
   location. Wrong-but-confident is the only unrecoverable failure here.
-- **Always store the extracted text verbatim** in the store. It is the
+- **Always keep the extracted text verbatim** in the ledger. It is the
   fingerprint, the offline review payload, and the safety net if the source is
   deleted. Not optional duplication.
 
 Sub-decisions inside C:
 
 - Normalization: normalize whitespace and strip Markdown syntax for the match
-  key; store the raw text verbatim for display.
+  key; keep the raw text verbatim for display.
 - Duplicate-quote disambiguation: context window first, then
   nearest-to-last-known-position.
 - Orphan UX: needs-re-anchor extracts stay visible in the queue, never
@@ -283,7 +283,7 @@ Sub-decisions inside C:
 Source deletion behavior:
 
 - Never cascade-delete extracts when their source is deleted. Content is never
-  lost: the verbatim text lives in the store, so the extract stays fully
+  lost: the verbatim text lives in the ledger, so the extract stays fully
   reviewable and its items keep scheduling.
 - Reparent children to the grandparent where a tree exists (always).
 - Detect deletion via Obsidian vault events (`vault.on("delete")`) **and**
@@ -313,7 +313,7 @@ Source deletion behavior:
   keeping the tombstone so the next load does not prompt again.
   **STATUS (2026-08-14): IMPLEMENTED.**
 
-### Q2. Store granularity and sync shape
+### Q2. Ledger granularity and sync shape
 
 STATUS: RESOLVED 2026-05-18. Hybrid (option D): per-element state files plus
 per-device append-only log shards.
@@ -332,7 +332,7 @@ Sub-decisions:
 
 1. Location: a dedicated vault dotfolder (`<vault>/.ir/`), never the plugin
    config dir (users often do not sync config, which would silently desync the
-   store). Written through the data adapter, not as markdown notes, so the
+   ledger). Written through the data adapter, not as markdown notes, so the
    JSON is not indexed as a vault note.
 2. Concurrent same-item conflict: both grade events are always retained in the
    logs. Materialized scheduler state defaults to the **conservative schedule**
@@ -357,13 +357,13 @@ Sub-decisions:
 
 ## Integration (storage substrate to live plugin)
 
-The substrate (log, fold, compaction, reconcile, store) is complete and
+The substrate (log, fold, compaction, reconcile, ledger) is complete and
 pure. Bringing it into the running plugin splits into three parts on a
 clean boundary so the gradable pieces can be delegated and only the
 irreversible glue stays on the maintainer.
 
-**Boundary contract.** The store reaches the vault through one port,
-`VaultFs`. Nothing above the store imports Obsidian; nothing in the store
+**Boundary contract.** The ledger reaches the vault through one port,
+`VaultFs`. Nothing above the ledger imports Obsidian; nothing in the ledger
 knows about Obsidian. Migration is a pure function from old frontmatter to
 events. The controller is the only place that touches both worlds.
 
@@ -382,20 +382,20 @@ events. The controller is the only place that touches both worlds.
    `readTopicFromFrontmatter`), so migrated state is by construction
    equivalent to what the frontmatter readers saw. Element ids are
    deterministic from the note path, so a re-run is idempotent and an
-   `ir-parent` path resolves to the parent's migrated id. Pre-store
+   `ir-parent` path resolves to the parent's migrated id. Pre-ledger
    extracts and items are already standalone notes, so they migrate as
    promoted elements (`notePath` set, no anchor). New file
    `src/ir/migrate.ts`. Single-file fence, deterministic oracle.
 
 3. Migration controller (maintainer-owned). Not delegated: it owns the
    one-way, data-at-risk decisions a mechanical oracle cannot gate. On
-   load it constructs the store over `ObsidianVaultFs`, decides whether a
+   load it constructs the ledger over `ObsidianVaultFs`, decides whether a
    migration is owed (no `.ir/meta.json`), enumerates IR notes via
    `metadataCache`, runs `migrateNotes`, appends, reconciles, and writes a
    migration marker. It is guarded (runs once), reversible (frontmatter is
    left intact as the fallback until the user confirms), and idempotent
    (re-run is a no-op via the marker plus deterministic ids). Wiring the
-   live queue and review flow to read the store instead of frontmatter
+   live queue and review flow to read the ledger instead of frontmatter
    follows after the controller lands.
 
 ### Q3. Source-note pristine guarantee (decoration-only highlights)
@@ -428,7 +428,7 @@ Resolution: source notes are never mutated by extract or cloze creation.
 Visible feedback is painted in the editor as a CodeMirror 6 decoration
 (`<mark class="ir-extract-source">` injected into the render tree only),
 driven by `src/ir/extract-decorations.ts` reading resolved anchor ranges
-from the store. Anchors store the raw selected slice in `quote.exact` and
+from the ledger. Anchors carry the raw selected slice in `quote.exact` and
 the byte-exact body offsets in `position`.
 
 Sub-decisions locked alongside it:
@@ -450,10 +450,10 @@ Sub-decisions locked alongside it:
   note. Coverage highlights (`mark.ir-cloze-source`) reuse the extract
   decoration pipeline (CM6, reading-view post-processor, review splice)
   so already-clozed spans are visible on the topic like SuperMemo.
-  New clozes also store a text-quote `anchor` on the item. No second
+  New clozes also carry a text-quote `anchor` on the item. No second
   viewer. PDFs stay extract-only.
 - **Bulk-extract idempotency** moves from "skip spans inside a body
-  mark" to "skip spans that overlap any anchor already in the store
+  mark" to "skip spans that overlap any anchor already in the ledger
   for this source." See `main.ts existingExtractRangesForSource`.
 
 Remaining follow-up:

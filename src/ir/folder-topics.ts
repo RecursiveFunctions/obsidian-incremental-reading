@@ -17,7 +17,7 @@ export interface FolderFileRef {
 
 /**
  * Candidates to mark. `skipPaths` is already-IR (topic/extract/item, or a
- * store-only PDF topic). Nested folders are included.
+ * ledger-only PDF topic). Nested folders are included.
  */
 export function folderTopicCandidates(
   files: readonly FolderFileRef[],

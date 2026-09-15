@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The "store" is now the "ledger", in code and docs.** The plugin's
+  persistence layer (the `.ir/` folder: append-only per-device event
+  journals that state is replayed from) was internally called the
+  store, which collided with the Obsidian community store and said
+  nothing about the append-only design. It is now `IrLedger` /
+  `src/ir/ledger.ts` throughout the source and DESIGN.md. Pure rename:
+  no on-disk file or format changes, no migration, nothing
+  user-visible.
+
 - **One meaning per word, everywhere.** The UI used element, item, and
   card interchangeably; now each has exactly one job, matching the
   README's Concepts table. An **element** is anything scheduled (topic,

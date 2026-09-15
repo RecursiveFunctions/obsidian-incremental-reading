@@ -9,7 +9,7 @@
  */
 
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
-import { IrStore } from "./ir/store";
+import { IrLedger } from "./ir/ledger";
 import {
   actionLabel,
   formatTimestamp,
@@ -38,18 +38,18 @@ const KIND_ICON: Record<string, string> = {
 };
 
 export class IrSessionView extends ItemView {
-  private store: IrStore;
+  private ledger: IrLedger;
   private sessionStartMs: number;
   private readonly onOpenEntry?: (elementId: string, notePath?: string) => void;
 
   constructor(
     leaf: WorkspaceLeaf,
-    store: IrStore,
+    ledger: IrLedger,
     sessionStartMs: number,
     onOpenEntry?: (elementId: string, notePath?: string) => void,
   ) {
     super(leaf);
-    this.store = store;
+    this.ledger = ledger;
     this.sessionStartMs = sessionStartMs;
     this.onOpenEntry = onOpenEntry;
   }
@@ -76,7 +76,7 @@ export class IrSessionView extends ItemView {
 
   async onClose(): Promise<void> {}
 
-  /** Re-render from the store. Safe to call repeatedly. */
+  /** Re-render from the ledger. Safe to call repeatedly. */
   async render(): Promise<void> {
     const container = this.contentEl;
     container.empty();
@@ -89,8 +89,8 @@ export class IrSessionView extends ItemView {
 
     let entries: SessionEntry[];
     try {
-      const state = await this.store.load();
-      const events = await this.store.loadEvents();
+      const state = await this.ledger.load();
+      const events = await this.ledger.loadEvents();
       entries = sessionEntries(events, state.elements, this.sessionStartMs);
     } catch (e) {
       console.error("Incremental Reading: session log load failed", e);

@@ -5,7 +5,7 @@
  * for stripping it) and returns body-relative `{ start, end }` ranges. The
  * caller passes those into the bulk-extract engine, which records anchored
  * extracts against the unchanged source body (DESIGN §Q3); idempotency is
- * enforced by the caller checking the store's existing extract ranges, not
+ * enforced by the caller checking the ledger's existing extract ranges, not
  * by inspecting the body for marks.
  *
  * No Obsidian imports — keeps the segmentation logic unit-testable and

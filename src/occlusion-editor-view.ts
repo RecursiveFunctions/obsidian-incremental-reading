@@ -6,7 +6,7 @@
  * mode, arrows nudge the selected mask.
  *
  * The view owns no IR state. It hands the finished rect list back through
- * `onCreate`; the host plugin turns it into item notes and store events.
+ * `onCreate`; the host plugin turns it into item notes and ledger events.
  */
 
 import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";

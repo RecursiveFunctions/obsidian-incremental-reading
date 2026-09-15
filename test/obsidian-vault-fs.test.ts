@@ -30,7 +30,7 @@ import {
   ObsidianVaultFs,
   type ObsidianDataAdapter,
 } from "../src/ir/obsidian-vault-fs";
-import type { VaultFs } from "../src/ir/store";
+import type { VaultFs } from "../src/ir/ledger";
 
 function fakeAdapter(): ObsidianDataAdapter & {
   calls: string[];

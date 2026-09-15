@@ -40,7 +40,7 @@ import { dueQueue, neuralQueue, EMPTY_COLLECTION_COPY, EMPTY_NEURAL_COPY, type R
 import { makeLcg } from "./src/ir/neural";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
 import { openPriorityPrompt } from "./src/priority-prompt";
-import { IrStore, META } from "./src/ir/store";
+import { IrLedger, META } from "./src/ir/ledger";
 import {
   computeLoad,
   computeUpcoming,
@@ -226,7 +226,7 @@ function normalizePathForFolder(p: string): string {
 }
 
 /**
- * Machine-identifying string passed to `IrStore.init` so each physical
+ * Machine-identifying string passed to `IrLedger.init` so each physical
  * Obsidian install gets its own device id (DESIGN §Q2 fix). Falls back to
  * `"unknown"` on platforms where `os.hostname()` isn't reachable — a single
  * "unknown" device is still an improvement over every device sharing the
@@ -305,19 +305,19 @@ export default class IncrementalReadingPlugin extends Plugin {
   private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; emptyVault?: boolean; nothingDue?: UpcomingLoad; } | null = null;
 
   /**
-   * The store, constructed once the layout exists (after a migration, or
+   * The ledger, constructed once the layout exists (after a migration, or
    * immediately when `.ir/` is already present). It is the source of truth
    * for the queue and review loop; frontmatter is dual-written on every
    * action only as the migration fallback.
    */
-  private store?: IrStore;
+  private ledger?: IrLedger;
 
   /**
-   * Store init / first-run migration. Started from onload but not awaited
+   * Ledger init / first-run migration. Started from onload but not awaited
    * there: a hung `.ir/` exists() on mobile must not block command and FAB
-   * registration. Callers that need a ready store await this.
+   * registration. Callers that need a ready ledger await this.
    */
-  private storeInit: Promise<void> = Promise.resolve();
+  private ledgerInit: Promise<void> = Promise.resolve();
 
   /** Status bar queue-load indicator (UI commitment #4). */
   private statusBarEl?: HTMLElement;
@@ -330,7 +330,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /**
    * Wall-clock when the current review pass started (Alt+R / Alt+N). The
-   * session audit (UI commitment #7) filters the store event log to events
+   * session audit (UI commitment #7) filters the ledger event log to events
    * newer than this. Infinity until the first pass so plugin-load noise
    * does not masquerade as a review.
    */
@@ -367,12 +367,12 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /**
    * Decoration cache that the CM6 extension reads from. Rebuilt by
-   * {@link refreshExtractDecorations} after every store reconcile so new
+   * {@link refreshExtractDecorations} after every ledger reconcile so new
    * extracts paint instantly without re-resolving anchors on each keystroke.
    */
   private decorationCache = new IrDecorationCache();
 
-  /** Store-only PDF topics (`notePath` ends in .pdf). Sync after each reconcile. */
+  /** Ledger-only PDF topics (`notePath` ends in .pdf). Sync after each reconcile. */
   private irPdfPaths = new Set<string>();
 
   private pdfHighlights?: PdfHighlightPainter;
@@ -398,8 +398,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     const fs = new ObsidianVaultFs(
       this.app.vault.adapter as unknown as ObsidianDataAdapter,
     );
-    this.store = new IrStore(fs, { conflict: "clock-order" });
-    this.storeInit = this.runMigrationIfOwed(fs);
+    this.ledger = new IrLedger(fs, { conflict: "clock-order" });
+    this.ledgerInit = this.runMigrationIfOwed(fs);
     this.addSettingTab(new IrSettingTab(this.app, this));
     this.pdfHighlights = new PdfHighlightPainter(this.app);
     this.registerDomEvent(document, "selectionchange", () => {
@@ -471,11 +471,11 @@ export default class IncrementalReadingPlugin extends Plugin {
         this.paintPdfHighlights();
       }),
     );
-    // Initial decoration paint runs once the store is ready, below.
+    // Initial decoration paint runs once the ledger is ready, below.
     void this.refreshExtractDecorations();
 
     // Glanceable queue-load indicator. Built before any other UI so it shows
-    // up immediately, and refreshed once the store is ready below.
+    // up immediately, and refreshed once the ledger is ready below.
     this.statusBarEl = this.addStatusBarItem();
     renderStatusBar(
       this.statusBarEl,
@@ -484,7 +484,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       (evt) => this.showStatusBarMenu(evt),
     );
     void this.refreshStatusBar();
-    void this.storeInit.then(() => {
+    void this.ledgerInit.then(() => {
       void this.refreshStatusBar();
       void this.reconcileMissingSources().then(() => this.offerPendingRelinks());
     });
@@ -536,14 +536,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.registerView(
       IR_TREE_VIEW_TYPE,
       (leaf: WorkspaceLeaf) => {
-        if (!this.store) {
+        if (!this.ledger) {
           throw new Error(
-            "Incremental Reading: store not ready for tree view.",
+            "Incremental Reading: ledger not ready for tree view.",
           );
         }
         return new IrTreeView(
           leaf,
-          this.store,
+          this.ledger,
           (elementId, file, priority) =>
             this.applyIrPriorityChange(elementId, file, priority),
           (elementId, file, dismissed) =>
@@ -570,14 +570,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.registerView(
       IR_SESSION_VIEW_TYPE,
       (leaf: WorkspaceLeaf) => {
-        if (!this.store) {
+        if (!this.ledger) {
           throw new Error(
-            "Incremental Reading: store not ready for session view.",
+            "Incremental Reading: ledger not ready for session view.",
           );
         }
         return new IrSessionView(
           leaf,
-          this.store,
+          this.ledger,
           this.sessionStartMs,
           (id, notePath) => this.revealSessionEntry(id, notePath),
         );
@@ -587,12 +587,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.registerView(
       IR_STATS_VIEW_TYPE,
       (leaf: WorkspaceLeaf) => {
-        if (!this.store) {
+        if (!this.ledger) {
           throw new Error(
-            "Incremental Reading: store not ready for stats view.",
+            "Incremental Reading: ledger not ready for stats view.",
           );
         }
-        return new IrStatsView(leaf, this.store, this);
+        return new IrStatsView(leaf, this.ledger, this);
       },
     );
 
@@ -602,9 +602,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
 
     this.registerView(IR_REVIEW_VIEW_TYPE, (leaf: WorkspaceLeaf) => {
-        if (!this.store) {
+        if (!this.ledger) {
           throw new Error(
-            "Incremental Reading: store not ready for review view.",
+            "Incremental Reading: ledger not ready for review view.",
           );
         }
         const session = this.irReviewSession;
@@ -618,7 +618,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           leaf,
           this,
           this.settings,
-          this.store,
+          this.ledger,
           queue,
           elementsById,
           isNeural,
@@ -763,7 +763,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       name: "Mark current note as IR topic",
       icon: "book-open",
       hotkeys: [{ modifiers: ["Alt"], key: "t" }],
-      // Markdown notes and PDFs (store-only; PDFs have no YAML).
+      // Markdown notes and PDFs (ledger-only; PDFs have no YAML).
       checkCallback: (checking: boolean) => {
         const file = activeIrFile(this.app);
         if (!file || (file.extension !== "md" && file.extension !== "pdf")) {
@@ -1428,21 +1428,21 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Re-render the status bar from the current store state and repaint the
+   * Re-render the status bar from the current ledger state and repaint the
    * editor extract decorations from the same load. Safe to call before the
-   * store is ready (it leaves a zero-state placeholder); safe to call
+   * ledger is ready (it leaves a zero-state placeholder); safe to call
    * repeatedly (both renders are idempotent).
    *
    * Decorations piggyback here because they react to the same trigger the
-   * status bar does (store changed) and pushing them on every reconcile from
+   * status bar does (ledger changed) and pushing them on every reconcile from
    * its caller would require touching ~20 sites instead of one.
    */
   private async refreshStatusBar(): Promise<void> {
     if (!this.statusBarEl) return;
-    if (!this.store) return;
+    if (!this.ledger) return;
     try {
-      const state = await this.store.load();
-      const events = await this.store.loadEvents();
+      const state = await this.ledger.load();
+      const events = await this.ledger.loadEvents();
       const load = computeLoad(state.elements.values(), events, Date.now());
       // Mobile has no status bar; the FAB badge is the same number.
       setWorkspaceIrFabDue(load.due);
@@ -1569,9 +1569,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     elementsById: Map<ElementId, IrElement>;
     isNeural: boolean;
   } | null> {
-    if (!this.store) return null;
-    await this.storeInit;
-    const state = await this.store.load();
+    if (!this.ledger) return null;
+    await this.ledgerInit;
+    const state = await this.ledger.load();
     const queue = dueQueue(
       this.app,
       this.settings.reviewsPerReading,
@@ -1590,9 +1590,9 @@ export default class IncrementalReadingPlugin extends Plugin {
    * itself is empty, which is the first-run pane instead.
    */
   private async computeReviewUpcoming(): Promise<UpcomingLoad | null> {
-    if (!this.store) return null;
-    await this.storeInit;
-    const state = await this.store.load();
+    if (!this.ledger) return null;
+    await this.ledgerInit;
+    const state = await this.ledger.load();
     if (state.elements.size === 0) return null;
     return computeUpcoming(state.elements.values(), Date.now());
   }
@@ -1711,8 +1711,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     opts?: { promote?: boolean },
   ): Promise<void> {
     if (!(await this.ensureIrSource(source))) return;
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
     const selection = mapped.text.trim();
@@ -1739,15 +1739,15 @@ export default class IncrementalReadingPlugin extends Plugin {
         priority: getPriority(this.app, source, this.settings.defaultPriority),
         elementId: newElementId(),
         eventId: newEventId(),
-        device: await this.store.getDeviceId(),
+        device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
         schedule: topicStateToSchedule(
           newTopicState(this.settings, new Date(now)),
         ),
       });
-      await this.store.appendEvent(ev);
-      await this.store.reconcile();
+      await this.ledger.appendEvent(ev);
+      await this.ledger.reconcile();
       void this.refreshStatusBar();
       const created = ev.payload.element as IrElement;
       const promote =
@@ -1762,7 +1762,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     } catch (e) {
       console.error("Incremental Reading: anchored extract failed", e);
       new Notice(
-        "Incremental Reading: could not record the extract in the store. See the developer console.",
+        "Incremental Reading: could not record the extract in the ledger. See the developer console.",
       );
     }
   }
@@ -1811,8 +1811,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     opts?: { promote?: boolean },
   ) {
     if (!(await this.ensureIrSource(source))) return;
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
     // Multi-cursor / Ctrl+select: every non-empty range joins the extract;
@@ -1885,15 +1885,15 @@ export default class IncrementalReadingPlugin extends Plugin {
         priority: getPriority(this.app, source, this.settings.defaultPriority),
         elementId: newElementId(),
         eventId: newEventId(),
-        device: await this.store.getDeviceId(),
+        device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
         schedule: topicStateToSchedule(
           newTopicState(this.settings, new Date(now)),
         ),
       });
-      await this.store.appendEvent(ev);
-      await this.store.reconcile();
+      await this.ledger.appendEvent(ev);
+      await this.ledger.reconcile();
       void this.refreshStatusBar();
       const created = ev.payload.element as IrElement;
       const promote =
@@ -1910,7 +1910,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     } catch (e) {
       console.error("Incremental Reading: anchored extract failed", e);
       new Notice(
-        "Incremental Reading: could not record the extract in the store. See the developer console.",
+        "Incremental Reading: could not record the extract in the ledger. See the developer console.",
       );
     }
   }
@@ -1994,8 +1994,8 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<IrElement | undefined> {
     const sel = { file, page: pdf.page };
     if (!(await this.ensureIrSource(sel.file))) return;
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
     const reviewParent = this.getActiveReviewView()?.pdfExtractParentId(
@@ -2005,7 +2005,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       reviewParent ??
       (await this.resolveElementIdForFile(sel.file)) ??
       elementIdForPath(sel.file.path);
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     const parent = state.elements.get(parentId);
     const now = Date.now();
     try {
@@ -2017,15 +2017,15 @@ export default class IncrementalReadingPlugin extends Plugin {
         priority: parent?.priority ?? this.settings.defaultPriority,
         elementId: newElementId(),
         eventId: newEventId(),
-        device: await this.store.getDeviceId(),
+        device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
         schedule: topicStateToSchedule(
           newTopicState(this.settings, new Date(now)),
         ),
       });
-      await this.store.appendEvent(ev);
-      await this.store.reconcile();
+      await this.ledger.appendEvent(ev);
+      await this.ledger.reconcile();
       void this.refreshStatusBar();
       const created = ev.payload.element as IrElement;
       const promote =
@@ -2052,7 +2052,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     } catch (e) {
       console.error("Incremental Reading: PDF extract failed", e);
       new Notice(
-        "Incremental Reading: could not record the extract in the store. See the developer console.",
+        "Incremental Reading: could not record the extract in the ledger. See the developer console.",
       );
       return undefined;
     }
@@ -2215,15 +2215,15 @@ export default class IncrementalReadingPlugin extends Plugin {
     headlineLabel: string,
   ): Promise<void> {
     if (!(await this.ensureIrSource(source))) return;
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
 
     const initialBody = stripFrontmatter(await this.app.vault.read(source));
     // Decoration-only highlights (DESIGN §Q3) mean the source body holds no
     // `<mark>` chrome for new extracts, so the old "is this span inside a
-    // mark?" test would always say no. Idempotency now comes from the store:
+    // mark?" test would always say no. Idempotency now comes from the ledger:
     // skip a span when its body offsets overlap any anchor we've already
     // recorded for this source path.
     const existingRanges = await this.existingExtractRangesForSource(
@@ -2259,7 +2259,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       source,
       this.settings.defaultPriority,
     );
-    const device = await this.store.getDeviceId();
+    const device = await this.ledger.getDeviceId();
 
     let created = 0;
     const createdEls: IrElement[] = [];
@@ -2282,7 +2282,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             newTopicState(this.settings, new Date(now)),
           ),
         });
-        await this.store.appendEvent(ev);
+        await this.ledger.appendEvent(ev);
         createdEls.push(ev.payload.element as IrElement);
         created += 1;
       } catch (e) {
@@ -2299,7 +2299,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
-    await this.store.reconcile();
+    await this.ledger.reconcile();
     void this.refreshStatusBar();
     const rv = this.getActiveReviewView();
     if (rv && rv.getCurrentReviewFile()?.path === source.path) {
@@ -2312,17 +2312,17 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Rebuild the editor decoration cache from the store, then push the result
+   * Rebuild the editor decoration cache from the ledger, then push the result
    * to every open MarkdownView. Called after every reconcile path that can
    * change the set of resolved extract anchors (new extract, deletion,
-   * re-anchor, store load on startup).
+   * re-anchor, ledger load on startup).
    */
   async refreshExtractDecorations(): Promise<void> {
-    if (!this.store) return;
+    if (!this.ledger) return;
     try {
-      await refreshIrDecorationCache(this.app, this.store, this.decorationCache);
+      await refreshIrDecorationCache(this.app, this.ledger, this.decorationCache);
       pushIrDecorations(this.app, this.decorationCache);
-      const state = await this.store.load();
+      const state = await this.ledger.load();
       this.irPdfPaths.clear();
       for (const el of state.elements.values()) {
         if (el.notePath && isPdfPath(el.notePath)) {
@@ -2344,7 +2344,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Resolve every extract anchor in the store whose `sourcePath` matches this
+   * Resolve every extract anchor in the ledger whose `sourcePath` matches this
    * source against `body`, returning the in-body ranges the decoration would
    * paint over. Used to make bulk-extract idempotent: re-running on the same
    * note never duplicates an extract over a passage that already has one.
@@ -2357,8 +2357,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     sourcePath: string,
     body: string,
   ): Promise<Span[]> {
-    if (!this.store) return [];
-    const state = await this.store.load();
+    if (!this.ledger) return [];
+    const state = await this.ledger.load();
     const out: Span[] = [];
     for (const [, element] of state.elements) {
       if (element.type !== "extract") continue;
@@ -2495,7 +2495,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * Resolve "is this note ready to be a cloze/extract parent?" Returns true
    * if the source is already a topic/extract/item; if it's a plain note and
    * the auto-mark setting is on, marks it as a topic (recording in the
-   * store) and returns true. Returns false (with a Notice) only when the
+   * ledger) and returns true. Returns false (with a Notice) only when the
    * user has opted out and the source still isn't an IR element.
    */
   private async ensureIrSource(source: TFile): Promise<boolean> {
@@ -2565,7 +2565,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     const seedId = await this.resolveElementIdForFile(active);
     if (!seedId) {
       new Notice(
-        "Incremental Reading: that note is marked IR but is not in the store yet. Try again in a moment.",
+        "Incremental Reading: that note is marked IR but is not in the ledger yet. Try again in a moment.",
       );
       return;
     }
@@ -2573,11 +2573,11 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   public async startNeuralReview(seedElementId: ElementId | null, seedNotePath: string | null) {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     const queue = neuralQueue(
       this.app,
       state,
@@ -2608,20 +2608,20 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async startReview() {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
     try {
-      await withTimeout(this.storeInit, 8000, "store init");
+      await withTimeout(this.ledgerInit, 8000, "ledger init");
     } catch (e) {
-      console.error("Incremental Reading: store init still running", e);
+      console.error("Incremental Reading: ledger init still running", e);
       new Notice(
         "Incremental Reading: still starting up. Try Start IR review again in a moment.",
       );
       return;
     }
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     if (state.elements.size === 0) {
       this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
       this.irReviewSession = {
@@ -2695,7 +2695,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * the user left off.
    *
    * Returns false (with a notice) when there is no bookmark, when the
-   * bookmarked element has been deleted from the store, or when the
+   * bookmarked element has been deleted from the ledger, or when the
    * element is no longer a reading element (e.g. the user converted it
    * into a cloze item). The caller decides whether to surface a "nothing
    * to resume" notice or stay quiet — the command palette entry shows
@@ -2712,13 +2712,13 @@ export default class IncrementalReadingPlugin extends Plugin {
   async resumeReadingBookmark(
     elementId?: ElementId,
   ): Promise<boolean> {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return false;
     }
     let targetId = elementId ?? null;
     if (!targetId) {
-      const bookmarks = await this.store.loadBookmarks();
+      const bookmarks = await this.ledger.loadBookmarks();
       const most = mostRecentBookmark(bookmarks);
       if (!most) {
         new Notice("Incremental Reading: no reading bookmarks yet.");
@@ -2727,7 +2727,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       targetId = most.elementId as ElementId;
     }
 
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     const el = state.elements.get(targetId);
     if (!el) {
       new Notice(
@@ -2768,8 +2768,8 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async openTreeView(): Promise<void> {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
     const existing = this.app.workspace.getLeavesOfType(IR_TREE_VIEW_TYPE);
@@ -2799,7 +2799,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /**
    * Alt+P: reveal the IR tree and open the inline `pNN` editor for the active
-   * note when it maps to a store element; otherwise fall back to the
+   * note when it maps to a ledger element; otherwise fall back to the
    * status-bar prompt (SCOPE-MODAL-REMOVAL.md).
    *
    * Mobile has no status bar, so the fallback prompt renders into an element
@@ -2836,8 +2836,8 @@ export default class IncrementalReadingPlugin extends Plugin {
    * time the view rendered.
    */
   private async openSessionView(): Promise<void> {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
     const existing = this.app.workspace.getLeavesOfType(IR_SESSION_VIEW_TYPE);
@@ -2854,14 +2854,14 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Resolve the store element id for a vault note path (queue + tree use the
-   * folded store, not frontmatter alone).
+   * Resolve the ledger element id for a vault note path (queue + tree use the
+   * folded ledger, not frontmatter alone).
    */
   private async resolveElementIdForFile(
     file: TFile,
   ): Promise<ElementId | null> {
-    if (!this.store) return null;
-    const state = await this.store.load();
+    if (!this.ledger) return null;
+    const state = await this.ledger.load();
     for (const el of state.elements.values()) {
       if (el.notePath === file.path) return el.id;
     }
@@ -2874,13 +2874,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     file: TFile | null,
     priority: number,
   ): Promise<void> {
-    if (!this.store) return;
+    if (!this.ledger) return;
     const p = clampPriority(priority);
-    await this.store.appendEvent({
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: Date.now(),
       lamport: Date.now(),
-      device: await this.store.getDeviceId(),
+      device: await this.ledger.getDeviceId(),
       kind: "priority-set",
       target: elementId,
       payload: { priority: p },
@@ -2891,7 +2891,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         "priority",
       );
     }
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after priority failed", e);
     });
     void this.refreshStatusBar();
@@ -2903,12 +2903,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     file: TFile | null,
     dismissed: boolean,
   ): Promise<void> {
-    if (!this.store) return;
-    await this.store.appendEvent({
+    if (!this.ledger) return;
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: Date.now(),
       lamport: Date.now(),
-      device: await this.store.getDeviceId(),
+      device: await this.ledger.getDeviceId(),
       kind: "dismiss-set",
       target: elementId,
       payload: { dismissed },
@@ -2919,7 +2919,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         "dismiss",
       );
     }
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after dismiss failed", e);
     });
     void this.refreshStatusBar();
@@ -2931,15 +2931,15 @@ export default class IncrementalReadingPlugin extends Plugin {
     elementId: ElementId,
     parentId: ElementId | null,
   ): Promise<void> {
-    if (!this.store) return;
-    const state = await this.store.load();
-    const device = await this.store.getDeviceId();
+    if (!this.ledger) return;
+    const state = await this.ledger.load();
+    const device = await this.ledger.getDeviceId();
     const now = Date.now();
     let lamport = now;
 
     for (const el of state.elements.values()) {
       if (el.parentId === elementId) {
-        await this.store.appendEvent({
+        await this.ledger.appendEvent({
           id: newEventId(),
           ts: now,
           lamport,
@@ -2952,7 +2952,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     }
 
-    await this.store.appendEvent({
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: now,
       lamport,
@@ -2961,7 +2961,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       target: elementId,
       payload: {},
     });
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after delete failed", e);
     });
     void this.refreshStatusBar();
@@ -2975,7 +2975,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     elementId: ElementId,
     element: IrElement,
   ): Promise<void> {
-    if (!this.store) return;
+    if (!this.ledger) return;
     if (element.notePath) {
       new Notice("Incremental Reading: that extract is already a note.");
       return;
@@ -2987,13 +2987,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       elementId,
       notePath,
       eventId: newEventId(),
-      device: await this.store.getDeviceId(),
+      device: await this.ledger.getDeviceId(),
       lamport: Date.now(),
       now: Date.now(),
     });
-    await this.store.appendEvent(ev);
+    await this.ledger.appendEvent(ev);
     element.notePath = notePath;
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after promote failed", e);
     });
     new Notice(`Promoted extract to "${notePath}".`);
@@ -3011,7 +3011,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     elementId: ElementId,
     element: IrElement,
   ): Promise<boolean> {
-    if (!this.store || !element.anchor) return false;
+    if (!this.ledger || !element.anchor) return false;
     if (element.anchor.pdf || isPdfPath(element.anchor.sourcePath)) {
       return false;
     }
@@ -3030,16 +3030,16 @@ export default class IncrementalReadingPlugin extends Plugin {
       position: { start: result.start, end: result.end },
     };
 
-    await this.store.appendEvent({
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: Date.now(),
       lamport: Date.now(),
-      device: await this.store.getDeviceId(),
+      device: await this.ledger.getDeviceId(),
       kind: "anchor-repaired",
       target: elementId,
       payload: { anchor: repairedAnchor },
     });
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after re-anchor failed", e);
     });
     return true;
@@ -3050,17 +3050,17 @@ export default class IncrementalReadingPlugin extends Plugin {
     elementId: ElementId,
     _element: IrElement,
   ): Promise<void> {
-    if (!this.store) return;
-    await this.store.appendEvent({
+    if (!this.ledger) return;
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: Date.now(),
       lamport: Date.now(),
-      device: await this.store.getDeviceId(),
+      device: await this.ledger.getDeviceId(),
       kind: "anchor-detached",
       target: elementId,
       payload: {},
     });
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after detach failed", e);
     });
     void this.refreshStatusBar();
@@ -3071,17 +3071,17 @@ export default class IncrementalReadingPlugin extends Plugin {
     elementId: ElementId,
     newParentId: ElementId | null,
   ): Promise<void> {
-    if (!this.store) return;
-    await this.store.appendEvent({
+    if (!this.ledger) return;
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: Date.now(),
       lamport: Date.now(),
-      device: await this.store.getDeviceId(),
+      device: await this.ledger.getDeviceId(),
       kind: "reparented",
       target: elementId,
       payload: { parentId: newParentId },
     });
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after reparent failed", e);
     });
     void this.refreshStatusBar();
@@ -3092,19 +3092,19 @@ export default class IncrementalReadingPlugin extends Plugin {
     _file: TFile | null,
     days: number,
   ): Promise<void> {
-    if (!this.store) return;
+    if (!this.ledger) return;
     const now = Date.now();
     const newDue = now + days * 24 * 60 * 60 * 1000;
-    await this.store.appendEvent({
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: now,
       lamport: now,
-      device: await this.store.getDeviceId(),
+      device: await this.ledger.getDeviceId(),
       kind: "mercy-postponed",
       target: elementId,
       payload: { newDue },
     });
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after postpone failed", e);
     });
     void this.refreshStatusBar();
@@ -3116,7 +3116,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * skips both events on next load, so the affected element's `card`
    * reverts to its pre-grade value (or `undefined` if the undone grade
    * was the first ever for that card). The note's frontmatter is
-   * rewritten in lockstep so YAML and the store agree.
+   * rewritten in lockstep so YAML and the ledger agree.
    *
    * Returns the affected element's id and a human label for the toast,
    * or `null` when the log holds no un-undone grade events. Callers (the
@@ -3135,20 +3135,20 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     | null
   > {
-    if (!this.store) return null;
-    const events = await this.store.loadEvents();
+    if (!this.ledger) return null;
+    const events = await this.ledger.loadEvents();
     const target = findLastUndoableGrade(events);
     if (!target) return null;
 
     const now = Date.now();
-    await this.store.appendEvent({
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: now,
       // Live single-device events sort after migration lamports and among
       // themselves by wall clock; ties break on the unique event id. Same
       // policy as `IrReviewView.emit`.
       lamport: now,
-      device: await this.store.getDeviceId(),
+      device: await this.ledger.getDeviceId(),
       kind: "grade-undone",
       target: target.target,
       payload: { eventId: target.id },
@@ -3159,7 +3159,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     // grade for this card, `el.card` is now undefined — write a freshly
     // constructed card so the YAML reflects "ungraded" rather than
     // leaving the prior post-grade values in place.
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     const el = state.elements.get(target.target);
     if (el?.notePath) {
       const file = this.app.vault.getAbstractFileByPath(el.notePath);
@@ -3178,7 +3178,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     }
 
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after undo failed", e);
     });
     void this.refreshStatusBar();
@@ -3241,8 +3241,8 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async openStatsView(): Promise<void> {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
     const existing = this.app.workspace.getLeavesOfType(IR_STATS_VIEW_TYPE);
@@ -3265,11 +3265,11 @@ export default class IncrementalReadingPlugin extends Plugin {
    * line in the header tells Anki where to put new items).
    */
   private async exportAnkiTsv(): Promise<void> {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     const elements = Array.from(state.elements.values());
     const tsv = toAnkiTsv(elements, { deck: this.settings.ankiDeckName });
     const outPath = "anki-ir.tsv";
@@ -3291,10 +3291,10 @@ export default class IncrementalReadingPlugin extends Plugin {
    * written.
    */
   private async copyOptimizerDataReport(): Promise<void> {
-    if (!this.store) return;
-    await this.storeInit;
-    const events = await this.store.loadEvents();
-    const state = await this.store.load();
+    if (!this.ledger) return;
+    await this.ledgerInit;
+    const events = await this.ledger.loadEvents();
+    const state = await this.ledger.load();
     const revlog = extractRevlog(events, state);
     const text = formatDataReport(revlog, Date.now());
     try {
@@ -3312,7 +3312,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   /**
    * Import the current clipboard text as a new IR topic. The pure
    * `planBulkImport` resolves title, body, and frontmatter; this method
-   * creates the vault note, records it in the store, and opens it.
+   * creates the vault note, records it in the ledger, and opens it.
    * The plugin never fetches a URL; paste-only is the privacy contract.
    */
   private async bulkImport(): Promise<void> {
@@ -3374,12 +3374,12 @@ export default class IncrementalReadingPlugin extends Plugin {
    * its real next-due.
    */
   private async runMercy(): Promise<void> {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
     const now = Date.now();
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     const elements = Array.from(state.elements.values());
 
     const entries: MercyEntry[] = [];
@@ -3404,9 +3404,9 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
-    const events = await this.store.loadEvents();
+    const events = await this.ledger.loadEvents();
     let lamport = nextLamport(events);
-    const device = await this.store.getDeviceId();
+    const device = await this.ledger.getDeviceId();
     const newDue = now + 24 * 60 * 60 * 1000;
 
     for (const id of result.postponed) {
@@ -3419,10 +3419,10 @@ export default class IncrementalReadingPlugin extends Plugin {
         target: id as ElementId,
         payload: { newDue },
       };
-      await this.store.appendEvent(ev);
+      await this.ledger.appendEvent(ev);
       lamport += 1;
     }
-    await this.store.reconcile();
+    await this.ledger.reconcile();
 
     new Notice(
       `Incremental Reading: postponed ${result.postponedCount} element` +
@@ -3453,7 +3453,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /**
    * Create the on-disk standalone note for a freshly-promoted orphan extract.
-   * The new note carries the extract's verbatim text as body (the store
+   * The new note carries the extract's verbatim text as body (the ledger
    * already had that text; this just makes it user-visible) plus the IR
    * frontmatter a normal extract gets, so it slots into the queue
    * indistinguishably from a user-created one.
@@ -3555,7 +3555,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * whatever is still actually gone.
    */
   private async settlePendingGone(): Promise<void> {
-    if (this.nuking || !this.store || this.pendingGone.size === 0) return;
+    if (this.nuking || !this.ledger || this.pendingGone.size === 0) return;
     const existing = this.vaultFilePaths();
     const missing = [...this.pendingGone.keys()];
     const prefix = inferPrefixRewrite(missing, existing);
@@ -3606,14 +3606,14 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /**
    * Deletes that happened while Obsidian was closed never fire
-   * vault.on("delete"). After store init, any path the collection still
+   * vault.on("delete"). After ledger init, any path the collection still
    * names whose file is gone and which has no tombstone gets the same
    * prompt as a live delete — unless we can see it moved.
    */
   private async reconcileMissingSources(): Promise<void> {
-    if (this.nuking || !this.store) return;
+    if (this.nuking || !this.ledger) return;
     try {
-      const state = await this.store.load();
+      const state = await this.ledger.load();
       const missing = missingSourcePaths(
         Array.from(state.elements.values()),
         state.tombstones.keys(),
@@ -3636,7 +3636,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
       }
       await this.restoreOrphanIrNotes();
-      const after = await this.store.load();
+      const after = await this.ledger.load();
       const leftover = missingSourcePaths(
         Array.from(after.elements.values()),
         after.tombstones.keys(),
@@ -3665,9 +3665,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     title: string,
     remaining: number,
   ): Promise<void> {
-    if (this.nuking || !this.store) return;
+    if (this.nuking || !this.ledger) return;
     try {
-      const state = await this.store.load();
+      const state = await this.ledger.load();
       if (state.tombstones.has(path)) return;
       if (this.app.vault.getAbstractFileByPath(path) instanceof TFile) return;
 
@@ -3712,16 +3712,16 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Notes still marked `ir-type` whose path is not in the store — typical
+   * Notes still marked `ir-type` whose path is not in the ledger — typical
    * after a folder move was treated as a mass delete. Resurrect with the
    * original element id when the log names the old path.
    */
   private async restoreOrphanIrNotes(): Promise<void> {
-    if (!this.store) return;
+    if (!this.ledger) return;
     try {
       const notes = this.enumerateIrNotes();
-      const state = await this.store.load();
-      const events = await this.store.loadEvents();
+      const state = await this.ledger.load();
+      const events = await this.ledger.loadEvents();
       const plan = planOrphanRecoveries(
         notes,
         state.elements.values(),
@@ -3730,7 +3730,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         this.vaultFilePaths(),
         Date.now(),
         nextLamport(events),
-        await this.store.getDeviceId(),
+        await this.ledger.getDeviceId(),
         () => newEventId(),
       );
       if (plan.events.length === 0) return;
@@ -3739,7 +3739,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       void this.refreshExtractDecorations();
       const n = plan.restored;
       new Notice(
-        `Incremental Reading: restored ${n} note${n === 1 ? "" : "s"} that were still marked IR into the store.`,
+        `Incremental Reading: restored ${n} note${n === 1 ? "" : "s"} that were still marked IR into the ledger.`,
       );
     } catch (e) {
       console.error("Incremental Reading: orphan-note restore failed", e);
@@ -3753,7 +3753,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     choice: SourceGoneChoice,
     quiet = false,
   ): Promise<void> {
-    if (!this.store) return;
+    if (!this.ledger) return;
     if (this.app.vault.getAbstractFileByPath(path) instanceof TFile) return;
     const existing = this.vaultFilePaths();
     const moved =
@@ -3765,8 +3765,8 @@ export default class IncrementalReadingPlugin extends Plugin {
         return;
       }
     }
-    const events = await this.store.loadEvents();
-    const device = await this.store.getDeviceId();
+    const events = await this.ledger.loadEvents();
+    const device = await this.ledger.getDeviceId();
     const now = Date.now();
     const lamport = nextLamport(events);
     const before = elements.map((e) => structuredClone(e));
@@ -3815,8 +3815,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     }
 
-    for (const ev of newEvents) await this.store.appendEvent(ev);
-    await this.store.reconcile();
+    for (const ev of newEvents) await this.ledger.appendEvent(ev);
+    await this.ledger.reconcile();
 
     this.lastSourceDeletionUndo = {
       before,
@@ -3847,20 +3847,20 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async undoLastSourceDeletion(): Promise<void> {
-    if (!this.store || !this.lastSourceDeletionUndo) {
+    if (!this.ledger || !this.lastSourceDeletionUndo) {
       new Notice("Incremental Reading: nothing to undo.");
       return;
     }
     const pending = this.lastSourceDeletionUndo;
     this.lastSourceDeletionUndo = null;
     try {
-      const events = await this.store.loadEvents();
+      const events = await this.ledger.loadEvents();
       const undo = planUndoSourceDeletion(
         pending.before,
         pending.deletionEvents,
         Date.now(),
         nextLamport(events),
-        await this.store.getDeviceId(),
+        await this.ledger.getDeviceId(),
         () => newEventId(),
       );
       await this.appendRelinkEvents(undo);
@@ -3896,7 +3896,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     oldPath: string,
   ): Promise<void> {
     if (this.nuking) return;
-    if (!this.store) return;
+    if (!this.ledger) return;
     if (file instanceof TFile) {
       if (file.extension !== "md" && file.extension !== "pdf") return;
     }
@@ -3905,7 +3905,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async rewriteSourcePaths(from: string, to: string): Promise<void> {
-    if (!this.store || from === to) return;
+    if (!this.ledger || from === to) return;
     for (const p of [...this.irPdfPaths]) {
       const next = rewriteStoredPath(p, from, to);
       if (next) {
@@ -3914,16 +3914,16 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     }
     try {
-      const events = await this.store.loadEvents();
-      const state = await this.store.load();
+      const events = await this.ledger.loadEvents();
+      const state = await this.ledger.load();
       const rewrites = sourcePathRewrites(state.elements.values(), from, to);
       if (rewrites.length === 0) return;
 
-      const device = await this.store.getDeviceId();
+      const device = await this.ledger.getDeviceId();
       let lamport = nextLamport(events);
       const now = Date.now();
       for (const rw of rewrites) {
-        await this.store.appendEvent({
+        await this.ledger.appendEvent({
           id: newEventId(),
           ts: now,
           lamport,
@@ -3934,7 +3934,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         });
         lamport += 1;
       }
-      await this.store.reconcile();
+      await this.ledger.reconcile();
     } catch (e) {
       console.error("Incremental Reading: rename handling failed", e);
     }
@@ -3945,9 +3945,9 @@ export default class IncrementalReadingPlugin extends Plugin {
    * trash restore, or a create we missed), offer re-link once per path.
    */
   private async offerPendingRelinks(): Promise<void> {
-    if (this.nuking || !this.store) return;
+    if (this.nuking || !this.ledger) return;
     try {
-      const state = await this.store.load();
+      const state = await this.ledger.load();
       for (const path of state.tombstones.keys()) {
         const af = this.app.vault.getAbstractFileByPath(path);
         if (af instanceof TFile && (af.extension === "md" || af.extension === "pdf")) {
@@ -3960,7 +3960,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async maybeOfferRelink(file: TFile): Promise<void> {
-    if (this.nuking || !this.store) return;
+    if (this.nuking || !this.ledger) return;
     if (file.extension !== "md" && file.extension !== "pdf") return;
     this.relinkQueue.push(file);
     if (this.relinkBusy) return;
@@ -3979,16 +3979,16 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async offerRelinkForFile(file: TFile): Promise<void> {
-    if (this.nuking || !this.store) return;
+    if (this.nuking || !this.ledger) return;
     try {
-      const state = await this.store.load();
+      const state = await this.ledger.load();
       const tomb = state.tombstones.get(file.path);
       if (!tomb) return;
 
       const elements = Array.from(state.elements.values());
       const candidates = relinkCandidates(elements, tomb.path);
-      const events = await this.store.loadEvents();
-      const device = await this.store.getDeviceId();
+      const events = await this.ledger.loadEvents();
+      const device = await this.ledger.getDeviceId();
       const now = Date.now();
       const lamport = nextLamport(events);
 
@@ -4043,9 +4043,9 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async appendRelinkEvents(events: IrEvent[]): Promise<void> {
-    if (!this.store) return;
-    for (const ev of events) await this.store.appendEvent(ev);
-    await this.store.reconcile();
+    if (!this.ledger) return;
+    for (const ev of events) await this.ledger.appendEvent(ev);
+    await this.ledger.reconcile();
   }
 
   private async toggleDismiss(file: TFile) {
@@ -4184,14 +4184,14 @@ export default class IncrementalReadingPlugin extends Plugin {
         });
       }
       const reviewFile = review.getCurrentReviewFile();
-      if (reviewFile?.extension === "md" && this.store) {
-        const state = await this.store.load();
+      if (reviewFile?.extension === "md" && this.ledger) {
+        const state = await this.ledger.load();
         for (const el of state.elements.values()) {
           if (el.type === "extract" && el.notePath === reviewFile.path) {
             out.push({
               title: "Fork this extract",
               description:
-                "Duplicate this reading element (promoted extract: copy note; anchored: second store element).",
+                "Duplicate this reading element (promoted extract: copy note; anchored: second ledger element).",
               icon: "git-branch",
               run: () => this.forkStoreExtract(el.id),
             });
@@ -4269,14 +4269,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     }
 
-    if (file?.extension === "md" && this.store) {
-      const state = await this.store.load();
+    if (file?.extension === "md" && this.ledger) {
+      const state = await this.ledger.load();
       for (const el of state.elements.values()) {
         if (el.type === "extract" && el.notePath === file.path) {
           out.push({
             title: "Fork this extract",
             description:
-              "Duplicate this reading element (promoted extract: copy note; anchored: second store element).",
+              "Duplicate this reading element (promoted extract: copy note; anchored: second ledger element).",
             icon: "git-branch",
             run: () => this.forkStoreExtract(el.id),
           });
@@ -4519,17 +4519,17 @@ export default class IncrementalReadingPlugin extends Plugin {
    * Promoted extracts (vault note) are forked by copying the markdown file.
    */
   private async forkStoreExtract(elementId: ElementId): Promise<void> {
-    if (!this.store) {
-      new Notice("Incremental Reading: store is not ready.");
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     const el = state.elements.get(elementId);
     if (!el || el.type !== "extract") {
       new Notice("Incremental Reading: fork only applies to IR extracts.");
       return;
     }
-    const device = await this.store.getDeviceId();
+    const device = await this.ledger.getDeviceId();
     const now = Date.now();
 
     if (el.notePath) {
@@ -4557,8 +4557,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.recordElement(nf);
       new Notice(`Incremental Reading: forked extract to "${nf.basename}".`);
       void this.refreshStatusBar();
-      if (this.store) {
-        const state = await this.store.load();
+      if (this.ledger) {
+        const state = await this.ledger.load();
         const created = state.elements.get(elementIdForPath(newPath));
         if (created) this.getActiveReviewView()?.adoptElement(created);
       }
@@ -4585,7 +4585,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         : undefined,
     };
 
-    await this.store.appendEvent({
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: now,
       lamport: now,
@@ -4594,7 +4594,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       target: newEl.id,
       payload: { element: newEl },
     });
-    await this.store.reconcile().catch((e) => {
+    await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after fork failed", e);
     });
     new Notice("Incremental Reading: forked extract (second reading element).");
@@ -4620,7 +4620,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     selStart: number,
     selEnd: number,
   ): Promise<void> {
-    if (!this.store || selEnd <= selStart) return;
+    if (!this.ledger || selEnd <= selStart) return;
     const id = await this.resolveElementIdForFile(itemFile);
     if (!id) return;
     const anchor = buildTextQuoteAnchor(
@@ -4630,16 +4630,16 @@ export default class IncrementalReadingPlugin extends Plugin {
       selEnd,
     );
     try {
-      await this.store.appendEvent({
+      await this.ledger.appendEvent({
         id: newEventId(),
         ts: Date.now(),
         lamport: Date.now(),
-        device: await this.store.getDeviceId(),
+        device: await this.ledger.getDeviceId(),
         kind: "anchor-repaired",
         target: id,
         payload: { anchor },
       });
-      await this.store.reconcile();
+      await this.ledger.reconcile();
     } catch (e) {
       console.error("Incremental Reading: recording cloze source span failed", e);
       return;
@@ -4660,8 +4660,8 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private async markFolderAsTopics(folder: TFolder): Promise<void> {
     const skip = new Set<string>();
-    if (this.store) {
-      const state = await this.store.load();
+    if (this.ledger) {
+      const state = await this.ledger.load();
       for (const el of state.elements.values()) {
         if (el.notePath) skip.add(el.notePath);
       }
@@ -4704,8 +4704,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.recordElement(abs, { skipReconcile: true });
       marked += 1;
     }
-    if (this.store) {
-      await this.store.reconcile().catch((e) => {
+    if (this.ledger) {
+      await this.ledger.reconcile().catch((e) => {
         console.error(
           "Incremental Reading: reconcile after folder topics failed",
           e,
@@ -5220,16 +5220,16 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * PDFs have no frontmatter. Record a store-only topic whose `notePath` is
+   * PDFs have no frontmatter. Record a ledger-only topic whose `notePath` is
    * the PDF. Idempotent: the id is path-derived, same as migration.
    */
   private async markPdfAsTopic(
     file: TFile,
     opts?: { silentIfExists?: boolean; silent?: boolean },
   ): Promise<boolean> {
-    if (!this.store) {
+    if (!this.ledger) {
       if (!opts?.silent) {
-        new Notice("Incremental Reading: store is not ready.");
+        new Notice("Incremental Reading: ledger is not ready.");
       }
       return false;
     }
@@ -5247,7 +5247,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         path: file.path,
         elementId: elementIdForPath(file.path),
         eventId: newEventId(),
-        device: await this.store.getDeviceId(),
+        device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
         priority: this.settings.defaultPriority,
@@ -5255,8 +5255,8 @@ export default class IncrementalReadingPlugin extends Plugin {
           newTopicState(this.settings, new Date(now)),
         ),
       });
-      await this.store.appendEvent(ev);
-      await this.store.reconcile();
+      await this.ledger.appendEvent(ev);
+      await this.ledger.reconcile();
       this.irPdfPaths.add(file.path);
       void this.refreshStatusBar();
       if (!opts?.silent) {
@@ -5275,11 +5275,11 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Mirror a just-created/marked note into the store as an `element-created`
-   * event so it reaches the store-backed queue. Reuses the *pure*
+   * Mirror a just-created/marked note into the ledger as an `element-created`
+   * event so it reaches the ledger-backed queue. Reuses the *pure*
    * `migrateNotes` transform on a single note: the element is built exactly
    * as a migration would build it, with the same path-derived id, so this is
-   * idempotent and consistent with the rest of the store. Frontmatter (just
+   * idempotent and consistent with the rest of the ledger. Frontmatter (just
    * written by the ir-note helpers) is the dual-write fallback and is read
    * back atomically via `processFrontMatter`, which is reliable immediately
    * after creation where `metadataCache` may still be stale.
@@ -5288,7 +5288,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     file: TFile,
     opts?: { skipReconcile?: boolean },
   ): Promise<void> {
-    if (!this.store) return;
+    if (!this.ledger) return;
     try {
       let fm: Record<string, unknown> = {};
       await this.app.fileManager.processFrontMatter(file, (f) => {
@@ -5299,16 +5299,16 @@ export default class IncrementalReadingPlugin extends Plugin {
         Date.now(),
       );
       for (const ev of events) {
-        await this.store.appendEvent(ev);
+        await this.ledger.appendEvent(ev);
       }
       if (opts?.skipReconcile) return;
-      await this.store.reconcile();
+      await this.ledger.reconcile();
       void this.refreshStatusBar();
     } catch (e) {
       console.error("Incremental Reading: recording element failed", e);
       new Notice(
         "Incremental Reading: could not record the new element in the " +
-          "store; it is still in the note. See the developer console.",
+          "ledger; it is still in the note. See the developer console.",
       );
     }
   }
@@ -5316,21 +5316,21 @@ export default class IncrementalReadingPlugin extends Plugin {
   /**
    * Migration controller (maintainer-owned; see docs/DESIGN.md "Integration").
    *
-   * This is the one place that touches both worlds: it constructs the store
+   * This is the one place that touches both worlds: it constructs the ledger
    * over the Obsidian data adapter, decides whether a migration is owed,
    * drives the *pure* `migrateNotes` transform with frontmatter read out of
-   * `metadataCache`, and lands the result through the store's append +
+   * `metadataCache`, and lands the result through the ledger's append +
    * reconcile path.
    *
    * Three invariants make this safe enough to run unattended on load, since
    * no mechanical oracle can gate a one-way data move:
    *
    * - Guarded / runs once. The presence of `.ir/meta.json` is the marker.
-   *   `store.init()` writes it (with `device.json`) before any append, so a
+   *   `ledger.init()` writes it (with `device.json`) before any append, so a
    *   second load short-circuits here.
    * - Reversible. The controller itself never touches note frontmatter; the
    *   migrated log is written alongside under `.ir/`, never in place of
-   *   anything. Post-cutover the store drives the queue, but every review
+   *   anything. Post-cutover the ledger drives the queue, but every review
    *   action still dual-writes the old `ir-` keys, so frontmatter remains a
    *   complete, hand-readable fallback.
    * - Idempotent. `migrateNotes` derives element and event ids from the note
@@ -5342,8 +5342,8 @@ export default class IncrementalReadingPlugin extends Plugin {
    * whole plugin (commands, review) down with it.
    */
   private async runMigrationIfOwed(fs: ObsidianVaultFs): Promise<void> {
-    const store = this.store;
-    if (!store) return;
+    const ledger = this.ledger;
+    if (!ledger) return;
     // clock-order, not conservative: on the live single-device plugin the
     // newest event must win, otherwise a "graded" event whose due moves
     // later than the migrated card is folded away and the item never
@@ -5367,35 +5367,35 @@ export default class IncrementalReadingPlugin extends Plugin {
         // no-op for META in the already-initialized branch; it only touches
         // .ir/device.json.
         await withTimeout(
-          store.init({ hostname }),
+          ledger.init({ hostname }),
           8000,
-          "IrStore.init",
+          "IrLedger.init",
         );
         return;
       }
 
       // Marker + device id first, so the append below has a shard to write
       // to and a re-run sees the marker.
-      await withTimeout(store.init({ hostname }), 8000, "IrStore.init");
+      await withTimeout(ledger.init({ hostname }), 8000, "IrLedger.init");
 
       const notes = this.enumerateIrNotes();
       const events = migrateNotes(notes, Date.now());
       for (const ev of events) {
-        await store.appendEvent(ev);
+        await ledger.appendEvent(ev);
       }
-      await store.reconcile();
+      await ledger.reconcile();
 
       if (events.length > 0) {
         new Notice(
           `Incremental Reading: migrated ${events.length} element` +
-            `${events.length === 1 ? "" : "s"} into the new store. ` +
+            `${events.length === 1 ? "" : "s"} into the new ledger. ` +
             `Frontmatter is kept as a fallback.`,
         );
       }
     } catch (e) {
       console.error("Incremental Reading: migration failed", e);
       new Notice(
-        "Incremental Reading: store migration failed; your notes are " +
+        "Incremental Reading: ledger migration failed; your notes are " +
           "untouched and still drive the plugin. See the developer console.",
       );
     }
@@ -5568,8 +5568,8 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   /**
-   * Remove the `.ir/` state folder, drop the in-memory store, detach IR
-   * leaves so they do not render against the now-empty store, then
+   * Remove the `.ir/` state folder, drop the in-memory ledger, detach IR
+   * leaves so they do not render against the now-empty ledger, then
    * re-initialise so subsequent commands work without a plugin reload.
    * Shared by the full nuke flow and the state-only reset flow.
    */
@@ -5585,7 +5585,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       stateRemoved = false;
     }
 
-    this.store = undefined;
+    this.ledger = undefined;
     this.app.workspace.detachLeavesOfType(IR_TREE_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
@@ -5594,11 +5594,11 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     try {
       const fs = new ObsidianVaultFs(adapter);
-      this.store = new IrStore(fs, { conflict: "clock-order" });
-      this.storeInit = this.runMigrationIfOwed(fs);
-      await this.storeInit;
+      this.ledger = new IrLedger(fs, { conflict: "clock-order" });
+      this.ledgerInit = this.runMigrationIfOwed(fs);
+      await this.ledgerInit;
     } catch (e) {
-      console.error("Incremental Reading: post-wipe store re-init failed", e);
+      console.error("Incremental Reading: post-wipe ledger re-init failed", e);
     }
 
     void this.refreshStatusBar();

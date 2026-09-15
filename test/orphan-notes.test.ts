@@ -67,7 +67,7 @@ function created(
   };
 }
 
-test("orphanNotes: disk IR notes whose path is not any store notePath", () => {
+test("orphanNotes: disk IR notes whose path is not any ledger notePath", () => {
   const live = [
     newElement({
       id: "el_a" as ElementId,
@@ -269,7 +269,7 @@ test("planOrphanRecoveries: resurrect deleted folder-move notes with old ids", (
   assert.equal(again.restored, 0);
 });
 
-test("planOrphanRecoveries: stale store path becomes source-renamed", () => {
+test("planOrphanRecoveries: stale ledger path becomes source-renamed", () => {
   const oldPath = "Papers/a.md";
   const newPath = "Archive/Papers/a.md";
   const id = elementIdForPath(oldPath);

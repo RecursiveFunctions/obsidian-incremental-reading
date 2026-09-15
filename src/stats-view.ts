@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 
-import { IrStore } from "./ir/store";
+import { IrLedger } from "./ir/ledger";
 import type { IrElement, IrEvent } from "./ir/model";
 import type { LogState } from "./ir/log";
 import type { IrSettings } from "./ir/settings-data";
@@ -42,13 +42,13 @@ export interface SchedulerHost {
 const FIT_SEED = 42;
 
 export class IrStatsView extends ItemView {
-  private store: IrStore;
+  private ledger: IrLedger;
   private host: SchedulerHost;
   private fitCancelled = false;
 
-  constructor(leaf: WorkspaceLeaf, store: IrStore, host: SchedulerHost) {
+  constructor(leaf: WorkspaceLeaf, ledger: IrLedger, host: SchedulerHost) {
     super(leaf);
-    this.store = store;
+    this.ledger = ledger;
     this.host = host;
   }
 
@@ -70,7 +70,7 @@ export class IrStatsView extends ItemView {
 
   async onClose(): Promise<void> {}
 
-  /** Re-render from the store. Safe to call from the host plugin onChange. */
+  /** Re-render from the ledger. Safe to call from the host plugin onChange. */
   refresh(): Promise<void> {
     return this.render();
   }
@@ -92,8 +92,8 @@ export class IrStatsView extends ItemView {
     const body = container.createDiv({ cls: "ir-stats-body" });
     body.createEl("p", { cls: "ir-stats-empty", text: "Loading..." });
 
-    const events = await this.store.loadEvents();
-    const state = await this.store.load();
+    const events = await this.ledger.loadEvents();
+    const state = await this.ledger.load();
     const now = Date.now();
     const undoneEventIds = new Set<string>();
     for (const ev of events) {

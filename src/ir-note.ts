@@ -364,7 +364,7 @@ export async function createIrItemChildNote(
 }
 
 /**
- * Dual-write YAML after the store already succeeded. Failures are logged
+ * Dual-write YAML after the ledger already succeeded. Failures are logged
  * once; the user still has IR. Do not toast "see the developer console."
  */
 export async function quietFrontmatterWrite(
@@ -375,7 +375,7 @@ export async function quietFrontmatterWrite(
     await work();
   } catch (e) {
     console.error(
-      `Incremental Reading: frontmatter dual-write failed (${context}); the store still has this change.`,
+      `Incremental Reading: frontmatter dual-write failed (${context}); the ledger still has this change.`,
       e,
     );
   }

@@ -238,7 +238,7 @@ test("createCloze keeps multi-line context", async () => {
 
 // `markExtractedSpan` and its three tests deleted under DESIGN §Q3: extracts
 // and clozes no longer mutate the source body. Highlights now render as
-// decoration-only overlays painted from store anchors, so the contract these
+// decoration-only overlays painted from ledger anchors, so the contract these
 // tests defended (chrome present in the body, propagated to ancestors) is no
 // longer one the plugin promises.
 

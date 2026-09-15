@@ -1,15 +1,15 @@
 /**
- * Golden contract for IrStore shard compaction (Q2 D, sub-decision 3).
+ * Golden contract for IrLedger shard compaction (Q2 D, sub-decision 3).
  *
  * Claude-authored, fenced out of the delegated scope. The oracle is an
  * in-memory VaultFs defined here: deterministic, no real filesystem. The
- * delegated agent implements compaction in src/ir/store.ts ONLY and is
+ * delegated agent implements compaction in src/ir/ledger.ts ONLY and is
  * judged solely by this suite + the rest of the suite staying green + tsc.
  * This file is the spec made executable; do not edit it to pass.
  *
  * Contract under test
  * -------------------
- * IrStore gains shard compaction wired to the log.ts `compact()` primitive:
+ * IrLedger gains shard compaction wired to the log.ts `compact()` primitive:
  *
  *  - new exported path constants `SNAPSHOT` (".ir/snapshot.jsonl") and
  *    `RHISTDIR` (".ir/review-history").
@@ -31,12 +31,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  IrStore,
+  IrLedger,
   SNAPSHOT,
   RHISTDIR,
   LOGDIR,
   type VaultFs,
-} from "../src/ir/store";
+} from "../src/ir/ledger";
 import {
   fold,
   type LogState,
@@ -155,39 +155,39 @@ function lines(s: string | undefined): IrEvent[] {
     .map((l) => JSON.parse(l) as IrEvent);
 }
 
-async function seed(store: IrStore, events: IrEvent[]): Promise<void> {
-  await store.init();
-  for (const e of events) await store.appendEvent(e);
+async function seed(ledger: IrLedger, events: IrEvent[]): Promise<void> {
+  await ledger.init();
+  for (const e of events) await ledger.appendEvent(e);
 }
 
 test("compactLocalShard is a no-op below both thresholds", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
+  const ledger = new IrLedger(fs);
   const id = newElementId();
   const events = [created(id, 1), prio(id, 2, 10), prio(id, 3, 20)];
-  await seed(store, events);
+  await seed(ledger, events);
 
   const before = new Map(fs.dump());
-  const r = await store.compactLocalShard(5_000, { maxEvents: 250, maxAgeDays: 7 });
+  const r = await ledger.compactLocalShard(5_000, { maxEvents: 250, maxAgeDays: 7 });
 
   assert.deepEqual(r, { compacted: false, archived: 0, dropped: 0 });
   assert.deepEqual(fs.dump(), before, "no file touched below thresholds");
   assert.equal(fs.dump().has(SNAPSHOT), false);
-  assert.deepEqual(await store.load(), expectFold(events));
+  assert.deepEqual(await ledger.load(), expectFold(events));
 });
 
 test("count trigger: local shard shrinks to the kept events, state preserved", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
+  const ledger = new IrLedger(fs);
   const id = newElementId();
   const events: IrEvent[] = [created(id, 1)];
   for (let i = 2; i <= 13; i += 1) events.push(prio(id, i, i));
-  await seed(store, events);
+  await seed(ledger, events);
 
-  const dev = await store.getDeviceId();
+  const dev = await ledger.getDeviceId();
   const shardPath = `${LOGDIR}/${dev}.jsonl`;
 
-  const r = await store.compactLocalShard(9_999_999_999, {
+  const r = await ledger.compactLocalShard(9_999_999_999, {
     maxEvents: 5,
     maxAgeDays: 999_999,
   });
@@ -206,12 +206,12 @@ test("count trigger: local shard shrinks to the kept events, state preserved", a
     "every compacted-away event lands in the snapshot",
   );
   // Folded state is invariant across compaction.
-  assert.deepEqual(await store.load(), expectFold(events));
+  assert.deepEqual(await ledger.load(), expectFold(events));
 });
 
 test("age safety net triggers even below the count cap", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
+  const ledger = new IrLedger(fs);
   const id = newElementId();
   const now = 100 * DAY;
   const events = [
@@ -219,11 +219,11 @@ test("age safety net triggers even below the count cap", async () => {
     prio(id, 2, 7, 50 * DAY),
     prio(id, 3, 9, 99 * DAY),
   ];
-  await seed(store, events);
-  const dev = await store.getDeviceId();
+  await seed(ledger, events);
+  const dev = await ledger.getDeviceId();
   const shardPath = `${LOGDIR}/${dev}.jsonl`;
 
-  const r = await store.compactLocalShard(now, {
+  const r = await ledger.compactLocalShard(now, {
     maxEvents: 999_999,
     maxAgeDays: 7,
   });
@@ -234,18 +234,18 @@ test("age safety net triggers even below the count cap", async () => {
     [3],
     "only events within maxAgeDays stay in the active shard",
   );
-  assert.deepEqual(await store.load(), expectFold(events));
+  assert.deepEqual(await ledger.load(), expectFold(events));
 });
 
 test("only the local device shard is rewritten; foreign shards are byte-identical", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
+  const ledger = new IrLedger(fs);
   const local = newElementId();
   const events: IrEvent[] = [created(local, 1)];
   for (let i = 2; i <= 10; i += 1) events.push(prio(local, i, i));
-  await seed(store, events);
+  await seed(ledger, events);
 
-  // A second device's shard, written verbatim and never owned by this store.
+  // A second device's shard, written verbatim and never owned by this ledger.
   const foreignDev = newDeviceId();
   const foreignId = newElementId();
   const foreignEv = created(foreignId, 2);
@@ -253,7 +253,7 @@ test("only the local device shard is rewritten; foreign shards are byte-identica
   const foreignRaw = JSON.stringify(foreignEv) + "\n";
   await fs.write(foreignPath, foreignRaw);
 
-  await store.compactLocalShard(9_999_999_999, { maxEvents: 3, maxAgeDays: 999_999 });
+  await ledger.compactLocalShard(9_999_999_999, { maxEvents: 3, maxAgeDays: 999_999 });
 
   assert.equal(
     fs.dump().get(foreignPath),
@@ -261,12 +261,12 @@ test("only the local device shard is rewritten; foreign shards are byte-identica
     "a device never compacts another device's shard",
   );
   // Cross-device state still resolves after a local compaction.
-  assert.deepEqual(await store.load(), expectFold([...events, foreignEv]));
+  assert.deepEqual(await ledger.load(), expectFold([...events, foreignEv]));
 });
 
 test("review-history guarantee: review events survive, history holds only reviews", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
+  const ledger = new IrLedger(fs);
   const id = newElementId();
   const events: IrEvent[] = [created(id, 1)];
   const reviewIds = new Set<string>();
@@ -279,12 +279,12 @@ test("review-history guarantee: review events survive, history holds only review
       events.push(prio(id, i, i % 100));
     }
   }
-  await seed(store, events);
-  const dev = await store.getDeviceId();
+  await seed(ledger, events);
+  const dev = await ledger.getDeviceId();
   const shardPath = `${LOGDIR}/${dev}.jsonl`;
   const rhistPath = `${RHISTDIR}/${dev}.jsonl`;
 
-  const r = await store.compactLocalShard(9_999_999_999, {
+  const r = await ledger.compactLocalShard(9_999_999_999, {
     maxEvents: 5,
     maxAgeDays: 999_999,
   });
@@ -310,27 +310,27 @@ test("review-history guarantee: review events survive, history holds only review
   }
   assert.equal(r.archived, hist.length);
   // Even with review events folded out, full state is preserved.
-  assert.deepEqual(await store.load(), expectFold(events));
+  assert.deepEqual(await ledger.load(), expectFold(events));
 });
 
 test("repeated compaction is idempotent for folded state", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
+  const ledger = new IrLedger(fs);
   const id = newElementId();
   const events: IrEvent[] = [created(id, 1)];
   for (let i = 2; i <= 20; i += 1) {
     events.push(i % 3 === 0 ? graded(id, i, i * 1000) : prio(id, i, i));
   }
-  await seed(store, events);
+  await seed(ledger, events);
 
-  await store.compactLocalShard(9_999_999_999, { maxEvents: 4, maxAgeDays: 999_999 });
-  const afterFirst = await store.load();
+  await ledger.compactLocalShard(9_999_999_999, { maxEvents: 4, maxAgeDays: 999_999 });
+  const afterFirst = await ledger.load();
   // A second pass (shard is now small) must not corrupt or double-count.
-  const r2 = await store.compactLocalShard(9_999_999_999, {
+  const r2 = await ledger.compactLocalShard(9_999_999_999, {
     maxEvents: 4,
     maxAgeDays: 999_999,
   });
-  assert.deepEqual(await store.load(), afterFirst);
-  assert.deepEqual(await store.load(), expectFold(events));
+  assert.deepEqual(await ledger.load(), afterFirst);
+  assert.deepEqual(await ledger.load(), expectFold(events));
   assert.equal(r2.compacted, false, "a shard already at/under the cap is left alone");
 });

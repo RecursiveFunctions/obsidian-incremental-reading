@@ -4,7 +4,7 @@
  * The review pane is an ItemView, so Edit used to swap rendered markdown for a
  * raw textarea (source). Clicking the card felt like jumping to another view.
  * Live Preview (`source: false`) by default. **Source** uses the same nested
- * editor in raw markdown (`source: true`). Store-only extracts and mobile
+ * editor in raw markdown (`source: true`). Ledger-only extracts and mobile
  * keep the textarea.
  *
  * The nested leaf lives in a detached WorkspaceSplit (same idea as Hover

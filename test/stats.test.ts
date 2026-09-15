@@ -1,6 +1,6 @@
 /**
  * Golden contract for src/ir/stats.ts (v0.2 "Statistics": daily reviews,
- * retention, queue size, due count). Pure aggregation over the store's
+ * retention, queue size, due count). Pure aggregation over the ledger's
  * elements plus the review-history grade events.
  *
  * Claude-authored, fenced out of scope. Skips until the module exists;

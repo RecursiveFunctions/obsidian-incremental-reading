@@ -3,7 +3,7 @@
  *
  * The source note is never mutated by extract creation. Highlights for
  * existing anchors are painted into the editor's render tree only, via a
- * CodeMirror 6 StateField. Anchors live in the store; this module resolves
+ * CodeMirror 6 StateField. Anchors live in the ledger; this module resolves
  * them against the current note body and pushes the resulting decoration
  * set into every open MarkdownView whose file matches.
  *
@@ -28,7 +28,7 @@ import {
   type Extension,
   type Range as CmRange,
 } from "@codemirror/state";
-import type { IrStore } from "./store";
+import type { IrLedger } from "./ledger";
 import type { Anchor, IrElement } from "./model";
 import { resolveAnchor } from "./anchor";
 import {
@@ -65,7 +65,7 @@ export interface CachedAnchor {
 /**
  * Workspace-singleton cache: vault path -> resolved anchor ranges in
  * body-relative offsets. Built by {@link refreshIrDecorationCache} after
- * every store reconcile. The CM6 extension reads from this through
+ * every ledger reconcile. The CM6 extension reads from this through
  * {@link pushIrDecorations}; the reading-view post-processor through
  * {@link createIrExtractMarkdownPostProcessor}.
  */
@@ -88,19 +88,19 @@ export class IrDecorationCache {
 }
 
 /**
- * Re-resolve every extract anchor in the store against its source's current
+ * Re-resolve every extract anchor in the ledger against its source's current
  * body and rebuild the cache. Anchors that can't resolve right now (their
  * source moved, the text was edited away) are simply absent from the cache:
- * they still exist in the store and surface as "needs re-anchor" elsewhere.
+ * they still exist in the ledger and surface as "needs re-anchor" elsewhere.
  *
  * Idempotent; safe to call after every reconcile.
  */
 export async function refreshIrDecorationCache(
   app: App,
-  store: IrStore,
+  ledger: IrLedger,
   cache: IrDecorationCache,
 ): Promise<void> {
-  const state = await store.load();
+  const state = await ledger.load();
   const byPath = new Map<
     string,
     Array<{ anchor: Anchor; text: string }>

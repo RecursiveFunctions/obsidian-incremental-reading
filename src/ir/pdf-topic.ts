@@ -1,5 +1,5 @@
 /**
- * Store-only PDF topic. PDFs have no frontmatter, so Alt+T cannot use
+ * Ledger-only PDF topic. PDFs have no frontmatter, so Alt+T cannot use
  * `markAsTopic` / `processFrontMatter`. The element id is the same
  * path-derived id migration uses, so this is idempotent with a later
  * re-mark of the same file.

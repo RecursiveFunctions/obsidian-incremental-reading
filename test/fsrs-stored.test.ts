@@ -3,7 +3,7 @@
  * src/fsrs.ts (Task 5). Claude-authored, fenced out of the delegated scope.
  *
  * The existing frontmatter helpers in src/fsrs.ts stay (their own test still
- * runs); this task only ADDS the store-native conversion. Removal of the
+ * runs); this task only ADDS the ledger-native conversion. Removal of the
  * frontmatter path is task #6.
  */
 

@@ -24,7 +24,7 @@ only), optimizing the topic A-Factor schedule (FSRS items only).
 
 ## Data audit (done 2026-09-13)
 
-The store is an append-only event log (`src/ir/log.ts`); `graded` events
+The ledger is an append-only event log (`src/ir/log.ts`); `graded` events
 are the revlog. Findings:
 
 - Until 0.7.15, `graded` payloads carried only the rescheduled card, NOT

@@ -53,7 +53,7 @@ import {
   type TopicState,
 } from "./topic";
 import type { IrSettings } from "./settings";
-import type { IrStore } from "./ir/store";
+import type { IrLedger } from "./ir/ledger";
 import { elementIdForPath, migrateNotes } from "./ir/migrate";
 import {
   clampPriority,
@@ -268,12 +268,12 @@ export class IrReviewView extends ItemView {
     /** Mirrors ReviewModal's Component; MarkdownRenderer uses `this` as Component. */
     private readonly plugin: Component,
     private settings: IrSettings,
-    private store: IrStore,
+    private ledger: IrLedger,
     private queue: ReviewSlot[],
     /**
      * All elements indexed by id, used to render the parent-chain
      * breadcrumb (UI commitment #5). Passed in rather than re-derived so
-     * the view does not need to touch the store mid-session.
+     * the view does not need to touch the ledger mid-session.
      */
     private elementsById: Map<ElementId, IrElement>,
     private isNeural: boolean = false,
@@ -425,7 +425,7 @@ export class IrReviewView extends ItemView {
       }
     }
 
-    this.bookmarks = await this.store.loadBookmarks();
+    this.bookmarks = await this.ledger.loadBookmarks();
     this.bookmarksLoaded = true;
     this.sessionSeedLabel = this.queue[0]
       ? labelFor(this.queue[0].element)
@@ -645,7 +645,7 @@ export class IrReviewView extends ItemView {
       return;
     }
     void this.persistBookmarks()
-      .then(() => this.store.reconcile())
+      .then(() => this.ledger.reconcile())
       .catch((e) => {
         console.error("Incremental Reading: reconcile after review failed", e);
       })
@@ -882,7 +882,7 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (!slot || this.bodyMissing) return false;
     if (slot.file && isPdfPath(slot.file.path)) return false;
-    // Anchored elements (no backing file) edit through a "text-edited" store
+    // Anchored elements (no backing file) edit through a "text-edited" ledger
     // event; file-backed elements edit through `saveBody`. Both paths are
     // wired through `flushEdits`.
     if (this.isReading(slot)) return true;
@@ -894,7 +894,7 @@ export class IrReviewView extends ItemView {
    * source must be a topic or extract (items cannot have children), and for
    * items we'd be back to leaking the answer.
    *
-   * File-backed topics/extracts are the common case. Anchored extracts (store
+   * File-backed topics/extracts are the common case. Anchored extracts (ledger
    * body, no `notePath`) still need children: resolve a vault note for
    * provenance (`buildExtractEvent.sourcePath`) and for cloze placement +
    * migration (`createChildNote`).
@@ -1025,19 +1025,19 @@ export class IrReviewView extends ItemView {
     return null;
   }
 
-  /** Append a store event for the current element's state change. */
+  /** Append a ledger event for the current element's state change. */
   private async emit(
     kind: IrEventKind,
     target: ElementId,
     payload: Record<string, unknown>,
   ): Promise<void> {
-    await this.store.appendEvent({
+    await this.ledger.appendEvent({
       id: newEventId(),
       ts: Date.now(),
       // Live single-device events sort after the small migration lamports and
       // among themselves by wall clock; ties break on the unique event id.
       lamport: Date.now(),
-      device: await this.store.getDeviceId(),
+      device: await this.ledger.getDeviceId(),
       kind,
       target,
       payload,
@@ -1415,7 +1415,7 @@ export class IrReviewView extends ItemView {
     this.loadedSlotId = slot.id;
     // Reading topics/extracts: start in rendered markdown (same pipeline as
     // Preview). **Edit** or a click on the card body (outside links) opens
-    // Live Preview for vault notes. **Source** opens raw markdown. Store-only
+    // Live Preview for vault notes. **Source** opens raw markdown. Ledger-only
     // extracts and phones use a textarea. Extract/cloze from the preview use
     // DOM selection → source offsets; if that map fails we switch to Source
     // and keep the selection.
@@ -1515,7 +1515,7 @@ export class IrReviewView extends ItemView {
 
   /**
    * The scrollport that actually moves: CodeMirror while Live Preview is
-   * open, the textarea on phone/store-only, otherwise the reading pane.
+   * open, the textarea on phone/ledger-only, otherwise the reading pane.
    */
   private readingScroller(): HTMLElement | null {
     const live = this.liveEditor?.getScroller();
@@ -1534,7 +1534,7 @@ export class IrReviewView extends ItemView {
    * slot. No-op for non-reading elements (items have no meaningful position
    * to resume). Returns silently when nothing is visible yet.
    *
-   * Reader and editor use different scroll elements, so we store a 0–1
+   * Reader and editor use different scroll elements, so we keep a 0–1
    * `progress` fraction and apply it to whichever view is showing.
    */
   private captureBookmark(): void {
@@ -1703,7 +1703,7 @@ export class IrReviewView extends ItemView {
 
   private async persistBookmarks(): Promise<void> {
     try {
-      await this.store.saveBookmarks(this.bookmarks);
+      await this.ledger.saveBookmarks(this.bookmarks);
     } catch (e) {
       console.error("Incremental Reading: saving bookmarks failed", e);
     }
@@ -1776,7 +1776,7 @@ export class IrReviewView extends ItemView {
    * Persist any pending edit before advancing or creating a child.
    * Idempotent: re-flushing is a no-op when the buffer matches the last
    * saved state. File-backed elements save the whole body via `saveBody`;
-   * anchored elements (no file) record a `text-edited` event in the store
+   * anchored elements (no file) record a `text-edited` event in the ledger
    * so the change survives across folds without rewriting the parent note.
    */
   private async flushEdits(): Promise<void> {
@@ -1810,11 +1810,11 @@ export class IrReviewView extends ItemView {
           elementId: slot.id,
           text: this.currentRaw,
           eventId: newEventId(),
-          device: await this.store.getDeviceId(),
+          device: await this.ledger.getDeviceId(),
           lamport: now,
           now,
         });
-        await this.store.appendEvent(ev);
+        await this.ledger.appendEvent(ev);
         const updated = { ...slot.element, text: this.currentRaw };
         slot.element = updated;
         this.elementsById.set(slot.id, updated);
@@ -2617,7 +2617,7 @@ export class IrReviewView extends ItemView {
               new Notice("Could not re-anchor: text not found in source.");
               return;
             }
-            const state = await this.store.load();
+            const state = await this.ledger.load();
             const updated = state.elements.get(slot.id);
             if (updated) {
               slot.element = updated;
@@ -2634,7 +2634,7 @@ export class IrReviewView extends ItemView {
         .addEventListener("click", () => {
           void (async () => {
             await this.commitDetachAnchor!(slot.id, slot.element);
-            const state = await this.store.load();
+            const state = await this.ledger.load();
             const updated = state.elements.get(slot.id);
             if (updated) {
               slot.element = updated;
@@ -2727,7 +2727,7 @@ export class IrReviewView extends ItemView {
       const prev = this.queue[this.index - 1];
       if (prev && prev.element.id === result.targetId) {
         try {
-          const state = await this.store.load();
+          const state = await this.ledger.load();
           const updated = state.elements.get(result.targetId);
           if (updated) {
             prev.element = updated;
@@ -2961,7 +2961,7 @@ export class IrReviewView extends ItemView {
     // The `ir-occlusion` code-block processor reads this to decide whether
     // the tested mask is uncovered (the pane owns reveal, not the mask).
     body.toggleClass("ir-review-revealed", this.revealed);
-    // For store-only anchored extracts, `slot.file` is null. Falling back
+    // For ledger-only anchored extracts, `slot.file` is null. Falling back
     // to the empty string strips the source path Obsidian uses to resolve
     // contextual wikilinks (`[[sample]]`), so they render as unresolved.
     // Use the extract's provenance — the parent source note's path — so
@@ -2995,7 +2995,7 @@ export class IrReviewView extends ItemView {
         }),
       );
     } else if (!isCloze && slot && !slot.file) {
-      // Store-only card (e.g. a PDF extract): its children are anchored
+      // Ledger-only card (e.g. a PDF extract): its children are anchored
       // in this card's own text, so paint them from the element tree.
       const kids: DomSourceMark[] = [];
       for (const e of this.elementsById.values()) {
@@ -3584,12 +3584,12 @@ export class IrReviewView extends ItemView {
         priority: slot.element.priority,
         elementId: newElementId(),
         eventId: newEventId(),
-        device: await this.store.getDeviceId(),
+        device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
         schedule: topicStateToSchedule(newTopicState(this.settings, new Date(now))),
       });
-      await this.store.appendEvent(ev);
+      await this.ledger.appendEvent(ev);
       created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
       const promote =
@@ -3610,7 +3610,7 @@ export class IrReviewView extends ItemView {
     } catch (e) {
       console.error("Incremental Reading: anchored extract failed", e);
       new Notice(
-        "Incremental Reading: could not record the extract in the store. See the developer console.",
+        "Incremental Reading: could not record the extract in the ledger. See the developer console.",
       );
     }
     await this.reloadCurrentRaw();
@@ -3814,14 +3814,14 @@ export class IrReviewView extends ItemView {
         priority: slot.element.priority,
         elementId: newElementId(),
         eventId: newEventId(),
-        device: await this.store.getDeviceId(),
+        device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
         schedule: topicStateToSchedule(
           newTopicState(this.settings, new Date(now)),
         ),
       });
-      await this.store.appendEvent(ev);
+      await this.ledger.appendEvent(ev);
       const created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
       this.adoptElement(created);
@@ -3895,7 +3895,7 @@ export class IrReviewView extends ItemView {
 
   /**
    * Record a text-quote anchor on a new cloze item so source decorations
-   * can paint the already-clozed span (SuperMemo coverage). Store-only
+   * can paint the already-clozed span (SuperMemo coverage). Ledger-only
    * extracts map the selection through the extract's own anchor.
    */
   private async attachClozeSourceAnchor(
@@ -4006,7 +4006,7 @@ export class IrReviewView extends ItemView {
         Date.now(),
       );
       for (const ev of events) {
-        await this.store.appendEvent(ev);
+        await this.ledger.appendEvent(ev);
         if (ev.kind === "element-created") {
           created = ev.payload.element as IrElement;
           this.elementsById.set(created.id, created);

@@ -4,9 +4,9 @@
  * "audit their own pass" the way SuperMemo never made obvious.
  *
  * Pure: takes events + an element index + the session start timestamp,
- * returns a sorted list of entries. The store already records every IR
+ * returns a sorted list of entries. The ledger already records every IR
  * action as an event, so this is a filter + format, not a new tracking
- * mechanism (which would risk drifting from the store's truth).
+ * mechanism (which would risk drifting from the ledger's truth).
  */
 
 import { treeRowLabel } from "./labels";

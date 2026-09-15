@@ -1,7 +1,7 @@
 /**
  * Stable, path-independent identifiers.
  *
- * The store keys every element, event, and device by an id that never changes
+ * The ledger keys every element, event, and device by an id that never changes
  * when a note is renamed, moved, or its text is edited. Zero runtime
  * dependencies on purpose (see the security/trust pillar in docs/DESIGN.md):
  * ids come from the platform crypto, not an npm package.

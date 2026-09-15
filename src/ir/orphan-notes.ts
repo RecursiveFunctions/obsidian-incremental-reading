@@ -1,5 +1,5 @@
 /**
- * Put IR-marked notes back in the store when they vanished from the fold.
+ * Put IR-marked notes back in the ledger when they vanished from the fold.
  *
  * A folder move used to fire source-gone, which `element-deleted` every
  * file-backed topic/extract/item. The notes still exist (new path, same
@@ -8,7 +8,7 @@
  *
  * Resurrect with the *old* element id when the log or a tombstone names
  * the previous path — a fresh `el_mig_<newpath>` would break `parentId`
- * links. Fall back to `migrateNotes` for notes the store never saw.
+ * links. Fall back to `migrateNotes` for notes the ledger never saw.
  */
 
 import type { DeviceId, ElementId, EventId } from "./ids";

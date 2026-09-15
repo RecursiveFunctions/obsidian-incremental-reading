@@ -1,4 +1,4 @@
-import type { VaultFs } from "./store";
+import type { VaultFs } from "./ledger";
 
 export interface ObsidianDataAdapter {
   exists(path: string): Promise<boolean>;
@@ -42,7 +42,7 @@ export class ObsidianVaultFs implements VaultFs {
       return await this.adapter.exists(p);
     } catch {
       // Capacitor / iCloud adapters throw on missing hidden paths instead
-      // of returning false. Treat that as absent so store init can proceed.
+      // of returning false. Treat that as absent so ledger init can proceed.
       return false;
     }
   }

@@ -3,7 +3,7 @@
  *
  * Pure function — no Obsidian API, no I/O. Layered resolution:
  *   1. Anchor (position hint → text-quote → normalized match)
- *   2. Plain substring fallback for pre-store extracts
+ *   2. Plain substring fallback for pre-ledger extracts
  *
  * Returns undefined when the text cannot be located or is ambiguous.
  */
@@ -26,7 +26,7 @@ export function findExtractRange(
   if (!text) return undefined;
   const direct = uniqueIndexOf(sourceRaw, text);
   if (direct !== -1) return { start: direct, end: direct + text.length };
-  // Cloze items (especially the split-cloze variant) store their body with
+  // Cloze items (especially the split-cloze variant) keep their body with
   // `{{cN::…}}` syntax, but the parent note's body is plain prose. A direct
   // substring search always misses; falling back to the inlined-answer form
   // restores source highlighting + scroll-to-position for those cards.

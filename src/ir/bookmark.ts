@@ -1,5 +1,5 @@
 /**
- * Pure per-topic reading-position store (v0.2 roadmap item).
+ * Pure per-topic reading-position ledger (v0.2 roadmap item).
  *
  * This module provides immutable, deterministic bookmark management
  * for tracking reading positions across topics. All operations are pure

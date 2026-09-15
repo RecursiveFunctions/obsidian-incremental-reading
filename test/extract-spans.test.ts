@@ -205,6 +205,6 @@ test("findAllParagraphs: empty range returns []", () => {
 });
 
 // `spanIsInsideExtractMark` and its tests deleted under DESIGN §Q3:
-// bulk-extract idempotency now reads the store for existing anchor ranges
+// bulk-extract idempotency now reads the ledger for existing anchor ranges
 // (see main.ts `existingExtractRangesForSource`) instead of scanning the
 // body for inline `<mark>` chrome.

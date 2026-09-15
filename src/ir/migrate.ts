@@ -1,5 +1,5 @@
 /**
- * Pure frontmatter → append-only store events migration (DESIGN.md).
+ * Pure frontmatter → append-only ledger events migration (DESIGN.md).
  */
 
 import { readCardFromFrontmatter, cardToStored } from "../fsrs";

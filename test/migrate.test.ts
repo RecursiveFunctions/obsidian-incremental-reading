@@ -1,5 +1,5 @@
 /**
- * Golden contract for src/ir/migrate.ts (frontmatter -> store events).
+ * Golden contract for src/ir/migrate.ts (frontmatter -> ledger events).
  *
  * Claude-authored, fenced out of the delegated scope. Pure: no Obsidian,
  * no filesystem. The delegated agent implements src/ir/migrate.ts ONLY and

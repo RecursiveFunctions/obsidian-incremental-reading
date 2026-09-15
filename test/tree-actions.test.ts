@@ -2,7 +2,7 @@
  * Golden contract for src/ir/tree-actions.ts (unlocks the 0.0.2 tree view).
  *
  * Pure gesture-to-action-plan controller for the element tree view. The
- * tree view ItemView dispatches TreeAction values to the existing store
+ * tree view ItemView dispatches TreeAction values to the existing ledger
  * mutations; this module makes that translation deterministic and
  * unit-testable without Obsidian. Claude-authored, fenced out of the
  * delegated scope. Skips until the module exists; computed specifier

@@ -9,7 +9,7 @@ off `origin/main`, PR into `main`, `npm run ship:*` per AGENTS.md.
 
 - Revlog: `graded` events since 0.7.15 carry `{ card, grade (1-4),
   overridden? }`; event `ts` is the review timestamp. Raw access is
-  `store.loadEvents()` (stats and session views already use it).
+  `ledger.loadEvents()` (stats and session views already use it).
   Undo voiding: `grade-undone` events reference the voided event id;
   `fold()` in `src/ir/log.ts` computes the undone set in a first pass.
 - Scheduler boundary: `src/fsrs.ts` owns the ts-fsrs singleton,

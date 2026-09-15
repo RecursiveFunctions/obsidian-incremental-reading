@@ -1,9 +1,9 @@
 /**
- * The store data model.
+ * The ledger data model.
  *
  * Under Option 1 (see docs/DESIGN.md) IR element state does NOT live in note
- * frontmatter. It lives in a plugin-owned structured store. This module is the
- * single source of truth for the shapes that store holds: elements, anchors,
+ * frontmatter. It lives in a plugin-owned structured ledger. This module is the
+ * single source of truth for the shapes that ledger holds: elements, anchors,
  * source tombstones, and the append-only event log. Pure data plus a few
  * total helpers; no Obsidian API, no I/O, so it is trivially unit tested.
  *
@@ -115,7 +115,7 @@ export type AnchorState = "ok" | "needs-reanchor" | "detached";
 // --- Scheduler state ------------------------------------------------------
 
 /**
- * FSRS card state, store-native. Dates are epoch ms (compact, directly
+ * FSRS card state, ledger-native. Dates are epoch ms (compact, directly
  * comparable) rather than the ISO strings the old frontmatter path used.
  * src/fsrs.ts owns conversion to and from the ts-fsrs `Card`.
  */
@@ -207,7 +207,7 @@ export interface IrEvent {
   id: EventId;
   /** Wall-clock epoch ms. Advisory; ordering uses `lamport` first. */
   ts: number;
-  /** Monotonic per store, for deterministic cross-device ordering. */
+  /** Monotonic per ledger, for deterministic cross-device ordering. */
   lamport: number;
   device: DeviceId;
   kind: IrEventKind;

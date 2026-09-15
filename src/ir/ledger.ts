@@ -1,9 +1,9 @@
 /**
- * The store module.
+ * The ledger module.
  *
- * This module implements the append-only event log store with persistence
+ * This module implements the append-only event log ledger with persistence
  * through the injected VaultFs interface. It provides methods for initializing
- * the store, managing device IDs, appending events, and loading the current
+ * the ledger, managing device IDs, appending events, and loading the current
  * state of the log.
  *
  * No Obsidian API, no node fs/path, all IO via the injected VaultFs.
@@ -30,7 +30,7 @@ export interface VaultFs {
   write(path: string, data: string): Promise<void>;
   append(path: string, data: string): Promise<void>;
   list(dir: string): Promise<string[]>;
-  /** Whole-file delete; required when calling {@link IrStore.reconcile}. */
+  /** Whole-file delete; required when calling {@link IrLedger.reconcile}. */
   remove?(path: string): Promise<void>;
 }
 
@@ -80,7 +80,7 @@ export interface StoreOptions {
   conflict?: "conservative" | "clock-order";
 }
 
-export class IrStore {
+export class IrLedger {
   private fs: VaultFs;
   private opts: StoreOptions;
   private deviceId?: DeviceId;
@@ -99,7 +99,7 @@ export class IrStore {
   }
 
   /**
-   * Initialize the store. Optional `hostname` opts in to the per-host device
+   * Initialize the ledger. Optional `hostname` opts in to the per-host device
    * registry (DESIGN §Q2 fix): `.ir/device.json` becomes a `{devices:{host:id}}`
    * map so each physical Obsidian install gets its own id and its own log
    * shard, even though the file itself rides Obsidian Sync. Without a
@@ -186,7 +186,7 @@ export class IrStore {
     }
     if (!this.deviceId) {
       throw new Error(
-        "IrStore.getDeviceId: device.json has no readable id; init() never ran.",
+        "IrLedger.getDeviceId: device.json has no readable id; init() never ran.",
       );
     }
     return this.deviceId;
@@ -332,7 +332,7 @@ export class IrStore {
   async reconcile(): Promise<LogState> {
     const rm = this.fs.remove;
     if (!rm) {
-      throw new Error("IrStore.reconcile requires VaultFs.remove");
+      throw new Error("IrLedger.reconcile requires VaultFs.remove");
     }
 
     const state = await this.load();

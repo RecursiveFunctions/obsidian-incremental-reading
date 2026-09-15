@@ -2,7 +2,7 @@
  * The review loop: find what is due, show it one element at a time, and
  * reschedule it.
  *
- * Source of truth is the plugin-owned store (Option 1, docs/DESIGN.md): the
+ * Source of truth is the plugin-owned ledger (Option 1, docs/DESIGN.md): the
  * queue is built from the folded event log, and every review action appends
  * an event. Frontmatter is *also* written on each action so the migration
  * fallback stays intact and a user can still read state in the note until
@@ -22,7 +22,7 @@
  *
  * In-place editing and child-note creation are also first-class: topics and
  * extracts open as rendered markdown; **Edit** (or a click on the card) opens
- * Live Preview for vault notes. **Source** opens raw markdown. Store-only
+ * Live Preview for vault notes. **Source** opens raw markdown. Ledger-only
  * extracts and phones use a textarea. Text can be selected in either mode for
  * extract/cloze (preview selection maps back to the markdown source when
  * possible), and edits auto-save when the card advances. For cloze items,
@@ -45,7 +45,7 @@ import {
 import { isVaultFile } from "./ir/vault-file";
 
 /**
- * One element scheduled into the session: its current store state plus the
+ * One element scheduled into the session: its current ledger state plus the
  * vault note that renders it (absent if the source note was removed; the
  * element survives on its stored text).
  */
@@ -58,9 +58,9 @@ export interface ReviewSlot {
 }
 
 /**
- * The interleaved daily session, due now. Adapts the folded store state into
+ * The interleaved daily session, due now. Adapts the folded ledger state into
  * plain `QueueEntry` records and delegates ordering to the pure, unit-tested
- * `interleavedQueue`. The store is the only source consulted.
+ * `interleavedQueue`. The ledger is the only source consulted.
  */
 export function dueQueue(
   app: App,
@@ -82,7 +82,7 @@ export function dueQueue(
     // resolves (deleted/renamed/synced away) AND no `text` snapshot was
     // captured. Without this filter the review surface shows "the source
     // note for this element is no longer in the vault" with no way to act
-    // on it. The element stays in the store, so if the file ever reappears
+    // on it. The element stays in the ledger, so if the file ever reappears
     // at its old path (Sync, trash restore) the next build picks it up.
     if (!file && !el.text) continue;
     slots.set(el.id, { id: el.id, element: el, file });

@@ -5,7 +5,7 @@
  */
 
 export interface QueueEntry {
-  /** Stable element id from the store (no longer a note path; see Option 1). */
+  /** Stable element id from the ledger (no longer a note path; see Option 1). */
   id: string;
   /** IR type: "topic" | "extract" | "item", or empty for non-IR. */
   type: string;

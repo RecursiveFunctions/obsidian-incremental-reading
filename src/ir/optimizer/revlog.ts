@@ -5,7 +5,7 @@
  * feature: this optimizer fails loudly where others discard silently.
  *
  * Pure: no Obsidian imports, no I/O. Callers pass the full event stream
- * from `IrStore.loadEvents()` and a folded `LogState`.
+ * from `IrLedger.loadEvents()` and a folded `LogState`.
  */
 
 import type { ElementId, EventId } from "../ids";

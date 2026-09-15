@@ -1,5 +1,5 @@
 /**
- * The store log module.
+ * The ledger log module.
  *
  * This module implements the append-only event log and its fold. It is pure
  * data plus a few helpers; no Obsidian API, no I/O, so it is trivially unit
@@ -269,7 +269,7 @@ export function nextLamport(events: IrEvent[]): number {
  * has been recorded yet.
  *
  * Pure: no I/O, no Obsidian. Callers pass the full event stream from
- * `IrStore.loadEvents()`.
+ * `IrLedger.loadEvents()`.
  */
 export function findLastUndoableGrade(events: IrEvent[]): IrEvent | null {
   const undone = undoneEventIds(events);

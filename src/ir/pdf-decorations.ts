@@ -1,5 +1,5 @@
 /**
- * Paint store-backed PDF extracts onto the core pdf.js text layer.
+ * Paint ledger-backed PDF extracts onto the core pdf.js text layer.
  *
  * Same contract as markdown decorations (DESIGN §Q3): never mutate the
  * source file. Classes match the markdown marks (`ir-extract-source`,

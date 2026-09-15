@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { buildPdfTopicEvent } from "../src/ir/pdf-topic";
 import type { DeviceId, ElementId, EventId } from "../src/ir/ids";
 
-test("buildPdfTopicEvent: store-only topic with notePath and schedule", () => {
+test("buildPdfTopicEvent: ledger-only topic with notePath and schedule", () => {
   const sched = { due: 10, interval: 3, aFactor: 2 };
   const ev = buildPdfTopicEvent({
     path: "Papers/foo.pdf",

@@ -1,14 +1,14 @@
 /**
- * Golden contract for src/ir/store.ts (Q2 D, store IO half).
+ * Golden contract for src/ir/ledger.ts (Q2 D, ledger IO half).
  *
  * Claude-authored, fenced out of the delegated scope. The oracle is an
  * in-memory VaultFs defined here: deterministic, no real filesystem. opencode
- * implements src/ir/store.ts from TASK.md and is judged by this suite + tsc.
+ * implements src/ir/ledger.ts from TASK.md and is judged by this suite + tsc.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { IrStore, type VaultFs } from "../src/ir/store";
+import { IrLedger, type VaultFs } from "../src/ir/ledger";
 import type { IrEvent } from "../src/ir/model";
 import { newElement } from "../src/ir/model";
 import { newElementId, newEventId, newDeviceId, type ElementId } from "../src/ir/ids";
@@ -69,22 +69,22 @@ function createEvent(id: ElementId, lamport: number): IrEvent {
 
 test("init creates schema meta v1 and a device id", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
-  await store.init();
-  assert.equal(await store.schemaVersion(), 1);
-  const dev = await store.getDeviceId();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  assert.equal(await ledger.schemaVersion(), 1);
+  const dev = await ledger.getDeviceId();
   assert.match(dev, /^dev_/);
 });
 
-test("device id is stable across init calls and store instances", async () => {
+test("device id is stable across init calls and ledger instances", async () => {
   const fs = memFs();
-  const a = new IrStore(fs);
+  const a = new IrLedger(fs);
   await a.init();
   const d1 = await a.getDeviceId();
   await a.init(); // second init must not regenerate
   assert.equal(await a.getDeviceId(), d1);
 
-  const b = new IrStore(fs); // different instance, same fs
+  const b = new IrLedger(fs); // different instance, same fs
   await b.init();
   assert.equal(await b.getDeviceId(), d1);
 });
@@ -96,11 +96,11 @@ test("per-host init: distinct hostnames get distinct ids on the same vault", asy
   // `.ir/device.json` and write to the same shard, causing Obsidian Sync
   // last-write-wins conflicts on the shard file.
   const fs = memFs();
-  const a = new IrStore(fs);
+  const a = new IrLedger(fs);
   await a.init({ hostname: "alpha" });
   const idA = await a.getDeviceId();
 
-  const b = new IrStore(fs);
+  const b = new IrLedger(fs);
   await b.init({ hostname: "beta" });
   const idB = await b.getDeviceId();
 
@@ -109,11 +109,11 @@ test("per-host init: distinct hostnames get distinct ids on the same vault", asy
 
 test("per-host init: same hostname returns the same id on re-init", async () => {
   const fs = memFs();
-  const a = new IrStore(fs);
+  const a = new IrLedger(fs);
   await a.init({ hostname: "alpha" });
   const idA = await a.getDeviceId();
 
-  const b = new IrStore(fs);
+  const b = new IrLedger(fs);
   await b.init({ hostname: "alpha" });
   assert.equal(await b.getDeviceId(), idA);
 });
@@ -127,7 +127,7 @@ test("per-host init: upgrades legacy single-id schema to the host that runs firs
   const fs = memFs();
   await fs.write(".ir/device.json", JSON.stringify({ deviceId: "dev_legacy_id" }));
 
-  const original = new IrStore(fs);
+  const original = new IrLedger(fs);
   await original.init({ hostname: "alpha" });
   assert.equal(await original.getDeviceId(), "dev_legacy_id");
 
@@ -138,7 +138,7 @@ test("per-host init: upgrades legacy single-id schema to the host that runs firs
   assert.deepEqual(after.devices, { alpha: "dev_legacy_id" });
 
   // A different host on the same vault gets a fresh id, not the legacy one.
-  const other = new IrStore(fs);
+  const other = new IrLedger(fs);
   await other.init({ hostname: "beta" });
   const idBeta = await other.getDeviceId();
   assert.notEqual(idBeta, "dev_legacy_id");
@@ -150,7 +150,7 @@ test("per-host init: clobbered entry is re-added on next load (sync-war recovery
   // arrives and overwrites device.json with only its own entry, then device
   // A loads again and must restore its entry without changing its id.
   const fs = memFs();
-  const a1 = new IrStore(fs);
+  const a1 = new IrLedger(fs);
   await a1.init({ hostname: "alpha" });
   const idA = await a1.getDeviceId();
 
@@ -160,7 +160,7 @@ test("per-host init: clobbered entry is re-added on next load (sync-war recovery
     JSON.stringify({ devices: { beta: "dev_beta_only" } }),
   );
 
-  const a2 = new IrStore(fs);
+  const a2 = new IrLedger(fs);
   await a2.init({ hostname: "alpha" });
   // The id we generate for alpha is a NEW one (the previous id is lost
   // with the clobbered entry), but it's deterministic for the session and
@@ -181,13 +181,13 @@ test("per-host init: clobbered entry is re-added on next load (sync-war recovery
 
 test("appendEvent appends lines to this device's shard, never overwrites", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
-  await store.init();
-  const dev = await store.getDeviceId();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const dev = await ledger.getDeviceId();
 
   const id = newElementId();
-  await store.appendEvent(createEvent(id, 1));
-  await store.appendEvent(gradeEvent(id, 2, 5000, dev));
+  await ledger.appendEvent(createEvent(id, 1));
+  await ledger.appendEvent(gradeEvent(id, 2, 5000, dev));
 
   const shardPath = `.ir/log/${dev}.jsonl`;
   const raw = await fs.read(shardPath);
@@ -198,28 +198,28 @@ test("appendEvent appends lines to this device's shard, never overwrites", async
 
 test("load with no shards returns an empty state", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
-  await store.init();
-  const s = await store.load();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const s = await ledger.load();
   assert.equal(s.elements.size, 0);
   assert.equal(s.tombstones.size, 0);
 });
 
 test("load folds events across all device shards", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
-  await store.init();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
   const id = newElementId();
 
-  await store.appendEvent(createEvent(id, 1));
-  await store.appendEvent(gradeEvent(id, 2, 7000, await store.getDeviceId()));
+  await ledger.appendEvent(createEvent(id, 1));
+  await ledger.appendEvent(gradeEvent(id, 2, 7000, await ledger.getDeviceId()));
 
   // A shard that arrived from another device via Sync.
   const otherDev = newDeviceId();
   const foreign = gradeEvent(id, 3, 4000, otherDev);
   await fs.write(`.ir/log/${otherDev}.jsonl`, JSON.stringify(foreign) + "\n");
 
-  const s = await store.load();
+  const s = await ledger.load();
   const el = s.elements.get(id);
   assert.ok(el);
   // Default conflict is conservative: earlier due (4000) wins over 7000.
@@ -228,12 +228,12 @@ test("load folds events across all device shards", async () => {
 
 test("conflict option threads into the fold on load", async () => {
   const fs = memFs();
-  const store = new IrStore(fs, { conflict: "clock-order" });
-  await store.init();
+  const ledger = new IrLedger(fs, { conflict: "clock-order" });
+  await ledger.init();
   const id = newElementId();
 
-  await store.appendEvent(createEvent(id, 1));
-  await store.appendEvent(gradeEvent(id, 2, 4000, await store.getDeviceId()));
+  await ledger.appendEvent(createEvent(id, 1));
+  await ledger.appendEvent(gradeEvent(id, 2, 4000, await ledger.getDeviceId()));
 
   const otherDev = newDeviceId();
   await fs.write(
@@ -241,17 +241,17 @@ test("conflict option threads into the fold on load", async () => {
     JSON.stringify(gradeEvent(id, 3, 9000, otherDev)) + "\n",
   );
 
-  const s = await store.load();
+  const s = await ledger.load();
   // clock-order: highest lamport (3 -> due 9000) wins.
   assert.equal(s.elements.get(id)?.card?.due, 9000);
 });
 
 test("malformed shard lines are skipped, not fatal", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
-  await store.init();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
   const id = newElementId();
-  await store.appendEvent(createEvent(id, 1));
+  await ledger.appendEvent(createEvent(id, 1));
 
   const otherDev = newDeviceId();
   await fs.write(
@@ -259,44 +259,44 @@ test("malformed shard lines are skipped, not fatal", async () => {
     "not json\n" + JSON.stringify(gradeEvent(id, 2, 1234, otherDev)) + "\n\n",
   );
 
-  const s = await store.load();
+  const s = await ledger.load();
   assert.equal(s.elements.get(id)?.card?.due, 1234);
 });
 
 test("loadBookmarks returns empty map when file is missing", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
-  await store.init();
-  const bm = await store.loadBookmarks();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const bm = await ledger.loadBookmarks();
   assert.deepEqual(bm, {});
 });
 
 test("saveBookmarks + loadBookmarks round-trips", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
-  await store.init();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
   const id = newElementId();
   const bm = {
     [id]: { elementId: id, line: 42, ch: 7, scrollTop: 300, updatedAt: 1000 },
   };
-  await store.saveBookmarks(bm);
-  const loaded = await store.loadBookmarks();
+  await ledger.saveBookmarks(bm);
+  const loaded = await ledger.loadBookmarks();
   assert.deepEqual(loaded, bm);
 });
 
 test("saveBookmarks overwrites previous bookmarks", async () => {
   const fs = memFs();
-  const store = new IrStore(fs);
-  await store.init();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
   const id1 = newElementId();
   const id2 = newElementId();
-  await store.saveBookmarks({
+  await ledger.saveBookmarks({
     [id1]: { elementId: id1, line: 1, ch: 0, scrollTop: 0, updatedAt: 1000 },
   });
-  await store.saveBookmarks({
+  await ledger.saveBookmarks({
     [id2]: { elementId: id2, line: 99, ch: 3, scrollTop: 500, updatedAt: 2000 },
   });
-  const loaded = await store.loadBookmarks();
+  const loaded = await ledger.loadBookmarks();
   assert.equal(Object.keys(loaded).length, 1);
   assert.equal(loaded[id2]?.line, 99);
   assert.equal(loaded[id1], undefined);

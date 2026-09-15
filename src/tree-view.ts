@@ -12,7 +12,7 @@ import type { LogState } from "./ir/log";
 import { recentBookmarks, type Bookmark } from "./ir/bookmark";
 import { labelFor } from "./ir/labels";
 import { promptConfirm } from "./confirm-modal";
-import { IrStore } from "./ir/store";
+import { IrLedger } from "./ir/ledger";
 import {
   buildTree,
   filterTreeByPredicate,
@@ -38,34 +38,34 @@ export const IR_TREE_VIEW_TYPE = "ir-tree-view";
 /** Long enough to swallow a fast typist's keystrokes, short enough to feel live. */
 const FILTER_DEBOUNCE_MS = 150;
 
-/** Persist priority to the append-only store + note frontmatter (dual-write). */
+/** Persist priority to the append-only ledger + note frontmatter (dual-write). */
 export type CommitIrPriorityFn = (
   elementId: ElementId,
   file: TFile | null,
   priority: number,
 ) => Promise<void>;
 
-/** Toggle dismiss in the store + note frontmatter. */
+/** Toggle dismiss in the ledger + note frontmatter. */
 export type CommitIrDismissFn = (
   elementId: ElementId,
   file: TFile | null,
   dismissed: boolean,
 ) => Promise<void>;
 
-/** Postpone an element by N days in the store + note frontmatter. */
+/** Postpone an element by N days in the ledger + note frontmatter. */
 export type CommitIrPostponeFn = (
   elementId: ElementId,
   file: TFile | null,
   days: number,
 ) => Promise<void>;
 
-/** Move an element to a new parent in the store. */
+/** Move an element to a new parent in the ledger. */
 export type CommitIrReparentFn = (
   elementId: ElementId,
   newParentId: ElementId | null,
 ) => Promise<void>;
 
-/** Delete an element from the store, reparenting its children. */
+/** Delete an element from the ledger, reparenting its children. */
 export type CommitIrDeleteFn = (
   elementId: ElementId,
   parentId: ElementId | null,
@@ -83,7 +83,7 @@ export type CommitIrReanchorFn = (
   element: IrElement,
 ) => Promise<boolean>;
 
-/** Fork a store extract (second reading element). */
+/** Fork a ledger extract (second reading element). */
 export type CommitIrForkFn = (elementId: ElementId) => void | Promise<void>;
 
 const ICONS: Record<IrType, string> = {
@@ -96,7 +96,7 @@ import { formatDueLabel } from "./ir/due-label";
 export { formatDueLabel };
 
 export class IrTreeView extends ItemView {
-  private store: IrStore;
+  private ledger: IrLedger;
   /**
    * Element ids the user has explicitly collapsed. Session-only state
    * (UI commitment #5: expand/collapse per node). Default = expanded.
@@ -150,7 +150,7 @@ export class IrTreeView extends ItemView {
   /** Element id currently being dragged (session-only). */
   private dragSourceId: string | null = null;
 
-  /** Last loaded store snapshot, keyed by id. Used by the Promote command. */
+  /** Last loaded ledger snapshot, keyed by id. Used by the Promote command. */
   private elementsById = new Map<string, IrElement>();
 
   /**
@@ -168,7 +168,7 @@ export class IrTreeView extends ItemView {
 
   constructor(
     leaf: WorkspaceLeaf,
-    store: IrStore,
+    ledger: IrLedger,
     private readonly commitPriority?: CommitIrPriorityFn,
     private readonly commitDismiss?: CommitIrDismissFn,
     private readonly commitPostpone?: CommitIrPostponeFn,
@@ -191,7 +191,7 @@ export class IrTreeView extends ItemView {
     private readonly revealInReview?: (id: ElementId) => boolean,
   ) {
     super(leaf);
-    this.store = store;
+    this.ledger = ledger;
   }
 
   getViewType(): string {
@@ -229,7 +229,7 @@ export class IrTreeView extends ItemView {
     this.currentElementId = id;
     if (id) {
       try {
-        const state = await this.store.load();
+        const state = await this.ledger.load();
         let cur = state.elements.get(id);
         while (cur?.parentId) {
           this.collapsed.delete(cur.parentId);
@@ -262,7 +262,7 @@ export class IrTreeView extends ItemView {
 
     let state;
     try {
-      state = await this.store.load();
+      state = await this.ledger.load();
     } catch (e) {
       console.error("Incremental Reading: tree priority reveal load failed", e);
       return false;
@@ -310,7 +310,7 @@ export class IrTreeView extends ItemView {
     return true;
   }
 
-  /** Reload the tree from the store. Safe to call from the host plugin. */
+  /** Reload the tree from the ledger. Safe to call from the host plugin. */
   refresh(): Promise<void> {
     return this.render();
   }
@@ -391,7 +391,7 @@ export class IrTreeView extends ItemView {
       placeholder: "Filter elements\u2026",
     });
     searchInput.value = this.filterText;
-    // Debounced: a full render reloads the store and reads every non-dismissed
+    // Debounced: a full render reloads the ledger and reads every non-dismissed
     // cloze note, so per-keystroke rendering re-read the whole collection on
     // the way to typing one word (and then had to steal focus back).
     searchInput.addEventListener("input", () => {
@@ -438,7 +438,7 @@ export class IrTreeView extends ItemView {
         if (this.visibleTypes.has(t)) {
           // Refuse to deselect the last remaining type — leaving zero means
           // "show nothing", which is never what the user wants and is
-          // indistinguishable from an empty store. Clicking the only-active
+          // indistinguishable from an empty ledger. Clicking the only-active
           // chip instead resets to all types on, matching the typical
           // pill-group convention.
           if (this.visibleTypes.size === 1) {
@@ -461,12 +461,12 @@ export class IrTreeView extends ItemView {
 
     let state;
     try {
-      state = await this.store.load();
+      state = await this.ledger.load();
     } catch (e) {
       console.error("Incremental Reading: tree view load failed", e);
       body.createEl("p", {
         text:
-          "Could not load the IR store. See the developer console.",
+          "Could not load the IR ledger. See the developer console.",
       });
       return;
     }
@@ -618,7 +618,7 @@ export class IrTreeView extends ItemView {
    * of the neutral `Cloze item (xxxxxx)` placeholder. Bodies are fetched in
    * parallel via `cachedRead`, which is in-memory after the first hit, so
    * this is essentially free on subsequent renders. Items whose note can't
-   * be resolved (deleted, store-only, missing) silently fall through to the
+   * be resolved (deleted, ledger-only, missing) silently fall through to the
    * placeholder via the helper in `labels.ts`.
    */
   private async loadItemBodies(
@@ -674,7 +674,7 @@ export class IrTreeView extends ItemView {
   /**
    * Render the "Resume reading" header + a row per recent bookmark above
    * the main tree contents. Only surfaces bookmarks whose target element
-   * still exists in the store AND is still a reading element — a stale
+   * still exists in the ledger AND is still a reading element — a stale
    * bookmark for a deleted topic, or one for a now-converted cloze item,
    * is silently dropped (and never offered as a click target) rather
    * than confronting the user with a broken row.
@@ -692,8 +692,8 @@ export class IrTreeView extends ItemView {
     let state;
     try {
       [bookmarks, state] = await Promise.all([
-        this.store.loadBookmarks(),
-        this.store.load(),
+        this.ledger.loadBookmarks(),
+        this.ledger.load(),
       ]);
     } catch (err) {
       console.error("Incremental Reading: recent-reading load failed", err);
@@ -1266,7 +1266,7 @@ export class IrTreeView extends ItemView {
     ids: ElementId[],
   ): Promise<void> {
     if (!this.commitDismiss) return;
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     let ok = 0;
     let fail = 0;
     for (const id of ids) {
@@ -1289,7 +1289,7 @@ export class IrTreeView extends ItemView {
 
   private async bulkPostpone(days: number, ids: ElementId[]): Promise<void> {
     if (!this.commitPostpone) return;
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     let ok = 0;
     let fail = 0;
     for (const id of ids) {
@@ -1323,7 +1323,7 @@ export class IrTreeView extends ItemView {
       ctaText: `Delete ${ids.length}`,
     });
     if (!okToDelete) return;
-    const state = await this.store.load();
+    const state = await this.ledger.load();
     let ok = 0;
     let fail = 0;
     for (const id of ids) {
