@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Source note is gone" no longer comes back after you answer it.** On a
+  synced vault, a device that still had a stale copy of the deleted note
+  offered to re-link it on load. Closing that prompt erased the answer you
+  gave on the other device, so that device asked again on its next open.
+  Load-time re-link now only runs for deletions this device recorded.
+  A note restored while Obsidian is open still offers re-link.
+- Missing-source checks wait for the vault to finish loading, and the
+  startup file scan no longer counts as notes being restored.
+
 ## [0.8.0] — 2026-09-15
 
 Everything from 0.7.14 through 0.7.25 plus this release: the FSRS-6

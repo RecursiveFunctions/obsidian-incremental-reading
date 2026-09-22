@@ -325,3 +325,36 @@ export function planClearTombstone(
     },
   ];
 }
+
+/**
+ * Tombstoned paths this device may offer to re-link on plugin load.
+ *
+ * A file sitting at a tombstoned path on load is only proof it came back
+ * when *this* device wrote the tombstone (it saw the file missing, now it
+ * sees it present). A tombstone from another device usually means this
+ * device holds a stale copy the sync has not deleted yet. Clearing on that
+ * evidence erases the other device's answer, and it prompts again on its
+ * next load. Live `create` events still re-link from any device.
+ */
+export function tombstonesOwnedBy(
+  events: IrEvent[],
+  device: DeviceId,
+): Set<string> {
+  const sorted = [...events].sort((a, b) => {
+    if (a.lamport !== b.lamport) return a.lamport - b.lamport;
+    return a.id.localeCompare(b.id);
+  });
+  const owner = new Map<string, DeviceId>();
+  for (const ev of sorted) {
+    if (ev.kind === "source-tombstoned") {
+      const path = (ev.payload.tombstone as SourceTombstone | undefined)?.path;
+      if (path) owner.set(path, ev.device);
+    } else if (ev.kind === "source-restored") {
+      const path = ev.payload.path;
+      if (typeof path === "string") owner.delete(path);
+    }
+  }
+  const out = new Set<string>();
+  for (const [path, dev] of owner) if (dev === device) out.add(path);
+  return out;
+}

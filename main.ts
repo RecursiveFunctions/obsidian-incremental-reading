@@ -55,7 +55,7 @@ import {
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
 import { planOrphanRecoveries } from "./src/ir/orphan-notes";
 import { toAnkiTsv } from "./src/ir/anki-export";
-import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath } from "./src/ir/deletion";
+import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath, tombstonesOwnedBy } from "./src/ir/deletion";
 import {
   basenameOf,
   inferPrefixRewrite,
@@ -486,7 +486,11 @@ export default class IncrementalReadingPlugin extends Plugin {
     void this.refreshStatusBar();
     void this.ledgerInit.then(() => {
       void this.refreshStatusBar();
-      void this.reconcileMissingSources().then(() => this.offerPendingRelinks());
+      // Wait for the vault index: before layout-ready, present files can
+      // still read as missing and prompt for notes that exist.
+      this.app.workspace.onLayoutReady(() => {
+        void this.reconcileMissingSources().then(() => this.offerPendingRelinks());
+      });
     });
 
     // Background tick: refreshes the "+N/7d" rolling window so it does not
@@ -1185,6 +1189,9 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.app.vault.on("create", (created) => {
         if (!(created instanceof TFile)) return;
         if (created.extension !== "md" && created.extension !== "pdf") return;
+        // Vault load fires create for every existing file; those are not
+        // restores. Load-time re-links go through offerPendingRelinks.
+        if (!this.app.workspace.layoutReady) return;
         void this.tryMatchPendingGone(created);
         void this.maybeOfferRelink(created);
       }),
@@ -3943,12 +3950,18 @@ export default class IncrementalReadingPlugin extends Plugin {
   /**
    * Q1 comes-back: if a note exists at a tombstoned path (plugin load after
    * trash restore, or a create we missed), offer re-link once per path.
+   * Only for tombstones this device wrote; see tombstonesOwnedBy.
    */
   private async offerPendingRelinks(): Promise<void> {
     if (this.nuking || !this.ledger) return;
     try {
       const state = await this.ledger.load();
+      const owned = tombstonesOwnedBy(
+        await this.ledger.loadEvents(),
+        await this.ledger.getDeviceId(),
+      );
       for (const path of state.tombstones.keys()) {
+        if (!owned.has(path)) continue;
         const af = this.app.vault.getAbstractFileByPath(path);
         if (af instanceof TFile && (af.extension === "md" || af.extension === "pdf")) {
           await this.maybeOfferRelink(af);

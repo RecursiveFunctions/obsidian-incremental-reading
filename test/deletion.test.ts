@@ -346,3 +346,36 @@ test("planClearTombstone drops the tombstone without repairing anchors", async (
   const ex1 = st.elements.get("el_ex1" as ElementId)!;
   assert.equal(ex1.anchorState, "detached");
 });
+
+test("tombstonesOwnedBy: only the device that saw the delete may re-link on load", async () => {
+  const mod = await load();
+  if (!mod?.tombstonesOwnedBy) return;
+  const A = "dev_a" as DeviceId;
+  const B = "dev_b" as DeviceId;
+  const ev = (
+    id: string,
+    lamport: number,
+    device: DeviceId,
+    kind: IrEvent["kind"],
+    payload: Record<string, unknown>,
+  ): IrEvent => ({
+    id: id as EventId,
+    ts: NOW,
+    lamport,
+    device,
+    kind,
+    target: "el_x" as ElementId,
+    payload,
+  });
+  const tomb = (path: string) => ({ tombstone: { path, title: "t", deletedAt: NOW } });
+  const events = [
+    ev("e1", 1, A, "source-tombstoned", tomb("a.md")),
+    ev("e2", 2, B, "source-tombstoned", tomb("b.md")),
+    ev("e3", 3, A, "source-tombstoned", tomb("both.md")),
+    ev("e4", 4, B, "source-tombstoned", tomb("both.md")),
+    ev("e5", 5, A, "source-tombstoned", tomb("gone.md")),
+    ev("e6", 6, B, "source-restored", { path: "gone.md" }),
+  ];
+  assert.deepEqual([...mod.tombstonesOwnedBy(events, A)].sort(), ["a.md"]);
+  assert.deepEqual([...mod.tombstonesOwnedBy(events, B)].sort(), ["b.md", "both.md"]);
+});
