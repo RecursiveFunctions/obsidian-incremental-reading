@@ -32,6 +32,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   IrLedger,
+  COMPACTIONDIR,
   SNAPSHOT,
   RHISTDIR,
   LOGDIR,
@@ -200,10 +201,12 @@ test("count trigger: local shard shrinks to the kept events, state preserved", a
     [9, 10, 11, 12, 13],
     "the most recent events are the ones kept",
   );
+  const archives = [...fs.dump()].filter(([path]) => path.startsWith(`${COMPACTIONDIR}/`));
+  assert.equal(archives.length, 1, "compaction writes one transaction archive");
   assert.equal(
-    lines(fs.dump().get(SNAPSHOT)).length,
-    8,
-    "every compacted-away event lands in the snapshot",
+    lines(archives[0]?.[1]).length,
+    13,
+    "the recovery archive contains the complete original shard",
   );
   // Folded state is invariant across compaction.
   assert.deepEqual(await ledger.load(), expectFold(events));
@@ -333,4 +336,50 @@ test("repeated compaction is idempotent for folded state", async () => {
   assert.deepEqual(await ledger.load(), afterFirst);
   assert.deepEqual(await ledger.load(), expectFold(events));
   assert.equal(r2.compacted, false, "a shard already at/under the cap is left alone");
+});
+
+test("archive failure leaves the live shard unchanged", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  const id = newElementId();
+  const events = [created(id, 1), prio(id, 2, 10), prio(id, 3, 20)];
+  await seed(ledger, events);
+  const dev = await ledger.getDeviceId();
+  const shardPath = `${LOGDIR}/${dev}.jsonl`;
+  const before = await fs.read(shardPath);
+  const write = fs.write.bind(fs);
+  fs.write = async (path, data) => {
+    if (path.startsWith(`${COMPACTIONDIR}/`)) throw new Error("archive unavailable");
+    await write(path, data);
+  };
+
+  await assert.rejects(
+    ledger.compactLocalShard(9_999_999_999, { maxEvents: 1, maxAgeDays: 999_999 }),
+    /archive unavailable/,
+  );
+  assert.equal(await fs.read(shardPath), before);
+});
+
+test("a torn shard replacement recovers from the complete archive", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  const id = newElementId();
+  const events = [created(id, 1), prio(id, 2, 10), prio(id, 3, 20)];
+  await seed(ledger, events);
+  const dev = await ledger.getDeviceId();
+  const shardPath = `${LOGDIR}/${dev}.jsonl`;
+  const write = fs.write.bind(fs);
+  fs.write = async (path, data) => {
+    if (path === shardPath) {
+      await write(path, data.slice(0, Math.max(1, Math.floor(data.length / 2))));
+      throw new Error("injected torn shard write");
+    }
+    await write(path, data);
+  };
+
+  await assert.rejects(
+    ledger.compactLocalShard(9_999_999_999, { maxEvents: 1, maxAgeDays: 999_999 }),
+    /injected torn shard write/,
+  );
+  assert.deepEqual(await ledger.load(), expectFold(events));
 });

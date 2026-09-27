@@ -8,7 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { IrLedger, type VaultFs } from "../src/ir/ledger";
+import { IrLedger, META, type VaultFs } from "../src/ir/ledger";
 import type { IrEvent } from "../src/ir/model";
 import { newElement } from "../src/ir/model";
 import { newElementId, newEventId, newDeviceId, type ElementId } from "../src/ir/ids";
@@ -74,6 +74,107 @@ test("init creates schema meta v1 and a device id", async () => {
   assert.equal(await ledger.schemaVersion(), 1);
   const dev = await ledger.getDeviceId();
   assert.match(dev, /^dev_/);
+});
+
+test("commitMigration writes and verifies events before its completion marker", async () => {
+  const fs = memFs();
+  const operations: string[] = [];
+  const write = fs.write.bind(fs);
+  const read = fs.read.bind(fs);
+  fs.write = async (path, data) => {
+    operations.push(`write:${path}`);
+    await write(path, data);
+  };
+  fs.read = async (path) => {
+    operations.push(`read:${path}`);
+    return read(path);
+  };
+  const ledger = new IrLedger(fs);
+  await ledger.initDevice();
+  const event = createEvent(newElementId(), 1);
+
+  await ledger.commitMigration([event]);
+
+  assert.equal(await ledger.status(), "migrated");
+  const migrationWrite = operations.findIndex((op) => op.startsWith("write:") && op.endsWith("/dev_mig_ir_store.jsonl"));
+  const migrationRead = operations.findIndex((op) => op.startsWith("read:") && op.endsWith("/dev_mig_ir_store.jsonl"));
+  assert.ok(migrationWrite >= 0 && migrationWrite < migrationRead);
+  assert.ok(migrationRead < operations.indexOf(`write:${META}`));
+});
+
+test("failed migration body write leaves migration uncommitted and retryable", async () => {
+  const fs = memFs();
+  const write = fs.write.bind(fs);
+  let fail = true;
+  fs.write = async (path, data) => {
+    if (path.endsWith("/dev_mig_ir_store.jsonl") && fail) {
+      fail = false;
+      throw new Error("injected write failure");
+    }
+    await write(path, data);
+  };
+  const ledger = new IrLedger(fs);
+  await ledger.initDevice();
+  const event = createEvent(newElementId(), 1);
+
+  await assert.rejects(ledger.commitMigration([event]), /injected write failure/);
+  assert.equal(await ledger.status(), "absent");
+
+  await ledger.commitMigration([event]);
+  assert.equal(await ledger.status(), "migrated");
+  assert.equal((await ledger.loadEvents()).length, 1);
+});
+
+test("reset marker remains inert across ledger instances", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.initDevice();
+  await fs.write(".ir/log/stale.jsonl", JSON.stringify(createEvent(newElementId(), 1)) + "\n");
+  await ledger.markReset();
+  assert.equal(await ledger.status(), "reset");
+  assert.equal(await new IrLedger(fs).status(), "reset");
+  assert.deepEqual(await new IrLedger(fs).loadEvents(), []);
+});
+
+test("a migrated generation ignores stale pre-reset root shards", async () => {
+  const fs = memFs();
+  const stale = createEvent(newElementId(), 1);
+  const current = createEvent(newElementId(), 2);
+  await fs.write(".ir/log/stale.jsonl", JSON.stringify(stale) + "\n");
+  const ledger = new IrLedger(fs);
+  await ledger.initDevice();
+  await ledger.commitMigration([current]);
+
+  assert.deepEqual((await ledger.loadEvents()).map((event) => event.id), [current.id]);
+});
+
+test("migration verification rejects same-count event substitution", async () => {
+  const fs = memFs();
+  const read = fs.read.bind(fs);
+  const replacement = createEvent(newElementId(), 2);
+  fs.read = async (path) => path.endsWith("/dev_mig_ir_store.jsonl")
+    ? JSON.stringify(replacement) + "\n"
+    : read(path);
+  const ledger = new IrLedger(fs);
+  await ledger.initDevice();
+
+  await assert.rejects(
+    ledger.commitMigration([createEvent(newElementId(), 1)]),
+    /persisted event mismatch/,
+  );
+  assert.equal(await ledger.status(), "absent");
+});
+
+test("legacy schema v1 metadata remains a committed legacy store", async () => {
+  const fs = memFs();
+  await fs.write(META, JSON.stringify({ schemaVersion: 1 }));
+  assert.equal(await new IrLedger(fs).status(), "legacy");
+});
+
+test("unsupported ledger schemas fail closed", async () => {
+  const fs = memFs();
+  await fs.write(META, JSON.stringify({ schemaVersion: 2 }));
+  await assert.rejects(new IrLedger(fs).status(), /unsupported schema version 2/);
 });
 
 test("device id is stable across init calls and ledger instances", async () => {
@@ -246,7 +347,7 @@ test("conflict option threads into the fold on load", async () => {
   assert.equal(s.elements.get(id)?.card?.due, 9000);
 });
 
-test("malformed shard lines are skipped, not fatal", async () => {
+test("malformed shard lines fail with their source path", async () => {
   const fs = memFs();
   const ledger = new IrLedger(fs);
   await ledger.init();
@@ -259,8 +360,45 @@ test("malformed shard lines are skipped, not fatal", async () => {
     "not json\n" + JSON.stringify(gradeEvent(id, 2, 1234, otherDev)) + "\n\n",
   );
 
-  const s = await ledger.load();
-  assert.equal(s.elements.get(id)?.card?.due, 1234);
+  await assert.rejects(ledger.load(), new RegExp(`invalid JSONL.*${otherDev}`));
+});
+
+test("appendEvent rejects invalid runtime data before writing", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  await assert.rejects(
+    ledger.appendEvent({ ...createEvent(newElementId(), 1), lamport: -1 }),
+    /lamport must be a non-negative integer/,
+  );
+  assert.equal((await fs.list(".ir/log")).length, 0);
+});
+
+test("loadEvents rejects syntactically valid invalid events", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  await fs.write(".ir/log/corrupt.jsonl", JSON.stringify({ kind: "graded" }) + "\n");
+  await assert.rejects(ledger.loadEvents(), /id must be a non-empty string/);
+});
+
+test("appendEvent rejects malformed nested event data", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const id = newElementId();
+  const event = createEvent(id, 1);
+  const element = event.payload.element as Record<string, unknown>;
+  element.anchor = { sourcePath: "note.md", quote: {} };
+
+  await assert.rejects(ledger.appendEvent(event), /element-created payload is invalid/);
+
+  const repaired = {
+    ...event,
+    kind: "anchor-repaired" as const,
+    payload: { anchor: { sourcePath: "note.md", quote: { exact: "x" } } },
+  };
+  await assert.rejects(ledger.appendEvent(repaired), /anchor is required/);
 });
 
 test("loadBookmarks returns empty map when file is missing", async () => {
