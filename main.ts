@@ -54,7 +54,7 @@ import {
 } from "./src/ir/obsidian-vault-fs";
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
 import { planOrphanRecoveries } from "./src/ir/orphan-notes";
-import { toAnkiTsv } from "./src/ir/anki-export";
+import { isOcclusionItem, toAnkiTsv } from "./src/ir/anki-export";
 import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath, tombstonesOwnedBy } from "./src/ir/deletion";
 import {
   basenameOf,
@@ -134,6 +134,7 @@ import { findImageEmbedRange } from "./src/ir/image-embed";
 import { fuzzyLocateInBody } from "./src/ir/fuzzy-text";
 import { cropImageBytes } from "./src/ir/image-crop";
 import type { NormalizedRect, PdfSelector } from "./src/ir/model";
+import type { LogState } from "./src/ir/log";
 import { resolveAnchor } from "./src/ir/anchor";
 import {
   IrDecorationCache,
@@ -498,7 +499,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     // a folded in-memory state). Cleaned up automatically on unload via
     // registerInterval.
     this.registerInterval(
-      window.setInterval(() => void this.refreshStatusBar(), 60_000),
+      window.setInterval(() => void this.refreshStatusBar(false), 60_000),
     );
 
     if (Platform.isMobile) {
@@ -1444,12 +1445,11 @@ export default class IncrementalReadingPlugin extends Plugin {
    * status bar does (ledger changed) and pushing them on every reconcile from
    * its caller would require touching ~20 sites instead of one.
    */
-  private async refreshStatusBar(): Promise<void> {
+  private async refreshStatusBar(refreshDecorations = true): Promise<void> {
     if (!this.statusBarEl) return;
     if (!this.ledger) return;
     try {
-      const state = await this.ledger.load();
-      const events = await this.ledger.loadEvents();
+      const { state, events } = await this.ledger.loadSnapshot();
       const load = computeLoad(state.elements.values(), events, Date.now());
       // Mobile has no status bar; the FAB badge is the same number.
       setWorkspaceIrFabDue(load.due);
@@ -1460,10 +1460,10 @@ export default class IncrementalReadingPlugin extends Plugin {
         (evt) => this.showStatusBarMenu(evt),
       );
       this.refreshAuxiliaryViews();
+      if (refreshDecorations) void this.refreshExtractDecorations(state);
     } catch (e) {
       console.error("Incremental Reading: status bar refresh failed", e);
     }
-    void this.refreshExtractDecorations();
   }
 
   private refreshAuxiliaryViews(): void {
@@ -2324,12 +2324,12 @@ export default class IncrementalReadingPlugin extends Plugin {
    * change the set of resolved extract anchors (new extract, deletion,
    * re-anchor, ledger load on startup).
    */
-  async refreshExtractDecorations(): Promise<void> {
+  async refreshExtractDecorations(loadedState?: LogState): Promise<void> {
     if (!this.ledger) return;
     try {
-      await refreshIrDecorationCache(this.app, this.ledger, this.decorationCache);
+      const state = loadedState ?? await this.ledger.load();
+      await refreshIrDecorationCache(this.app, this.ledger, this.decorationCache, state);
       pushIrDecorations(this.app, this.decorationCache);
-      const state = await this.ledger.load();
       this.irPdfPaths.clear();
       for (const el of state.elements.values()) {
         if (el.notePath && isPdfPath(el.notePath)) {
@@ -3282,11 +3282,17 @@ export default class IncrementalReadingPlugin extends Plugin {
     const outPath = "anki-ir.tsv";
     await this.app.vault.adapter.write(outPath, tsv);
     const itemCount = elements.filter(
-      (e) => e.type === "item" && !e.dismissed,
+      (e) => e.type === "item" && !e.dismissed && !isOcclusionItem(e),
+    ).length;
+    const skippedOcclusions = elements.filter(
+      (e) => e.type === "item" && !e.dismissed && isOcclusionItem(e),
     ).length;
     new Notice(
       `Incremental Reading: wrote ${itemCount} item` +
-        `${itemCount === 1 ? "" : "s"} to ${outPath}.`,
+        `${itemCount === 1 ? "" : "s"} to ${outPath}.` +
+        (skippedOcclusions > 0
+          ? ` Skipped ${skippedOcclusions} image-occlusion item${skippedOcclusions === 1 ? "" : "s"}; Anki TSV cannot import them.`
+          : ""),
     );
   }
 
@@ -5350,9 +5356,9 @@ export default class IncrementalReadingPlugin extends Plugin {
    *   path, so even if the marker were lost and this re-ran, the fold
    *   collapses the re-created elements to the identical state.
    *
-   * A failure is reported and swallowed: a half-written `.ir/` is inert while
-   * frontmatter remains authoritative, and breaking `onload` would take the
-   * whole plugin (commands, review) down with it.
+    * A failure is reported and disables ledger-backed actions for this load.
+    * Notes remain untouched, but continuing against a partial ledger could
+    * compound storage damage.
    */
   private async runMigrationIfOwed(fs: ObsidianVaultFs): Promise<void> {
     const ledger = this.ledger;
@@ -5369,33 +5375,33 @@ export default class IncrementalReadingPlugin extends Plugin {
       // Detection happens before init(): init() is what writes the marker.
       // Timeout: Capacitor/iCloud can hang on hidden `.ir/` exists() and
       // that used to stall the whole plugin (no commands, no FAB).
-      const hasMeta = await withTimeout(
-        fs.exists(META),
+      const status = await withTimeout(
+        ledger.status(),
         4000,
-        "exists(.ir/meta.json)",
+        "IrLedger.status",
       );
-      if (hasMeta) {
+      if (status !== "absent") {
         // Still call init() so the per-host device.json resolution runs and
         // this machine's device id is stable for the session. init() is a
         // no-op for META in the already-initialized branch; it only touches
         // .ir/device.json.
         await withTimeout(
-          ledger.init({ hostname }),
+          ledger.initDevice({ hostname }),
           8000,
           "IrLedger.init",
         );
         return;
       }
 
-      // Marker + device id first, so the append below has a shard to write
-      // to and a re-run sees the marker.
-      await withTimeout(ledger.init({ hostname }), 8000, "IrLedger.init");
+      await withTimeout(
+        ledger.initDevice({ hostname }),
+        8000,
+        "IrLedger.initDevice",
+      );
 
       const notes = this.enumerateIrNotes();
       const events = migrateNotes(notes, Date.now());
-      for (const ev of events) {
-        await ledger.appendEvent(ev);
-      }
+      await ledger.commitMigration(events);
       await ledger.reconcile();
 
       if (events.length > 0) {
@@ -5407,9 +5413,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     } catch (e) {
       console.error("Incremental Reading: migration failed", e);
+      this.ledger = undefined;
       new Notice(
-        "Incremental Reading: ledger migration failed; your notes are " +
-          "untouched and still drive the plugin. See the developer console.",
+        "Incremental Reading: ledger initialization failed; IR actions are " +
+          "disabled for this load. Your notes are untouched. See the developer console.",
       );
     }
   }
@@ -5528,7 +5535,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (!ok) return;
 
     try {
-      const removed = await this.wipeIrState();
+      const removed = await this.wipeIrState("reset");
       new Notice(
         removed
           ? "Incremental Reading: .ir/ state removed."
@@ -5573,7 +5580,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
       }
 
-      const stateRemoved = await this.wipeIrState();
+      const stateRemoved = await this.wipeIrState("empty");
       return { notesTrashed: trashed, stateRemoved };
     } finally {
       this.nuking = false;
@@ -5586,16 +5593,15 @@ export default class IncrementalReadingPlugin extends Plugin {
    * re-initialise so subsequent commands work without a plugin reload.
    * Shared by the full nuke flow and the state-only reset flow.
    */
-  private async wipeIrState(): Promise<boolean> {
+  private async wipeIrState(after: "reset" | "empty"): Promise<boolean> {
     const adapter = this.app.vault.adapter as unknown as ObsidianDataAdapter;
-    let stateRemoved = true;
     try {
       if (await adapter.exists(".ir")) {
         await adapter.rmdir(".ir", true);
       }
     } catch (e) {
       console.error("Incremental Reading: could not remove .ir/", e);
-      stateRemoved = false;
+      return false;
     }
 
     this.ledger = undefined;
@@ -5608,13 +5614,21 @@ export default class IncrementalReadingPlugin extends Plugin {
     try {
       const fs = new ObsidianVaultFs(adapter);
       this.ledger = new IrLedger(fs, { conflict: "clock-order" });
-      this.ledgerInit = this.runMigrationIfOwed(fs);
+      this.ledgerInit = (async () => {
+        await this.ledger?.initDevice({ hostname: getMachineHostname() });
+        if (after === "reset") {
+          await this.ledger?.markReset();
+        } else {
+          await this.ledger?.commitMigration([]);
+        }
+      })();
       await this.ledgerInit;
     } catch (e) {
       console.error("Incremental Reading: post-wipe ledger re-init failed", e);
+      return false;
     }
 
     void this.refreshStatusBar();
-    return stateRemoved;
+    return true;
   }
 }

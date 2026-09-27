@@ -29,6 +29,7 @@ import {
   type Range as CmRange,
 } from "@codemirror/state";
 import type { IrLedger } from "./ledger";
+import type { LogState } from "./log";
 import type { Anchor, IrElement } from "./model";
 import { resolveAnchor } from "./anchor";
 import {
@@ -99,8 +100,9 @@ export async function refreshIrDecorationCache(
   app: App,
   ledger: IrLedger,
   cache: IrDecorationCache,
+  loadedState?: LogState,
 ): Promise<void> {
-  const state = await ledger.load();
+  const state = loadedState ?? await ledger.load();
   const byPath = new Map<
     string,
     Array<{ anchor: Anchor; text: string }>
