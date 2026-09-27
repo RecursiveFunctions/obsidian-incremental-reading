@@ -12,16 +12,7 @@ import assert from "node:assert/strict";
 import { newElement } from "../src/ir/model";
 import type { IrElement } from "../src/ir/model";
 import type { ElementId } from "../src/ir/ids";
-
-const SPEC = ["..", "src", "ir", "anki-export.ts"].join("/");
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function load(): Promise<any> {
-  try {
-    return await import(SPEC);
-  } catch {
-    return null;
-  }
-}
+import { toAnkiTsv } from "../src/ir/anki-export";
 
 function item(id: string, text: string, dismissed = false): IrElement {
   const e = newElement({
@@ -52,10 +43,7 @@ function world(): IrElement[] {
   ];
 }
 
-test("toAnkiTsv: exact deterministic bytes", async (t) => {
-  const m = await load();
-  if (!m) return t.skip("src/ir/anki-export.ts not implemented yet");
-
+test("toAnkiTsv: exact deterministic bytes", () => {
   const expected =
     [
       "#separator:tab",
@@ -68,14 +56,11 @@ test("toAnkiTsv: exact deterministic bytes", async (t) => {
       `Line one Line two with tab${TAB}el_b`,
     ].join("\n") + "\n";
 
-  assert.equal(m.toAnkiTsv(world(), { deck: "IR" }), expected);
+  assert.equal(toAnkiTsv(world(), { deck: "IR" }), expected);
 });
 
-test("toAnkiTsv: only non-dismissed items, sorted by id", async (t) => {
-  const m = await load();
-  if (!m) return t.skip("src/ir/anki-export.ts not implemented yet");
-
-  const out: string = m.toAnkiTsv(world(), { deck: "IR" });
+test("toAnkiTsv: only non-dismissed items, sorted by id", () => {
+  const out = toAnkiTsv(world(), { deck: "IR" });
   const rows = out
     .split("\n")
     .filter((l) => l && !l.startsWith("#"));
@@ -86,16 +71,20 @@ test("toAnkiTsv: only non-dismissed items, sorted by id", async (t) => {
   assert.ok(!out.includes("el_t")); // non-item excluded
 });
 
-test("toAnkiTsv: deterministic and tab/newline-safe", async (t) => {
-  const m = await load();
-  if (!m) return t.skip("src/ir/anki-export.ts not implemented yet");
-
-  const a = m.toAnkiTsv(world(), { deck: "IR" });
-  const b = m.toAnkiTsv(world(), { deck: "IR" });
+test("toAnkiTsv: deterministic and tab/newline-safe", () => {
+  const a = toAnkiTsv(world(), { deck: "IR" });
+  const b = toAnkiTsv(world(), { deck: "IR" });
   assert.equal(a, b);
   // no raw tab/newline may leak into a record body (would corrupt the TSV)
   for (const row of a.split("\n").filter((l: string) => l && !l.startsWith("#"))) {
     const body = row.slice(0, row.lastIndexOf(TAB));
     assert.ok(!body.includes("\n") && !body.includes("\r"));
   }
+});
+
+test("toAnkiTsv skips unsupported occlusion items and sanitizes deck headers", () => {
+  const occlusion = item("el_occ", "```ir-occlusion\n{}\n```");
+  const out = toAnkiTsv([...world(), occlusion], { deck: "IR\n#notetype:Basic\tbad" });
+  assert.ok(!out.includes("el_occ"));
+  assert.ok(out.includes("#deck:IR #notetype:Basic bad\n"));
 });

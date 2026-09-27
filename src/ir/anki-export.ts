@@ -11,19 +11,23 @@ function tsvSafeBody(text: string | undefined): string {
     .replace(/\n/g, " ");
 }
 
+export function isOcclusionItem(element: IrElement): boolean {
+  return /```ir-occlusion\b/.test(element.text);
+}
+
 export function toAnkiTsv(
   elements: IrElement[],
   opts: AnkiExportOptions,
 ): string {
   const items = elements
-    .filter((e) => e.type === "item" && e.dismissed === false)
+    .filter((e) => e.type === "item" && e.dismissed === false && !isOcclusionItem(e))
     .sort((a, b) => a.id.localeCompare(b.id));
 
   const header = [
     "#separator:tab",
     "#html:false",
     "#notetype:Cloze",
-    `#deck:${opts.deck}`,
+    `#deck:${tsvSafeBody(opts.deck)}`,
     `#columns:Text\tguid`,
     "#guid column:2",
   ];

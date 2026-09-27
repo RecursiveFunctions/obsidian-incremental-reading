@@ -2,7 +2,7 @@
 
 Read many sources in parallel, pull the parts worth keeping out of them, and review those parts on a spaced schedule. SuperMemo-style incremental reading, in your vault.
 
-**Status:** alpha, currently 0.7.13. Install through [BRAT](#installation) from [GitHub Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases). A commit on `main` is not installable; BRAT reads the release assets.
+**Status:** alpha. The current version is published on [GitHub Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases). Install through [BRAT](#installation). A commit on `main` is not installable; BRAT reads the release assets.
 
 ## What it is
 
@@ -81,7 +81,7 @@ The occlusion editor is a workspace leaf. Drag to draw masks, click one to selec
 {"image":"attachments/heart.png","mode":"hide-all","active":2,"rects":[{"n":1,"x":0.1,"y":0.2,"w":0.3,"h":0.1,"label":"aorta"},{"n":2,"x":0.5,"y":0.5,"w":0.2,"h":0.2}]}
 ```
 
-That block renders as the masked image anywhere Obsidian renders markdown. In review, `Space` reveals and `1` to `4` grade, the same as a text cloze. Anki TSV export writes the block verbatim; Anki cannot import it.
+That block renders as the masked image anywhere Obsidian renders markdown. In review, `Space` reveals and `1` to `4` grade, the same as a text cloze. Anki TSV export skips image-occlusion items and reports how many were omitted because Anki cannot import this block format.
 
 ## Neural review
 
@@ -166,13 +166,12 @@ Built to work offline. Full threat model, verification commands and reproducible
 
 ## Roadmap
 
-Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling, interleaved due review, neural sessions, priority queue and mercy postpone, the element tree with keyboard and touch reparenting, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
+Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling and a local parameter optimizer, interleaved due review, neural sessions, priority queue and mercy postpone, the element tree with keyboard and touch reparenting, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
 
 PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be extracted, and cloze is markdown-only: extract from the PDF first, then cloze the extract.
 
 Planned, in order:
 
-- [ ] Local FSRS optimizer over your own review log. It reports exactly which reviews it excluded and why, and previews the schedule changes before you apply them.
 - [ ] Community directory submission. The id `incremental-reading` is taken, so this includes a one-time plugin id and name change with a migration note for BRAT installs.
 - [ ] Full mobile parity, meaning whatever a real device still gets wrong on small screens.
 - [ ] Calendar heatmap and retention trend in stats.
@@ -216,7 +215,7 @@ mkdir -p .obsidian/plugins
 ln -s /absolute/path/to/obsidian-incremental-reading .obsidian/plugins/incremental-reading
 ```
 
-`npm run build` is a one-shot production build with type-checking. `npm test` runs 642 headless tests over the pure cores. Those tests do not cover the live review surface, hotkey dispatch, or `processFrontMatter` against the real app, so changes there need a real vault.
+`npm run build` is a one-shot production build with type-checking. `npm test` runs the headless core suite, and `npm run test:layout` checks the mobile edit layout in Chromium. These tests do not cover every live review interaction, hotkey dispatch, or `processFrontMatter` against the real app, so changes there need a real vault.
 
 Release mechanics are in [`docs/RELEASE.md`](docs/RELEASE.md). UI rules the project holds itself to are in [`docs/UI-COMMITMENTS.md`](docs/UI-COMMITMENTS.md).
 
