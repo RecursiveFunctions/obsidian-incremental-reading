@@ -217,6 +217,152 @@ export interface IrEvent {
   payload: Record<string, unknown>;
 }
 
+const IR_EVENT_KINDS = new Set<IrEventKind>([
+  "element-created", "priority-set", "dismiss-set", "graded", "grade-undone",
+  "topic-advanced", "mercy-postponed", "anchor-repaired", "anchor-detached",
+  "promoted", "demoted", "reparented", "source-tombstoned", "source-restored",
+  "source-renamed", "element-deleted", "text-edited",
+]);
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function finite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function nonNegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0;
+}
+
+function validQuote(value: unknown): boolean {
+  const quote = record(value);
+  return !!quote && typeof quote.exact === "string" &&
+    typeof quote.prefix === "string" && typeof quote.suffix === "string";
+}
+
+function validPosition(value: unknown): boolean {
+  const position = record(value);
+  return !!position && nonNegativeInteger(position.start) &&
+    nonNegativeInteger(position.end) && position.end >= position.start;
+}
+
+function validSelection(value: unknown): boolean {
+  return Array.isArray(value) && value.length === 4 && value.every(nonNegativeInteger);
+}
+
+function validRect(value: unknown): boolean {
+  const rect = record(value);
+  return !!rect && ["x", "y", "w", "h"].every((key) => finite(rect[key])) &&
+    (rect.x as number) >= 0 && (rect.y as number) >= 0 &&
+    (rect.w as number) > 0 && (rect.h as number) > 0 &&
+    (rect.x as number) + (rect.w as number) <= 1 &&
+    (rect.y as number) + (rect.h as number) <= 1;
+}
+
+function validPdfSegment(value: unknown): boolean {
+  const segment = record(value);
+  return !!segment && Number.isInteger(segment.page) && (segment.page as number) >= 1 &&
+    validSelection(segment.selection);
+}
+
+function validPdf(value: unknown): boolean {
+  const pdf = record(value);
+  return !!pdf && Number.isInteger(pdf.page) && (pdf.page as number) >= 1 &&
+    validSelection(pdf.selection) &&
+    (pdf.segments === undefined || (Array.isArray(pdf.segments) && pdf.segments.every(validPdfSegment))) &&
+    (pdf.rect === undefined || validRect(pdf.rect));
+}
+
+function validAnchorSpan(value: unknown): boolean {
+  const span = record(value);
+  return !!span && validQuote(span.quote) &&
+    (span.position === undefined || validPosition(span.position));
+}
+
+function validAnchor(value: unknown): boolean {
+  const anchor = record(value);
+  return !!anchor && nonEmptyString(anchor.sourcePath) && validQuote(anchor.quote) &&
+    (anchor.position === undefined || validPosition(anchor.position)) &&
+    (anchor.blockId === undefined || nonEmptyString(anchor.blockId)) &&
+    (anchor.spans === undefined || (Array.isArray(anchor.spans) && anchor.spans.every(validAnchorSpan))) &&
+    (anchor.pdf === undefined || validPdf(anchor.pdf));
+}
+
+function validCard(value: unknown): boolean {
+  const card = record(value);
+  return !!card && ["due", "stability", "difficulty", "elapsedDays", "scheduledDays", "reps", "lapses", "state"]
+    .every((key) => finite(card[key])) &&
+    ["elapsedDays", "scheduledDays", "reps", "lapses", "state"].every((key) => nonNegativeInteger(card[key])) &&
+    (card.learningSteps === undefined || nonNegativeInteger(card.learningSteps)) &&
+    (card.lastReview === undefined || finite(card.lastReview));
+}
+
+function validSchedule(value: unknown): boolean {
+  const schedule = record(value);
+  return !!schedule && finite(schedule.due) && finite(schedule.interval) && finite(schedule.aFactor);
+}
+
+function validElement(value: unknown): value is IrElement {
+  const element = record(value);
+  return !!element && nonEmptyString(element.id) &&
+    (element.type === "topic" || element.type === "extract" || element.type === "item") &&
+    finite(element.priority) && (element.priority as number) >= PRIORITY_MIN &&
+    (element.priority as number) <= PRIORITY_MAX &&
+    (element.parentId === null || nonEmptyString(element.parentId)) &&
+    typeof element.dismissed === "boolean" && finite(element.created) &&
+    typeof element.text === "string" &&
+    (element.anchorState === "ok" || element.anchorState === "needs-reanchor" || element.anchorState === "detached") &&
+    (element.anchor === undefined || validAnchor(element.anchor)) &&
+    (element.notePath === undefined || nonEmptyString(element.notePath)) &&
+    (element.card === undefined || validCard(element.card)) &&
+    (element.schedule === undefined || validSchedule(element.schedule)) &&
+    (element.schedulerOverride === undefined || nonEmptyString(element.schedulerOverride));
+}
+
+export function validateIrEvent(value: unknown): string | null {
+  const event = record(value);
+  if (!event) return "event must be an object";
+  if (typeof event.id !== "string" || !event.id) return "id must be a non-empty string";
+  if (!finite(event.ts)) return "ts must be finite";
+  if (!Number.isInteger(event.lamport) || (event.lamport as number) < 0) return "lamport must be a non-negative integer";
+  if (typeof event.device !== "string" || !event.device) return "device must be a non-empty string";
+  if (!IR_EVENT_KINDS.has(event.kind as IrEventKind)) return "kind is unsupported";
+  if (typeof event.target !== "string" || !event.target) return "target must be a non-empty string";
+  const payload = record(event.payload);
+  if (!payload) return "payload must be an object";
+
+  switch (event.kind as IrEventKind) {
+    case "element-created":
+      return validElement(payload.element) && payload.element.id === event.target ? null : "element-created payload is invalid";
+    case "priority-set": return finite(payload.priority) ? null : "priority must be finite";
+    case "dismiss-set": return typeof payload.dismissed === "boolean" ? null : "dismissed must be boolean";
+    case "graded": return validCard(payload.card) ? null : "card is invalid";
+    case "grade-undone": return typeof payload.eventId === "string" && payload.eventId ? null : "eventId is required";
+    case "topic-advanced": return validSchedule(payload.schedule) ? null : "schedule is invalid";
+    case "mercy-postponed": return finite(payload.newDue) ? null : "newDue must be finite";
+    case "reparented": return payload.parentId === null || nonEmptyString(payload.parentId) ? null : "parentId is invalid";
+    case "promoted": return nonEmptyString(payload.notePath) ? null : "notePath is required";
+    case "source-tombstoned": {
+      const tombstone = record(payload.tombstone);
+      return tombstone && nonEmptyString(tombstone.path) && typeof tombstone.title === "string" && finite(tombstone.deletedAt)
+        ? null : "tombstone is invalid";
+    }
+    case "source-restored": return nonEmptyString(payload.path) ? null : "path is required";
+    case "source-renamed": return nonEmptyString(payload.oldPath) && nonEmptyString(payload.newPath) ? null : "rename paths are required";
+    case "text-edited": return typeof payload.text === "string" ? null : "text is required";
+    case "anchor-repaired": return validAnchor(payload.anchor) ? null : "anchor is required";
+    default: return null;
+  }
+}
+
 /** True for the events the fold must never discard on compaction. */
 export function isReviewEvent(kind: IrEventKind): boolean {
   // grade-undone references a graded event by id. If we drop the graded

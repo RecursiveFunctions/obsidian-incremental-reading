@@ -11,7 +11,7 @@
 
 import { fold, compact, type LogState } from "./log";
 import { newDeviceId, type DeviceId, type ElementId } from "./ids";
-import type { IrEvent } from "./model";
+import { validateIrEvent, type IrEvent } from "./model";
 import type { BookmarkMap } from "./bookmark";
 
 // Fixed paths (constants in the module)
@@ -20,9 +20,29 @@ export const DEVICE = ".ir/device.json";
 export const LOGDIR = ".ir/log";
 export const SNAPSHOT = ".ir/snapshot.jsonl";
 export const RHISTDIR = ".ir/review-history";
+export const COMPACTIONDIR = ".ir/compaction";
 export const STATEDIR = ".ir/state";
 export const TOMBSTONES = ".ir/tombstones.json";
 export const BOOKMARKS = ".ir/bookmarks.json";
+export const MIGRATION_LOG = `${LOGDIR}/dev_mig_ir_store.jsonl`;
+
+export type LedgerStatus = "absent" | "legacy" | "migrated" | "reset";
+
+interface LedgerMetaV1 {
+  schemaVersion: 1;
+  migration?: "complete";
+  reset?: "inert";
+  generation?: string;
+}
+
+interface LedgerPaths {
+  logDir: string;
+  migrationLog: string;
+  snapshot: string;
+  reviewHistoryDir: string;
+  compactionDir: string;
+  bookmarks: string;
+}
 
 export interface VaultFs {
   exists(path: string): Promise<boolean>;
@@ -56,6 +76,35 @@ function deterministicJsonStringify(value: unknown): string {
   return JSON.stringify(sortKeysDeep(normalized));
 }
 
+function assertSameEvents(context: string, expected: readonly IrEvent[], actual: readonly IrEvent[]): void {
+  const expectedById = new Map<string, string>();
+  for (const event of expected) {
+    const bytes = deterministicJsonStringify(event);
+    const prior = expectedById.get(event.id);
+    if (prior !== undefined && prior !== bytes) {
+      throw new Error(`${context}: conflicting expected event id ${event.id}`);
+    }
+    expectedById.set(event.id, bytes);
+  }
+  const actualById = new Map<string, string>();
+  for (const event of actual) {
+    const bytes = deterministicJsonStringify(event);
+    const prior = actualById.get(event.id);
+    if (prior !== undefined) {
+      throw new Error(`${context}: duplicate persisted event id ${event.id}`);
+    }
+    actualById.set(event.id, bytes);
+  }
+  if (expectedById.size !== actualById.size) {
+    throw new Error(`${context}: persisted event count mismatch`);
+  }
+  for (const [id, bytes] of expectedById) {
+    if (actualById.get(id) !== bytes) {
+      throw new Error(`${context}: persisted event mismatch for ${id}`);
+    }
+  }
+}
+
 function elementStatePath(id: string): string {
   return `${STATEDIR}/${id}.json`;
 }
@@ -84,6 +133,7 @@ export class IrLedger {
   private fs: VaultFs;
   private opts: StoreOptions;
   private deviceId?: DeviceId;
+  private generation?: string;
   /**
    * Element ids whose state file we've already tried (and failed) to write
    * this session. Reconcile retries every pass otherwise, which spams the
@@ -110,18 +160,93 @@ export class IrLedger {
     if (!(await this.fs.exists(META))) {
       await this.fs.write(META, JSON.stringify({ schemaVersion: 1 }));
     }
+    await this.initDevice(opts);
+  }
 
+  async status(): Promise<LedgerStatus> {
+    if (!(await this.fs.exists(META))) return "absent";
+    const meta = this.parseMeta(await this.fs.read(META));
+    this.generation = meta.generation;
+    if (meta.reset === "inert") return "reset";
+    if (meta.migration === "complete") return "migrated";
+    return "legacy";
+  }
+
+  async initDevice(opts?: { hostname?: string }): Promise<void> {
     if (opts?.hostname) {
       this.deviceId = await this.resolvePerHostDeviceId(opts.hostname);
       return;
     }
-
-    // Legacy path (no hostname provided): single-id schema, generate-if-missing.
     if (!(await this.fs.exists(DEVICE))) {
       const id = newDeviceId();
       await this.fs.write(DEVICE, JSON.stringify({ deviceId: id }));
       this.deviceId = id;
     }
+  }
+
+  async commitMigration(events: readonly IrEvent[]): Promise<void> {
+    const generation = newDeviceId();
+    const migrationLog = this.pathsFor(generation).migrationLog;
+    const body = events.map((event) => JSON.stringify(event) + "\n").join("");
+    await this.fs.write(migrationLog, body);
+    const persisted = this.parseJsonl(migrationLog, await this.fs.read(migrationLog));
+    assertSameEvents("IrLedger.commitMigration", events, persisted);
+    await this.fs.write(
+      META,
+      JSON.stringify({ schemaVersion: 1, migration: "complete", generation } satisfies LedgerMetaV1),
+    );
+    this.generation = generation;
+  }
+
+  async markReset(): Promise<void> {
+    const generation = newDeviceId();
+    await this.fs.write(
+      META,
+      JSON.stringify({ schemaVersion: 1, reset: "inert", generation } satisfies LedgerMetaV1),
+    );
+    this.generation = generation;
+  }
+
+  private parseMeta(content: string): LedgerMetaV1 {
+    const value = JSON.parse(content) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("IrLedger: invalid meta.json");
+    }
+    const meta = value as Record<string, unknown>;
+    if (meta.schemaVersion !== 1) {
+      throw new Error(`IrLedger: unsupported schema version ${String(meta.schemaVersion)}`);
+    }
+    if (meta.migration !== undefined && meta.migration !== "complete") {
+      throw new Error("IrLedger: invalid migration status");
+    }
+    if (meta.reset !== undefined && meta.reset !== "inert") {
+      throw new Error("IrLedger: invalid reset status");
+    }
+    if (meta.generation !== undefined &&
+        (typeof meta.generation !== "string" || meta.generation.length === 0)) {
+      throw new Error("IrLedger: invalid generation");
+    }
+    return meta as unknown as LedgerMetaV1;
+  }
+
+  private pathsFor(generation = this.generation): LedgerPaths {
+    const base = generation ? `.ir/generations/${generation}` : ".ir";
+    const logDir = `${base}/log`;
+    return {
+      logDir,
+      migrationLog: `${logDir}/dev_mig_ir_store.jsonl`,
+      snapshot: `${base}/snapshot.jsonl`,
+      reviewHistoryDir: `${base}/review-history`,
+      compactionDir: `${base}/compaction`,
+      bookmarks: `${base}/bookmarks.json`,
+    };
+  }
+
+  private async paths(): Promise<LedgerPaths> {
+    if (this.generation === undefined && await this.fs.exists(META)) {
+      this.generation = this.parseMeta(await this.fs.read(META)).generation;
+    }
+    return this.pathsFor();
   }
 
   /**
@@ -193,31 +318,34 @@ export class IrLedger {
   }
 
   async schemaVersion(): Promise<number> {
-    const metaContent = await this.fs.read(META);
-    const metaData = JSON.parse(metaContent);
-    return metaData.schemaVersion as number;
+    return this.parseMeta(await this.fs.read(META)).schemaVersion;
   }
 
   async appendEvent(ev: IrEvent): Promise<void> {
+    const issue = validateIrEvent(ev);
+    if (issue) throw new Error(`IrLedger.appendEvent: ${issue}`);
     const deviceId = await this.getDeviceId();
-    const shardPath = `${LOGDIR}/${deviceId}.jsonl`;
+    const { logDir } = await this.paths();
+    const shardPath = `${logDir}/${deviceId}.jsonl`;
     const eventString = JSON.stringify(ev) + "\n";
     await this.fs.append(shardPath, eventString);
   }
 
-  private parseJsonl(content: string): IrEvent[] {
+  private parseJsonl(path: string, content: string): IrEvent[] {
     const out: IrEvent[] = [];
     const lines = content.split("\n");
 
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index]!;
       const trimmedLine = line.trim();
       if (trimmedLine) {
         try {
-          const event = JSON.parse(trimmedLine);
-          out.push(event);
-        } catch {
-          // Skip malformed lines
-          continue;
+          const event = JSON.parse(trimmedLine) as unknown;
+          const issue = validateIrEvent(event);
+          if (issue) throw new Error(issue);
+          out.push(event as IrEvent);
+        } catch (error) {
+          throw new Error(`IrLedger: invalid JSONL in ${path} at line ${index + 1}: ${(error as Error).message}`);
         }
       }
     }
@@ -230,35 +358,60 @@ export class IrLedger {
    * deletion args, history exports) don't have to reach into private state.
    */
   async loadEvents(): Promise<IrEvent[]> {
+    if (await this.fs.exists(META)) {
+      const meta = this.parseMeta(await this.fs.read(META));
+      this.generation = meta.generation;
+      if (meta.reset === "inert") return [];
+    }
+    const paths = this.pathsFor();
     const events: IrEvent[] = [];
 
-    if (await this.fs.exists(SNAPSHOT)) {
-      try {
-        const snapContent = await this.fs.read(SNAPSHOT);
-        events.push(...this.parseJsonl(snapContent));
-      } catch {
-        // Skip if snapshot cannot be read
-      }
+    if (await this.fs.exists(paths.snapshot)) {
+      const snapContent = await this.fs.read(paths.snapshot);
+      events.push(...this.parseJsonl(paths.snapshot, snapContent));
     }
 
-    const shards = await this.fs.list(LOGDIR);
+    const archives = await this.fs.list(paths.compactionDir);
+    for (const archive of archives) {
+      const content = await this.fs.read(archive);
+      events.push(...this.parseJsonl(archive, content));
+    }
 
+    const shards = await this.fs.list(paths.logDir);
     for (const shard of shards) {
+      const content = await this.fs.read(shard);
       try {
-        const content = await this.fs.read(shard);
-        events.push(...this.parseJsonl(content));
-      } catch {
-        // Skip if shard doesn't exist or can't be read
-        continue;
+        events.push(...this.parseJsonl(shard, content));
+      } catch (error) {
+        const shardName = shard.slice(shard.lastIndexOf("/") + 1).replace(/\.jsonl$/, "");
+        const hasRecoveryArchive = archives.some((archive) => {
+          const archiveName = archive.slice(archive.lastIndexOf("/") + 1);
+          return archiveName.startsWith(`${shardName}-`);
+        });
+        if (!hasRecoveryArchive) throw error;
+        console.warn(`Incremental Reading: recovered ${shard} from its compaction archive`);
       }
     }
 
-    return events;
+    const byId = new Map<string, IrEvent>();
+    for (const event of events) {
+      const prior = byId.get(event.id);
+      if (prior && deterministicJsonStringify(prior) !== deterministicJsonStringify(event)) {
+        throw new Error(`IrLedger: conflicting duplicate event id ${event.id}`);
+      }
+      byId.set(event.id, event);
+    }
+    return [...byId.values()];
   }
 
   async load(): Promise<LogState> {
     const events = await this.loadEvents();
     return fold(events, { conflict: this.opts.conflict });
+  }
+
+  async loadSnapshot(): Promise<{ events: IrEvent[]; state: LogState }> {
+    const events = await this.loadEvents();
+    return { events, state: fold(events, { conflict: this.opts.conflict }) };
   }
 
   async compactLocalShard(
@@ -270,16 +423,13 @@ export class IrLedger {
     const dayMs = 86400000;
 
     const deviceId = await this.getDeviceId();
-    const shardPath = `${LOGDIR}/${deviceId}.jsonl`;
+    const paths = await this.paths();
+    const shardPath = `${paths.logDir}/${deviceId}.jsonl`;
 
     let localEvents: IrEvent[] = [];
     if (await this.fs.exists(shardPath)) {
-      try {
-        const content = await this.fs.read(shardPath);
-        localEvents = this.parseJsonl(content);
-      } catch {
-        localEvents = [];
-      }
+      const content = await this.fs.read(shardPath);
+      localEvents = this.parseJsonl(shardPath, content);
     }
 
     const ageCutoff = now - maxAgeDays * dayMs;
@@ -294,18 +444,28 @@ export class IrLedger {
 
     const result = compact(localEvents, now, { maxEvents, maxAgeDays });
 
+    const compactedAway = [...result.archived, ...result.dropped];
+    const transactionId = localEvents.map((event) => event.id).sort().join("_");
+    const archivePath = `${paths.compactionDir}/${deviceId}-${hashString(transactionId)}.jsonl`;
+    const archiveBody = localEvents.map((e) => JSON.stringify(e) + "\n").join("");
+    await this.fs.write(archivePath, archiveBody);
+    const verifiedArchive = this.parseJsonl(archivePath, await this.fs.read(archivePath));
+    assertSameEvents("IrLedger.compactLocalShard archive", localEvents, verifiedArchive);
+
+    const rhistPath = `${paths.reviewHistoryDir}/${deviceId}.jsonl`;
+    if (result.archived.length > 0) {
+      const existing = await this.fs.exists(rhistPath)
+        ? this.parseJsonl(rhistPath, await this.fs.read(rhistPath))
+        : [];
+      const existingIds = new Set(existing.map((event) => event.id));
+      const historyBody = [...existing, ...result.archived.filter((event) => !existingIds.has(event.id))]
+        .map((event) => JSON.stringify(event) + "\n").join("");
+      await this.fs.write(rhistPath, historyBody);
+      this.parseJsonl(rhistPath, await this.fs.read(rhistPath));
+    }
+
     const shardBody = result.keep.map((e) => JSON.stringify(e) + "\n").join("");
     await this.fs.write(shardPath, shardBody);
-
-    const compactedAway = [...result.archived, ...result.dropped];
-    for (const ev of compactedAway) {
-      await this.fs.append(SNAPSHOT, JSON.stringify(ev) + "\n");
-    }
-
-    const rhistPath = `${RHISTDIR}/${deviceId}.jsonl`;
-    for (const ev of result.archived) {
-      await this.fs.append(rhistPath, JSON.stringify(ev) + "\n");
-    }
 
     return {
       compacted: true,
@@ -315,9 +475,10 @@ export class IrLedger {
   }
 
   async loadBookmarks(): Promise<BookmarkMap> {
-    if (!(await this.fs.exists(BOOKMARKS))) return {};
+    const { bookmarks } = await this.paths();
+    if (!(await this.fs.exists(bookmarks))) return {};
     try {
-      const raw = await this.fs.read(BOOKMARKS);
+      const raw = await this.fs.read(bookmarks);
       return JSON.parse(raw) as BookmarkMap;
     } catch {
       return {};
@@ -326,7 +487,8 @@ export class IrLedger {
 
   async saveBookmarks(bm: BookmarkMap): Promise<void> {
     const data = deterministicJsonStringify(bm);
-    await this.fs.write(BOOKMARKS, data);
+    const { bookmarks } = await this.paths();
+    await this.fs.write(bookmarks, data);
   }
 
   async reconcile(): Promise<LogState> {
@@ -400,4 +562,13 @@ export class IrLedger {
 
     return state;
   }
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
