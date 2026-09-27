@@ -66,6 +66,12 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Install layout-test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser layout tests
+        run: npm run test:layout
+
       - name: Build plugin bundle
         run: npm run build
 
@@ -76,10 +82,14 @@ jobs:
           test -f styles.css
           # Release tag and shipped manifest.version must match for BRAT.
           MANIFEST_VER=$(node -p 'require("./manifest.json").version')
+          PACKAGE_VER=$(node -p 'require("./package.json").version')
+          VERSIONS_MIN=$(node -p 'require("./versions.json")[require("./manifest.json").version]')
           if [ "$MANIFEST_VER" != "${{ steps.meta.outputs.tag }}" ]; then
             echo "manifest.json version ($MANIFEST_VER) != tag (${{ steps.meta.outputs.tag }})" >&2
             exit 1
           fi
+          test "$PACKAGE_VER" = "$MANIFEST_VER"
+          test "$VERSIONS_MIN" = "$(node -p 'require("./manifest.json").minAppVersion')"
 
       - name: Publish GitHub Release (BRAT / Obsidian)
         uses: softprops/action-gh-release@v2

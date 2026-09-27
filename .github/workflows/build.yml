@@ -35,6 +35,12 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Install layout-test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser layout tests
+        run: npm run test:layout
+
       - name: Type-check and build
         run: npm run build
 

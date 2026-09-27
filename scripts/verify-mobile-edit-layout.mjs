@@ -6,21 +6,23 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.join(__dirname, "../test/fixtures/mobile-edit-layout.html");
 const stylesPath = path.join(__dirname, "../styles.css");
 
 async function main() {
-  let chromium;
-  try {
-    ({ chromium } = await import("playwright"));
-  } catch {
-    console.log("SKIP: playwright not installed");
-    process.exit(0);
-  }
+  const { chromium } = await import("playwright");
 
-  const browser = await chromium.launch();
+  const systemChrome = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+  ].find((candidate) => candidate && existsSync(candidate));
+  const browser = await chromium.launch(
+    systemChrome ? { executablePath: systemChrome } : undefined,
+  );
   try {
     const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
     await page.goto(`file://${fixturePath}`);
@@ -161,9 +163,6 @@ async function main() {
       `keyboard open: host too short (${open.hostHeight}px)`,
     );
 
-    await page.screenshot({
-      path: path.join(__dirname, "../.layout-verify-keyboard.png"),
-    });
     console.log("OK: mobile edit layout verified in browser");
   } finally {
     await browser.close();
