@@ -1,9 +1,11 @@
 # Scope: review-feel patch + mobile queue badge
 
-Handoff for the next implementation pass, from the 2026-09-03 UX audit.
-Read `docs/UI-COMMITMENTS.md` first; phases A-E close gaps against
-commitments #3, #4, and #6, plus the loudest feedback holes in the
-review loop.
+> **Historical, shipped work.** Phases A–F shipped in 0.7.9–0.7.10, with
+> follow-on audit work in 0.7.11–0.7.12. This document preserves the original
+> 2026-09-03 implementation brief; it is not a handoff for current work.
+>
+> For new changes, use the current UI commitments and canonical release
+> procedure in `docs/RELEASE.md`.
 
 Two releases:
 
@@ -178,14 +180,14 @@ Acceptance: on mobile, Alt+P on an unmarked note produces a visible
 outcome instead of a focus-stealing no-op; the swipe coach appears at
 most 3 times ever for a button-only user.
 
-## Release 1 checkpoint
+## Release 1 checkpoint (historical)
 
-- [ ] `npm run build` clean, `npm test` all pass.
-- [ ] Per-phase acceptance above, plus the standing checklist from
-      `SCOPE-MODAL-REMOVAL.md` (hotkeys, status-bar refresh chain,
-      session log, tree/stats views).
-- [ ] `npm version patch`, tag, `gh release create <ver> main.js
-      manifest.json styles.css` (BRAT reads releases, not commits).
+- [x] The phase acceptance criteria and automated gates were completed for
+      the 0.7.9 release.
+- [x] The work was published through the then-current release process; its
+      BRAT-facing release is recorded in the shipped status below.
+- For any new release, use the canonical `npm run ship:patch|minor|major`
+  commands in `docs/RELEASE.md` rather than these historical instructions.
 
 ---
 
@@ -302,9 +304,8 @@ Notable implementation points:
   in-tree key lists are hardcoded with pointers to their handlers,
   because those keys are not commands.
 
-Still open from the 2026-09-03 audit: a calendar/streak heatmap and
-retention trend in stats, and terminology unification (element / item /
-card used interchangeably; four names for postpone across five
-surfaces). The terminology sweep is deliberately unstarted: it rewrites
-user-facing copy across every view, and the vocabulary section in the
-new help panel is the cheaper half of the fix.
+The remaining audit backlog is a calendar/streak heatmap and retention trend
+in stats. Terminology was unified in the shipped vocabulary: an **element** is
+anything scheduled, an **item** is a graded cloze or image occlusion, and a
+**card** is only the review-pass surface. Postpone naming was likewise
+normalized in the current UI and documentation.

@@ -61,7 +61,7 @@ There are two kinds, and the menus use these words:
 
 Cloze items always get their own note. Creating one with `Alt+Z` offers an optional hint on an inline bar: Enter confirms, empty means no hint, Escape cancels. Deletions use Anki-compatible markup, `{{c1::hidden text}}` or `{{c1::hidden text::hint}}`.
 
-Extract and cloze both work from Reading view. When a rendered selection cannot be mapped back onto the markdown, the note switches to Edit and keeps the selection where possible.
+Extract and cloze both work from Reading view. `Alt+X` uses a formatting-tolerant mapping and never switches Reading view automatically; if it cannot map the selection, it reports that instead. Cloze creation can switch to Source/Edit when exact markdown is required, keeping the selection where possible.
 
 Extract and cloze highlights paint in the editor, in reading view, and in the review source column. Extracts are yellow, clozes are green and underlined. The source file is never rewritten to add them.
 
@@ -163,6 +163,20 @@ Built to work offline. Full threat model, verification commands and reproducible
 - **No network calls.** There is no `fetch`, `requestUrl`, `XMLHttpRequest`, or `WebSocket` anywhere in the source, and the build fails if one ever appears in the compiled `main.js`.
 - **No telemetry**, which follows from the above.
 - **One runtime dependency**, [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), pinned to an exact version with a committed lockfile.
+
+## Changelog
+
+### 0.8.2 — 2026-09-27
+
+- Torn ledger shards now repair durably before the next append, with a verified
+  recovery archive protecting complete post-compaction events if repair fails.
+- Live event and bookmark writes wait for first-run migration to commit its
+  generation, preventing acknowledged work from being stranded in the old root
+  ledger.
+- Ledger loads, appends, and compaction are serialized within a plugin session
+  so recovery cannot overwrite a concurrent local write.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the complete release history.
 
 ## Roadmap
 

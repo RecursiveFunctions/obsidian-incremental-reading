@@ -105,6 +105,45 @@ function assertSameEvents(context: string, expected: readonly IrEvent[], actual:
   }
 }
 
+function assertSameEventSequence(
+  context: string,
+  expected: readonly IrEvent[],
+  actual: readonly IrEvent[],
+): void {
+  if (expected.length !== actual.length) {
+    throw new Error(`${context}: persisted event count mismatch`);
+  }
+  for (let index = 0; index < expected.length; index++) {
+    if (deterministicJsonStringify(expected[index]) !== deterministicJsonStringify(actual[index])) {
+      throw new Error(`${context}: persisted event mismatch at index ${index}`);
+    }
+  }
+}
+
+function assertNoConflictingEvents(
+  context: string,
+  existing: readonly IrEvent[],
+  candidates: readonly IrEvent[],
+): void {
+  const byId = new Map<string, string>();
+  for (const event of existing) {
+    const bytes = deterministicJsonStringify(event);
+    const prior = byId.get(event.id);
+    if (prior !== undefined && prior !== bytes) {
+      throw new Error(`${context}: conflicting duplicate event id ${event.id}`);
+    }
+    byId.set(event.id, bytes);
+  }
+  for (const event of candidates) {
+    const bytes = deterministicJsonStringify(event);
+    const prior = byId.get(event.id);
+    if (prior !== undefined && prior !== bytes) {
+      throw new Error(`${context}: conflicting duplicate event id ${event.id}`);
+    }
+    byId.set(event.id, bytes);
+  }
+}
+
 function elementStatePath(id: string): string {
   return `${STATEDIR}/${id}.json`;
 }
@@ -134,6 +173,12 @@ export class IrLedger {
   private opts: StoreOptions;
   private deviceId?: DeviceId;
   private generation?: string;
+  private readyBarrier?: () => Promise<void>;
+  private pendingShardRepairs = new Map<
+    string,
+    { archivePath: string; body: string; events: IrEvent[] }
+  >();
+  private shardAccessTail: Promise<void> = Promise.resolve();
   /**
    * Element ids whose state file we've already tried (and failed) to write
    * this session. Reconcile retries every pass otherwise, which spams the
@@ -146,6 +191,34 @@ export class IrLedger {
   constructor(fs: VaultFs, opts?: StoreOptions) {
     this.fs = fs;
     this.opts = opts || {};
+  }
+
+  /**
+   * Delay externally initiated writes until the plugin's asynchronous ledger
+   * initialization has selected and committed its generation. Migration code
+   * itself does not append through this gate, so the barrier cannot deadlock
+   * the generation commit it is waiting for.
+   */
+  setReadyBarrier(barrier: () => Promise<void>): void {
+    this.readyBarrier = barrier;
+  }
+
+  private async awaitReady(): Promise<void> {
+    if (this.readyBarrier) await this.readyBarrier();
+  }
+
+  private async withShardAccess<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.shardAccessTail;
+    let release!: () => void;
+    this.shardAccessTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   /**
@@ -291,6 +364,7 @@ export class IrLedger {
   }
 
   async getDeviceId(): Promise<DeviceId> {
+    await this.awaitReady();
     if (this.deviceId) {
       return this.deviceId;
     }
@@ -322,13 +396,48 @@ export class IrLedger {
   }
 
   async appendEvent(ev: IrEvent): Promise<void> {
+    await this.awaitReady();
     const issue = validateIrEvent(ev);
     if (issue) throw new Error(`IrLedger.appendEvent: ${issue}`);
-    const deviceId = await this.getDeviceId();
-    const { logDir } = await this.paths();
-    const shardPath = `${logDir}/${deviceId}.jsonl`;
-    const eventString = JSON.stringify(ev) + "\n";
-    await this.fs.append(shardPath, eventString);
+    await this.withShardAccess(async () => {
+      const deviceId = await this.getDeviceId();
+      const { logDir } = await this.paths();
+      const shardPath = `${logDir}/${deviceId}.jsonl`;
+      const pendingRepair = this.pendingShardRepairs.get(shardPath);
+      if (pendingRepair) {
+        await this.persistShardRepair(shardPath, pendingRepair);
+      }
+      const eventString = JSON.stringify(ev) + "\n";
+      await this.fs.append(shardPath, eventString);
+    });
+  }
+
+  private async persistShardRepair(
+    path: string,
+    repair: { archivePath: string; body: string; events: IrEvent[] },
+  ): Promise<void> {
+    // Preserve the complete validated prefix in a verified transaction archive
+    // before touching the live shard. If the replacement itself tears, the
+    // archive still carries post-compaction events that older archives lack.
+    if (await this.fs.exists(repair.archivePath)) {
+      const archived = this.parseJsonl(
+        repair.archivePath,
+        await this.fs.read(repair.archivePath),
+      );
+      assertSameEventSequence("IrLedger torn-shard repair archive", repair.events, archived);
+    } else {
+      await this.fs.write(repair.archivePath, repair.body);
+      const archived = this.parseJsonl(
+        repair.archivePath,
+        await this.fs.read(repair.archivePath),
+      );
+      assertSameEventSequence("IrLedger torn-shard repair archive", repair.events, archived);
+    }
+
+    await this.fs.write(path, repair.body);
+    const persisted = this.parseJsonl(path, await this.fs.read(path));
+    assertSameEventSequence("IrLedger torn-shard repair", repair.events, persisted);
+    this.pendingShardRepairs.delete(path);
   }
 
   private parseJsonl(path: string, content: string): IrEvent[] {
@@ -353,11 +462,49 @@ export class IrLedger {
   }
 
   /**
+   * Return the strictly validated prefix of a live shard only when its final
+   * record is an interrupted JSON object write. Compaction archives are
+   * complete transaction records, so they can cover the lost suffix; they do
+   * not authorize accepting any other malformed shard content.
+   */
+  private parseRecoverableTornJsonlTail(path: string, content: string): IrEvent[] | null {
+    if (content.endsWith("\n")) return null;
+
+    const tailStart = content.lastIndexOf("\n") + 1;
+    const tail = content.slice(tailStart);
+    if (!tail.trimStart().startsWith("{")) return null;
+
+    // Parse every preceding line normally so malformed middle records and
+    // schema-invalid records remain fail-closed with their original location.
+    const prefix = this.parseJsonl(path, content.slice(0, tailStart));
+    try {
+      JSON.parse(tail);
+      return null; // A complete JSON value must still pass normal validation.
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) return null;
+      const position = /position (\d+)/.exec(error.message);
+      // V8 gives some incomplete lexical tokens (for example `1e`, `-`, and
+      // `\\u00`) a specific error rather than “unexpected end”. They are torn
+      // only when its parser reached the end of this final physical record.
+      // A reported position before EOF is malformed content, even if V8 calls
+      // the token “unterminated”.
+      const errorPosition = position === null ? null : Number(position[1]);
+      const endsAtTailEnd = errorPosition === tail.length;
+      const endsWithoutPosition = errorPosition === null && /unexpected end/i.test(error.message);
+      return endsAtTailEnd || endsWithoutPosition ? prefix : null;
+    }
+  }
+
+  /**
    * Read all events from the snapshot + every device shard. Same scan
    * `load()` performs; exposed so callers that need the raw stream (stats,
    * deletion args, history exports) don't have to reach into private state.
    */
   async loadEvents(): Promise<IrEvent[]> {
+    return this.withShardAccess(() => this.loadEventsWithoutShardLock());
+  }
+
+  private async loadEventsWithoutShardLock(): Promise<IrEvent[]> {
     if (await this.fs.exists(META)) {
       const meta = this.parseMeta(await this.fs.read(META));
       this.generation = meta.generation;
@@ -371,10 +518,11 @@ export class IrLedger {
       events.push(...this.parseJsonl(paths.snapshot, snapContent));
     }
 
-    const archives = await this.fs.list(paths.compactionDir);
-    for (const archive of archives) {
-      const content = await this.fs.read(archive);
-      events.push(...this.parseJsonl(archive, content));
+    const archiveEntries: Array<{ path: string; events: IrEvent[] }> = [];
+    for (const archive of await this.fs.list(paths.compactionDir)) {
+      const archiveEvents = this.parseJsonl(archive, await this.fs.read(archive));
+      archiveEntries.push({ path: archive, events: archiveEvents });
+      events.push(...archiveEvents);
     }
 
     const shards = await this.fs.list(paths.logDir);
@@ -384,12 +532,43 @@ export class IrLedger {
         events.push(...this.parseJsonl(shard, content));
       } catch (error) {
         const shardName = shard.slice(shard.lastIndexOf("/") + 1).replace(/\.jsonl$/, "");
-        const hasRecoveryArchive = archives.some((archive) => {
+        const hasRecoveryArchive = archiveEntries.some(({ path: archive, events: archiveEvents }) => {
           const archiveName = archive.slice(archive.lastIndexOf("/") + 1);
-          return archiveName.startsWith(`${shardName}-`);
+          const transactionId = archiveEvents.map((event) => event.id).sort().join("_");
+          const expectedArchiveName = `${shardName}-${hashString(transactionId)}.jsonl`;
+          return archiveName === expectedArchiveName;
         });
         if (!hasRecoveryArchive) throw error;
-        console.warn(`Incremental Reading: recovered ${shard} from its compaction archive`);
+
+        const recoveredPrefix = this.parseRecoverableTornJsonlTail(shard, content);
+        if (recoveredPrefix === null) throw error;
+        // Validate against snapshots, archives, and earlier shards before any
+        // repair write. Otherwise a forged/conflicting prefix could overwrite
+        // the archive that proves the conflict and appear valid on next load.
+        assertNoConflictingEvents("IrLedger torn-shard recovery", events, recoveredPrefix);
+        if (shardName === this.deviceId) {
+          const transactionId = recoveredPrefix.map((event) => event.id).sort().join("_");
+          const repair = {
+            archivePath:
+              `${paths.compactionDir}/${shardName}-${hashString(transactionId)}.jsonl`,
+            body: recoveredPrefix.map((event) => JSON.stringify(event) + "\n").join(""),
+            events: recoveredPrefix,
+          };
+          this.pendingShardRepairs.set(shard, repair);
+          try {
+            await this.persistShardRepair(shard, repair);
+          } catch (repairError) {
+            console.warn(
+              `Incremental Reading: could not persist torn-shard repair for ${shard}; ` +
+                "the next append will retry before writing",
+              repairError,
+            );
+          }
+        }
+        events.push(...recoveredPrefix);
+        console.warn(
+          `Incremental Reading: recovered validated prefix of ${shard}; discarded a torn final JSONL line`,
+        );
       }
     }
 
@@ -415,6 +594,14 @@ export class IrLedger {
   }
 
   async compactLocalShard(
+    now: number,
+    policy?: { maxEvents?: number; maxAgeDays?: number },
+  ): Promise<{ compacted: boolean; archived: number; dropped: number }> {
+    await this.awaitReady();
+    return this.withShardAccess(() => this.compactLocalShardWithoutShardLock(now, policy));
+  }
+
+  private async compactLocalShardWithoutShardLock(
     now: number,
     policy?: { maxEvents?: number; maxAgeDays?: number },
   ): Promise<{ compacted: boolean; archived: number; dropped: number }> {
@@ -486,6 +673,7 @@ export class IrLedger {
   }
 
   async saveBookmarks(bm: BookmarkMap): Promise<void> {
+    await this.awaitReady();
     const data = deterministicJsonStringify(bm);
     const { bookmarks } = await this.paths();
     await this.fs.write(bookmarks, data);

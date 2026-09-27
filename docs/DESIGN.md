@@ -5,11 +5,15 @@ These are locked for v1 unless a decision explicitly says otherwise.
 
 ## Current v1 invariants
 
-- Topics and cloze items are Markdown notes; PDF topics and anchored extracts may be ledger-only.
-- Scheduling, review history, bookmarks, tombstones, and anchor state live under `.ir/`.
+- Topics, cloze items, and image-occlusion items are Markdown notes; PDF topics and anchored extracts may be ledger-only.
+- The ledger under `.ir/` is authoritative for scheduling, review history, bookmarks, tombstones, and anchor state. `ir-` frontmatter remains a migration fallback and compatibility copy, not the queue's source of truth.
+- Each completed migration, reset, and nuke uses generation metadata to isolate its live logs from stale root or prior-generation data.
+- The live plugin folds concurrent event streams in clock order; there is no user-facing setting that switches it to conservative scheduling.
+- Compaction writes and verifies a complete transaction archive before rewriting its live shard. A matching archive can recover only the validated prefix before an interrupted final JSONL event.
 - Source notes are never rewritten to paint extract or cloze highlights.
-- Anchored extracts become files only when explicitly promoted.
-- Anki export is one-way and omits image-occlusion blocks it cannot import.
+- Anchored extracts become files only when explicitly promoted. Image-region extracts and image occlusion are shipped workflows.
+- Anki export is one-way and omits image-occlusion items it cannot import, reporting the skipped count.
+- Reading-view highlights use a formatting-tolerant fallback that crosses inline formatting boundaries.
 - Historical notes below explain how these decisions evolved; when they conflict, this section is current.
 
 **Decision 2026-05-18:** Full structured-ledger model chosen (Option 1) over
@@ -140,7 +144,8 @@ model above, without a second anchoring scheme.
   `ItemView` leaf (UI commitment #6) and keyboard-complete (#1).
 
 Known limits: paragraph breaks inside a PDF selection are not recoverable
-from the text layer; Anki export writes the occlusion block verbatim.
+from the text layer; Anki TSV export omits image-occlusion items and reports
+how many it skipped because that block format is not importable.
 
 ## 3. Graph (Obsidian Graph view)
 
@@ -344,9 +349,9 @@ Sub-decisions:
    ledger). Written through the data adapter, not as markdown notes, so the
    JSON is not indexed as a vault note.
 2. Concurrent same-item conflict: both grade events are always retained in the
-   logs. Materialized scheduler state defaults to the **conservative schedule**
-   (earlier next-due wins, so a review is never accidentally skipped), with a
-   setting to switch to clock-order (last grade wins).
+   logs. The live plugin folds them in **clock order** (the newest Lamport
+   event wins), matching its synced-vault behavior. `conservative` remains a
+   pure-ledger/testing option, not a user-facing scheduling setting.
 3. Compaction defaults (all adjustable except the review-history guarantee):
    - Primary trigger: compact the local shard when it exceeds **250 events**
      (caps the active shard around 60 KB; cheap per-grade resync on mobile,
@@ -361,6 +366,10 @@ Sub-decisions:
      events (anchor repairs, priority tweaks) are dropped after folding.
      Default-on; the override warns loudly because disabling it kneecaps the
      multi-scheduler features.
+   - Before a live shard is rewritten, compaction writes and verifies a
+     complete transaction archive. During loading, that archive can recover
+     only a validated prefix before an interrupted final JSONL line; it never
+     permits malformed middle lines or schema-invalid events.
 4. Element ids: stable and path-independent (already required by Q1's anchor
    model and the `queue.ts` id rework).
 
@@ -473,15 +482,14 @@ Remaining follow-up:
   resolver, but the migration would tidy old notes that the user wants to
   keep in pure markdown.
 
-Reading-view limitations (worth knowing about, not bugs):
+Reading-view behavior and limitations:
 
-- Text-quote search runs per-section and finds matches only within a
-  single text node. Extracts spanning inline formatting boundaries
-  (`<strong>`, links, embedded blocks) won't be marked in reading view.
-  The editor surface marks them precisely via CM6 offsets.
+- The initial text-quote search runs per-section. When a match crosses inline
+  formatting such as `<strong>` or links, the formatting-tolerant fallback
+  wraps every touched text node, so the extract still paints in reading view.
 - Identical quotes at different positions each get a mark in reading view
-  (Nth occurrence of that needle). Spans that cross formatting boundaries
-  still will not.
+  (Nth occurrence of that needle). Embedded blocks and other non-text content
+  may still require the editor's precise CM6-offset surface.
 
 ## Open items
 

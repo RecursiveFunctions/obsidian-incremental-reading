@@ -1,9 +1,12 @@
 # Plan: local FSRS optimizer (implementation)
 
-Status: planned 2026-09-13. Companion to `SCOPE-OPTIMIZER.md`, which
-holds the why, the engine decision (pure TS + CI oracle), and the UX
-sketch. This file is the build order. Work happens on a feature branch
-off `origin/main`, PR into `main`, `npm run ship:*` per AGENTS.md.
+> **Historical implementation record — shipped.** The optimizer's revlog,
+> fitting engine, CI oracle, settings plumbing, and Scheduler panel shipped
+> across 0.7.16–0.7.20 and were released as part of 0.8.0. This document keeps
+> the original rationale and build sequence; it is not an open work plan.
+
+Status: shipped 2026-09-15. Companion to `SCOPE-OPTIMIZER.md`, which holds the
+why, engine decision (pure TS + CI oracle), and UX sketch.
 
 ## Ground truth this plan builds on (verified in-repo 2026-09-13)
 

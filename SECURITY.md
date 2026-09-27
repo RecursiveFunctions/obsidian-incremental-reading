@@ -41,8 +41,9 @@ Consequences of the property:
 - No telemetry, no analytics, no license server, no update pings.
 - The clipboard-import command imports what you paste; the plugin never
   fetches a URL.
-- Your notes and review history live in your vault (`.ir/` for the
-  review log, frontmatter for schedules) and nowhere else.
+- Your notes and review history live in your vault and nowhere else. The
+  authoritative scheduling and review ledger is stored under `.ir/`; note
+  frontmatter is retained as a migration fallback and compatibility copy.
 
 ## Reproducible build
 

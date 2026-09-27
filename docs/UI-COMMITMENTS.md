@@ -25,13 +25,15 @@ without a keyboard equivalent, modal dialogs that swallow `:`.
 
 ## 2. Single review surface
 
-During a review session the user sees one pane: the item or extract under
-review, with its source context visible alongside (side panel, not modal).
-No new window. No interrupting overlay.
+During a review session the user sees one dedicated review leaf: the item or
+extract under review, with its source context visible alongside (side panel,
+not modal). The leaf may be opened or reused for a session, but individual
+cards must not create additional tabs, detached windows, or interrupting
+overlays.
 
-**Satisfied when:** entering review does not open a new tab, modal, or
-detached window; the source is reachable in the same surface; closing the
-review does not leave orphan panes.
+**Satisfied when:** entering or resuming review opens or reuses one dedicated
+review leaf; the source is reachable in that surface; no per-card tab, modal,
+or detached window appears; and closing review does not leave orphan panes.
 
 **PDF exception (2026-08-19):** a PDF source is Obsidian's built-in viewer,
 not markdown spliced into the side column. The review pane keeps a Focus
@@ -150,7 +152,8 @@ reflect what the project actually believes.
 
 ## Why these seven and not more
 
-These seven map to the loudest UX complaints against SuperMemo and against
-the Obsidian competition (see `MARKET-RESEARCH.md` §8). Each one is
-testable in a PR review without subjective taste. Adding more commitments
-weakens the contract: longer lists get skimmed, shorter lists get followed.
+These seven map to recurring UX failures in SuperMemo-style workflows and
+Obsidian plugins: keyboard dead ends, blocking review UI, stale queue state,
+and hidden session history. Each one is testable in a PR review without
+subjective taste. Adding more commitments weakens the contract: longer lists
+get skimmed, shorter lists get followed.
