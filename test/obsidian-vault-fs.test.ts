@@ -184,3 +184,27 @@ test("remove deletes an existing path and is a silent no-op when absent", async 
     "remove tolerates a missing path",
   );
 });
+
+test("adapter permission errors propagate instead of looking absent", async () => {
+  const a = fakeAdapter();
+  const fs = new ObsidianVaultFs(a);
+  a.exists = async () => { throw new Error("EACCES denied"); };
+  await assert.rejects(fs.exists(".ir/meta.json"), /EACCES/);
+  a.list = async () => { throw new Error("EACCES denied"); };
+  await assert.rejects(fs.list(".ir/log"), /EACCES/);
+  a.remove = async () => { throw new Error("EACCES denied"); };
+  await assert.rejects(fs.remove(".ir/meta.json"), /EACCES/);
+});
+
+test("concurrent ancestor creation tolerates an already-created folder", async () => {
+  const a = fakeAdapter();
+  const fs = new ObsidianVaultFs(a);
+  a.exists = async () => false;
+  a.mkdir = async (path) => {
+    a.folders.add(path);
+    throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+  };
+
+  await fs.write(".ir/log/dev.jsonl", "event\n");
+  assert.equal(await fs.read(".ir/log/dev.jsonl"), "event\n");
+});

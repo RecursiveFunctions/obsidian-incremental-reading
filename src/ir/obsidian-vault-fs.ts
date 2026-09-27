@@ -29,9 +29,27 @@ function ancestorFolders(filePath: string): string[] {
 async function ensureAncestors(adapter: ObsidianDataAdapter, filePath: string): Promise<void> {
   for (const folder of ancestorFolders(filePath)) {
     if (!(await adapter.exists(folder))) {
-      await adapter.mkdir(folder);
+      try {
+        await adapter.mkdir(folder);
+      } catch (error) {
+        if (!isAlreadyExists(error)) throw error;
+      }
     }
   }
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; status?: unknown; message?: unknown };
+  return candidate.code === "EEXIST" || candidate.status === 409 ||
+    (typeof candidate.message === "string" && /\bEEXIST\b|already exists/i.test(candidate.message));
+}
+
+function isNotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; status?: unknown; message?: unknown };
+  return candidate.code === "ENOENT" || candidate.status === 404 ||
+    (typeof candidate.message === "string" && /\bENOENT\b|not found|does not exist/i.test(candidate.message));
 }
 
 export class ObsidianVaultFs implements VaultFs {
@@ -40,10 +58,11 @@ export class ObsidianVaultFs implements VaultFs {
   async exists(p: string): Promise<boolean> {
     try {
       return await this.adapter.exists(p);
-    } catch {
+    } catch (error) {
       // Capacitor / iCloud adapters throw on missing hidden paths instead
       // of returning false. Treat that as absent so ledger init can proceed.
-      return false;
+      if (isNotFound(error)) return false;
+      throw error;
     }
   }
 
@@ -65,16 +84,18 @@ export class ObsidianVaultFs implements VaultFs {
     try {
       const { files } = await this.adapter.list(dir);
       return files;
-    } catch {
-      return [];
+    } catch (error) {
+      if (isNotFound(error)) return [];
+      throw error;
     }
   }
 
   async remove(p: string): Promise<void> {
     try {
       await this.adapter.remove(p);
-    } catch {
+    } catch (error) {
       // missing path: resolve without throwing
+      if (!isNotFound(error)) throw error;
     }
   }
 }
