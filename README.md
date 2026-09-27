@@ -164,6 +164,20 @@ Built to work offline. Full threat model, verification commands and reproducible
 - **No telemetry**, which follows from the above.
 - **One runtime dependency**, [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), pinned to an exact version with a committed lockfile.
 
+## Changelog
+
+### 0.8.2 — 2026-09-27
+
+- Torn ledger shards now repair durably before the next append, with a verified
+  recovery archive protecting complete post-compaction events if repair fails.
+- Live event and bookmark writes wait for first-run migration to commit its
+  generation, preventing acknowledged work from being stranded in the old root
+  ledger.
+- Ledger loads, appends, and compaction are serialized within a plugin session
+  so recovery cannot overwrite a concurrent local write.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the complete release history.
+
 ## Roadmap
 
 Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling and a local parameter optimizer, interleaved due review, neural sessions, priority queue and mercy postpone, the element tree with keyboard and touch reparenting, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.

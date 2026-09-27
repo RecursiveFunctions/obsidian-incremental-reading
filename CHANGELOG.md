@@ -17,9 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generation logs cannot revive previous reviews.
 - **Compaction recovery keeps durable work instead of dropping a whole shard.**
   When a verified matching archive exists, the loader keeps every complete,
-  validated event before a syntactically torn final JSONL line. Corrupt middle
-  lines, schema-invalid events, unreadable archives, and conflicting event ids
-  still stop loading rather than guessing.
+  validated event before a syntactically torn final JSONL line, writes a
+  verified recovery archive, and repairs the local shard before another event
+  can append. A failed repair cannot erase complete post-compaction events.
+  Corrupt middle lines, schema-invalid events, unreadable archives, and
+  conflicting event ids still stop loading rather than guessing.
+- **Live writes no longer race first-run migration.** Event and bookmark writes
+  wait for the generated ledger to commit, so a command used during startup
+  cannot acknowledge data that the generation switch then hides.
 - **Storage failures no longer look like an empty collection.** Adapter errors
   propagate to initialization; the plugin reports the failure and disables
   ledger-backed actions for that load instead of presenting partial state.

@@ -102,6 +102,44 @@ test("commitMigration writes and verifies events before its completion marker", 
   assert.ok(migrationRead < operations.indexOf(`write:${META}`));
 });
 
+test("ready barrier keeps a concurrent live append in the committed generation", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.initDevice();
+  const device = await ledger.getDeviceId();
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  ledger.setReadyBarrier(() => ready);
+  const migrated = createEvent(newElementId(), 1);
+  const live = createEvent(newElementId(), 2);
+  const bookmarkId = newElementId();
+  const bookmarks = {
+    [bookmarkId]: {
+      elementId: bookmarkId,
+      line: 4,
+      ch: 2,
+      scrollTop: 100,
+      updatedAt: 2000,
+    },
+  };
+
+  const append = ledger.appendEvent(live);
+  const saveBookmarks = ledger.saveBookmarks(bookmarks);
+  await ledger.commitMigration([migrated]);
+  assert.equal(fs.dump().has(`.ir/log/${device}.jsonl`), false);
+  assert.equal(fs.dump().has(".ir/bookmarks.json"), false);
+  release();
+  await Promise.all([append, saveBookmarks]);
+
+  assert.deepEqual(
+    (await ledger.loadEvents()).map((event) => event.id).sort(),
+    [migrated.id, live.id].sort(),
+  );
+  assert.deepEqual(await ledger.loadBookmarks(), bookmarks);
+});
+
 test("failed migration body write leaves migration uncommitted and retryable", async () => {
   const fs = memFs();
   const write = fs.write.bind(fs);

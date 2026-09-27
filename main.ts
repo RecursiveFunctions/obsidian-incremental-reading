@@ -399,8 +399,16 @@ export default class IncrementalReadingPlugin extends Plugin {
     const fs = new ObsidianVaultFs(
       this.app.vault.adapter as unknown as ObsidianDataAdapter,
     );
-    this.ledger = new IrLedger(fs, { conflict: "clock-order" });
-    this.ledgerInit = this.runMigrationIfOwed(fs);
+    const ledger = new IrLedger(fs, { conflict: "clock-order" });
+    this.ledger = ledger;
+    const ledgerInit = this.runMigrationIfOwed(fs);
+    this.ledgerInit = ledgerInit;
+    ledger.setReadyBarrier(async () => {
+      await ledgerInit;
+      if (this.ledger !== ledger) {
+        throw new Error("Incremental Reading: ledger initialization failed");
+      }
+    });
     this.addSettingTab(new IrSettingTab(this.app, this));
     this.pdfHighlights = new PdfHighlightPainter(this.app);
     this.registerDomEvent(document, "selectionchange", () => {
@@ -5613,15 +5621,23 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     try {
       const fs = new ObsidianVaultFs(adapter);
-      this.ledger = new IrLedger(fs, { conflict: "clock-order" });
-      this.ledgerInit = (async () => {
-        await this.ledger?.initDevice({ hostname: getMachineHostname() });
+      const ledger = new IrLedger(fs, { conflict: "clock-order" });
+      this.ledger = ledger;
+      const ledgerInit = (async () => {
+        await ledger.initDevice({ hostname: getMachineHostname() });
         if (after === "reset") {
-          await this.ledger?.markReset();
+          await ledger.markReset();
         } else {
-          await this.ledger?.commitMigration([]);
+          await ledger.commitMigration([]);
         }
       })();
+      this.ledgerInit = ledgerInit;
+      ledger.setReadyBarrier(async () => {
+        await ledgerInit;
+        if (this.ledger !== ledger) {
+          throw new Error("Incremental Reading: ledger initialization failed");
+        }
+      });
       await this.ledgerInit;
     } catch (e) {
       console.error("Incremental Reading: post-wipe ledger re-init failed", e);

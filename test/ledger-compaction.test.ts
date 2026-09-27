@@ -385,6 +385,12 @@ test("a torn shard replacement recovers from the complete archive", async () => 
     /injected torn shard write/,
   );
   assert.deepEqual(await ledger.load(), expectFold(events));
+
+  // Recovery must remain append-safe even when the first repair write fails.
+  fs.write = write;
+  const postRecovery = prio(id, 4, 30);
+  await ledger.appendEvent(postRecovery);
+  assert.deepEqual(await ledger.load(), expectFold([...events, postRecovery]));
 });
 
 test("a torn tail preserves valid events appended after compaction", async () => {
@@ -401,12 +407,33 @@ test("a torn tail preserves valid events appended after compaction", async () =>
   await ledger.appendEvent(postArchive);
   await fs.append(shardPath, '{"id":"torn');
 
+  // A failed in-place repair must not lose the valid post-archive event.
+  const write = fs.write.bind(fs);
+  let failRepair = true;
+  fs.write = async (path, data) => {
+    if (path === shardPath && failRepair) {
+      failRepair = false;
+      const postArchiveStart = data.indexOf(JSON.stringify(postArchive));
+      await write(path, data.slice(0, Math.max(0, postArchiveStart)));
+      throw new Error("injected torn repair write");
+    }
+    await write(path, data);
+  };
+
   const loaded = await ledger.loadEvents();
   assert.deepEqual(
     loaded.map((event) => event.id).sort(),
     [...events, postArchive].map((event) => event.id).sort(),
   );
+  fs.write = write;
   assert.deepEqual(await ledger.load(), expectFold([...events, postArchive]));
+
+  const postRecovery = prio(id, 5, 40);
+  await ledger.appendEvent(postRecovery);
+  assert.deepEqual(
+    await ledger.load(),
+    expectFold([...events, postArchive, postRecovery]),
+  );
 });
 
 test("an archive does not mask malformed middle shard lines", async () => {
@@ -455,6 +482,31 @@ test("an archive does not mask malformed final JSON that fails before EOF", asyn
   await fs.append(shardPath, '{"x":1..2');
 
   await assert.rejects(ledger.loadEvents(), new RegExp(`invalid JSONL.*${dev}`));
+});
+
+test("conflicting torn recovery cannot overwrite its authorizing archive", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  const id = newElementId();
+  const events = [created(id, 1), prio(id, 2, 10), prio(id, 3, 20)];
+  await seed(ledger, events);
+  const dev = await ledger.getDeviceId();
+  const shardPath = `${LOGDIR}/${dev}.jsonl`;
+
+  await ledger.compactLocalShard(9_999_999_999, { maxEvents: 1, maxAgeDays: 999_999 });
+  const [archivePath] = await fs.list(COMPACTIONDIR);
+  assert.ok(archivePath);
+  const archiveBefore = await fs.read(archivePath);
+  const conflicting = lines(archiveBefore);
+  conflicting[1] = { ...conflicting[1]!, payload: { priority: 99 } };
+  await fs.write(
+    shardPath,
+    conflicting.map((event) => JSON.stringify(event) + "\n").join("") + '{"id":"torn',
+  );
+
+  await assert.rejects(ledger.loadEvents(), /conflicting duplicate event id/);
+  assert.equal(await fs.read(archivePath), archiveBefore);
+  await assert.rejects(ledger.loadEvents(), /conflicting duplicate event id/);
 });
 
 test("an unrelated same-prefix archive cannot authorize torn-tail recovery", async () => {
