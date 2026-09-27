@@ -3,6 +3,15 @@
 Architecture decisions for the incremental reading plugin, with rationale.
 These are locked for v1 unless a decision explicitly says otherwise.
 
+## Current v1 invariants
+
+- Topics and cloze items are Markdown notes; PDF topics and anchored extracts may be ledger-only.
+- Scheduling, review history, bookmarks, tombstones, and anchor state live under `.ir/`.
+- Source notes are never rewritten to paint extract or cloze highlights.
+- Anchored extracts become files only when explicitly promoted.
+- Anki export is one-way and omits image-occlusion blocks it cannot import.
+- Historical notes below explain how these decisions evolved; when they conflict, this section is current.
+
 **Decision 2026-05-18:** Full structured-ledger model chosen (Option 1) over
 the hybrid. All element state, including extracts, leaves frontmatter for the
 plugin ledger; extracts become block-anchored with promotion. Chosen because

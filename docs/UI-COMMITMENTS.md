@@ -12,12 +12,13 @@ violation is named in writing.
 
 ## 1. Keyboard-first
 
-Every IR action has a default keyboard binding. Vim mode is respected.
-Nothing critical lives behind a mouse-only menu.
+Every critical IR workflow is keyboard-operable. Vim mode is respected.
+Secondary command-palette actions may be unbound by default to avoid OS and
+plugin conflicts. Nothing critical lives behind a mouse-only menu.
 
-**Satisfied when:** every command added to the plugin registers a default
-hotkey AND works under the Vim plugin AND has no Vim-incompatible side
-effects (no focus traps, no swallowed `Esc`).
+**Satisfied when:** every critical action has a keyboard path, commands work
+under the Vim plugin, and there are no Vim-incompatible side effects (no focus
+traps, no swallowed `Esc`). Recommended unbound commands are documented in Help.
 
 **Common violations:** "ribbon-only" actions, mouse-driven drag-to-create
 without a keyboard equivalent, modal dialogs that swallow `:`.
@@ -61,6 +62,9 @@ inline `style="color: #..."`, fonts forced via `font-family`.
 A persistent indicator shows queue state without requiring a click: due
 today, postponed, net inflow this week. Visible without opening the
 plugin's main view.
+
+**Mobile exception:** Obsidian mobile has no status bar, so the persistent FAB
+shows due count; postponed and inflow remain available in the review hub.
 
 **Satisfied when:** status bar or top-bar element shows current queue
 load at all times during plugin activation; numbers update on add /
