@@ -382,6 +382,21 @@ test("loadEvents rejects syntactically valid invalid events", async () => {
   await assert.rejects(ledger.loadEvents(), /id must be a non-empty string/);
 });
 
+test("loadEvents rejects conflicting duplicate IDs across durable sources", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const event = createEvent(newElementId(), 1);
+  const conflicting = { ...event, lamport: 2, ts: 2000 };
+  await fs.write(".ir/compaction/durable-source.jsonl", JSON.stringify(event) + "\n");
+  await fs.write(".ir/log/other-device.jsonl", JSON.stringify(conflicting) + "\n");
+
+  await assert.rejects(
+    ledger.loadEvents(),
+    new RegExp(`conflicting duplicate event id ${event.id}`),
+  );
+});
+
 test("appendEvent rejects malformed nested event data", async () => {
   const fs = memFs();
   const ledger = new IrLedger(fs);

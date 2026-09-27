@@ -353,6 +353,40 @@ export class IrLedger {
   }
 
   /**
+   * Return the strictly validated prefix of a live shard only when its final
+   * record is an interrupted JSON object write. Compaction archives are
+   * complete transaction records, so they can cover the lost suffix; they do
+   * not authorize accepting any other malformed shard content.
+   */
+  private parseRecoverableTornJsonlTail(path: string, content: string): IrEvent[] | null {
+    if (content.endsWith("\n")) return null;
+
+    const tailStart = content.lastIndexOf("\n") + 1;
+    const tail = content.slice(tailStart);
+    if (!tail.trimStart().startsWith("{")) return null;
+
+    // Parse every preceding line normally so malformed middle records and
+    // schema-invalid records remain fail-closed with their original location.
+    const prefix = this.parseJsonl(path, content.slice(0, tailStart));
+    try {
+      JSON.parse(tail);
+      return null; // A complete JSON value must still pass normal validation.
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) return null;
+      const position = /position (\d+)/.exec(error.message);
+      // V8 gives some incomplete lexical tokens (for example `1e`, `-`, and
+      // `\\u00`) a specific error rather than “unexpected end”. They are torn
+      // only when its parser reached the end of this final physical record.
+      // A reported position before EOF is malformed content, even if V8 calls
+      // the token “unterminated”.
+      const errorPosition = position === null ? null : Number(position[1]);
+      const endsAtTailEnd = errorPosition === tail.length;
+      const endsWithoutPosition = errorPosition === null && /unexpected end/i.test(error.message);
+      return endsAtTailEnd || endsWithoutPosition ? prefix : null;
+    }
+  }
+
+  /**
    * Read all events from the snapshot + every device shard. Same scan
    * `load()` performs; exposed so callers that need the raw stream (stats,
    * deletion args, history exports) don't have to reach into private state.
@@ -371,10 +405,11 @@ export class IrLedger {
       events.push(...this.parseJsonl(paths.snapshot, snapContent));
     }
 
-    const archives = await this.fs.list(paths.compactionDir);
-    for (const archive of archives) {
-      const content = await this.fs.read(archive);
-      events.push(...this.parseJsonl(archive, content));
+    const archiveEntries: Array<{ path: string; events: IrEvent[] }> = [];
+    for (const archive of await this.fs.list(paths.compactionDir)) {
+      const archiveEvents = this.parseJsonl(archive, await this.fs.read(archive));
+      archiveEntries.push({ path: archive, events: archiveEvents });
+      events.push(...archiveEvents);
     }
 
     const shards = await this.fs.list(paths.logDir);
@@ -384,12 +419,20 @@ export class IrLedger {
         events.push(...this.parseJsonl(shard, content));
       } catch (error) {
         const shardName = shard.slice(shard.lastIndexOf("/") + 1).replace(/\.jsonl$/, "");
-        const hasRecoveryArchive = archives.some((archive) => {
+        const hasRecoveryArchive = archiveEntries.some(({ path: archive, events: archiveEvents }) => {
           const archiveName = archive.slice(archive.lastIndexOf("/") + 1);
-          return archiveName.startsWith(`${shardName}-`);
+          const transactionId = archiveEvents.map((event) => event.id).sort().join("_");
+          const expectedArchiveName = `${shardName}-${hashString(transactionId)}.jsonl`;
+          return archiveName === expectedArchiveName;
         });
         if (!hasRecoveryArchive) throw error;
-        console.warn(`Incremental Reading: recovered ${shard} from its compaction archive`);
+
+        const recoveredPrefix = this.parseRecoverableTornJsonlTail(shard, content);
+        if (recoveredPrefix === null) throw error;
+        events.push(...recoveredPrefix);
+        console.warn(
+          `Incremental Reading: recovered validated prefix of ${shard}; discarded a torn final JSONL line`,
+        );
       }
     }
 

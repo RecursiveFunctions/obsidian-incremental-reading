@@ -11,21 +11,24 @@
  * -------------------
  * IrLedger gains shard compaction wired to the log.ts `compact()` primitive:
  *
- *  - new exported path constants `SNAPSHOT` (".ir/snapshot.jsonl") and
- *    `RHISTDIR` (".ir/review-history").
+ *  - exported path constants retain `SNAPSHOT` for legacy reads and expose
+ *    `RHISTDIR` plus `COMPACTIONDIR` for review history and transaction
+ *    archives.
  *  - `compactLocalShard(now, policy?)` operates on THIS device's shard only
  *    and returns `{ compacted, archived, dropped }`.
  *  - Trigger: no-op unless the local shard length exceeds `maxEvents`
  *    (default 250) OR its oldest event is older than `maxAgeDays`
  *    (default 7) relative to `now`. Defaults match log.ts `compact()`.
  *  - On compaction it delegates partitioning to log.ts `compact()`, then:
+ *      * writes and verifies a complete transaction archive before replacing
+ *        the local shard,
  *      * rewrites the local shard file to exactly the kept events,
- *      * appends the compacted-away events to the shared `SNAPSHOT` log,
  *      * appends the archived (review) events to this device's file under
  *        `RHISTDIR` (the optimizer/export feed; review events only),
  *      * never touches any other device's shard.
- *  - `load()` seeds from `SNAPSHOT` (when present) then folds every live
- *    shard, so folded state is identical before and after compaction.
+ *  - `load()` reads a legacy `SNAPSHOT` when present, then combines complete
+ *    transaction archives with every live shard so folded state is identical
+ *    before and after compaction.
  */
 
 import { test } from "node:test";
@@ -382,4 +385,116 @@ test("a torn shard replacement recovers from the complete archive", async () => 
     /injected torn shard write/,
   );
   assert.deepEqual(await ledger.load(), expectFold(events));
+});
+
+test("a torn tail preserves valid events appended after compaction", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  const id = newElementId();
+  const events = [created(id, 1), prio(id, 2, 10), prio(id, 3, 20)];
+  await seed(ledger, events);
+  const dev = await ledger.getDeviceId();
+  const shardPath = `${LOGDIR}/${dev}.jsonl`;
+
+  await ledger.compactLocalShard(9_999_999_999, { maxEvents: 1, maxAgeDays: 999_999 });
+  const postArchive = prio(id, 4, 30);
+  await ledger.appendEvent(postArchive);
+  await fs.append(shardPath, '{"id":"torn');
+
+  const loaded = await ledger.loadEvents();
+  assert.deepEqual(
+    loaded.map((event) => event.id).sort(),
+    [...events, postArchive].map((event) => event.id).sort(),
+  );
+  assert.deepEqual(await ledger.load(), expectFold([...events, postArchive]));
+});
+
+test("an archive does not mask malformed middle shard lines", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  const id = newElementId();
+  const events = [created(id, 1), prio(id, 2, 10), prio(id, 3, 20)];
+  await seed(ledger, events);
+  const dev = await ledger.getDeviceId();
+  const shardPath = `${LOGDIR}/${dev}.jsonl`;
+
+  await ledger.compactLocalShard(9_999_999_999, { maxEvents: 1, maxAgeDays: 999_999 });
+  await fs.write(
+    shardPath,
+    JSON.stringify(events[2]) + "\nnot json\n" + JSON.stringify(prio(id, 4, 30)) + "\n",
+  );
+
+  await assert.rejects(ledger.loadEvents(), new RegExp(`invalid JSONL.*${dev}.*line 2`));
+});
+
+test("an archive does not mask schema-invalid final shard lines", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  const id = newElementId();
+  const events = [created(id, 1), prio(id, 2, 10), prio(id, 3, 20)];
+  await seed(ledger, events);
+  const dev = await ledger.getDeviceId();
+  const shardPath = `${LOGDIR}/${dev}.jsonl`;
+
+  await ledger.compactLocalShard(9_999_999_999, { maxEvents: 1, maxAgeDays: 999_999 });
+  await fs.write(shardPath, JSON.stringify({ kind: "graded" }) + "\n");
+
+  await assert.rejects(ledger.loadEvents(), /id must be a non-empty string/);
+});
+
+test("an archive does not mask malformed final JSON that fails before EOF", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  const id = newElementId();
+  const events = [created(id, 1), prio(id, 2, 10), prio(id, 3, 20)];
+  await seed(ledger, events);
+  const dev = await ledger.getDeviceId();
+  const shardPath = `${LOGDIR}/${dev}.jsonl`;
+
+  await ledger.compactLocalShard(9_999_999_999, { maxEvents: 1, maxAgeDays: 999_999 });
+  await fs.append(shardPath, '{"x":1..2');
+
+  await assert.rejects(ledger.loadEvents(), new RegExp(`invalid JSONL.*${dev}`));
+});
+
+test("an unrelated same-prefix archive cannot authorize torn-tail recovery", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const dev = await ledger.getDeviceId();
+  const shardPath = `${LOGDIR}/${dev}.jsonl`;
+  await fs.write(
+    `${COMPACTIONDIR}/${dev}-not-a-transaction.jsonl`,
+    JSON.stringify(created(newElementId(), 1)) + "\n",
+  );
+  await fs.write(shardPath, JSON.stringify(created(newElementId(), 2)) + "\n{\"id\":\"torn");
+
+  await assert.rejects(ledger.loadEvents(), new RegExp(`invalid JSONL.*${dev}`));
+});
+
+test("archive recovery accepts truncated numeric and Unicode JSON tokens", async () => {
+  const tornTails = [
+    '{"ts":1e',
+    '{"id":"' + String.fromCharCode(92) + "u00",
+  ];
+  for (const tornTail of tornTails) {
+    const fs = memFs();
+    const ledger = new IrLedger(fs);
+    const id = newElementId();
+    const events = [created(id, 1), prio(id, 2, 10), prio(id, 3, 20)];
+    await seed(ledger, events);
+    const dev = await ledger.getDeviceId();
+    const shardPath = `${LOGDIR}/${dev}.jsonl`;
+
+    await ledger.compactLocalShard(9_999_999_999, { maxEvents: 1, maxAgeDays: 999_999 });
+    const postArchive = prio(id, 4, 30);
+    await ledger.appendEvent(postArchive);
+    await fs.append(shardPath, tornTail);
+
+    assert.deepEqual(
+      (await ledger.loadEvents()).map((event) => event.id).sort(),
+      [...events, postArchive].map((event) => event.id).sort(),
+      tornTail,
+    );
+  }
 });

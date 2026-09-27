@@ -31,18 +31,38 @@ Rules:
 
 `main.js` is **gitignored** here on purpose; the **Release workflow** builds it in CI and attaches it. Do not expect BRAT to work from tag-only pushes.
 
-## Automated path (preferred)
+## Automated path (canonical)
 
-1. Land your code on `main` (or merge a PR).
-2. Bump version in lockstep:
-   - `npm version patch` (or `minor` / `major`)  
-     This runs `version-bump.mjs` (via the `version` npm script) and stages `manifest.json` + `versions.json`.
-3. Push branch and tags: `git push origin main && git push origin <tag>`  
-   e.g. `git push origin main --follow-tags`
-4. **Wait for GitHub Actions → “Release” workflow** on that tag. It runs tests, builds `main.js`, and creates the GitHub Release with the three files.
-5. In BRAT, pick **Update** / reinstall the plugin; it should see the new semver from Releases.
+1. Land your code on `main` (or merge a PR) and update clean `main`.
+2. Run exactly one canonical ship command:
 
-If the Release workflow fails, fix it before re-tagging; delete the bad tag only if no one depends on it, or ship a patch version.
+   ```bash
+   npm run ship:patch  # bug fix
+   npm run ship:minor  # user-facing feature
+   npm run ship:major  # breaking change
+   ```
+
+   Each command runs `npm run test:ci`, invokes `npm version`, syncs and stages
+   `manifest.json` plus `versions.json` through `version-bump.mjs`, creates the
+   matching unprefixed semver tag, and pushes `HEAD --follow-tags` through the
+   `postversion` hook. Do not manually run `npm version` and separate pushes
+   for a normal release.
+3. **Wait for GitHub Actions → “Release”** on that tag. It runs the full test,
+   browser-layout, and build gates, then creates the GitHub Release with the
+   required assets.
+4. Verify the published asset set before calling the release complete:
+
+   ```bash
+   gh release view "$(node -p 'require("./manifest.json").version')" --json assets \
+     --jq '.assets[].name' | sort
+   ```
+
+   The output must be exactly `main.js`, `manifest.json`, and `styles.css`.
+5. In BRAT, pick **Update** / reinstall the plugin; it should see the new
+   semver from Releases.
+
+If the Release workflow fails, repair it with a new patch release unless a
+maintainer has explicitly chosen the one-off repair below.
 
 ## Repair a tag that has no Release (one-off)
 
@@ -65,7 +85,8 @@ Requires [GitHub CLI](https://cli.github.com/) (`gh`) and permission on the repo
 - `manifest.json` → `version` (synced by `version-bump.mjs` from package.json)
 - `versions.json` → new key per release → `minAppVersion` from manifest
 
-Use `npm version patch` so they stay aligned.
+The `npm run ship:patch|minor|major` commands keep these files aligned for a
+normal release.
 
 ## BRAT troubleshooting
 

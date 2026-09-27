@@ -61,7 +61,7 @@ There are two kinds, and the menus use these words:
 
 Cloze items always get their own note. Creating one with `Alt+Z` offers an optional hint on an inline bar: Enter confirms, empty means no hint, Escape cancels. Deletions use Anki-compatible markup, `{{c1::hidden text}}` or `{{c1::hidden text::hint}}`.
 
-Extract and cloze both work from Reading view. When a rendered selection cannot be mapped back onto the markdown, the note switches to Edit and keeps the selection where possible.
+Extract and cloze both work from Reading view. `Alt+X` uses a formatting-tolerant mapping and never switches Reading view automatically; if it cannot map the selection, it reports that instead. Cloze creation can switch to Source/Edit when exact markdown is required, keeping the selection where possible.
 
 Extract and cloze highlights paint in the editor, in reading view, and in the review source column. Extracts are yellow, clozes are green and underlined. The source file is never rewritten to add them.
 

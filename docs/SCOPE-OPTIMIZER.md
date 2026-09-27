@@ -1,13 +1,16 @@
 # Scope: local FSRS parameter optimizer
 
-Status: scoping (2026-09-13). Roadmap item P0.2; the FSRS-6 upgrade
-(0.7.14) and the revlog fix (0.7.15) are its prerequisites and shipped.
+> **Historical scope record — shipped.** The optimizer shipped in 0.8.0 after
+> its prerequisites landed in 0.7.14–0.7.15. This document preserves the
+> original scoping rationale; it is not a current roadmap item.
+
+Status: historical planning record (2026-09-13).
 
 ## Why this feature, and why these two properties
 
-FSRS optimization exists elsewhere (Anki, Decks). What does not exist
-anywhere, and what the 2026 complaint record demands (MARKET-RESEARCH.md
-Section 10.5), is an optimizer that fails loudly instead of silently:
+FSRS optimization exists elsewhere (Anki, Decks). This plugin's requirement is
+that a personal optimizer must fail loudly instead of silently when data is
+excluded or a candidate would change schedules:
 
 1. **Exclusion report.** Before fitting, list exactly which reviews were
    excluded and why, with counts. Anki's optimizer silently excluding
@@ -193,12 +196,9 @@ live in `PLAN-OPTIMIZER.md`; the phases below are the summary.
 4. **Ship as 0.8.0 once verified in real use** (minor bump per release policy:
    user-verified feature).
 
-Open questions carried into implementation:
+Resolved during implementation:
 
-- Where parameters live: settings JSON (plugin data) vs a vault note.
-  Leaning settings; parameters are device-agnostic and small, and
-  settings already sync with the vault for most setups.
-- Whether to expose target retention in the same panel (probably yes;
-  it is the one knob FSRS expects users to own).
-- Threshold values for the data gate; align with upstream guidance and
-  say the number in the UI.
+- Parameters are stored in plugin settings JSON, and the Scheduler panel
+  exposes desired retention alongside the active fit.
+- The delivered fit uses the documented 8-card / 64-card tiers and labels
+  thin histories as low-data rather than silently refusing to explain them.

@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.8.1] — 2026-09-27
+## [0.8.2] — 2026-09-27
+
+### Fixed
+
+- **Ledger migrations now prove their data is durable before they commit.** A
+  migration writes and reads back its generation log before `meta.json` marks
+  it complete. Reset and nuke start an empty generation, so stale root or old
+  generation logs cannot revive previous reviews.
+- **Compaction recovery keeps durable work instead of dropping a whole shard.**
+  When a verified matching archive exists, the loader keeps every complete,
+  validated event before a syntactically torn final JSONL line. Corrupt middle
+  lines, schema-invalid events, unreadable archives, and conflicting event ids
+  still stop loading rather than guessing.
+- **Storage failures no longer look like an empty collection.** Adapter errors
+  propagate to initialization; the plugin reports the failure and disables
+  ledger-backed actions for that load instead of presenting partial state.
+- **Anki export is explicit about unsupported image occlusions.** TSV export
+  writes supported clozes only and reports both written and skipped counts.
+
+### Changed
+
+- The live queue now refreshes status and decorations in a single pass after a
+  mutation, avoiding duplicate redraw work.
+- CI enforces the browser layout gate and release-version alignment alongside
+  the production type-check, build, and zero-network gate.
+
+## [0.8.1] — 2026-09-22
 
 ### Fixed
 
@@ -1012,7 +1038,10 @@ First BRAT-installable pre-release. Bundles the v0.1 MVP (topic mark, extract, c
 - Frontmatter/FSRS serialization layer (`src/fsrs.ts`, `src/ir-note.ts`, `src/types.ts`), the shared foundation later IR features build on.
 - Initial repository scaffold: Obsidian plugin skeleton, TypeScript + esbuild build pipeline, `ts-fsrs` dependency for scheduling, MIT license, CI build workflow, issue templates.
 
-[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.13...HEAD
+[Unreleased]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.8.2...HEAD
+[0.8.2]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.8.1...0.8.2
+[0.8.1]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.8.0...0.8.1
+[0.8.0]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.7.25...0.8.0
 [0.0.13]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.12...0.0.13
 [0.0.12]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.11...0.0.12
 [0.0.11]: https://github.com/RecursiveFunctions/obsidian-incremental-reading/compare/0.0.10...0.0.11

@@ -1,9 +1,12 @@
 # Scope: remove the three modals (UI commitments #2 + #6)
 
-Handoff for the next implementation pass. Read `docs/UI-COMMITMENTS.md`
-first; the contract is what this work satisfies.
+> **Historical, shipped work.** The modal-removal work described here shipped
+> long ago; the former paths named below no longer represent the current
+> implementation. This document is retained as design and migration history,
+> not as an implementation handoff. Use `docs/UI-COMMITMENTS.md` and
+> `docs/RELEASE.md` for current rules.
 
-## What violates the contract right now
+## What this plan addressed (historical)
 
 | Modal | Used by | Lines | Risk |
 |---|---|---|---|
@@ -203,12 +206,8 @@ end-to-end. Specifically:
    `onClose().finally(...)`. The view's equivalent is its own `onClose()`
    (ItemView lifecycle). Don't drop this.
 
-## After: cut 0.0.5
+## Release outcome (historical)
 
-Bump version. Build. Tag. `gh release create 0.0.5 main.js manifest.json
-styles.css --title "0.0.5 — Modal removal, single review surface" ...`.
-BRAT will pick it up. (Same dance as 0.0.3 and 0.0.4.)
-
-Run `npm version patch` before tagging a release (or bump `manifest.json`,
-`package.json`, and `versions.json` in lockstep); `version-bump.mjs` keeps
-BRAT-facing metadata aligned with `package.json`.
+This work was released long ago. The version, tag, and manual GitHub Release
+commands in this historical plan are superseded; follow `docs/RELEASE.md` and
+run `npm run ship:patch|minor|major` for any current release.
