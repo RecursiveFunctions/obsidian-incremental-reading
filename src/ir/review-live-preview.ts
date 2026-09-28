@@ -44,8 +44,7 @@ export function isSourceEditorState(state: unknown): boolean {
 
 export function canUseReviewLivePreview(
   file: { extension: string } | null | undefined,
-  isMobile: boolean,
+  _isMobile: boolean,
 ): boolean {
-  if (isMobile || !file) return false;
-  return file.extension === "md";
+  return file?.extension === "md";
 }

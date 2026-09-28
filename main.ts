@@ -172,6 +172,11 @@ import {
   type EditorSelectionSnapshot,
 } from "./src/ir/editor-selection-snapshot";
 import {
+  isScopedSelectionCurrent,
+  scopeSelectionSnapshot,
+  type ScopedSelectionSnapshot,
+} from "./src/ir/scoped-selection-snapshot";
+import {
   findAllBlockquotes,
   findAllListItems,
   findAllParagraphs,
@@ -327,7 +332,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    * Markdown selection captured on FAB pointerdown before mobile blur clears
    * it; used to build the radial and restore cursors when a petal runs.
    */
-  private hubSelectionSnapshot: EditorSelectionSnapshot | null = null;
+  private hubSelectionSnapshot: ScopedSelectionSnapshot<EditorSelectionSnapshot> | null = null;
 
   /**
    * Wall-clock when the current review pass started (Alt+R / Alt+N). The
@@ -378,8 +383,8 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private pdfHighlights?: PdfHighlightPainter;
   private lastPdfMarks = new Map<string, PdfExtractMark[]>();
-  /** Survives the click that focuses review and collapses the PDF selection. */
-  private lastPdfSelection: PdfTextSelection | null = null;
+  /** Survives focus loss while its originating PDF leaf still shows that file. */
+  private lastPdfSelection: ScopedSelectionSnapshot<PdfTextSelection> | null = null;
 
   /**
    * SuperMemo-style multi-selection: spans held with Ctrl+select (PDF text
@@ -413,7 +418,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.pdfHighlights = new PdfHighlightPainter(this.app);
     this.registerDomEvent(document, "selectionchange", () => {
       const sel = findPdfTextSelection(this.app);
-      if (sel) this.lastPdfSelection = sel;
+      if (sel) this.capturePdfSelection(sel);
     });
 
     // PDF regions + images + occlusion: editor leaf, card renderer, and the
@@ -465,18 +470,21 @@ export default class IncrementalReadingPlugin extends Plugin {
     // editor's decoration field starts empty until we push.
     this.registerEvent(
       this.app.workspace.on("file-open", () => {
+        this.invalidateSelectionSnapshots();
         pushIrDecorations(this.app, this.decorationCache);
         this.paintPdfHighlights();
       }),
     );
     this.registerEvent(
       this.app.workspace.on("layout-change", () => {
+        this.invalidateSelectionSnapshots();
         pushIrDecorations(this.app, this.decorationCache);
         this.paintPdfHighlights();
       }),
     );
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
+        this.invalidateSelectionSnapshots();
         this.paintPdfHighlights();
       }),
     );
@@ -809,17 +817,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "scissors",
       hotkeys: [{ modifiers: ["Alt"], key: "x" }],
       checkCallback: (checking) => {
-        const pdfSel = findPdfTextSelection(this.app);
-        if (pdfSel) this.lastPdfSelection = pdfSel;
-        const heldPdf = this.heldPdfFile();
-        if (pdfSel || this.lastPdfSelection || heldPdf) {
-          if (!checking) {
-            void this.extractFromPdfSelection(
-              pdfSel ?? this.lastPdfSelection,
-            );
-          }
-          return true;
-        }
         const rv = this.getActiveReviewView();
         if (rv) {
           if (!checking) void rv.handleExtract();
@@ -828,6 +825,20 @@ export default class IncrementalReadingPlugin extends Plugin {
         const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (mv?.file && this.markdownViewHasSelection(mv)) {
           if (!checking) void this.extractFromMarkdownView(mv);
+          return true;
+        }
+        const pdfSel = findPdfTextSelection(this.app);
+        if (pdfSel) this.capturePdfSelection(pdfSel);
+        const cachedPdfSel = this.cachedPdfSelection();
+        const heldPdf = this.heldPdfFile();
+        if (pdfSel || cachedPdfSel || heldPdf) {
+          if (!checking) {
+            void this.extractFromPdfSelection(
+              pdfSel ?? cachedPdfSel,
+              undefined,
+              !pdfSel && !!cachedPdfSel,
+            );
+          }
           return true;
         }
         return false;
@@ -843,17 +854,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "file-plus",
       hotkeys: [{ modifiers: ["Alt", "Shift"], key: "x" }],
       checkCallback: (checking) => {
-        const pdfSel = findPdfTextSelection(this.app);
-        if (pdfSel) this.lastPdfSelection = pdfSel;
-        if (pdfSel || this.lastPdfSelection) {
-          if (!checking) {
-            void this.extractFromPdfSelection(
-              pdfSel ?? this.lastPdfSelection!,
-              { promote: true },
-            );
-          }
-          return true;
-        }
         const rv = this.getActiveReviewView();
         if (rv) {
           if (!checking) void this.extractSelectionToNoteFromReview(rv);
@@ -861,8 +861,19 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
         const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (mv?.file && this.markdownViewHasSelection(mv)) {
+          if (!checking) void this.extractFromMarkdownView(mv, { promote: true });
+          return true;
+        }
+        const pdfSel = findPdfTextSelection(this.app);
+        if (pdfSel) this.capturePdfSelection(pdfSel);
+        const cachedPdfSel = this.cachedPdfSelection();
+        if (pdfSel || cachedPdfSel) {
           if (!checking) {
-            void this.extractFromMarkdownView(mv, { promote: true });
+            void this.extractFromPdfSelection(
+              pdfSel ?? cachedPdfSel!,
+              { promote: true },
+              !pdfSel && !!cachedPdfSel,
+            );
           }
           return true;
         }
@@ -1318,12 +1329,6 @@ export default class IncrementalReadingPlugin extends Plugin {
   private addMobileIrFileMenuNav(menu: Menu): void {
     if (!Platform.isMobile) return;
     menu.addSeparator();
-    menu.addItem((item) =>
-      item
-        .setTitle("IR quick actions (radial wheel)…")
-        .setIcon("layout-list")
-        .onClick(() => void this.openIrActionsHub()),
-    );
     menu.addItem((item) =>
       item
         .setTitle("Start IR review")
@@ -1943,9 +1948,12 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async extractFromPdfInReview(opts?: {
     promote?: boolean;
   }): Promise<IrElement | undefined> {
-    const sel = findPdfTextSelection(this.app) ?? this.lastPdfSelection;
+    const live = findPdfTextSelection(this.app);
+    if (live) this.capturePdfSelection(live);
+    const cached = this.cachedPdfSelection();
+    const sel = live ?? cached;
     if (!sel && !this.heldPdfFile()) return undefined;
-    return this.extractFromPdfSelection(sel, opts);
+    return this.extractFromPdfSelection(sel, opts, !live && !!cached);
   }
 
   /** PDF that has spans held with Ctrl (only one PDF is held at a time). */
@@ -1966,6 +1974,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async extractFromPdfSelection(
     sel: PdfTextSelection | null,
     opts?: { promote?: boolean },
+    consumeCachedSelection = false,
   ): Promise<IrElement | undefined> {
     const file = sel?.file ?? this.heldPdfFile();
     if (!file) return undefined;
@@ -1996,6 +2005,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (created) {
       this.multiSelect.clear();
       document.getSelection()?.removeAllRanges();
+      if (consumeCachedSelection) this.lastPdfSelection = null;
     }
     return created;
   }
@@ -2048,12 +2058,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       if (promote) {
         await this.applyIrPromote(created.id, created);
         await this.refreshExtractDecorations();
-        this.lastPdfSelection = null;
         return created;
       }
       this.getActiveReviewView()?.adoptElement(created);
       await this.refreshExtractDecorations();
-      this.lastPdfSelection = null;
       const pages = (pdf.segments ?? [pdf]).map((g) => g.page);
       new Notice(
         opts?.noticeLabel ??
@@ -4077,11 +4085,58 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async toggleDismiss(file: TFile) {
     const dismiss = !isDismissed(this.app, file);
-    await setDismissed(this.app, file, dismiss);
+    const elementId =
+      (await this.resolveElementIdForFile(file)) ?? elementIdForPath(file.path);
+    await this.applyIrDismissChange(elementId, file, dismiss);
     new Notice(
       `${dismiss ? "Dismissed" : "Restored"} "${file.basename}".`,
     );
     void this.refreshStatusBar();
+  }
+
+  private capturePdfSelection(selection: PdfTextSelection): void {
+    const active = this.app.workspace.activeLeaf;
+    const leaf =
+      active && pdfFileFromView(active.view)?.path === selection.file.path
+        ? active
+        : this.app.workspace
+            .getLeavesOfType("pdf")
+            .find((candidate) => pdfFileFromView(candidate.view)?.path === selection.file.path);
+    if (leaf) {
+      this.lastPdfSelection = scopeSelectionSnapshot(
+        leaf,
+        selection.file.path,
+        selection,
+      );
+    }
+  }
+
+  /** Drop snapshots when their source leaf has been retargeted or replaced. */
+  private invalidateSelectionSnapshots(): void {
+    const activeLeaf = this.app.workspace.activeLeaf;
+    const activeFile = activeLeaf ? activeIrFile(this.app) : null;
+    if (
+      this.hubSelectionSnapshot &&
+      !isScopedSelectionCurrent(
+        this.hubSelectionSnapshot,
+        activeLeaf,
+        activeFile?.path,
+      )
+    ) {
+      this.hubSelectionSnapshot = null;
+    }
+    if (
+      this.lastPdfSelection &&
+      pdfFileFromView(this.lastPdfSelection.leaf as WorkspaceLeaf)?.path !==
+        this.lastPdfSelection.filePath
+    ) {
+      this.lastPdfSelection = null;
+    }
+  }
+
+  private cachedPdfSelection(): PdfTextSelection | null {
+    this.invalidateSelectionSnapshots();
+    return this.lastPdfSelection?.value ?? null;
   }
 
   /** Radial wheel: contextual IR actions; always opens so placement stays predictable. */
@@ -4102,22 +4157,32 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /** Snapshot the active markdown selection before focus moves to the FAB. */
   private captureHubEditorSelection(): void {
+    const leaf = this.app.workspace.activeLeaf;
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     const file = mv?.file;
     const editor = mv?.editor;
-    if (!file || !editor || file.extension !== "md") {
+    if (!leaf || !file || !editor || file.extension !== "md") {
       this.hubSelectionSnapshot = null;
       return;
     }
-    this.hubSelectionSnapshot = captureEditorSelection(file, editor);
+    const snapshot = captureEditorSelection(file, editor);
+    this.hubSelectionSnapshot = snapshot
+      ? scopeSelectionSnapshot(leaf, file.path, snapshot)
+      : null;
   }
 
   private hubSelectionFor(file: TFile, editor: Editor): string {
-    return snapshotSelectionText(this.hubSelectionSnapshot, file, editor);
+    const leaf = this.app.workspace.activeLeaf;
+    return isScopedSelectionCurrent(this.hubSelectionSnapshot, leaf, file.path)
+      ? snapshotSelectionText(this.hubSelectionSnapshot.value, file, editor)
+      : editor.getSelection().trim();
   }
 
   private restoreHubSelection(file: TFile, editor: Editor): void {
-    restoreEditorSelection(this.hubSelectionSnapshot, file, editor);
+    const leaf = this.app.workspace.activeLeaf;
+    if (isScopedSelectionCurrent(this.hubSelectionSnapshot, leaf, file.path)) {
+      restoreEditorSelection(this.hubSelectionSnapshot.value, file, editor);
+    }
   }
 
   /** Run a hub action on the active markdown editor, restoring a FAB snapshot. */

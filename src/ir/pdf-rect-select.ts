@@ -34,9 +34,10 @@ export function startPdfRectSelect(
     if (!active) return;
     active = false;
     container.classList.remove(PDF_RECT_MODE_CLASS);
-    container.removeEventListener("mousedown", onDown, true);
-    doc.removeEventListener("mousemove", onMove, true);
-    doc.removeEventListener("mouseup", onUp, true);
+    container.removeEventListener("pointerdown", onDown, true);
+    doc.removeEventListener("pointermove", onMove, true);
+    doc.removeEventListener("pointerup", onUp, true);
+    doc.removeEventListener("pointercancel", onCancel, true);
     doc.removeEventListener("keydown", onKey, true);
     overlay?.remove();
     overlay = null;
@@ -44,7 +45,7 @@ export function startPdfRectSelect(
     page = null;
   };
 
-  const onDown = (evt: MouseEvent) => {
+  const onDown = (evt: PointerEvent) => {
     if (evt.button !== 0) return;
     const target = evt.target as HTMLElement | null;
     const p = target?.closest<HTMLElement>(".page[data-page-number]") ?? null;
@@ -52,6 +53,7 @@ export function startPdfRectSelect(
     evt.preventDefault();
     evt.stopPropagation();
     page = p;
+    container.setPointerCapture?.(evt.pointerId);
     startX = evt.clientX;
     startY = evt.clientY;
     overlay = p.createDiv({ cls: "ir-pdf-rect-overlay" });
@@ -72,13 +74,13 @@ export function startPdfRectSelect(
     box.style.height = `${h * 100}%`;
   };
 
-  const onMove = (evt: MouseEvent) => {
+  const onMove = (evt: PointerEvent) => {
     if (!page) return;
     evt.preventDefault();
     paint(evt.clientX, evt.clientY);
   };
 
-  const onUp = (evt: MouseEvent) => {
+  const onUp = (evt: PointerEvent) => {
     if (!page) return;
     evt.preventDefault();
     evt.stopPropagation();
@@ -90,6 +92,12 @@ export function startPdfRectSelect(
     else handlers.onCancel?.();
   };
 
+  const onCancel = () => {
+    if (!active) return;
+    cleanup();
+    handlers.onCancel?.();
+  };
+
   const onKey = (evt: KeyboardEvent) => {
     if (evt.key !== "Escape") return;
     cleanup();
@@ -97,9 +105,10 @@ export function startPdfRectSelect(
   };
 
   container.classList.add(PDF_RECT_MODE_CLASS);
-  container.addEventListener("mousedown", onDown, true);
-  doc.addEventListener("mousemove", onMove, true);
-  doc.addEventListener("mouseup", onUp, true);
+  container.addEventListener("pointerdown", onDown, true);
+  doc.addEventListener("pointermove", onMove, true);
+  doc.addEventListener("pointerup", onUp, true);
+  doc.addEventListener("pointercancel", onCancel, true);
   doc.addEventListener("keydown", onKey, true);
   return cleanup;
 }
@@ -142,15 +151,16 @@ export function startRectSelectOnElement(
     cleanup();
     handlers.onCancel?.();
   };
-  overlay.addEventListener("mousedown", (evt) => {
+  overlay.addEventListener("pointerdown", (evt) => {
     if (evt.button !== 0) return;
     evt.preventDefault();
+    overlay.setPointerCapture(evt.pointerId);
     dragging = true;
     sx = evt.clientX;
     sy = evt.clientY;
     drawn.style.display = "block";
   });
-  overlay.addEventListener("mousemove", (evt) => {
+  overlay.addEventListener("pointermove", (evt) => {
     if (!dragging) return;
     const a = norm(sx, sy);
     const b = norm(evt.clientX, evt.clientY);
@@ -159,7 +169,7 @@ export function startRectSelectOnElement(
     drawn.style.width = `${Math.abs(b.x - a.x) * 100}%`;
     drawn.style.height = `${Math.abs(b.y - a.y) * 100}%`;
   });
-  overlay.addEventListener("mouseup", (evt) => {
+  overlay.addEventListener("pointerup", (evt) => {
     if (!dragging) return;
     dragging = false;
     const a = norm(sx, sy);

@@ -24,6 +24,13 @@ export const ANDROID_SYS_NAV_PX = 28;
 export const MOBILE_EDGE_MARGIN_PX = 12;
 export const FAB_SIZE_PX = 52;
 
+/** Compact widths use the bottom-drawer variant of the IR Actions panel. */
+export const IR_ACTION_PANEL_COMPACT_MAX_WIDTH_PX = 700;
+
+export function irActionPanelUsesBottomDrawer(viewportWidth: number): boolean {
+  return viewportWidth <= IR_ACTION_PANEL_COMPACT_MAX_WIDTH_PX;
+}
+
 export function readMobileViewportInsets(): MobileViewportInsets {
   const vv = window.visualViewport;
   const layoutHeight = window.innerHeight;
@@ -206,21 +213,4 @@ export function clampRadialOrigin(
     cx: Math.min(maxX, Math.max(minX, origin.cx)),
     cy: Math.min(maxY, Math.max(minY, origin.cy)),
   };
-}
-
-/** Petal diameter in `styles.css`, plus the gap we want between petals. */
-const PETAL_PITCH_PX = 76;
-
-/**
- * Ring radius for `n` radial petals.
- *
- * A fixed radius overlapped once the ring got busy: petals sit on the
- * circumference, so past roughly a dozen entries they collided and their
- * labels became unreadable. Grow the circle to fit instead, keeping the old
- * radius as the floor so small rings look exactly as they always did.
- */
-export function radialRadius(n: number, isMobile: boolean): number {
-  const base = isMobile ? 100 : 122;
-  if (n <= 1) return base;
-  return Math.max(base, Math.ceil((n * PETAL_PITCH_PX) / (2 * Math.PI)));
 }

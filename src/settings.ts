@@ -12,6 +12,7 @@ import {
   isSpaceAfterReveal,
   SPACE_AFTER_REVEAL_OPTIONS,
 } from "./ir/review-keys";
+import { resetMobileReviewTips } from "./ir/review-touch-gestures";
 
 export type { IrSettings } from "./ir/settings-data";
 export { cloneDefaultSettings, DEFAULT_SETTINGS } from "./ir/settings-data";
@@ -114,6 +115,36 @@ export class IrSettingTab extends PluginSettingTab {
         });
       });
 
+    new Setting(containerEl)
+      .setName("Enable mobile review swipes")
+      .setDesc(
+        "Use horizontal swipes on review cards: left goes back or chooses Again; right advances or chooses Good.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableMobileReviewSwipes)
+          .onChange(async (value) => {
+            this.plugin.settings.enableMobileReviewSwipes = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Reset mobile swipe tips")
+      .setDesc(
+        "Show the mobile review swipe hint again on this device. This does not change synced plugin settings.",
+      )
+      .addButton((button) =>
+        button.setButtonText("Reset tips").onClick(() => {
+          try {
+            resetMobileReviewTips();
+            new Notice("Incremental Reading: mobile swipe tips reset.");
+          } catch {
+            new Notice("Incremental Reading: could not reset mobile swipe tips.");
+          }
+        }),
+      );
+
     containerEl.createEl("h3", { text: "Extracts" });
 
     new Setting(containerEl)
@@ -175,7 +206,7 @@ export class IrSettingTab extends PluginSettingTab {
       .setDesc(
         "Highlights from that note can become their own files, or stay as " +
           "in review with no new file. You still get a choice each time; " +
-          "this is the default if you close the prompt. On (default): make " +
+          "this selects the emphasized button. On (default): make " +
           "them notes. Off: keep without notes.",
       )
       .addToggle((toggle) =>

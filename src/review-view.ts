@@ -122,7 +122,10 @@ import { promptClozeHintInline } from "./cloze-hint-bar";
 import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
 import {
   attachReviewSwipeGestures,
+  MOBILE_REVIEW_SWIPE_TIP_DISMISSED_KEY,
   reviewSwipeMode,
+  swipeHintLabel,
+  swipeOutcomeFor,
   type SwipeOutcome,
 } from "./ir/review-touch-gestures";
 import {
@@ -141,20 +144,11 @@ import {
   isMobileEditViewportCompressed,
   resetMobileEditLayoutBaseline,
 } from "./ir/mobile-edit-layout";
+import { DropWhileBusyGate } from "./ir/action-gate";
 import { isPdfPath } from "./ir/pdf-fragment";
 import { getPdfPageForPath, openPdfAt } from "./ir/pdf-view";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
-
-const IR_SWIPE_LEGEND_KEY = "incremental-reading:swipe-legend-seen";
-/**
- * How many times the swipe coach mark may ever fire for a user who never
- * swipes. `IR_SWIPE_LEGEND_KEY` is only written once an actual swipe lands,
- * so a mobile user who taps the dock buttons was getting an 8-second Notice
- * at the top of every single session, forever.
- */
-const IR_SWIPE_COACH_COUNT_KEY = "incremental-reading:swipe-coach-shown";
-const IR_SWIPE_COACH_MAX_SHOWS = 3;
 
 const GRADES: { grade: Grade; label: string; key: string }[] = [
   { grade: "again", label: "Again", key: "1" },
@@ -164,6 +158,10 @@ const GRADES: { grade: Grade; label: string; key: string }[] = [
 ];
 
 export class IrReviewView extends ItemView {
+  /** Drop repeated taps rather than queuing a mutation for the next card. */
+  private readonly actionGate = new DropWhileBusyGate();
+  /** A failed save leaves the current card and its editable buffer intact. */
+  private editSaveError: string | null = null;
   private index = 0;
   private revealed = false;
 
@@ -196,12 +194,8 @@ export class IrReviewView extends ItemView {
   /** Mobile-only: parent source panel is open (default collapsed = zero layout space). */
   private mobileSourceExpanded = false;
 
-  /** Mobile-only: dismiss swipe coaching once the user has actually swiped.
-   * Persisted in localStorage so the one-time Notice does not repeat. */
+  /** Mobile-only inline swipe coach dismissal, persisted per device. */
   private swipeLegendDismissed = false;
-
-  /** Avoid showing the swipe coach Notice on every `renderCard` re-render. */
-  private swipeCoachShownThisSession = false;
 
   /** Mobile: priority / A-Factor editors collapsed behind a chip until tapped. */
   private priorityMetaExpanded = false;
@@ -446,7 +440,10 @@ export class IrReviewView extends ItemView {
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
       try {
-        if (window.localStorage.getItem(IR_SWIPE_LEGEND_KEY) === "1") {
+        if (
+          window.localStorage.getItem(MOBILE_REVIEW_SWIPE_TIP_DISMISSED_KEY) ===
+          "1"
+        ) {
           this.swipeLegendDismissed = true;
         }
       } catch {
@@ -458,28 +455,31 @@ export class IrReviewView extends ItemView {
       // the original landscape rule failed on roomier displays). Detect
       // landscape directly in JS and toggle a class instead.
       this.mobileOrientationCleanup = this.attachOrientationClass();
-      this.swipeHintEl = this.contentEl.createDiv({
-        cls: "ir-review-swipe-hint",
-      });
-      this.swipeGestureCleanup = attachReviewSwipeGestures(
-        this.contentEl,
-        this.swipeHintEl,
-        {
-          getMode: () => {
-            const slot = this.current;
-            if (!slot) return "reading";
-            const reading = this.isReading(slot);
-            const isCloze = !reading && this.isClozeLike(this.currentRaw);
-            return reviewSwipeMode(reading, isCloze, this.revealed);
+      if (this.settings.enableMobileReviewSwipes) {
+        this.contentEl.addClass("ir-review--swipes-enabled");
+        this.swipeHintEl = this.contentEl.createDiv({
+          cls: "ir-review-swipe-hint",
+        });
+        this.swipeGestureCleanup = attachReviewSwipeGestures(
+          this.contentEl,
+          this.swipeHintEl,
+          {
+            getMode: () => {
+              const slot = this.current;
+              if (!slot) return "reading";
+              const reading = this.isReading(slot);
+              const isCloze = !reading && this.isClozeLike(this.currentRaw);
+              return reviewSwipeMode(reading, isCloze, this.revealed);
+            },
+            isBlocked: () =>
+              !this.current ||
+              this.sessionComplete ||
+              this.editing ||
+              this.isTypingInInput(),
+            onOutcome: (outcome) => this.handleSwipeOutcome(outcome),
           },
-          isBlocked: () =>
-            !this.current ||
-            this.sessionComplete ||
-            this.editing ||
-            this.isTypingInInput(),
-          onOutcome: (outcome) => this.handleSwipeOutcome(outcome),
-        },
-      );
+        );
+      }
       this.mobileKeyboardCleanup = this.attachMobileKeyboardGuard();
     }
 
@@ -842,7 +842,7 @@ export class IrReviewView extends ItemView {
     if (!this.swipeLegendDismissed) {
       this.swipeLegendDismissed = true;
       try {
-        window.localStorage.setItem(IR_SWIPE_LEGEND_KEY, "1");
+        window.localStorage.setItem(MOBILE_REVIEW_SWIPE_TIP_DISMISSED_KEY, "1");
       } catch {
         // Best-effort: in-memory dismissal still applies for the session.
       }
@@ -1044,6 +1044,48 @@ export class IrReviewView extends ItemView {
     });
   }
 
+  private async runAction<T>(action: () => Promise<T>): Promise<T | undefined> {
+    return this.actionGate.run(async () => {
+      this.contentEl.setAttr("aria-busy", "true");
+      this.setReviewControlsDisabled(true);
+      try {
+        return await action();
+      } finally {
+        this.contentEl.removeAttribute("aria-busy");
+        this.setReviewControlsDisabled(false);
+      }
+    });
+  }
+
+  private setReviewControlsDisabled(disabled: boolean): void {
+    for (const el of Array.from(this.contentEl.querySelectorAll<
+      HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >("button, input, textarea, select"))) {
+      el.disabled = disabled;
+    }
+  }
+
+  private renderEditSaveRecovery(parent: HTMLElement): void {
+    if (!this.editSaveError) return;
+    const recovery = parent.createDiv({ cls: "ir-review-save-recovery" });
+    recovery.setAttr("role", "alert");
+    recovery.createSpan({ text: this.editSaveError });
+    recovery
+      .createEl("button", { text: "Retry", type: "button", cls: "mod-cta" })
+      .addEventListener("click", () =>
+        void this.runAction(async () => {
+          if (await this.flushEdits()) await this.renderCard();
+        }),
+      );
+    recovery
+      .createEl("button", { text: "Discard", type: "button" })
+      .addEventListener("click", () => {
+        this.currentRaw = this.rawOnDisk;
+        this.editSaveError = null;
+        void this.renderCard();
+      });
+  }
+
   /**
    * Button copy: desktop keeps hotkey hints; mobile omits them (no hardware
    * keyboard by default, and labels stay readable on narrow screens).
@@ -1066,50 +1108,35 @@ export class IrReviewView extends ItemView {
     return true;
   }
 
-  private maybeShowSwipeCoachMark(slot: ReviewSlot): void {
+  private renderSwipeCoachHint(parent: HTMLElement, slot: ReviewSlot): void {
     if (
       !Platform.isMobile ||
       this.swipeLegendDismissed ||
-      this.swipeCoachShownThisSession
+      !this.settings.enableMobileReviewSwipes
     ) {
       return;
     }
-    this.swipeCoachShownThisSession = true;
-    const shown = this.readSwipeCoachShows();
-    if (shown >= IR_SWIPE_COACH_MAX_SHOWS) return;
-    this.writeSwipeCoachShows(shown + 1);
     const reading = this.isReading(slot);
-    const clozeHint =
-      !reading && this.isClozeLike(this.currentRaw) && !this.revealed;
-    const text = reading
-      ? "Swipe the card: ← previous · → or ↑ next"
-      : clozeHint
-        ? "Swipe the card: ← previous · → next · ↑ show answer"
-        : "Swipe the card: ← Again · ↓ Hard · → Good · ↑ Easy";
-    new Notice(`Incremental Reading: ${text}`, 8000);
-  }
-
-  /**
-   * Lifetime coach-mark show count. Best-effort: a blocked or missing
-   * localStorage degrades to "show it again", which is the old behavior and
-   * strictly better than throwing inside a render path.
-   */
-  private readSwipeCoachShows(): number {
-    try {
-      const raw = window.localStorage.getItem(IR_SWIPE_COACH_COUNT_KEY);
-      const n = raw === null ? 0 : Number.parseInt(raw, 10);
-      return Number.isFinite(n) && n > 0 ? n : 0;
-    } catch {
-      return 0;
-    }
-  }
-
-  private writeSwipeCoachShows(n: number): void {
-    try {
-      window.localStorage.setItem(IR_SWIPE_COACH_COUNT_KEY, String(n));
-    } catch {
-      // Same as above: no persistence, no crash.
-    }
+    const mode = reviewSwipeMode(
+      reading,
+      !reading && this.isClozeLike(this.currentRaw),
+      this.revealed,
+    );
+    const left = swipeHintLabel(swipeOutcomeFor(mode, "left")!);
+    const right = swipeHintLabel(swipeOutcomeFor(mode, "right")!);
+    const hint = parent.createDiv({ cls: "ir-review-swipe-legend" });
+    hint.createSpan({ text: `Swipe card: ${left} · ${right}` });
+    hint
+      .createEl("button", { text: "Dismiss", type: "button" })
+      .addEventListener("click", () => {
+        this.swipeLegendDismissed = true;
+        try {
+          window.localStorage.setItem(MOBILE_REVIEW_SWIPE_TIP_DISMISSED_KEY, "1");
+        } catch {
+          // Best-effort; the inline hint still disappears for this session.
+        }
+        hint.remove();
+      });
   }
 
   private renderHubButton(parent: HTMLElement): void {
@@ -1337,8 +1364,9 @@ export class IrReviewView extends ItemView {
           "priority",
         );
       }
+      this.onChange?.();
     };
-    input.addEventListener("change", () => void commit());
+    input.addEventListener("change", () => void this.runAction(commit));
     row.createEl("span", {
       cls: "ir-priority-hint",
       text: "0 = most important",
@@ -1371,8 +1399,9 @@ export class IrReviewView extends ItemView {
         ...slot.element,
         schedule: newSchedule,
       };
+      this.onChange?.();
     };
-    input.addEventListener("change", () => void commit());
+    input.addEventListener("change", () => void this.runAction(commit));
     row.createEl("span", {
       cls: "ir-priority-hint",
       text: "interval multiplier",
@@ -1387,6 +1416,11 @@ export class IrReviewView extends ItemView {
   private async ensureLoaded(slot: ReviewSlot): Promise<void> {
     if (this.loadedSlotId === slot.id) return;
     this.priorityMetaExpanded = false;
+    this.mobileSourceExpanded = false;
+    this.editSaveError = null;
+    this.contentEl.removeClass("ir-review--reading-fits");
+    this.swipeHintEl?.remove();
+    this.swipeHintEl = undefined;
     this.pendingPdfOpen = true;
     this.skipBookmarkCursor = false;
     if (slot.file && isPdfPath(slot.file.path)) {
@@ -1395,10 +1429,18 @@ export class IrReviewView extends ItemView {
         : "";
       this.bodyMissing = false;
     } else if (slot.file) {
-      this.rawOnDisk = stripFrontmatter(
-        await this.app.vault.cachedRead(slot.file),
-      );
-      this.bodyMissing = false;
+      try {
+        this.rawOnDisk = stripFrontmatter(
+          await this.app.vault.cachedRead(slot.file),
+        );
+        this.bodyMissing = false;
+      } catch (error) {
+        console.error("Incremental Reading: could not load review source", error);
+        this.rawOnDisk = slot.element.text
+          ? stripExtractMarks(slot.element.text)
+          : "";
+        this.bodyMissing = !this.rawOnDisk;
+      }
     } else if (slot.element.text) {
       // Strip any `<mark class="ir-extract-source">` chrome that may have
       // leaked into the stored text for extracts created before the
@@ -1779,28 +1821,29 @@ export class IrReviewView extends ItemView {
    * anchored elements (no file) record a `text-edited` event in the ledger
    * so the change survives across folds without rewriting the parent note.
    */
-  private async flushEdits(): Promise<void> {
+  private async flushEdits(): Promise<boolean> {
     this.captureBookmark();
     const slot = this.current;
-    if (!slot || this.bodyMissing) return;
+    if (!slot || this.bodyMissing) return true;
     if (this.liveEditor) {
       this.currentRaw = this.liveEditor.getBody();
       try {
         await this.liveEditor.save();
         this.rawOnDisk = this.currentRaw;
+        this.editSaveError = null;
       } catch (e) {
         console.error("Incremental Reading: saving edits failed", e);
-        new Notice(
-          "Incremental Reading: could not save your edits. See the developer console.",
-        );
+        this.editSaveError = "Could not save your edits. Retry or discard the unsaved changes.";
+        void this.renderCard();
+        return false;
       }
-      return;
+      return true;
     }
-    if (this.currentRaw === this.rawOnDisk) return;
+    if (this.currentRaw === this.rawOnDisk) return true;
     try {
       if (slot.file && isPdfPath(slot.file.path)) {
         this.rawOnDisk = this.currentRaw;
-        return;
+        return true;
       }
       if (slot.file) {
         await saveBody(this.app, slot.file, this.currentRaw);
@@ -1821,11 +1864,13 @@ export class IrReviewView extends ItemView {
         this.onChange?.();
       }
       this.rawOnDisk = this.currentRaw;
+      this.editSaveError = null;
+      return true;
     } catch (e) {
       console.error("Incremental Reading: saving edits failed", e);
-      new Notice(
-        "Incremental Reading: could not save your edits. See the developer console.",
-      );
+      this.editSaveError = "Could not save your edits. Retry or discard the unsaved changes.";
+      void this.renderCard();
+      return false;
     }
   }
 
@@ -1836,8 +1881,11 @@ export class IrReviewView extends ItemView {
     }
     this.parkLiveEditor();
     if (!this.editing && this.liveEditor) {
-      await this.flushEdits();
-      this.teardownLiveEditorSync();
+      if (await this.flushEdits()) {
+        this.teardownLiveEditorSync();
+      } else {
+        this.editing = true;
+      }
     }
     const host = this.cardHostEl ?? this.contentEl;
     host.empty();
@@ -1877,6 +1925,23 @@ export class IrReviewView extends ItemView {
     }
 
     await this.ensureLoaded(slot);
+    if (this.bodyMissing) {
+      const recovery = host.createDiv({ cls: "ir-review-read-recovery" });
+      recovery.setAttr("role", "alert");
+      recovery.createEl("p", {
+        text: "Could not load this card's source. It has not been changed.",
+      });
+      recovery
+        .createEl("button", { text: "Retry", type: "button", cls: "mod-cta" })
+        .addEventListener("click", () => {
+          this.loadedSlotId = null;
+          void this.renderCard();
+        });
+      recovery
+        .createEl("button", { text: "Skip for this pass", type: "button" })
+        .addEventListener("click", () => this.advance());
+      return;
+    }
     this.announceSlot(slot);
 
     const sourceCtx = await this.loadSourceContext(slot);
@@ -2066,8 +2131,9 @@ export class IrReviewView extends ItemView {
 
     const dock = host.createDiv({ cls: "ir-review-dock" });
     const controls = dock.createEl("div", { cls: "ir-review-controls" });
+    this.renderEditSaveRecovery(controls);
 
-    this.maybeShowSwipeCoachMark(slot);
+    this.renderSwipeCoachHint(controls, slot);
 
     this.renderHubButton(controls);
 
@@ -3163,24 +3229,30 @@ export class IrReviewView extends ItemView {
     parent: HTMLElement,
     file: TFile,
   ): Promise<boolean> {
-    if (this.liveEditor && this.liveEditor.filePath === file.path) {
-      parent.appendChild(this.liveEditor.hostEl);
-      await this.flushEdits();
-      await this.liveEditor.setKind(this.editKind);
+    try {
+      if (this.liveEditor && this.liveEditor.filePath === file.path) {
+        parent.appendChild(this.liveEditor.hostEl);
+        await this.flushEdits();
+        await this.liveEditor.setKind(this.editKind);
+        return true;
+      }
+      this.teardownLiveEditorSync();
+      const mounted = await mountReviewLiveEditor(
+        this.app,
+        file,
+        this.leaf,
+        parent,
+        this.editKind,
+        () => this.handleEscapeKey(),
+      );
+      if (!mounted) return false;
+      this.liveEditor = mounted;
       return true;
+    } catch (error) {
+      console.error("Incremental Reading: review editor failed to mount", error);
+      this.teardownLiveEditorSync();
+      return false;
     }
-    this.teardownLiveEditorSync();
-    const mounted = await mountReviewLiveEditor(
-      this.app,
-      file,
-      this.leaf,
-      parent,
-      this.editKind,
-      () => this.handleEscapeKey(),
-    );
-    if (!mounted) return false;
-    this.liveEditor = mounted;
-    return true;
   }
 
   private async renderEditor(parent: HTMLElement) {
@@ -3204,6 +3276,10 @@ export class IrReviewView extends ItemView {
         }
         if (pending) this.liveEditor?.setSelection(pending.start, pending.end);
         return;
+      }
+      if (this.editKind === "live") {
+        this.editKind = "source";
+        new Notice("Incremental Reading: Live Preview unavailable; using Source.");
       }
     }
     const ta = parent.createEl("textarea", { cls: "ir-review-textarea" });
@@ -3493,6 +3569,13 @@ export class IrReviewView extends ItemView {
     silent?: boolean;
     promote?: boolean;
   }): Promise<IrElement | undefined> {
+    return this.runAction(() => this.handleExtractNow(opts));
+  }
+
+  private async handleExtractNow(opts?: {
+    silent?: boolean;
+    promote?: boolean;
+  }): Promise<IrElement | undefined> {
     const slot = this.current;
     if (!slot || !this.canMakeChild()) return;
     // A PDF-sourced card: if the user selected text *on the card* (the
@@ -3568,7 +3651,7 @@ export class IrReviewView extends ItemView {
       );
       return;
     }
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const bodyBeforeExtract = this.currentRaw;
     let created: IrElement | undefined;
     try {
@@ -3623,6 +3706,10 @@ export class IrReviewView extends ItemView {
   }
 
   public async handleCloze() {
+    await this.runAction(() => this.handleClozeNow());
+  }
+
+  private async handleClozeNow() {
     const slot = this.current;
     if (!slot || !this.canMakeClozeChild()) return;
     const sel = this.resolveSelection();
@@ -3793,7 +3880,7 @@ export class IrReviewView extends ItemView {
       new Notice("Incremental Reading: nothing to extract.");
       return;
     }
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const bodyBeforeExtract = this.currentRaw;
     const sourcePath =
       slot.file?.path ?? this.resolveProvenanceSourcePath(slot);
@@ -3857,7 +3944,7 @@ export class IrReviewView extends ItemView {
       );
       return;
     }
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const result = await createClozeFromText(
       this.app,
       placement,
@@ -3946,7 +4033,7 @@ export class IrReviewView extends ItemView {
     sel: { text: string; start: number; end: number },
     hint: string,
   ): Promise<void> {
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const groupN = nextClozeNumber(this.currentRaw);
     const { body, answer } = spliceClozeIntoText(
       this.currentRaw,
@@ -4038,8 +4125,12 @@ export class IrReviewView extends ItemView {
    * rewinds the in-session cursor (e.g. to add another cloze on a reading card).
    */
   private async previous() {
+    await this.runAction(() => this.previousNow());
+  }
+
+  private async previousNow() {
     if (this.index === 0) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     void this.persistBookmarks();
     this.index -= 1;
     this.revealed = false;
@@ -4050,9 +4141,13 @@ export class IrReviewView extends ItemView {
   }
 
   private async grade(g: Grade) {
+    await this.runAction(() => this.gradeNow(g));
+  }
+
+  private async gradeNow(g: Grade) {
     const slot = this.current;
     if (!slot) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     // A grade is newer than any pending Later/Dismiss snapshot, and the
     // logged `grade-undone` path owns undo from here.
     this.lastReversible = null;
@@ -4097,6 +4192,7 @@ export class IrReviewView extends ItemView {
         });
       }, "grade");
     }
+    this.onChange?.();
     this.advance();
   }
 
@@ -4116,7 +4212,7 @@ export class IrReviewView extends ItemView {
 
     const dock = this.contentEl.querySelector(".ir-review-dock");
     if (!dock) {
-      void this.applyGrade(slot, fsrsCard, fsrsStored, g);
+        void this.runAction(() => this.applyGrade(slot, fsrsCard, fsrsStored, g));
       return;
     }
 
@@ -4138,7 +4234,7 @@ export class IrReviewView extends ItemView {
       btn.addEventListener("click", () => {
         bar.remove();
         if (m.id === "FSRS") {
-          void this.applyGrade(slot, fsrsCard, fsrsStored, g);
+          void this.runAction(() => this.applyGrade(slot, fsrsCard, fsrsStored, g));
         } else {
           const overridden = {
             ...fsrsStored,
@@ -4146,16 +4242,20 @@ export class IrReviewView extends ItemView {
             scheduledDays: div.sm2IntervalDays,
           };
           const overriddenCard = storedToCard(overridden);
-          void this.applyGrade(slot, overriddenCard, overridden, g, true);
+          void this.runAction(() => this.applyGrade(slot, overriddenCard, overridden, g, true));
         }
       });
     }
   }
 
   private async next() {
+    await this.runAction(() => this.nextNow());
+  }
+
+  private async nextNow() {
     const slot = this.current;
     if (!slot) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
 
     const cur =
       scheduleToTopicState(slot.element.schedule) ??
@@ -4179,13 +4279,18 @@ export class IrReviewView extends ItemView {
         });
       }, "topic-advanced");
     }
+    this.onChange?.();
     this.advance();
   }
 
   private async later() {
+    await this.runAction(() => this.laterNow());
+  }
+
+  private async laterNow() {
     const slot = this.current;
     if (!slot) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
 
     const cur =
       scheduleToTopicState(slot.element.schedule) ??
@@ -4211,14 +4316,19 @@ export class IrReviewView extends ItemView {
       }, "later");
     }
     this.rememberReversible("later", slot, prevElement);
+    this.onChange?.();
     this.flash(`Later today · ${this.remainingAfterCurrent()} left`);
     this.advance();
   }
 
   private async dismiss() {
+    await this.runAction(() => this.dismissNow());
+  }
+
+  private async dismissNow() {
     const slot = this.current;
     if (!slot) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const prevElement = slot.element;
     await this.emit("dismiss-set", slot.id, { dismissed: true });
     slot.element = { ...slot.element, dismissed: true };
@@ -4229,6 +4339,7 @@ export class IrReviewView extends ItemView {
       );
     }
     this.rememberReversible("dismiss", slot, prevElement);
+    this.onChange?.();
     // Unconditional: on the last card `advance()` swaps in the session-complete
     // screen, which renders the pending flash itself, so the confirmation is
     // no longer swallowed when you dismiss the thing you were finishing on.

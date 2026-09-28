@@ -13,4 +13,5 @@ test("cloneDefaultSettings matches DEFAULT_SETTINGS without sharing the object",
   assert.equal(DEFAULT_SETTINGS.extractFolder, "");
   assert.equal(DEFAULT_SETTINGS.showDivergencePicker, false);
   assert.equal(DEFAULT_SETTINGS.spaceAfterReveal, "good");
+  assert.equal(DEFAULT_SETTINGS.enableMobileReviewSwipes, true);
 });

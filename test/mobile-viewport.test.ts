@@ -6,7 +6,7 @@ import {
   keyboardShrinkLikelyOpen,
   mobileTopInsetPx,
   radialAnchorCenterBottom,
-  radialRadius,
+  irActionPanelUsesBottomDrawer,
   readEffectiveVisibleBottom,
   workspaceFabBottomGapPx,
   type MobileViewportInsets,
@@ -122,18 +122,7 @@ test("keyboardCoverInsetPx: leaf shrink without vv shrink", () => {
   globalThis.window = prevWindow;
 });
 
-test("radialRadius: small rings keep the old fixed radius", () => {
-  assert.equal(radialRadius(0, false), 122);
-  assert.equal(radialRadius(1, false), 122);
-  assert.equal(radialRadius(4, true), 100);
-  assert.equal(radialRadius(6, false), 122);
-});
-
-test("radialRadius: a busy ring grows so petals stop overlapping", () => {
-  // 76px pitch: a 12-petal ring needs a circumference of at least 912px.
-  const r = radialRadius(12, true);
-  assert.ok(r > 100, "grew past the mobile floor");
-  assert.ok(2 * Math.PI * r >= 12 * 76, "every petal has its pitch");
-  const bigger = radialRadius(20, true);
-  assert.ok(bigger > r, "more entries means a wider ring");
+test("IR Actions uses a bottom drawer at compact widths", () => {
+  assert.equal(irActionPanelUsesBottomDrawer(700), true);
+  assert.equal(irActionPanelUsesBottomDrawer(701), false);
 });

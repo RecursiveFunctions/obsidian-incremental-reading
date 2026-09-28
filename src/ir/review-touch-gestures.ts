@@ -1,9 +1,9 @@
 /**
  * Mobile swipe gestures for the IR review pane (Option B).
  *
- * Pre-reveal (cloze hidden): ← previous · → next · ↑ show answer
- * Post-reveal / gradeable items: ← Again · ↓ Hard · → Good · ↑ Easy
- * Reading (topics/extracts): ← previous · → next · ↑ next (same as Space)
+ * Pre-reveal (cloze hidden): ← previous · → next
+ * Post-reveal / gradeable items: ← Again · → Good
+ * Reading (topics/extracts): ← previous · → next
  *
  * Swipes are scoped to `.ir-review-swipe-zone` inside our custom ItemView —
  * not the Obsidian editor — and ignore touches that start within
@@ -15,6 +15,21 @@
 
 import type { Grade } from "../fsrs";
 
+/** Device-local dismissal keys for the mobile review swipe coaching. */
+export const MOBILE_REVIEW_TIP_KEYS = [
+  "incremental-reading:swipe-legend-seen",
+  "incremental-reading:swipe-coach-shown",
+] as const;
+
+export const MOBILE_REVIEW_SWIPE_TIP_DISMISSED_KEY = MOBILE_REVIEW_TIP_KEYS[0];
+
+/** Reset mobile swipe coaching on this device without touching plugin data. */
+export function resetMobileReviewTips(
+  storage: Pick<Storage, "removeItem"> = window.localStorage,
+): void {
+  for (const key of MOBILE_REVIEW_TIP_KEYS) storage.removeItem(key);
+}
+
 /** Pixels from the left/right viewport edge where we refuse to start a swipe. */
 export const SWIPE_EDGE_DEAD_ZONE_PX = 32;
 
@@ -24,7 +39,7 @@ export const SWIPE_COMMIT_DISTANCE_PX = 48;
 /** Horizontal movement must beat vertical by this margin to steal the gesture. */
 export const SWIPE_AXIS_DOMINANCE_PX = 12;
 
-export type SwipeDirection = "left" | "right" | "up" | "down";
+export type SwipeDirection = "left" | "right";
 
 export type ReviewSwipeMode = "reading" | "nav" | "grade";
 
@@ -43,8 +58,8 @@ export function touchStartsInEdgeDeadZone(
 }
 
 /**
- * Pick the dominant cardinal direction once the finger has moved far enough.
- * Returns null when movement is ambiguous or below the commit threshold.
+ * Pick a horizontal direction once movement is committed. Vertical movement
+ * always belongs to the card scroller.
  */
 export function classifySwipeDirection(
   dx: number,
@@ -54,14 +69,8 @@ export function classifySwipeDirection(
 ): SwipeDirection | null {
   const adx = Math.abs(dx);
   const ady = Math.abs(dy);
-  if (adx < minDist && ady < minDist) return null;
-  if (adx >= ady + axisMargin) {
-    return dx < 0 ? "left" : "right";
-  }
-  if (ady >= adx + axisMargin) {
-    return dy < 0 ? "up" : "down";
-  }
-  return null;
+  if (adx < minDist || adx < ady + axisMargin) return null;
+  return dx < 0 ? "left" : "right";
 }
 
 export function reviewSwipeMode(
@@ -80,20 +89,17 @@ export function swipeOutcomeFor(
 ): SwipeOutcome | null {
   if (mode === "reading") {
     if (dir === "left") return { kind: "nav", action: "previous" };
-    if (dir === "right" || dir === "up") return { kind: "nav", action: "next" };
+    if (dir === "right") return { kind: "nav", action: "next" };
     return null;
   }
   if (mode === "nav") {
     if (dir === "left") return { kind: "nav", action: "previous" };
     if (dir === "right") return { kind: "nav", action: "next" };
-    if (dir === "up") return { kind: "nav", action: "reveal" };
     return null;
   }
-  // grade (AnkiMobile-style cardinals)
+  // Hard and Easy remain available as visible grade buttons.
   if (dir === "left") return { kind: "grade", grade: "again" };
-  if (dir === "down") return { kind: "grade", grade: "hard" };
   if (dir === "right") return { kind: "grade", grade: "good" };
-  if (dir === "up") return { kind: "grade", grade: "easy" };
   return null;
 }
 
@@ -112,13 +118,17 @@ const NAV_LABELS: Record<SwipeNavAction, string> = {
 
 export function swipeHintLabel(outcome: SwipeOutcome): string {
   if (outcome.kind === "grade") {
-    return `${GRADE_LABELS[outcome.grade]} →`;
+    return outcome.grade === "again"
+      ? `← ${GRADE_LABELS[outcome.grade]}`
+      : `${GRADE_LABELS[outcome.grade]} →`;
   }
-  return `${NAV_LABELS[outcome.action]} →`;
+  return outcome.action === "previous"
+    ? `← ${NAV_LABELS[outcome.action]}`
+    : `${NAV_LABELS[outcome.action]} →`;
 }
 
 const INTERACTIVE_SEL =
-  "button, a, input, select, textarea, label, .ir-review-fab, .ir-review-hub-btn";
+  "button, a, input, select, textarea, label, [contenteditable='true'], .ir-review-fab, .ir-review-hub-btn";
 
 export interface ReviewSwipeGestureCallbacks {
   getMode: () => ReviewSwipeMode;
@@ -164,6 +174,8 @@ export function attachReviewSwipeGestures(
     const target = evt.target as HTMLElement | null;
     if (!target?.closest(".ir-review-swipe-zone")) return;
     if (target.closest(INTERACTIVE_SEL)) return;
+    const selection = root.ownerDocument.getSelection();
+    if (selection && !selection.isCollapsed) return;
     const vw = root.ownerDocument.defaultView?.innerWidth ?? window.innerWidth;
     if (touchStartsInEdgeDeadZone(evt.clientX, vw)) return;
 
@@ -176,6 +188,11 @@ export function attachReviewSwipeGestures(
 
   const onPointerMove = (evt: PointerEvent) => {
     if (pointerId === null || evt.pointerId !== pointerId) return;
+    const selection = root.ownerDocument.getSelection();
+    if (selection && !selection.isCollapsed) {
+      reset();
+      return;
+    }
     const dx = evt.clientX - startX;
     const dy = evt.clientY - startY;
     const dir =

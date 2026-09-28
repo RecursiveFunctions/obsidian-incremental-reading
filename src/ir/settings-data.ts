@@ -36,7 +36,7 @@ export interface IrSettings {
   /**
    * When a source note is deleted, orphaned highlights can become their
    * own files (true) or stay as review cards with no new file (false).
-   * The prompt still offers both; this is the default if you close it.
+   * The prompt still offers both; this selects the emphasized button.
    */
   makeNotesWhenSourceDeleted: boolean;
   /**
@@ -60,6 +60,8 @@ export interface IrSettings {
    * as Next. Off leaves Space as reveal-only.
    */
   spaceAfterReveal: "again" | "hard" | "good" | "easy" | "off";
+  /** Enable horizontal swipe shortcuts in the mobile review pane. */
+  enableMobileReviewSwipes: boolean;
   /**
    * Default mask mode for new image-occlusion cards. "hide-all" masks every
    * rect and tests one (Anki's hide-all-guess-one); "hide-one" masks only
@@ -112,6 +114,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   interleaveSimilarPriority: true,
   showDivergencePicker: false,
   spaceAfterReveal: "good",
+  enableMobileReviewSwipes: true,
   occlusionDefaultMode: "hide-all",
   desiredRetention: 0.9,
 };

@@ -3,10 +3,20 @@ import assert from "node:assert/strict";
 import {
   classifySwipeDirection,
   reviewSwipeMode,
+  resetMobileReviewTips,
   swipeHintLabel,
   swipeOutcomeFor,
   touchStartsInEdgeDeadZone,
 } from "../src/ir/review-touch-gestures";
+
+test("resetMobileReviewTips clears device-local swipe coaching keys", () => {
+  const removed: string[] = [];
+  resetMobileReviewTips({ removeItem: (key: string) => removed.push(key) });
+  assert.deepEqual(removed, [
+    "incremental-reading:swipe-legend-seen",
+    "incremental-reading:swipe-coach-shown",
+  ]);
+});
 
 test("touchStartsInEdgeDeadZone: rejects left and right edges", () => {
   assert.equal(touchStartsInEdgeDeadZone(10, 400), true);
@@ -19,9 +29,9 @@ test("classifySwipeDirection: picks horizontal when dominant", () => {
   assert.equal(classifySwipeDirection(60, 5), "right");
 });
 
-test("classifySwipeDirection: picks vertical when dominant", () => {
-  assert.equal(classifySwipeDirection(5, -60), "up");
-  assert.equal(classifySwipeDirection(5, 60), "down");
+test("classifySwipeDirection: leaves vertical movement to scrolling", () => {
+  assert.equal(classifySwipeDirection(5, -60), null);
+  assert.equal(classifySwipeDirection(5, 60), null);
 });
 
 test("classifySwipeDirection: returns null when too short or ambiguous", () => {
@@ -36,7 +46,7 @@ test("reviewSwipeMode: reading vs cloze-hidden vs grade", () => {
   assert.equal(reviewSwipeMode(false, false, false), "grade");
 });
 
-test("swipeOutcomeFor: nav mode maps cardinals", () => {
+test("swipeOutcomeFor: nav mode maps horizontal directions", () => {
   assert.deepEqual(swipeOutcomeFor("nav", "left"), {
     kind: "nav",
     action: "previous",
@@ -45,46 +55,30 @@ test("swipeOutcomeFor: nav mode maps cardinals", () => {
     kind: "nav",
     action: "next",
   });
-  assert.deepEqual(swipeOutcomeFor("nav", "up"), {
-    kind: "nav",
-    action: "reveal",
-  });
-  assert.equal(swipeOutcomeFor("nav", "down"), null);
 });
 
-test("swipeOutcomeFor: grade mode maps Anki cardinals", () => {
+test("swipeOutcomeFor: grade mode maps horizontal shortcuts", () => {
   assert.deepEqual(swipeOutcomeFor("grade", "left"), {
     kind: "grade",
     grade: "again",
-  });
-  assert.deepEqual(swipeOutcomeFor("grade", "down"), {
-    kind: "grade",
-    grade: "hard",
   });
   assert.deepEqual(swipeOutcomeFor("grade", "right"), {
     kind: "grade",
     grade: "good",
   });
-  assert.deepEqual(swipeOutcomeFor("grade", "up"), {
-    kind: "grade",
-    grade: "easy",
-  });
 });
 
-test("swipeOutcomeFor: reading treats up as next", () => {
-  assert.deepEqual(swipeOutcomeFor("reading", "up"), {
-    kind: "nav",
-    action: "next",
-  });
-});
-
-test("swipeHintLabel: includes arrow suffix", () => {
+test("swipeHintLabel: arrows point in the direction that produces the outcome", () => {
   assert.equal(
     swipeHintLabel({ kind: "grade", grade: "good" }),
     "Good →",
   );
   assert.equal(
-    swipeHintLabel({ kind: "nav", action: "reveal" }),
-    "Show answer →",
+    swipeHintLabel({ kind: "grade", grade: "again" }),
+    "← Again",
+  );
+  assert.equal(
+    swipeHintLabel({ kind: "nav", action: "previous" }),
+    "← Previous",
   );
 });

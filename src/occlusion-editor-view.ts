@@ -278,7 +278,7 @@ export class IrOcclusionEditorView extends ItemView {
       if (i === this.selected) mask.addClass("ir-occlusion-mask--selected");
       const tag = mask.createSpan({ cls: "ir-occlusion-mask-tag", text: String(r.n) });
       if (r.label) tag.setText(`${r.n} · ${r.label}`);
-      mask.addEventListener("mousedown", (evt) => {
+      mask.addEventListener("pointerdown", (evt) => {
         evt.stopPropagation();
         evt.preventDefault();
         this.selected = i;
@@ -289,6 +289,7 @@ export class IrOcclusionEditorView extends ItemView {
 
   private wireDrawing(stage: HTMLElement): void {
     let drawing: HTMLElement | null = null;
+    let pointerId: number | null = null;
     let sx = 0;
     let sy = 0;
     const norm = (cx: number, cy: number) => {
@@ -298,7 +299,7 @@ export class IrOcclusionEditorView extends ItemView {
         y: (cy - box.top) / Math.max(1, box.height),
       };
     };
-    const onMove = (evt: MouseEvent) => {
+    const onMove = (evt: PointerEvent) => {
       if (!drawing) return;
       evt.preventDefault();
       const a = norm(sx, sy);
@@ -308,14 +309,15 @@ export class IrOcclusionEditorView extends ItemView {
       drawing.style.width = `${Math.abs(b.x - a.x) * 100}%`;
       drawing.style.height = `${Math.abs(b.y - a.y) * 100}%`;
     };
-    const onUp = (evt: MouseEvent) => {
-      if (!drawing) return;
+    const onUp = (evt: PointerEvent) => {
+      if (!drawing || evt.pointerId !== pointerId) return;
       const a = norm(sx, sy);
       const b = norm(evt.clientX, evt.clientY);
       drawing.remove();
       drawing = null;
-      stage.ownerDocument.removeEventListener("mousemove", onMove, true);
-      stage.ownerDocument.removeEventListener("mouseup", onUp, true);
+      pointerId = null;
+      stage.ownerDocument.removeEventListener("pointermove", onMove, true);
+      stage.ownerDocument.removeEventListener("pointerup", onUp, true);
       const rect: NormalizedRect | null = normalizeDragRect(a.x, a.y, b.x, b.y);
       if (!rect) {
         // A click, not a drag: clear the selection.
@@ -327,34 +329,17 @@ export class IrOcclusionEditorView extends ItemView {
       this.selected = this.rects.length - 1;
       this.render();
     };
-    stage.addEventListener("mousedown", (evt) => {
+    stage.addEventListener("pointerdown", (evt) => {
       if (evt.button !== 0) return;
+      if (!evt.isPrimary || drawing) return;
       evt.preventDefault();
+      pointerId = evt.pointerId;
+      stage.setPointerCapture(evt.pointerId);
       sx = evt.clientX;
       sy = evt.clientY;
       drawing = stage.createDiv({ cls: "ir-occlusion-mask ir-occlusion-mask--drawing" });
-      stage.ownerDocument.addEventListener("mousemove", onMove, true);
-      stage.ownerDocument.addEventListener("mouseup", onUp, true);
-    });
-    // Touch: map to the same handlers via pointer events on mobile.
-    stage.addEventListener("touchstart", (evt) => {
-      const t = evt.touches[0];
-      if (!t) return;
-      evt.preventDefault();
-      sx = t.clientX;
-      sy = t.clientY;
-      drawing = stage.createDiv({ cls: "ir-occlusion-mask ir-occlusion-mask--drawing" });
-    }, { passive: false });
-    stage.addEventListener("touchmove", (evt) => {
-      const t = evt.touches[0];
-      if (!t || !drawing) return;
-      evt.preventDefault();
-      onMove({ clientX: t.clientX, clientY: t.clientY, preventDefault() {} } as MouseEvent);
-    }, { passive: false });
-    stage.addEventListener("touchend", (evt) => {
-      const t = evt.changedTouches[0];
-      if (!t || !drawing) return;
-      onUp({ clientX: t.clientX, clientY: t.clientY } as MouseEvent);
+      stage.ownerDocument.addEventListener("pointermove", onMove, true);
+      stage.ownerDocument.addEventListener("pointerup", onUp, true);
     });
   }
 }
