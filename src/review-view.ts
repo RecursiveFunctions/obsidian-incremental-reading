@@ -214,9 +214,6 @@ export class IrReviewView extends ItemView {
   private swipeCoachShownCount = 0;
   private swipeCoachShownThisSession = false;
 
-  /** Avoid showing the swipe coach Notice on every `renderCard` re-render. */
-  private swipeCoachShownThisSession = false;
-
   /** Mobile: priority / A-Factor editors collapsed behind a chip until tapped. */
   private priorityMetaExpanded = false;
 
