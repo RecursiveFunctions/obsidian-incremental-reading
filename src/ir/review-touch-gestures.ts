@@ -22,6 +22,22 @@ export const MOBILE_REVIEW_TIP_KEYS = [
 ] as const;
 
 export const MOBILE_REVIEW_SWIPE_TIP_DISMISSED_KEY = MOBILE_REVIEW_TIP_KEYS[0];
+export const MOBILE_REVIEW_SWIPE_COACH_SHOWN_KEY = MOBILE_REVIEW_TIP_KEYS[1];
+export const MOBILE_REVIEW_SWIPE_COACH_MAX_SHOWS = 3;
+
+/** Parse the device-local coach counter defensively. */
+export function mobileSwipeCoachShowCount(value: string | null): number {
+  const count = Number.parseInt(value ?? "0", 10);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
+/** Keep coaching short: show it for at most a few review sessions per device. */
+export function shouldShowMobileSwipeCoach(
+  dismissed: boolean,
+  shownCount: number,
+): boolean {
+  return !dismissed && shownCount < MOBILE_REVIEW_SWIPE_COACH_MAX_SHOWS;
+}
 
 /** Reset mobile swipe coaching on this device without touching plugin data. */
 export function resetMobileReviewTips(

@@ -122,8 +122,11 @@ import { promptClozeHintInline } from "./cloze-hint-bar";
 import { checkGradeDivergence, type DivergenceCheck } from "./ir/grade-divergence";
 import {
   attachReviewSwipeGestures,
+  mobileSwipeCoachShowCount,
+  MOBILE_REVIEW_SWIPE_COACH_SHOWN_KEY,
   MOBILE_REVIEW_SWIPE_TIP_DISMISSED_KEY,
   reviewSwipeMode,
+  shouldShowMobileSwipeCoach,
   swipeHintLabel,
   swipeOutcomeFor,
   type SwipeOutcome,
@@ -196,6 +199,9 @@ export class IrReviewView extends ItemView {
 
   /** Mobile-only inline swipe coach dismissal, persisted per device. */
   private swipeLegendDismissed = false;
+  /** Number of review sessions that have displayed the device-local coach. */
+  private swipeCoachShownCount = 0;
+  private swipeCoachShownThisSession = false;
 
   /** Mobile: priority / A-Factor editors collapsed behind a chip until tapped. */
   private priorityMetaExpanded = false;
@@ -446,6 +452,9 @@ export class IrReviewView extends ItemView {
         ) {
           this.swipeLegendDismissed = true;
         }
+        this.swipeCoachShownCount = mobileSwipeCoachShowCount(
+          window.localStorage.getItem(MOBILE_REVIEW_SWIPE_COACH_SHOWN_KEY),
+        );
       } catch {
         // localStorage can be blocked or missing on niche WebViews; treat as
         // "show legend" and move on.
@@ -1111,10 +1120,25 @@ export class IrReviewView extends ItemView {
   private renderSwipeCoachHint(parent: HTMLElement, slot: ReviewSlot): void {
     if (
       !Platform.isMobile ||
-      this.swipeLegendDismissed ||
+      !shouldShowMobileSwipeCoach(
+        this.swipeLegendDismissed,
+        this.swipeCoachShownCount,
+      ) ||
       !this.settings.enableMobileReviewSwipes
     ) {
       return;
+    }
+    if (!this.swipeCoachShownThisSession) {
+      this.swipeCoachShownThisSession = true;
+      this.swipeCoachShownCount += 1;
+      try {
+        window.localStorage.setItem(
+          MOBILE_REVIEW_SWIPE_COACH_SHOWN_KEY,
+          String(this.swipeCoachShownCount),
+        );
+      } catch {
+        // Best-effort: the in-memory limit still prevents repeated re-renders.
+      }
     }
     const reading = this.isReading(slot);
     const mode = reviewSwipeMode(
@@ -1137,6 +1161,50 @@ export class IrReviewView extends ItemView {
         }
         hint.remove();
       });
+  }
+
+  /** Visible touch controls for held spans from the current review card only. */
+  private renderSelectionTray(parent: HTMLElement, slot: ReviewSlot): void {
+    const held = this.multiSelect?.pending.body(this.heldKey(slot)) ?? [];
+    const canAdd = !this.editing && this.canMakeChild() && !this.pdfSourcePath(slot);
+    if (!canAdd && held.length === 0) return;
+
+    const tray = parent.createDiv({ cls: "ir-review-selection-tray" });
+    tray.setAttr("role", "region");
+    tray.setAttr("aria-label", "Held selections from this review card");
+    tray.createSpan({
+      text:
+        held.length === 0
+          ? "Select text, then add selection"
+          : `${held.length} selection${held.length === 1 ? "" : "s"} from this card`,
+    });
+    if (canAdd) {
+      const add = tray.createEl("button", { text: "Add selection", type: "button" });
+      // Keep the DOM range alive until click maps it to card-body offsets.
+      add.addEventListener("pointerdown", (evt) => evt.preventDefault());
+      add.addEventListener("click", () => {
+        if (!this.holdCurrentSelection()) {
+          new Notice("Incremental Reading: select text in this card first.");
+          return;
+        }
+        void this.renderCard();
+      });
+    }
+    if (held.length > 0) {
+      tray
+        .createEl("button", {
+          text: `Extract ${held.length} selection${held.length === 1 ? "" : "s"}`,
+          type: "button",
+          cls: "mod-cta",
+        })
+        .addEventListener("click", () => void this.handleExtract());
+      tray
+        .createEl("button", { text: "Clear", type: "button" })
+        .addEventListener("click", () => {
+          this.multiSelect?.clear();
+          void this.renderCard();
+        });
+    }
   }
 
   private renderHubButton(parent: HTMLElement): void {
@@ -2132,6 +2200,7 @@ export class IrReviewView extends ItemView {
     const dock = host.createDiv({ cls: "ir-review-dock" });
     const controls = dock.createEl("div", { cls: "ir-review-controls" });
     this.renderEditSaveRecovery(controls);
+    this.renderSelectionTray(controls, slot);
 
     this.renderSwipeCoachHint(controls, slot);
 
@@ -2488,7 +2557,9 @@ export class IrReviewView extends ItemView {
 
     scroll.createEl("p", {
       cls: "ir-review-complete-hint",
-      text: "Escape or Close leaves this tab.",
+      text: Platform.isMobile
+        ? "Close leaves this review tab. Use IR Actions to browse your tree or create something new."
+        : "Escape or Close leaves this tab.",
     });
 
     const row = scroll.createDiv({ cls: "ir-review-buttons" });
@@ -2559,7 +2630,10 @@ export class IrReviewView extends ItemView {
 
     const row = scroll.createDiv({ cls: "ir-review-buttons" });
     row
-      .createEl("button", { text: "Open element tree (Alt+I)", cls: "mod-cta" })
+      .createEl("button", {
+        text: this.labelWithHotkey("Open element tree", "Alt+I"),
+        cls: "mod-cta",
+      })
       .addEventListener("click", () => this.openTreeFromIdlePane?.());
     row
       .createEl("button", { text: "Close" })
@@ -2591,13 +2665,17 @@ export class IrReviewView extends ItemView {
     scroll.createEl("p", {
       cls: "ir-review-complete-hint",
       text: neural
-        ? "Start outstanding (Alt+R) for today's due queue. Escape or Close leaves this tab."
-        : "Alt+R starts remaining due. Escape or Close leaves this tab.",
+        ? Platform.isMobile
+          ? "Start outstanding for today's due queue, or Close this review tab."
+          : "Start outstanding (Alt+R) for today's due queue. Escape or Close leaves this tab."
+        : Platform.isMobile
+          ? "Use IR Actions to browse your tree or start another review when more is due. Close leaves this review tab."
+          : "Alt+R starts remaining due. Escape or Close leaves this tab.",
     });
     if (neural && this.startOutstandingDue) {
       scroll
         .createEl("button", {
-          text: "Start outstanding (Alt+R)",
+          text: this.labelWithHotkey("Start outstanding", "Alt+R"),
           cls: "mod-cta",
         })
         .addEventListener("click", () => this.startOutstandingDue?.());

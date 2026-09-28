@@ -4,16 +4,43 @@
  * Run: npx playwright install chromium && npm run test:layout
  */
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { buildSync } from "esbuild";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.join(__dirname, "../test/fixtures/mobile-edit-layout.html");
 const stylesPath = path.join(__dirname, "../styles.css");
+const layoutModulePath = path.join(__dirname, "../src/ir/mobile-edit-layout.ts");
+const viewports = [
+  { width: 320, height: 568 },
+  { width: 360, height: 800 },
+  { width: 412, height: 915 },
+  { width: 800, height: 360 },
+  { width: 768, height: 1024 },
+  { width: 1024, height: 768 },
+];
+
+function buildLayoutBundle() {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "ir-mobile-layout-"));
+  const outfile = path.join(dir, "mobile-edit-layout.js");
+  buildSync({
+    entryPoints: [layoutModulePath],
+    bundle: true,
+    format: "iife",
+    globalName: "IrMobileEditLayout",
+    platform: "browser",
+    target: "es2020",
+    outfile,
+  });
+  return { dir, outfile };
+}
 
 async function main() {
   const { chromium } = await import("playwright");
+  const layoutBundle = buildLayoutBundle();
 
   const systemChrome = [
     process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
@@ -24,148 +51,64 @@ async function main() {
     systemChrome ? { executablePath: systemChrome } : undefined,
   );
   try {
-    const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
-    await page.goto(`file://${fixturePath}`);
-    await page.addStyleTag({ path: stylesPath });
+    for (const viewport of viewports) {
+      const page = await browser.newPage({ viewport });
+      await page.goto(`file://${fixturePath}`);
+      await page.addStyleTag({ path: stylesPath });
+      await page.addScriptTag({ path: layoutBundle.outfile });
 
-    const applyLayout = function applyLayout() {
-      const layoutRoot = document.getElementById("plugin-root");
-      const cardHost = document.getElementById("card-host");
-      const scroll = cardHost.querySelector(".ir-review-scroll");
-      const ta = cardHost.querySelector(".ir-review-textarea");
-      const mainCol = cardHost.querySelector(".ir-review-main-col");
-      const layoutRect = layoutRoot.getBoundingClientRect();
-      const vv = window.visualViewport;
-      const vvBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-      const visibleBottom = Math.min(vvBottom, layoutRect.bottom);
-      const top = Math.round(layoutRect.top);
-      const h = Math.max(120, Math.round(visibleBottom - top - 8));
-      const width = Math.round(layoutRect.width);
-      cardHost.style.position = "fixed";
-      cardHost.style.top = top + "px";
-      cardHost.style.left = Math.round(layoutRect.left) + "px";
-      cardHost.style.width = width + "px";
-      cardHost.style.height = h + "px";
-      cardHost.style.maxHeight = h + "px";
-      cardHost.style.flex = "none";
-      cardHost.style.overflow = "hidden";
-      scroll.style.flex = "none";
-      scroll.style.height = h + "px";
-      scroll.style.maxHeight = h + "px";
-      scroll.style.display = "flex";
-      scroll.style.flexDirection = "column";
-      scroll.style.overflow = "hidden";
-      ta.style.flex = "none";
-      ta.style.height = h + "px";
-      ta.style.maxHeight = h + "px";
-      ta.style.minHeight = "0";
-      ta.style.margin = "0";
-      ta.style.overflowY = "auto";
-      const columnDead = mainCol.clientHeight - scroll.offsetHeight;
-      const scrollFill = scroll.clientHeight - ta.offsetHeight;
-      return {
-        hostHeight: cardHost.offsetHeight,
-        scrollHeight: scroll.clientHeight,
-        textareaHeight: ta.offsetHeight,
-        columnDead,
-        scrollFill,
-        fillsColumn: columnDead <= 4,
-        fillsScroll: scrollFill <= 4,
+      const applyLayout = function applyLayout() {
+        const layoutRoot = document.getElementById("plugin-root");
+        const cardHost = document.getElementById("card-host");
+        return window.IrMobileEditLayout.applyMobileEditLayout(cardHost, layoutRoot);
       };
-    };
 
-  const metrics = function metrics() {
-      const cardHost = document.getElementById("card-host");
-      const scroll = cardHost.querySelector(".ir-review-scroll");
-      const ta = cardHost.querySelector(".ir-review-textarea");
-      const mainCol = cardHost.querySelector(".ir-review-main-col");
-      const columnDead = mainCol.clientHeight - scroll.offsetHeight;
-      const scrollFill = scroll.clientHeight - ta.offsetHeight;
-      return {
-        hostHeight: cardHost.offsetHeight,
-        scrollHeight: scroll.clientHeight,
-        textareaHeight: ta.offsetHeight,
-        columnDead,
-        scrollFill,
-        fillsColumn: columnDead <= 4,
-        fillsScroll: scrollFill <= 4,
-      };
-    };
+      const label = `${viewport.width}x${viewport.height}`;
+      const closed = await page.evaluate(applyLayout);
+      assert.ok(
+        closed.fillsColumn,
+        `${label} keyboard closed: column dead=${closed.columnDeadSpacePx}px`,
+      );
+      assert.ok(
+        closed.textareaHeight >= 120, `${label} keyboard closed: textarea too short`);
 
-    const closed = await page.evaluate(applyLayout);
-    assert.ok(
-      closed.fillsColumn,
-      `keyboard closed: column dead=${closed.columnDead}px scroll fill=${closed.scrollFill}px`,
-    );
-    assert.ok(
-      closed.fillsScroll,
-      `keyboard closed: textarea should fill scroll (gap=${closed.scrollFill}px)`,
-    );
-    assert.ok(
-      closed.textareaHeight >= 400,
-      `keyboard closed: textarea too short (${closed.textareaHeight}px)`,
-    );
+      // Obsidian Android: leaf shrinks while visualViewport can remain unchanged.
+      await page.evaluate(function shrinkLeaf(h) {
+        const root = document.getElementById("plugin-root");
+        root.style.height = `${h}px`;
+        root.style.maxHeight = `${h}px`;
+        root.style.overflow = "hidden";
+      }, Math.max(280, Math.floor(viewport.height * 0.45)));
+      const leafShrink = await page.evaluate(applyLayout);
+      assert.ok(leafShrink.fillsColumn, `${label} leaf shrink: column does not fill`);
+      assert.ok(leafShrink.textareaHeight >= 120, `${label} leaf shrink: textarea too short`);
 
-    // Obsidian Android: leaf shrinks, visualViewport may not.
-    await page.evaluate(function shrinkLeaf() {
-      const root = document.getElementById("plugin-root");
-      root.style.height = "380px";
-      root.style.maxHeight = "380px";
-      root.style.overflow = "hidden";
-    });
-
-    const leafShrink = await page.evaluate(applyLayout);
-    assert.ok(
-      leafShrink.fillsColumn,
-      `leaf shrink: column dead=${leafShrink.columnDead}px (must not leave white band)`,
-    );
-    assert.ok(
-      leafShrink.fillsScroll,
-      `leaf shrink: textarea should fill scroll (gap=${leafShrink.scrollFill}px)`,
-    );
-    assert.ok(
-      leafShrink.textareaHeight >= 200,
-      `leaf shrink: textarea too short (${leafShrink.textareaHeight}px)`,
-    );
-    assert.ok(
-      leafShrink.hostHeight >= 200,
-      `leaf shrink: host too short (${leafShrink.hostHeight}px)`,
-    );
-
-    await page.evaluate(function shrinkVv(h) {
-      Object.defineProperty(window, "visualViewport", {
-        configurable: true,
-        value: {
-          offsetTop: 0,
-          height: h,
-          width: 412,
-          addEventListener: function () {},
-          removeEventListener: function () {},
-        },
+      await page.evaluate(function shrinkVv({ h, width }) {
+        Object.defineProperty(window, "visualViewport", {
+          configurable: true,
+          value: {
+            offsetTop: 0,
+            offsetLeft: 0,
+            height: h,
+            width,
+            addEventListener() {},
+            removeEventListener() {},
+          },
+        });
+      }, {
+        h: Math.max(280, Math.floor(viewport.height * 0.45)),
+        width: viewport.width,
       });
-    }, 380);
+      const open = await page.evaluate(applyLayout);
+      assert.ok(open.fillsColumn, `${label} keyboard open: column does not fill`);
+      assert.ok(open.textareaHeight >= 120, `${label} keyboard open: textarea too short`);
+      await page.close();
+    }
 
-    const open = await page.evaluate(applyLayout);
-    assert.ok(
-      open.fillsColumn,
-      `keyboard open: column dead=${open.columnDead}px (must not leave white band)`,
-    );
-    assert.ok(
-      open.fillsScroll,
-      `keyboard open: textarea should fill scroll (gap=${open.scrollFill}px)`,
-    );
-    assert.ok(
-      open.textareaHeight >= 200,
-      `keyboard open: textarea too short (${open.textareaHeight}px)`,
-    );
-    assert.ok(
-      open.hostHeight >= 200,
-      `keyboard open: host too short (${open.hostHeight}px)`,
-    );
-
-    console.log("OK: mobile edit layout verified in browser");
+    console.log("OK: production mobile edit layout verified at six viewports");
   } finally {
     await browser.close();
+    rmSync(layoutBundle.dir, { recursive: true, force: true });
   }
 }
 

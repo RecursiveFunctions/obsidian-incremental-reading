@@ -380,20 +380,14 @@ img.ir-source-image.ir-cloze-source {
   flex-direction: column;
 }
 
-/* Workspace FAB: position is set in JS (mobile-viewport.ts) above Obsidian nav. */
+/* Workspace review controls: position is set in JS (mobile-viewport.ts) above
+ * Obsidian nav and its safe area. */
 .ir-workspace-fab {
   position: fixed;
   z-index: 10000;
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
   display: flex;
+  gap: 0.35rem;
   align-items: center;
-  justify-content: center;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
-  cursor: pointer;
   pointer-events: auto;
 }
 
@@ -401,41 +395,62 @@ img.ir-source-image.ir-cloze-source {
   display: none;
 }
 
-/*
- * Due-count badge (UI commitment #4 on mobile: Obsidian mobile has no status
- * bar, so the FAB carries the number). Never intercepts taps — the whole FAB
- * is the target, and a badge that swallowed a touch near the corner would
- * feel like a dead spot.
- */
-.ir-workspace-fab-badge {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  border-radius: 10px;
-  border: 2px solid var(--background-primary);
-  background: var(--background-modifier-error);
+.ir-workspace-fab button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.ir-workspace-fab-primary {
+  padding: 0.35em 1em;
+  background: var(--interactive-accent);
   color: var(--text-on-accent);
-  font-size: var(--font-ui-smaller);
-  font-weight: var(--font-semibold);
-  line-height: 16px;
-  text-align: center;
-  pointer-events: none;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
-.ir-workspace-fab-badge.is-hidden {
-  display: none;
+.ir-workspace-fab-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  padding: 0.35em 0.8em;
+  background: var(--background-primary);
+  color: var(--text-normal);
 }
 
-.ir-workspace-fab:active {
+.ir-workspace-fab button:active {
   transform: scale(0.96);
 }
 
-.ir-workspace-fab svg {
-  width: 22px;
-  height: 22px;
+.ir-workspace-fab-actions svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ir-review-selection-tray {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.45rem;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.ir-review-selection-tray > span {
+  flex: 1 1 12rem;
+  font-size: var(--font-ui-small);
+}
+
+.ir-review-selection-tray button {
+  min-height: 36px;
+}
+
+.ir-review--mobile .ir-review-selection-tray button {
+  min-height: 44px;
 }
 
 /* Edit mode: drop the source column and bulky dock chrome so the textarea
