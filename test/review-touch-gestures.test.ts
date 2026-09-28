@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   classifySwipeDirection,
+  mobileSwipeCoachShowCount,
   reviewSwipeMode,
   resetMobileReviewTips,
+  shouldShowMobileSwipeCoach,
   swipeHintLabel,
   swipeOutcomeFor,
   touchStartsInEdgeDeadZone,
@@ -16,6 +18,19 @@ test("resetMobileReviewTips clears device-local swipe coaching keys", () => {
     "incremental-reading:swipe-legend-seen",
     "incremental-reading:swipe-coach-shown",
   ]);
+});
+
+test("mobile swipe coach: parses its device-local display count defensively", () => {
+  assert.equal(mobileSwipeCoachShowCount(null), 0);
+  assert.equal(mobileSwipeCoachShowCount("bad"), 0);
+  assert.equal(mobileSwipeCoachShowCount("2"), 2);
+});
+
+test("mobile swipe coach: stops after three displays or dismissal", () => {
+  assert.equal(shouldShowMobileSwipeCoach(false, 0), true);
+  assert.equal(shouldShowMobileSwipeCoach(false, 2), true);
+  assert.equal(shouldShowMobileSwipeCoach(false, 3), false);
+  assert.equal(shouldShowMobileSwipeCoach(true, 0), false);
 });
 
 test("touchStartsInEdgeDeadZone: rejects left and right edges", () => {

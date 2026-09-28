@@ -186,7 +186,7 @@ import {
 import {
   notifyWorkspaceFabSync,
   registerWorkspaceIrFab,
-  setWorkspaceIrFabDue,
+  setWorkspaceIrFabLoad,
 } from "./src/ir-mobile-fab";
 import { sessionHubKinds } from "./src/ir/mobile-hub";
 import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
@@ -513,6 +513,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (Platform.isMobile) {
       this.register(
         registerWorkspaceIrFab(this, {
+          startOrResumeReview: () => void this.startOrResumeReview(),
           prepareOpenHub: () => this.captureHubEditorSelection(),
           openHub: () => void this.openIrActionsHub(),
         }),
@@ -1459,8 +1460,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     try {
       const { state, events } = await this.ledger.loadSnapshot();
       const load = computeLoad(state.elements.values(), events, Date.now());
-      // Mobile has no status bar; the FAB badge is the same number.
-      setWorkspaceIrFabDue(load.due);
+      // Mobile has no status bar; push the same complete queue snapshot to
+      // its review control without another ledger read.
+      setWorkspaceIrFabLoad(load);
       renderStatusBar(
         this.statusBarEl,
         load,
@@ -2620,6 +2622,16 @@ export default class IncrementalReadingPlugin extends Plugin {
         "Incremental Reading: could not open the review view. See the developer console.",
       );
     }
+  }
+
+  /** Reveal an in-progress review when one exists; otherwise build today's queue. */
+  private async startOrResumeReview(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(IR_REVIEW_VIEW_TYPE)[0];
+    if (existing) {
+      this.app.workspace.revealLeaf(existing);
+      return;
+    }
+    await this.startReview();
   }
 
   private async startReview() {

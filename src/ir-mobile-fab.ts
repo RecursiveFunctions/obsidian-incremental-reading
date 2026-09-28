@@ -1,5 +1,5 @@
 /**
- * Workspace-level IR quick-actions FAB for Obsidian mobile.
+ * Workspace-level IR review controls for Obsidian mobile.
  *
  * Fixed to the viewport on every mobile surface (file explorer included)
  * so Start review is one tap away. Mounted on `document.body` so Obsidian
@@ -10,38 +10,54 @@ import type { App, Plugin } from "obsidian";
 import { Platform, setIcon } from "obsidian";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./review-view";
 import { irWorkspaceFabShouldShow } from "./ir/mobile-hub";
+import { mobileReviewControlLabel } from "./ir/mobile-review-control";
 import { layoutWorkspaceFab } from "./ir/mobile-viewport";
+import type { QueueLoad } from "./status-bar";
 
 const FAB_CLASS = "ir-workspace-fab";
-const BADGE_CLASS = "ir-workspace-fab-badge";
+const PRIMARY_CLASS = "ir-workspace-fab-primary";
+const ACTIONS_CLASS = "ir-workspace-fab-actions";
 
 let workspaceFabSync: (() => void) | null = null;
-let workspaceFabBadge: ((due: number) => void) | null = null;
+let workspaceFabLoad: ((load: QueueLoad) => void) | null = null;
 
-/** Call after review edit-mode toggles so the FAB repositions immediately. */
+/** Call after review chrome changes so the workspace control resyncs immediately. */
 export function notifyWorkspaceFabSync(): void {
   workspaceFabSync?.();
 }
 
 /**
- * Paint the due count on the workspace FAB (UI commitment #4 on mobile).
+ * Paint the queue load on the workspace review control.
  *
  * Obsidian mobile has no status bar, so the glanceable queue-load indicator
  * had no mobile implementation at all: `renderStatusBar` was painting into
  * an element the platform never shows. The FAB is the only always-visible
- * IR surface on a phone, so the count rides there.
+ * IR surface on a phone, so the due count rides its primary action.
  *
  * Push, not poll: the host plugin already recomputes the load on every
  * mutation and calls this. The FAB's own 500 ms interval stays layout-only.
  * No-op on desktop, where no FAB exists.
  */
+export function setWorkspaceIrFabLoad(load: QueueLoad): void {
+  workspaceFabLoad?.(load);
+}
+
+/** @deprecated Use {@link setWorkspaceIrFabLoad} with the complete QueueLoad. */
 export function setWorkspaceIrFabDue(due: number): void {
-  workspaceFabBadge?.(due);
+  setWorkspaceIrFabLoad({
+    due,
+    later: 0,
+    postponed: 0,
+    inflow7d: 0,
+    dueByType: { topic: 0, extract: 0, item: 0 },
+  });
 }
 
 export function registerWorkspaceIrFab(
   plugin: Plugin,
   hooks: {
+    /** Start a fresh review or reveal an existing review session. */
+    startOrResumeReview: () => void;
     /** Run before focus leaves the editor (pointerdown / touchstart). */
     prepareOpenHub: () => void;
     openHub: () => void;
@@ -50,36 +66,34 @@ export function registerWorkspaceIrFab(
   if (!Platform.isMobile) return () => {};
 
   const fab = document.body.createDiv({ cls: FAB_CLASS });
-  fab.setAttr("role", "button");
-  fab.setAttr("aria-label", "Incremental Reading");
-  fab.setAttr("title", "Incremental Reading");
-  setIcon(fab, "brain-circuit");
-
-  // Created after setIcon: setIcon replaces the element's children, so a
-  // badge added before it would be wiped out.
-  const badge = fab.createDiv({ cls: BADGE_CLASS });
-  badge.addClass("is-hidden");
-  let lastDue = 0;
-  const paintBadge = (due: number) => {
-    lastDue = due;
-    if (due <= 0) {
-      badge.addClass("is-hidden");
-      badge.setText("");
-      fab.setAttr("aria-label", "Incremental Reading");
-      fab.setAttr("title", "Incremental Reading");
-      return;
-    }
-    badge.removeClass("is-hidden");
-    badge.setText(due > 99 ? "99+" : String(due));
-    const label = `Incremental Reading · ${due} due`;
-    fab.setAttr("aria-label", label);
-    fab.setAttr("title", label);
+  const primary = fab.createEl("button", { cls: PRIMARY_CLASS, type: "button" });
+  const actions = fab.createEl("button", {
+    cls: ACTIONS_CLASS,
+    type: "button",
+    attr: { "aria-label": "IR Actions", title: "IR Actions" },
+  });
+  setIcon(actions, "ellipsis");
+  actions.createSpan({ text: "Actions" });
+  let lastLoad: QueueLoad = {
+    due: 0,
+    later: 0,
+    postponed: 0,
+    inflow7d: 0,
+    dueByType: { topic: 0, extract: 0, item: 0 },
   };
-  workspaceFabBadge = paintBadge;
-  paintBadge(lastDue);
+  const paintLoad = (load: QueueLoad) => {
+    lastLoad = load;
+    const { resume } = fabLayoutContext(plugin.app);
+    const label = mobileReviewControlLabel(load.due, resume);
+    primary.setText(label);
+    primary.setAttr("aria-label", label);
+    primary.setAttr("title", label);
+  };
+  workspaceFabLoad = paintLoad;
+  paintLoad(lastLoad);
 
   const prepare = () => hooks.prepareOpenHub();
-  fab.addEventListener(
+  actions.addEventListener(
     "pointerdown",
     (ev) => {
       if (ev.pointerType === "mouse" && ev.button !== 0) return;
@@ -88,14 +102,18 @@ export function registerWorkspaceIrFab(
     },
     { capture: true },
   );
-  fab.addEventListener(
+  actions.addEventListener(
     "touchstart",
     () => {
       prepare();
     },
     { capture: true, passive: true },
   );
-  fab.addEventListener("click", (ev) => {
+  primary.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    hooks.startOrResumeReview();
+  });
+  actions.addEventListener("click", (ev) => {
     ev.stopPropagation();
     hooks.openHub();
   });
@@ -104,14 +122,12 @@ export function registerWorkspaceIrFab(
     const ctx = fabLayoutContext(plugin.app);
     if (ctx.show) {
       fab.removeClass("is-hidden");
-      fab.toggleClass("ir-workspace-fab--review", ctx.review);
       layoutWorkspaceFab(fab, {
-        reviewDock: ctx.reviewDock,
-        layoutRoot: ctx.layoutRoot,
+        reviewDock: false,
       });
+      paintLoad(lastLoad);
     } else {
       fab.addClass("is-hidden");
-      fab.removeClass("ir-workspace-fab--review");
     }
   };
 
@@ -131,7 +147,7 @@ export function registerWorkspaceIrFab(
 
   return () => {
     workspaceFabSync = null;
-    workspaceFabBadge = null;
+    workspaceFabLoad = null;
     if (vv) {
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
@@ -144,28 +160,20 @@ export function registerWorkspaceIrFab(
 
 function fabLayoutContext(app: App): {
   show: boolean;
-  review: boolean;
-  reviewDock: boolean;
-  layoutRoot?: HTMLElement;
+  resume: boolean;
 } {
   if (!irWorkspaceFabShouldShow(Platform.isMobile)) {
-    return { show: false, review: false, reviewDock: false };
+    return { show: false, resume: false };
   }
 
   const leaf = app.workspace.activeLeaf;
-  if (leaf?.view instanceof IrReviewView) {
-    return {
-      show: true,
-      review: true,
-      reviewDock: leaf.view.mobileFabAboveDock(),
-      layoutRoot: leaf.view.mobileFabLayoutRoot(),
-    };
-  }
-
   const vt = leaf?.view.getViewType();
-  if (vt === IR_REVIEW_VIEW_TYPE) {
-    return { show: true, review: true, reviewDock: true };
+  if (leaf?.view instanceof IrReviewView || vt === IR_REVIEW_VIEW_TYPE) {
+    return { show: false, resume: false };
   }
 
-  return { show: true, review: false, reviewDock: false };
+  return {
+    show: true,
+    resume: app.workspace.getLeavesOfType(IR_REVIEW_VIEW_TYPE).length > 0,
+  };
 }
