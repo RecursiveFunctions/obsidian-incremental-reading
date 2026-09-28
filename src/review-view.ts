@@ -142,6 +142,7 @@ import {
   resetMobileEditLayoutBaseline,
 } from "./ir/mobile-edit-layout";
 import { isPdfPath } from "./ir/pdf-fragment";
+import { DropWhileBusyGate } from "./ir/action-gate";
 import { getPdfPageForPath, openPdfAt } from "./ir/pdf-view";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
@@ -164,6 +165,10 @@ const GRADES: { grade: Grade; label: string; key: string }[] = [
 ];
 
 export class IrReviewView extends ItemView {
+  /** Drop repeated taps rather than queuing a mutation for the next card. */
+  private readonly actionGate = new DropWhileBusyGate();
+  /** A failed save leaves the current card and its editable buffer intact. */
+  private editSaveError: string | null = null;
   private index = 0;
   private revealed = false;
 
@@ -213,6 +218,49 @@ export class IrReviewView extends ItemView {
   /** In-dock success line; survives the next renderCard until it fades. */
   private pendingFlash: string | null = null;
   private flashClearTimer: number | null = null;
+  private async runAction<T>(action: () => Promise<T>): Promise<T | undefined> {
+    return this.actionGate.run(async () => {
+      this.contentEl.setAttr("aria-busy", "true");
+      this.setReviewControlsDisabled(true);
+      try {
+        return await action();
+      } finally {
+        this.contentEl.removeAttribute("aria-busy");
+        this.setReviewControlsDisabled(false);
+      }
+    });
+  }
+
+  private setReviewControlsDisabled(disabled: boolean): void {
+    for (const el of Array.from(this.contentEl.querySelectorAll<
+      HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >("button, input, textarea, select"))) {
+      el.disabled = disabled;
+    }
+  }
+
+  private renderEditSaveRecovery(parent: HTMLElement): void {
+    if (!this.editSaveError) return;
+    const recovery = parent.createDiv({ cls: "ir-review-save-recovery" });
+    recovery.setAttr("role", "alert");
+    recovery.createSpan({ text: this.editSaveError });
+    recovery
+      .createEl("button", { text: "Retry", type: "button", cls: "mod-cta" })
+      .addEventListener("click", () =>
+        void this.runAction(async () => {
+          await this.flushEdits();
+          await this.renderCard();
+        }),
+      );
+    recovery
+      .createEl("button", { text: "Discard", type: "button" })
+      .addEventListener("click", () => {
+        this.currentRaw = this.rawOnDisk;
+        this.editSaveError = null;
+        void this.renderCard();
+      });
+  }
+
   /**
    * The most recent reversible non-grade action in this session (Later
    * today or Dismiss), with the element as it was before the action.
@@ -627,7 +675,7 @@ export class IrReviewView extends ItemView {
       this.flashClearTimer = null;
     }
     this.captureBookmark();
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     this.teardownLiveEditorSync();
     this.swipeGestureCleanup?.();
     this.swipeGestureCleanup = undefined;
@@ -1387,6 +1435,9 @@ export class IrReviewView extends ItemView {
   private async ensureLoaded(slot: ReviewSlot): Promise<void> {
     if (this.loadedSlotId === slot.id) return;
     this.priorityMetaExpanded = false;
+    this.mobileSourceExpanded = false;
+    this.editSaveError = null;
+    this.contentEl.removeClass("ir-review--reading-fits");
     this.pendingPdfOpen = true;
     this.skipBookmarkCursor = false;
     if (slot.file && isPdfPath(slot.file.path)) {
@@ -1395,10 +1446,18 @@ export class IrReviewView extends ItemView {
         : "";
       this.bodyMissing = false;
     } else if (slot.file) {
-      this.rawOnDisk = stripFrontmatter(
-        await this.app.vault.cachedRead(slot.file),
-      );
-      this.bodyMissing = false;
+      try {
+        this.rawOnDisk = stripFrontmatter(
+          await this.app.vault.cachedRead(slot.file),
+        );
+        this.bodyMissing = false;
+      } catch (error) {
+        console.error("Incremental Reading: could not load review source", error);
+        this.rawOnDisk = slot.element.text
+          ? stripExtractMarks(slot.element.text)
+          : "";
+        this.bodyMissing = !this.rawOnDisk;
+      }
     } else if (slot.element.text) {
       // Strip any `<mark class="ir-extract-source">` chrome that may have
       // leaked into the stored text for extracts created before the
@@ -1779,28 +1838,29 @@ export class IrReviewView extends ItemView {
    * anchored elements (no file) record a `text-edited` event in the ledger
    * so the change survives across folds without rewriting the parent note.
    */
-  private async flushEdits(): Promise<void> {
+  private async flushEdits(): Promise<boolean> {
     this.captureBookmark();
     const slot = this.current;
-    if (!slot || this.bodyMissing) return;
+    if (!slot || this.bodyMissing) return true;
     if (this.liveEditor) {
       this.currentRaw = this.liveEditor.getBody();
       try {
         await this.liveEditor.save();
         this.rawOnDisk = this.currentRaw;
+        this.editSaveError = null;
       } catch (e) {
         console.error("Incremental Reading: saving edits failed", e);
-        new Notice(
-          "Incremental Reading: could not save your edits. See the developer console.",
-        );
+        this.editSaveError = "Could not save your edits. Retry or discard the unsaved changes.";
+        void this.renderCard();
+        return false;
       }
-      return;
+      return true;
     }
-    if (this.currentRaw === this.rawOnDisk) return;
+    if (this.currentRaw === this.rawOnDisk) return true;
     try {
       if (slot.file && isPdfPath(slot.file.path)) {
         this.rawOnDisk = this.currentRaw;
-        return;
+        return true;
       }
       if (slot.file) {
         await saveBody(this.app, slot.file, this.currentRaw);
@@ -1821,11 +1881,13 @@ export class IrReviewView extends ItemView {
         this.onChange?.();
       }
       this.rawOnDisk = this.currentRaw;
+      this.editSaveError = null;
+      return true;
     } catch (e) {
       console.error("Incremental Reading: saving edits failed", e);
-      new Notice(
-        "Incremental Reading: could not save your edits. See the developer console.",
-      );
+      this.editSaveError = "Could not save your edits. Retry or discard the unsaved changes.";
+      void this.renderCard();
+      return false;
     }
   }
 
@@ -1836,8 +1898,11 @@ export class IrReviewView extends ItemView {
     }
     this.parkLiveEditor();
     if (!this.editing && this.liveEditor) {
-      await this.flushEdits();
-      this.teardownLiveEditorSync();
+      if (await this.flushEdits()) {
+        this.teardownLiveEditorSync();
+      } else {
+        this.editing = true;
+      }
     }
     const host = this.cardHostEl ?? this.contentEl;
     host.empty();
@@ -1877,6 +1942,23 @@ export class IrReviewView extends ItemView {
     }
 
     await this.ensureLoaded(slot);
+    if (this.bodyMissing) {
+      const recovery = host.createDiv({ cls: "ir-review-read-recovery" });
+      recovery.setAttr("role", "alert");
+      recovery.createEl("p", {
+        text: "Could not load this card's source. It has not been changed.",
+      });
+      recovery
+        .createEl("button", { text: "Retry", type: "button", cls: "mod-cta" })
+        .addEventListener("click", () => {
+          this.loadedSlotId = null;
+          void this.renderCard();
+        });
+      recovery
+        .createEl("button", { text: "Skip for this pass", type: "button" })
+        .addEventListener("click", () => this.advance());
+      return;
+    }
     this.announceSlot(slot);
 
     const sourceCtx = await this.loadSourceContext(slot);
@@ -2066,6 +2148,7 @@ export class IrReviewView extends ItemView {
 
     const dock = host.createDiv({ cls: "ir-review-dock" });
     const controls = dock.createEl("div", { cls: "ir-review-controls" });
+    this.renderEditSaveRecovery(controls);
 
     this.maybeShowSwipeCoachMark(slot);
 
@@ -2273,7 +2356,7 @@ export class IrReviewView extends ItemView {
     if (i < 0) return false;
     if (i === this.index && !this.sessionComplete) return true;
     void (async () => {
-      await this.flushEdits();
+      if (!(await this.flushEdits())) return;
       void this.persistBookmarks();
       this.index = i;
       this.revealed = false;
@@ -3493,6 +3576,13 @@ export class IrReviewView extends ItemView {
     silent?: boolean;
     promote?: boolean;
   }): Promise<IrElement | undefined> {
+    return this.runAction(() => this.handleExtractNow(opts));
+  }
+
+  private async handleExtractNow(opts?: {
+    silent?: boolean;
+    promote?: boolean;
+  }): Promise<IrElement | undefined> {
     const slot = this.current;
     if (!slot || !this.canMakeChild()) return;
     // A PDF-sourced card: if the user selected text *on the card* (the
@@ -3568,7 +3658,7 @@ export class IrReviewView extends ItemView {
       );
       return;
     }
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const bodyBeforeExtract = this.currentRaw;
     let created: IrElement | undefined;
     try {
@@ -3623,6 +3713,10 @@ export class IrReviewView extends ItemView {
   }
 
   public async handleCloze() {
+    await this.runAction(() => this.handleClozeNow());
+  }
+
+  private async handleClozeNow() {
     const slot = this.current;
     if (!slot || !this.canMakeClozeChild()) return;
     const sel = this.resolveSelection();
@@ -3793,7 +3887,7 @@ export class IrReviewView extends ItemView {
       new Notice("Incremental Reading: nothing to extract.");
       return;
     }
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const bodyBeforeExtract = this.currentRaw;
     const sourcePath =
       slot.file?.path ?? this.resolveProvenanceSourcePath(slot);
@@ -3857,7 +3951,7 @@ export class IrReviewView extends ItemView {
       );
       return;
     }
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const result = await createClozeFromText(
       this.app,
       placement,
@@ -3946,7 +4040,7 @@ export class IrReviewView extends ItemView {
     sel: { text: string; start: number; end: number },
     hint: string,
   ): Promise<void> {
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const groupN = nextClozeNumber(this.currentRaw);
     const { body, answer } = spliceClozeIntoText(
       this.currentRaw,
@@ -4038,8 +4132,12 @@ export class IrReviewView extends ItemView {
    * rewinds the in-session cursor (e.g. to add another cloze on a reading card).
    */
   private async previous() {
+    await this.runAction(() => this.previousNow());
+  }
+
+  private async previousNow() {
     if (this.index === 0) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     void this.persistBookmarks();
     this.index -= 1;
     this.revealed = false;
@@ -4050,9 +4148,13 @@ export class IrReviewView extends ItemView {
   }
 
   private async grade(g: Grade) {
+    await this.runAction(() => this.gradeNow(g));
+  }
+
+  private async gradeNow(g: Grade) {
     const slot = this.current;
     if (!slot) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     // A grade is newer than any pending Later/Dismiss snapshot, and the
     // logged `grade-undone` path owns undo from here.
     this.lastReversible = null;
@@ -4153,6 +4255,10 @@ export class IrReviewView extends ItemView {
   }
 
   private async next() {
+    await this.runAction(() => this.nextNow());
+  }
+
+  private async nextNow() {
     const slot = this.current;
     if (!slot) return;
     await this.flushEdits();
@@ -4183,6 +4289,10 @@ export class IrReviewView extends ItemView {
   }
 
   private async later() {
+    await this.runAction(() => this.laterNow());
+  }
+
+  private async laterNow() {
     const slot = this.current;
     if (!slot) return;
     await this.flushEdits();
@@ -4216,6 +4326,10 @@ export class IrReviewView extends ItemView {
   }
 
   private async dismiss() {
+    await this.runAction(() => this.dismissNow());
+  }
+
+  private async dismissNow() {
     const slot = this.current;
     if (!slot) return;
     await this.flushEdits();

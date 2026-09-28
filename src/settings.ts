@@ -175,7 +175,7 @@ export class IrSettingTab extends PluginSettingTab {
       .setDesc(
         "Highlights from that note can become their own files, or stay as " +
           "in review with no new file. You still get a choice each time; " +
-          "this is the default if you close the prompt. On (default): make " +
+          "this chooses the emphasized button. On (default): make " +
           "them notes. Off: keep without notes.",
       )
       .addToggle((toggle) =>

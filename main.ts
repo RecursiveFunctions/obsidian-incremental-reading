@@ -4077,7 +4077,9 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async toggleDismiss(file: TFile) {
     const dismiss = !isDismissed(this.app, file);
-    await setDismissed(this.app, file, dismiss);
+    const elementId =
+      (await this.resolveElementIdForFile(file)) ?? elementIdForPath(file.path);
+    await this.applyIrDismissChange(elementId, file, dismiss);
     new Notice(
       `${dismiss ? "Dismissed" : "Restored"} "${file.basename}".`,
     );

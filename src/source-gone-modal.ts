@@ -7,6 +7,7 @@
  */
 
 import { App, Modal, Setting } from "obsidian";
+import { sourceGoneNonButtonCloseChoice } from "./ir/source-gone-close";
 
 export type SourceGoneChoice = "promote-all" | "leave-detached" | "undo";
 
@@ -125,7 +126,7 @@ class SourceGoneModal extends Modal {
     if (!this.resolved) {
       this.resolved = true;
       this.finish({
-        choice: this.opts.defaultPromote ? "promote-all" : "leave-detached",
+        choice: sourceGoneNonButtonCloseChoice(),
         applyToAll: false,
       });
     }

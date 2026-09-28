@@ -36,7 +36,7 @@ export interface IrSettings {
   /**
    * When a source note is deleted, orphaned highlights can become their
    * own files (true) or stay as review cards with no new file (false).
-   * The prompt still offers both; this is the default if you close it.
+   * The prompt still offers both; this chooses the emphasized button.
    */
   makeNotesWhenSourceDeleted: boolean;
   /**

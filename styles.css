@@ -573,6 +573,24 @@ img.ir-source-image.ir-cloze-source {
   margin-bottom: 0;
 }
 
+.ir-review-save-recovery,
+.ir-review-read-recovery {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  padding: 0.5em;
+  border: 1px solid var(--background-modifier-error);
+  border-radius: var(--radius-s);
+  color: var(--text-error);
+}
+
+.ir-review-save-recovery > span,
+.ir-review-read-recovery > p {
+  margin: 0;
+  flex: 1 1 14rem;
+}
+
 /* Session progress: queue completion (cards reviewed / total). Authoritative
  * indicator at the top of the pane, solid accent, slightly thicker so it
  * visually reads as the primary progress bar. The doc progress bar inside

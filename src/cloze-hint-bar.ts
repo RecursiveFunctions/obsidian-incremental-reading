@@ -7,6 +7,10 @@
  */
 
 import { Notice } from "obsidian";
+import {
+  cancelPendingClozeHint,
+  registerPendingClozeHint,
+} from "./ir/cloze-hint-prompt";
 
 export type ClozeHintPromptResult =
   | { ok: true; hint: string }
@@ -21,6 +25,8 @@ export function promptClozeHintInline(
   host: HTMLElement,
 ): Promise<ClozeHintPromptResult> {
   return new Promise((resolve) => {
+    // Resolve the old caller before its bar is removed by this replacement.
+    cancelPendingClozeHint(host);
     const existing = host.querySelector(".ir-hint-bar");
     if (existing) existing.remove();
 
@@ -46,12 +52,15 @@ export function promptClozeHintInline(
     });
 
     let finished = false;
+    let unregister = () => {};
     const finish = (r: ClozeHintPromptResult) => {
       if (finished) return;
       finished = true;
-      bar.remove();
+      unregister();
       resolve(r);
+      bar.remove();
     };
+    unregister = registerPendingClozeHint(host, () => finish({ ok: false }));
 
     const trySubmit = () => {
       const trimmed = input.value.trim();
