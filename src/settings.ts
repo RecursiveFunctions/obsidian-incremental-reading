@@ -12,6 +12,7 @@ import {
   isSpaceAfterReveal,
   SPACE_AFTER_REVEAL_OPTIONS,
 } from "./ir/review-keys";
+import { resetMobileReviewTips } from "./ir/review-touch-gestures";
 
 export type { IrSettings } from "./ir/settings-data";
 export { cloneDefaultSettings, DEFAULT_SETTINGS } from "./ir/settings-data";
@@ -113,6 +114,34 @@ export class IrSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+
+    new Setting(containerEl)
+      .setName("Enable mobile review swipes")
+      .setDesc(
+        "Use horizontal swipes on review cards: left goes back or chooses Again; right advances or chooses Good.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableMobileReviewSwipes)
+          .onChange(async (value) => {
+            this.plugin.settings.enableMobileReviewSwipes = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Reset mobile swipe tips")
+      .setDesc("Show the mobile review swipe hint again on this device.")
+      .addButton((button) =>
+        button.setButtonText("Reset tips").onClick(() => {
+          try {
+            resetMobileReviewTips();
+            new Notice("Incremental Reading: mobile swipe tips reset.");
+          } catch {
+            new Notice("Incremental Reading: could not reset mobile swipe tips.");
+          }
+        }),
+      );
 
     containerEl.createEl("h3", { text: "Extracts" });
 

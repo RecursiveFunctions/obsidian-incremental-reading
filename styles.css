@@ -2129,142 +2129,120 @@ img.ir-source-image.ir-cloze-source {
   height: 18px;
 }
 
-/* IR quick actions — radial overlay */
-.ir-radial-root {
+/* IR Actions is a non-modal surface. The workspace remains interactive. */
+.ir-action-panel {
   position: fixed;
-  inset: 0;
   z-index: 100050;
-  pointer-events: auto;
-}
-
-.ir-radial-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.38);
-}
-
-.ir-radial-disk {
-  position: absolute;
-  width: 320px;
-  height: 320px;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
-.ir-radial-orbit {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.ir-radial-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  z-index: 1;
-  transform: translate(-50%, -50%);
-  width: 176px;
-  max-height: 200px;
-  overflow-y: auto;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: var(--background-primary);
-  border: 2px solid var(--background-modifier-border);
-  box-shadow: var(--shadow-s);
-  text-align: center;
-  pointer-events: auto;
-}
-
-.ir-radial-center--wide {
-  width: min(300px, 92vw);
-  max-height: min(320px, 58vh);
-  text-align: left;
-}
-
-.ir-radial-center-title {
-  font-weight: 600;
-  font-size: var(--font-ui-small);
-  margin-bottom: 4px;
-  text-align: center;
-}
-
-.ir-radial-center-hint {
-  font-size: var(--font-ui-smaller);
-  line-height: 1.35;
-  color: var(--text-muted);
-  text-align: left;
-}
-
-.ir-radial-center-hint--empty p {
-  margin: 0.25em 0;
-  font-size: var(--font-ui-smaller);
-}
-
-.ir-radial-close {
-  margin-top: 8px;
-  width: 100%;
-}
-
-.ir-radial-petal {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  z-index: 2;
-  /* 64px, not 56: the label below was 8px to fit the old circle, which is
-   * under any reasonable legibility floor. Bigger circle, readable label,
-   * and a tap target that clears the 44px minimum with room to spare. */
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  border: 2px solid var(--background-modifier-border);
-  background: var(--background-primary);
-  box-shadow: var(--shadow-s);
-  cursor: pointer;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  width: min(360px, calc(100vw - 24px));
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  padding: 2px;
-  pointer-events: auto;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  background: var(--background-primary);
+  box-shadow: var(--shadow-l);
 }
 
-.ir-radial-petal:hover,
-.ir-radial-petal:focus-visible {
-  border-color: var(--interactive-accent);
+.ir-action-panel-header {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 4px 14px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ir-action-panel-title,
+.ir-action-panel-label {
+  font-weight: var(--font-semibold);
+}
+
+.ir-action-panel-close {
+  min-width: 44px;
+  height: 44px;
+}
+
+.ir-action-panel-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+
+.ir-action-panel-item {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-normal);
+  text-align: left;
+}
+
+.ir-action-panel-item:hover,
+.ir-action-panel-item:focus-visible {
   background: var(--background-modifier-hover);
 }
 
-.ir-radial-petal-key {
-  position: absolute;
-  top: 2px;
-  right: 5px;
-  font-size: var(--font-ui-smaller);
-  font-weight: var(--font-semibold);
-  color: var(--text-muted);
-}
-
-.ir-radial-petal-icon {
+.ir-action-panel-icon {
+  flex: 0 0 24px;
   display: flex;
-  align-items: center;
   justify-content: center;
 }
 
-.ir-radial-petal-icon svg {
-  width: 18px;
-  height: 18px;
+.ir-action-panel-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.ir-radial-petal-label {
-  font-size: var(--font-ui-smaller);
-  line-height: 1.15;
-  text-align: center;
+.ir-action-panel-description {
   color: var(--text-muted);
-  max-width: 60px;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.25;
+}
+
+.ir-action-panel-key {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-action-panel-empty {
+  padding: 4px 8px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+/* Narrow windows use a safe-area-aware bottom drawer rather than covering
+ * the document with a modal overlay. */
+@media (max-width: 700px) {
+  .ir-action-panel {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: auto;
+    max-height: min(70vh, calc(100vh - env(safe-area-inset-top, 0px) - 12px));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .ir-action-panel-list {
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /*

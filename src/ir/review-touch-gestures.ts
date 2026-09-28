@@ -15,6 +15,21 @@
 
 import type { Grade } from "../fsrs";
 
+/** Device-local dismissal keys for the mobile review swipe coaching. */
+export const MOBILE_REVIEW_TIP_KEYS = [
+  "incremental-reading:swipe-legend-seen",
+  "incremental-reading:swipe-coach-shown",
+] as const;
+
+export const MOBILE_REVIEW_SWIPE_TIP_DISMISSED_KEY = MOBILE_REVIEW_TIP_KEYS[0];
+
+/** Reset mobile swipe coaching on this device without touching plugin data. */
+export function resetMobileReviewTips(
+  storage: Pick<Storage, "removeItem"> = window.localStorage,
+): void {
+  for (const key of MOBILE_REVIEW_TIP_KEYS) storage.removeItem(key);
+}
+
 /** Pixels from the left/right viewport edge where we refuse to start a swipe. */
 export const SWIPE_EDGE_DEAD_ZONE_PX = 32;
 
@@ -24,7 +39,7 @@ export const SWIPE_COMMIT_DISTANCE_PX = 48;
 /** Horizontal movement must beat vertical by this margin to steal the gesture. */
 export const SWIPE_AXIS_DOMINANCE_PX = 12;
 
-export type SwipeDirection = "left" | "right" | "up" | "down";
+export type SwipeDirection = "left" | "right";
 
 export type ReviewSwipeMode = "reading" | "nav" | "grade";
 
@@ -54,14 +69,8 @@ export function classifySwipeDirection(
 ): SwipeDirection | null {
   const adx = Math.abs(dx);
   const ady = Math.abs(dy);
-  if (adx < minDist && ady < minDist) return null;
-  if (adx >= ady + axisMargin) {
-    return dx < 0 ? "left" : "right";
-  }
-  if (ady >= adx + axisMargin) {
-    return dy < 0 ? "up" : "down";
-  }
-  return null;
+  if (adx < minDist || adx < ady + axisMargin) return null;
+  return dx < 0 ? "left" : "right";
 }
 
 export function reviewSwipeMode(
@@ -80,20 +89,17 @@ export function swipeOutcomeFor(
 ): SwipeOutcome | null {
   if (mode === "reading") {
     if (dir === "left") return { kind: "nav", action: "previous" };
-    if (dir === "right" || dir === "up") return { kind: "nav", action: "next" };
+    if (dir === "right") return { kind: "nav", action: "next" };
     return null;
   }
   if (mode === "nav") {
     if (dir === "left") return { kind: "nav", action: "previous" };
     if (dir === "right") return { kind: "nav", action: "next" };
-    if (dir === "up") return { kind: "nav", action: "reveal" };
     return null;
   }
   // grade (AnkiMobile-style cardinals)
   if (dir === "left") return { kind: "grade", grade: "again" };
-  if (dir === "down") return { kind: "grade", grade: "hard" };
   if (dir === "right") return { kind: "grade", grade: "good" };
-  if (dir === "up") return { kind: "grade", grade: "easy" };
   return null;
 }
 
@@ -112,9 +118,13 @@ const NAV_LABELS: Record<SwipeNavAction, string> = {
 
 export function swipeHintLabel(outcome: SwipeOutcome): string {
   if (outcome.kind === "grade") {
-    return `${GRADE_LABELS[outcome.grade]} →`;
+    return outcome.grade === "again"
+      ? `← ${GRADE_LABELS[outcome.grade]}`
+      : `${GRADE_LABELS[outcome.grade]} →`;
   }
-  return `${NAV_LABELS[outcome.action]} →`;
+  return outcome.action === "previous"
+    ? `← ${NAV_LABELS[outcome.action]}`
+    : `${NAV_LABELS[outcome.action]} →`;
 }
 
 const INTERACTIVE_SEL =
