@@ -1,6 +1,6 @@
 {
   "name": "obsidian-incremental-reading",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "SuperMemo-style incremental reading and spaced repetition for Obsidian, built on FSRS.",
   "main": "main.js",
   "scripts": {
