@@ -10,7 +10,7 @@ export interface IrSettings {
   prioritySchedulingPolicy: PrioritySchedulingPolicy;
   reprioritizationPolicy: ReprioritizationPolicy;
   notices: NoticeAcknowledgements;
-  treeDisplayMode: "hierarchy" | "priority";
+  treeDisplayMode: "priority" | "sources";
   /** Priority assigned to a note when it's first marked as a topic. */
   defaultPriority: number;
   /** Folder new extracts go in. Empty means beside their source note. */
@@ -132,6 +132,7 @@ export interface NoticeAcknowledgements {
   prioritySuite: boolean;
   advancedPostponeRisk: boolean;
   randomReviewRisk: boolean;
+  collectionRedesign: boolean;
 }
 
 /** A fitted FSRS parameter set, as persisted in plugin data. */
@@ -189,8 +190,9 @@ export const DEFAULT_SETTINGS: IrSettings = {
     prioritySuite: false,
     advancedPostponeRisk: false,
     randomReviewRisk: false,
+    collectionRedesign: false,
   },
-  treeDisplayMode: "hierarchy",
+  treeDisplayMode: "priority",
   defaultPriority: 33,
   extractFolder: "",
   extractCreatesStandaloneNote: false,

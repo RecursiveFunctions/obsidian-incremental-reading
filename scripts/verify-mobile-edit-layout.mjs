@@ -163,7 +163,30 @@ async function main() {
       `keyboard open: host too short (${open.hostHeight}px)`,
     );
 
-    console.log("OK: mobile edit layout verified in browser");
+    await page.setContent(`<!doctype html><style>:root{--radius-s:4px;--radius-m:8px;--font-ui-small:14px;--font-ui-smaller:12px;--text-normal:#ddd;--text-muted:#aaa;--text-faint:#777;--text-accent:#7aa2f7;--background-primary:#222;--background-secondary:#2a2a2a;--interactive-accent:#7aa2f7;--shadow-s:0 1px 2px #0004}</style><body><div class="ir-tree-view ir-tree--mobile">
+      <div class="ir-collection-header"><h4>Collection</h4><div class="ir-collection-controls">
+        <div class="ir-collection-segments"><button class="ir-collection-segment is-active">Priority</button><button class="ir-collection-segment">Sources</button></div>
+        <div class="ir-collection-actions"><button class="ir-collection-filter-button">Filters</button><button class="ir-collection-icon-button">B</button></div>
+      </div></div><div class="ir-collection-search"><input class="ir-collection-search-input"></div>
+      <ul class="ir-tree-root"><li class="ir-tree-node"><div class="ir-tree-row ir-collection-row ir-collection-row--priority">
+        <div class="ir-collection-row-content"><div class="ir-collection-row-primary"><span class="ir-collection-rank">#123</span><span class="ir-tree-title">A very long article title that must truncate without forcing horizontal scrolling</span><span class="ir-collection-percentage">18.4000</span></div>
+        <div class="ir-collection-row-secondary"><span>Topic</span><span>Tomorrow</span><span class="ir-collection-breadcrumb">Root source with a very long breadcrumb › Parent extract</span></div></div>
+      </div></li></ul></div></body>`);
+    await page.addStyleTag({ path: stylesPath });
+    const collection = await page.evaluate(() => {
+      const root = document.querySelector(".ir-tree-view");
+      const controls = [...document.querySelectorAll(".ir-collection-segment, .ir-collection-icon-button")];
+      return {
+        overflow: root.scrollWidth - root.clientWidth,
+        minTarget: Math.min(...controls.map((element) => element.getBoundingClientRect().height)),
+        rowHeight: document.querySelector(".ir-collection-row--priority").getBoundingClientRect().height,
+      };
+    });
+    assert.ok(collection.overflow <= 1, `collection: horizontal overflow ${collection.overflow}px`);
+    assert.ok(collection.minTarget >= 44, `collection: mobile target too short (${collection.minTarget}px)`);
+    assert.ok(collection.rowHeight >= 55, `collection: priority row too short (${collection.rowHeight}px)`);
+
+    console.log("OK: mobile review and Collection layouts verified in browser");
   } finally {
     await browser.close();
   }

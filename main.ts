@@ -85,7 +85,7 @@ import {
   type IrElement,
   type IrEvent,
 } from "./src/ir/model";
-import { buildPriorityPlacement, legacyPriorityOrder, planAdjacentBlockMove } from "./src/ir/relative-priority";
+import { buildPriorityPlacement, legacyPriorityOrder, planAdjacentBlockMove, planAdjust, planBlockInsertion, planSpread, type PriorityPlacementPreview } from "./src/ir/relative-priority";
 import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
@@ -401,6 +401,11 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
+    if (!this.settings.notices.collectionRedesign) {
+      new Notice("Collection now separates global Priority from source structure.", 8_000);
+      this.settings.notices.collectionRedesign = true;
+      await this.saveSettings();
+    }
     if (!this.settings.notices.prioritySuite) {
       new Notice(
         "Incremental Reading now includes priority queue controls, optional auto-postpone, priority-aware scheduling, and protection analytics. All automation remains off until enabled in settings.",
@@ -612,6 +617,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.settings.treeDisplayMode = mode;
             void this.saveSettings();
           },
+          (plan) => this.applyPriorityPlan(plan),
+          (preview, file) => this.applyIrPriorityPreview(preview, file),
         );
       },
     );
@@ -693,6 +700,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           () => void this.openTreeView(),
           () => void this.openHelpView(),
           (id, file, priority) => this.applyIrPriorityChange(id, file, priority),
+          (preview, file) => this.applyIrPriorityPreview(preview, file),
           (orderedIds, cursor) => void this.persistSessionCursor(orderedIds, cursor),
         );
         view.multiSelect = this.multiSelect;
@@ -702,7 +710,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.irCommand({
       id: "open-tree-view",
-      name: "Open IR element tree",
+      name: "Open IR collection",
       icon: "list-tree",
       hotkeys: [{ modifiers: ["Alt"], key: "i" }],
       callback: () => void this.openTreeView(),
@@ -1147,7 +1155,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             );
             menu.addItem((item) =>
               item
-                .setTitle("Open IR element tree")
+                .setTitle("Open IR collection")
                 .setIcon("list-tree")
                 .onClick(() => void this.openTreeView()),
             );
@@ -1394,7 +1402,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
     menu.addItem((item) =>
       item
-        .setTitle("Open IR element tree")
+        .setTitle("Open IR collection")
         .setIcon("list-tree")
         .onClick(() => void this.openTreeView()),
     );
@@ -1610,7 +1618,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     menu.addSeparator();
     menu.addItem((item) =>
       item
-        .setTitle("Open IR element tree")
+        .setTitle("Open IR collection")
         .setIcon("list-tree")
         .onClick(() => void this.openTreeView()),
     );
@@ -3038,8 +3046,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     if (Platform.isMobile) {
       new Notice(
-        "Incremental Reading: this note is not in the element tree yet. " +
-          "Review or extract from it once, then set priority from its tree row.",
+        "Incremental Reading: this note is not in the collection yet. " +
+          "Review or extract from it once, then set priority from its collection row.",
       );
       return;
     }
@@ -3099,6 +3107,18 @@ export default class IncrementalReadingPlugin extends Plugin {
     ]);
   }
 
+  private async applyIrPriorityPreview(
+    preview: PriorityPlacementPreview,
+    file: TFile | null,
+  ): Promise<void> {
+    await this.applyIrPriorityBatch([{
+      targetId: preview.intent.targetId,
+      requestedPriority: preview.intent.requestedPriority,
+      placement: preview.intent,
+      file,
+    }]);
+  }
+
   private async applyIrPriorityBatch(changes: readonly {
     targetId: ElementId;
     requestedPriority: number;
@@ -3145,6 +3165,47 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (!this.ledger) return;
     const state = await this.ledger.load();
     const plan = planAdjacentBlockMove(legacyPriorityOrder(state.elements.values()), ids, direction);
+    await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
+      targetId: intent.targetId,
+      requestedPriority: intent.requestedPriority,
+      placement: intent,
+      file: null,
+    })));
+  }
+
+  private async movePrioritySelectionTo(ids: ElementId[], position: number): Promise<void> {
+    if (!this.ledger) return;
+    const state = await this.ledger.load();
+    const plan = planBlockInsertion(legacyPriorityOrder(state.elements.values()), ids, position);
+    await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
+      targetId: intent.targetId,
+      requestedPriority: intent.requestedPriority,
+      placement: intent,
+      file: null,
+    })));
+  }
+
+  private async applyPriorityPlan(plan: ReturnType<typeof planBlockInsertion>): Promise<void> {
+    await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
+      targetId: intent.targetId,
+      requestedPriority: intent.requestedPriority,
+      placement: intent,
+      file: null,
+    })));
+  }
+
+  private async distributePrioritySelection(
+    ids: ElementId[],
+    operation: "spread" | "adjust",
+    start: number,
+    end: number,
+  ): Promise<void> {
+    if (!this.ledger) return;
+    const state = await this.ledger.load();
+    const order = legacyPriorityOrder(state.elements.values());
+    const plan = operation === "spread"
+      ? planSpread(order, ids, start, end)
+      : planAdjust(order, ids, start, end);
     await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
       targetId: intent.targetId,
       requestedPriority: intent.requestedPriority,
@@ -4585,7 +4646,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         });
       } else if (kind === "open-tree") {
         out.push({
-          title: "Open IR element tree",
+          title: "Open IR collection",
           description: "Browse topics, extracts, and items.",
           icon: "list-tree",
           run: () => this.openTreeView(),

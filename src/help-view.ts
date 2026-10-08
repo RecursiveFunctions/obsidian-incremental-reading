@@ -167,10 +167,10 @@ export class IrHelpView extends ItemView {
       text: "These keys belong to the review pane itself and are fixed. They only fire while the review pane has focus.",
     });
 
-    this.section(c, "In the element tree", TREE_KEYS, "kbd");
+    this.section(c, "In Collection", TREE_KEYS, "kbd");
     c.createDiv({
       cls: "ir-help-note",
-      text: "Also fixed, and only while the element tree has focus.",
+      text: "Also fixed, and only while Collection has focus.",
     });
 
     // Commands are the rebindable half, so show what the user will actually

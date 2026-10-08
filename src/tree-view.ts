@@ -9,13 +9,14 @@ import {
 } from "obsidian";
 
 import type { LogState } from "./ir/log";
-import { recentBookmarks, type Bookmark } from "./ir/bookmark";
+import { recentBookmarks } from "./ir/bookmark";
 import { labelFor } from "./ir/labels";
 import { promptConfirm } from "./confirm-modal";
 import { IrLedger } from "./ir/ledger";
 import {
   buildTree,
   buildPriorityRows,
+  formatScheduleState,
   filterTreeByPredicate,
   rangeSelectIds,
   TreeNode,
@@ -27,8 +28,17 @@ import {
   treeRowCollapsed,
 } from "./ir/tree-nav";
 import { treeRowLabel } from "./ir/labels";
-import { clampPriority, type IrElement, type IrType } from "./ir/model";
-import { formatPriority } from "./ir/relative-priority";
+import type { IrElement, IrType } from "./ir/model";
+import {
+  formatPriority,
+  legacyPriorityOrder,
+  planAdjust,
+  planBlockInsertion,
+  planSpread,
+  type PriorityBatchPlan,
+  type PriorityPlacementPreview,
+} from "./ir/relative-priority";
+import { mountPriorityEditor } from "./priority-prompt";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
 import { findExtractEditorPosition } from "./ir/extract-range";
@@ -121,6 +131,9 @@ export class IrTreeView extends ItemView {
     "extract",
     "item",
   ]);
+  private visibleStates: Set<"due" | "future" | "unscheduled"> = new Set([
+    "due", "future", "unscheduled",
+  ]);
 
   /**
    * Currently multi-selected row ids, session-only. Cmd/Ctrl+click toggles
@@ -146,9 +159,6 @@ export class IrTreeView extends ItemView {
   private selectedIds: Set<string> = new Set();
   private selectionAnchorId: string | null = null;
 
-  /** True when the user collapsed the "Resume reading" header. Session-only. */
-  private recentReadingCollapsed = false;
-
   /** Element id currently being dragged (session-only). */
   private dragSourceId: string | null = null;
 
@@ -164,7 +174,7 @@ export class IrTreeView extends ItemView {
 
   /** Keyboard / click focus; independent of the review highlight. */
   private focusedId: string | null = null;
-  private displayMode: "hierarchy" | "priority";
+  private displayMode: "priority" | "sources";
 
   /** Delayed single-click so a double-click can cancel "reveal or open". */
   private pendingClickTimer: number | null = null;
@@ -192,8 +202,12 @@ export class IrTreeView extends ItemView {
      * false when there is no session or the id is not in that queue.
      */
     private readonly revealInReview?: (id: ElementId) => boolean,
-    displayMode: "hierarchy" | "priority" = "hierarchy",
-    private readonly saveDisplayMode?: (mode: "hierarchy" | "priority") => void,
+    displayMode: "priority" | "sources" = "priority",
+    private readonly saveDisplayMode?: (mode: "priority" | "sources") => void,
+    private readonly commitPriorityPlan?: (plan: PriorityBatchPlan) => Promise<void>,
+    private readonly commitPriorityPreview?: (
+      preview: PriorityPlacementPreview, file: TFile | null,
+    ) => Promise<void>,
   ) {
     super(leaf);
     this.ledger = ledger;
@@ -215,7 +229,7 @@ export class IrTreeView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "IR element tree";
+    return "Collection";
   }
 
   getIcon(): string {
@@ -362,60 +376,58 @@ export class IrTreeView extends ItemView {
       container.addClass("ir-tree--mobile");
     }
 
-    const header = container.createDiv({ cls: "ir-tree-header" });
-    header.createEl("h4", { text: "IR element tree" });
+    const header = container.createDiv({ cls: "ir-collection-header" });
+    header.createEl("h4", { text: "Collection" });
+    const controls = header.createDiv({ cls: "ir-collection-controls" });
+    const segments = controls.createDiv({ cls: "ir-collection-segments" });
+    segments.setAttribute("role", "group");
+    segments.setAttribute("aria-label", "Collection view");
+    for (const mode of ["priority", "sources"] as const) {
+      const active = this.displayMode === mode;
+      const tab = segments.createEl("button", {
+        cls: active ? "ir-collection-segment is-active" : "ir-collection-segment",
+        text: mode === "priority" ? "Priority" : "Sources",
+        attr: { type: "button", "aria-pressed": String(active) },
+      });
+      tab.onclick = () => {
+        if (this.displayMode === mode) return;
+        this.displayMode = mode;
+        this.filterText = "";
+        this.visibleTypes = new Set(["topic", "extract", "item"]);
+        this.saveDisplayMode?.(mode);
+        void this.render();
+      };
+    }
 
-    const actions = header.createDiv({ cls: "ir-tree-actions" });
-    const expandAll = actions.createEl("button", {
-      cls: "ir-tree-refresh",
-      attr: { "aria-label": "Expand all" },
+    const actions = controls.createDiv({ cls: "ir-collection-actions" });
+    const activeFilterCount = (3 - this.visibleTypes.size) +
+      (3 - this.visibleStates.size) + (this.showDismissed ? 1 : 0);
+    const filters = actions.createEl("button", {
+      cls: "ir-collection-filter-button",
+      text: activeFilterCount > 0 ? `Filters ${activeFilterCount}` : "Filters",
+      attr: { type: "button", "aria-label": "Filter collection" },
     });
-    setIcon(expandAll, "chevrons-down-up");
-    expandAll.onclick = () => {
-      this.collapsed.clear();
-      void this.render();
-    };
-    const collapseAll = actions.createEl("button", {
-      cls: "ir-tree-refresh",
-      attr: { "aria-label": "Collapse all" },
+    filters.onclick = (event) => this.showFiltersMenu(event);
+    if (this.resumeReading) {
+      const bookmarks = actions.createEl("button", {
+        cls: "ir-collection-icon-button",
+        attr: { type: "button", "aria-label": "Recent bookmarks" },
+      });
+      setIcon(bookmarks, "bookmark");
+      bookmarks.onclick = (event) => void this.showRecentBookmarks(event);
+    }
+    const overflow = actions.createEl("button", {
+      cls: "ir-collection-icon-button",
+      attr: { type: "button", "aria-label": "Collection actions" },
     });
-    setIcon(collapseAll, "chevrons-up-down");
-    collapseAll.onclick = () => {
-      for (const id of this.lastNodeIds) this.collapsed.add(id);
-      void this.render();
-    };
+    setIcon(overflow, "ellipsis");
+    overflow.onclick = (event) => this.showCollectionMenu(event);
 
-    const dismissToggle = actions.createEl("button", {
-      cls: "ir-tree-refresh",
-      text: this.showDismissed ? "Hide dismissed" : "Show dismissed",
-    });
-    dismissToggle.onclick = () => {
-      this.showDismissed = !this.showDismissed;
-      void this.render();
-    };
-
-    const modeToggle = actions.createEl("button", {
-      cls: "ir-tree-refresh",
-      text: this.displayMode === "priority" ? "Hierarchy" : "Priority",
-      attr: { "aria-label": `Switch to ${this.displayMode === "priority" ? "hierarchy" : "priority"} mode` },
-    });
-    modeToggle.onclick = () => {
-      this.displayMode = this.displayMode === "priority" ? "hierarchy" : "priority";
-      this.saveDisplayMode?.(this.displayMode);
-      void this.render();
-    };
-
-    const refresh = actions.createEl("button", {
-      text: "Refresh",
-      cls: "ir-tree-refresh",
-    });
-    refresh.onclick = () => void this.render();
-
-    const searchRow = container.createDiv({ cls: "ir-tree-search" });
+    const searchRow = container.createDiv({ cls: "ir-collection-search" });
     const searchInput = searchRow.createEl("input", {
-      cls: "ir-tree-search-input",
+      cls: "ir-collection-search-input",
       type: "search",
-      placeholder: "Filter elements\u2026",
+      placeholder: "Search collection\u2026",
     });
     searchInput.value = this.filterText;
     // Debounced: a full render reloads the ledger and reads every non-dismissed
@@ -441,50 +453,23 @@ export class IrTreeView extends ItemView {
       });
     }
 
-    const typeRow = container.createDiv({ cls: "ir-tree-type-filter" });
-    typeRow.setAttribute("role", "group");
-    typeRow.setAttribute("aria-label", "Filter by element type");
-    const TYPE_LABELS: Record<IrType, string> = {
-      topic: "Topics",
-      extract: "Extracts",
-      item: "Cloze items",
-    };
-    for (const t of ["topic", "extract", "item"] as const) {
-      const active = this.visibleTypes.has(t);
-      const chip = typeRow.createEl("button", {
-        cls: active
-          ? "ir-tree-type-chip ir-tree-type-chip--active"
-          : "ir-tree-type-chip",
-        text: TYPE_LABELS[t],
-        attr: {
-          type: "button",
-          "aria-pressed": active ? "true" : "false",
-        },
-      });
-      chip.addEventListener("click", () => {
-        if (this.visibleTypes.has(t)) {
-          // Refuse to deselect the last remaining type — leaving zero means
-          // "show nothing", which is never what the user wants and is
-          // indistinguishable from an empty ledger. Clicking the only-active
-          // chip instead resets to all types on, matching the typical
-          // pill-group convention.
-          if (this.visibleTypes.size === 1) {
-            this.visibleTypes = new Set(["topic", "extract", "item"]);
-          } else {
-            this.visibleTypes.delete(t);
-          }
-        } else {
-          this.visibleTypes.add(t);
-        }
-        void this.render();
-      });
+    if (activeFilterCount > 0) {
+      const chips = container.createDiv({ cls: "ir-collection-filter-chips" });
+      const addChip = (label: string, remove: () => void) => {
+        const chip = chips.createEl("button", { cls: "ir-collection-filter-chip", text: `${label} ×` });
+        chip.onclick = () => { remove(); void this.render(); };
+      };
+      for (const type of ["topic", "extract", "item"] as const) {
+        if (!this.visibleTypes.has(type)) addChip(`No ${type === "item" ? "cloze items" : `${type}s`}`,
+          () => this.visibleTypes.add(type));
+      }
+      for (const state of ["due", "future", "unscheduled"] as const) {
+        if (!this.visibleStates.has(state)) addChip(`No ${state}`, () => this.visibleStates.add(state));
+      }
+      if (this.showDismissed) addChip("Dismissed", () => { this.showDismissed = false; });
     }
 
     const body = container.createDiv({ cls: "ir-tree-body" });
-
-    if (this.resumeReading) {
-      await this.renderRecentReadingSection(body);
-    }
 
     let state;
     try {
@@ -540,9 +525,14 @@ export class IrTreeView extends ItemView {
     const query = queryRaw.toLowerCase();
     const hasTextFilter = queryRaw.length > 0;
     const hasTypeFilter = this.visibleTypes.size < 3;
-    if (hasTextFilter || hasTypeFilter) {
+    const hasStateFilter = this.visibleStates.size < 3 || !this.showDismissed;
+    if (hasTextFilter || hasTypeFilter || hasStateFilter) {
       roots = filterTreeByPredicate(roots, (node) => {
         if (!this.visibleTypes.has(node.type)) return false;
+        if (node.element.dismissed) return this.showDismissed;
+        const due = dueMsOf(node.element);
+        const state = !Number.isFinite(due) ? "unscheduled" : due <= Date.now() ? "due" : "future";
+        if (!this.visibleStates.has(state)) return false;
         if (!hasTextFilter) return true;
         return this.rowLabel(node.element).toLowerCase().includes(query);
       });
@@ -565,7 +555,7 @@ export class IrTreeView extends ItemView {
       this.renderSelectionToolbar(body, state);
     }
 
-    if (this.commitReparent) {
+    if (this.displayMode === "sources" && this.commitReparent) {
       const dropRoot = body.createDiv({ cls: "ir-tree-drop-root" });
       dropRoot.setText("Drop here to make a root element");
       dropRoot.addEventListener("dragover", (e) => {
@@ -705,94 +695,158 @@ export class IrTreeView extends ItemView {
     return `${Math.floor(dt / day / 30)}mo ago`;
   }
 
-  /**
-   * Render the "Resume reading" header + a row per recent bookmark above
-   * the main tree contents. Only surfaces bookmarks whose target element
-   * still exists in the ledger AND is still a reading element — a stale
-   * bookmark for a deleted topic, or one for a now-converted cloze item,
-   * is silently dropped (and never offered as a click target) rather
-   * than confronting the user with a broken row.
-   *
-   * Caps at 5 rows: the list is for "did I have something open" recall,
-   * not for browsing every bookmark ever set. A future "Show all" affordance
-   * is the right escape hatch if the cap becomes limiting.
-   *
-   * Falls through silently when there are no usable bookmarks; we'd
-   * rather collapse the area than show "Resume reading (0)" on first
-   * launch.
-   */
-  private async renderRecentReadingSection(parent: HTMLElement): Promise<void> {
-    let bookmarks;
-    let state;
+  private showCollectionMenu(event: MouseEvent): void {
+    const menu = new Menu();
+    menu.addItem((item) => item
+      .setTitle(this.showDismissed ? "Hide dismissed" : "Show dismissed")
+      .setIcon(this.showDismissed ? "eye-off" : "eye")
+      .onClick(() => {
+        this.showDismissed = !this.showDismissed;
+        void this.render();
+      }));
+    if (this.displayMode === "sources") {
+      menu.addSeparator();
+      menu.addItem((item) => item.setTitle("Expand all").setIcon("chevrons-down-up")
+        .onClick(() => {
+          this.collapsed.clear();
+          void this.render();
+        }));
+      menu.addItem((item) => item.setTitle("Collapse all").setIcon("chevrons-up-down")
+        .onClick(() => {
+          for (const id of this.lastNodeIds) this.collapsed.add(id);
+          void this.render();
+        }));
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  private showFiltersMenu(event: MouseEvent): void {
+    if (Platform.isMobile) {
+      this.showFiltersSheet(event.currentTarget as HTMLElement | null);
+      return;
+    }
+    const menu = new Menu();
+    const types: Array<[IrType, string]> = [
+      ["topic", "Topics"], ["extract", "Extracts"], ["item", "Cloze items"],
+    ];
+    for (const [type, label] of types) {
+      menu.addItem((item) => item.setTitle(label).setChecked(this.visibleTypes.has(type))
+        .onClick(() => {
+          if (this.visibleTypes.has(type) && this.visibleTypes.size > 1) this.visibleTypes.delete(type);
+          else this.visibleTypes.add(type);
+          void this.render();
+        }));
+    }
+    menu.addSeparator();
+    for (const state of ["due", "future", "unscheduled"] as const) {
+      const label = state[0].toUpperCase() + state.slice(1);
+      menu.addItem((item) => item.setTitle(label).setChecked(this.visibleStates.has(state))
+        .onClick(() => {
+          if (this.visibleStates.has(state) && this.visibleStates.size > 1) this.visibleStates.delete(state);
+          else this.visibleStates.add(state);
+          void this.render();
+        }));
+    }
+    menu.addItem((item) => item.setTitle("Dismissed").setChecked(this.showDismissed)
+      .onClick(() => { this.showDismissed = !this.showDismissed; void this.render(); }));
+    menu.addSeparator();
+    menu.addItem((item) => item.setTitle("Reset filters").setIcon("rotate-ccw").onClick(() => {
+      this.visibleTypes = new Set(["topic", "extract", "item"]);
+      this.visibleStates = new Set(["due", "future", "unscheduled"]);
+      this.showDismissed = false;
+      void this.render();
+    }));
+    menu.showAtMouseEvent(event);
+  }
+
+  private async showRecentBookmarks(event: MouseEvent): Promise<void> {
+    if (Platform.isMobile) {
+      await this.showBookmarksSheet(event.currentTarget as HTMLElement | null);
+      return;
+    }
+    const menu = new Menu();
     try {
-      [bookmarks, state] = await Promise.all([
+      const [bookmarks, state] = await Promise.all([
         this.ledger.loadBookmarks(),
         this.ledger.load(),
       ]);
-    } catch (err) {
-      console.error("Incremental Reading: recent-reading load failed", err);
-      return;
+      let count = 0;
+      const now = Date.now();
+      for (const bookmark of recentBookmarks(bookmarks)) {
+        const element = state.elements.get(bookmark.elementId as ElementId);
+        if (!element || element.dismissed ||
+          (element.type !== "topic" && element.type !== "extract")) continue;
+        menu.addItem((item) => item
+          .setTitle(`${labelFor(element)} · ${this.relativeTime(bookmark.updatedAt, now)}`)
+          .setIcon(ICONS[element.type] ?? "bookmark")
+          .onClick(() => void this.resumeReading?.(element.id)));
+        count += 1;
+        if (count >= 5) break;
+      }
+      if (count === 0) {
+        menu.addItem((item) => item.setTitle("No recent bookmarks").setDisabled(true));
+      }
+    } catch (error) {
+      console.error("Incremental Reading: recent bookmark load failed", error);
+      menu.addItem((item) => item.setTitle("Could not load bookmarks").setDisabled(true));
     }
+    menu.showAtMouseEvent(event);
+  }
 
-    type Resumable = { bookmark: Bookmark; element: IrElement };
-    const resumable: Resumable[] = [];
-    for (const bm of recentBookmarks(bookmarks)) {
-      const el = state.elements.get(bm.elementId as ElementId);
-      if (!el) continue;
-      if (el.type !== "topic" && el.type !== "extract") continue;
-      if (el.dismissed) continue;
-      resumable.push({ bookmark: bm, element: el });
-      if (resumable.length >= 5) break;
+  private openSheet(title: string, restoreFocus?: HTMLElement | null): HTMLElement {
+    this.contentEl.querySelector(".ir-adaptive-sheet-backdrop")?.remove();
+    const backdrop = this.contentEl.createDiv({ cls: "ir-adaptive-sheet-backdrop" });
+    const sheet = backdrop.createDiv({ cls: "ir-adaptive-sheet" });
+    sheet.setAttr("role", "dialog");
+    sheet.setAttr("aria-modal", "true");
+    const header = sheet.createDiv({ cls: "ir-adaptive-sheet-header" });
+    header.createEl("h3", { text: title });
+    const close = () => { backdrop.remove(); restoreFocus?.focus(); };
+    header.createEl("button", { text: "Done", type: "button" }).onclick = close;
+    backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
+    sheet.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+    return sheet;
+  }
+
+  private showFiltersSheet(trigger: HTMLElement | null): void {
+    const sheet = this.openSheet("Filters", trigger);
+    const addToggle = (label: string, checked: boolean, toggle: () => void) => {
+      const button = sheet.createEl("button", { cls: "ir-sheet-option", type: "button", text: label });
+      button.setAttr("aria-pressed", String(checked));
+      button.addClass(checked ? "is-active" : "");
+      button.onclick = () => { toggle(); void this.render(); };
+    };
+    for (const [type, label] of [["topic", "Topics"], ["extract", "Extracts"], ["item", "Cloze items"]] as const) {
+      addToggle(label, this.visibleTypes.has(type), () => {
+        if (this.visibleTypes.has(type) && this.visibleTypes.size > 1) this.visibleTypes.delete(type);
+        else this.visibleTypes.add(type);
+      });
     }
-    if (resumable.length === 0) return;
+    for (const state of ["due", "future", "unscheduled"] as const) {
+      addToggle(state[0].toUpperCase() + state.slice(1), this.visibleStates.has(state), () => {
+        if (this.visibleStates.has(state) && this.visibleStates.size > 1) this.visibleStates.delete(state);
+        else this.visibleStates.add(state);
+      });
+    }
+    addToggle("Dismissed", this.showDismissed, () => { this.showDismissed = !this.showDismissed; });
+  }
 
-    const section = parent.createDiv({ cls: "ir-tree-recent-reading" });
-    const header = section.createDiv({ cls: "ir-tree-recent-reading-header" });
-    const toggle = header.createSpan({
-      cls: "ir-tree-recent-reading-toggle",
-    });
-    setIcon(
-      toggle,
-      this.recentReadingCollapsed ? "chevron-right" : "chevron-down",
-    );
-    header.createSpan({
-      cls: "ir-tree-recent-reading-title",
-      text: `Resume reading (${resumable.length})`,
-    });
-    header.addEventListener("click", () => {
-      this.recentReadingCollapsed = !this.recentReadingCollapsed;
-      void this.render();
-    });
-
-    if (this.recentReadingCollapsed) return;
-
-    const list = section.createDiv({ cls: "ir-tree-recent-reading-list" });
+  private async showBookmarksSheet(trigger: HTMLElement | null): Promise<void> {
+    const sheet = this.openSheet("Recent bookmarks", trigger);
+    const [bookmarks, state] = await Promise.all([this.ledger.loadBookmarks(), this.ledger.load()]);
+    let count = 0;
     const now = Date.now();
-    for (const { bookmark, element } of resumable) {
-      const row = list.createDiv({ cls: "ir-tree-recent-reading-row" });
-      row.setAttribute("role", "button");
-      row.setAttribute("tabindex", "0");
-      const titleEl = row.createSpan({
-        cls: "ir-tree-recent-reading-row-title",
-        text: labelFor(element),
+    for (const bookmark of recentBookmarks(bookmarks)) {
+      const element = state.elements.get(bookmark.elementId as ElementId);
+      if (!element || element.dismissed || (element.type !== "topic" && element.type !== "extract")) continue;
+      const button = sheet.createEl("button", {
+        cls: "ir-sheet-option",
+        text: `${this.rowLabel(element)} · ${this.relativeTime(bookmark.updatedAt, now)}`,
       });
-      titleEl.setAttribute("title", labelFor(element));
-      row.createSpan({
-        cls: "ir-tree-recent-reading-row-meta",
-        text: this.relativeTime(bookmark.updatedAt, now),
-      });
-      const onClick = (): void => {
-        if (!this.resumeReading) return;
-        void this.resumeReading(element.id);
-      };
-      row.addEventListener("click", onClick);
-      row.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick();
-        }
-      });
+      button.onclick = () => void this.resumeReading?.(element.id);
+      if (++count >= 5) break;
     }
+    if (count === 0) sheet.createDiv({ cls: "ir-sheet-empty", text: "No recent bookmarks" });
   }
 
   /**
@@ -1213,73 +1267,116 @@ export class IrTreeView extends ItemView {
       text: `${els.length} selected`,
     });
     const actions = bar.createDiv({ cls: "ir-tree-selection-bar-actions" });
-
-    if (this.commitDismiss && activeCount > 0) {
-      const btn = actions.createEl("button", {
-        cls: "ir-tree-selection-bar-btn",
-        text: activeCount === els.length
-          ? "Dismiss"
-          : `Dismiss ${activeCount}`,
-      });
-      btn.addEventListener("click", () => void this.bulkDismiss(true, ids));
-    }
-    if (this.commitDismiss && dismissedCount > 0) {
-      const btn = actions.createEl("button", {
-        cls: "ir-tree-selection-bar-btn",
-        text: dismissedCount === els.length
-          ? "Restore"
-          : `Restore ${dismissedCount}`,
-      });
-      btn.addEventListener("click", () => void this.bulkDismiss(false, ids));
-    }
-    if (this.commitPostpone && activeCount > 0) {
-      const btn = actions.createEl("button", {
-        cls: "ir-tree-selection-bar-btn",
-        text: "Postpone\u2026",
-      });
-      btn.addEventListener("click", (e) => {
-        // Reuse the per-row postpone increments so single-row and bulk
-        // mental models match. Anchor the popup to the click event so the
-        // dropdown lands under the button on every screen size.
-        const menu = new Menu();
-        for (const days of [1, 3, 7, 14, 30]) {
-          const label = days === 1 ? "1 day" : `${days} days`;
-          menu.addItem((item) =>
-            item
-              .setTitle(`Postpone ${label}`)
-              .setIcon("clock")
-              .onClick(() => void this.bulkPostpone(days, ids)),
-          );
-        }
-        menu.showAtMouseEvent(e);
-      });
-    }
-    if (this.commitReparent) {
-      const btn = actions.createEl("button", {
-        cls: "ir-tree-selection-bar-btn",
-        text: "Move\u2026",
-      });
-      btn.addEventListener("click", () => {
+    const move = actions.createEl("button", { cls: "ir-tree-selection-bar-btn", text: "Move" });
+    move.onclick = () => {
+      if (this.displayMode === "priority" && this.commitPriorityPlan) {
+        this.showBulkMoveEditor(move, ids);
+      } else if (this.commitReparent) {
         this.moveSourceIds = ids.slice();
         void this.render();
-      });
+      }
+    };
+    if (this.displayMode === "priority" && this.commitPriorityPlan && ids.length > 1) {
+      const distribute = actions.createEl("button", { cls: "ir-tree-selection-bar-btn", text: "Distribute" });
+      distribute.onclick = (event) => {
+        const menu = new Menu();
+        for (const [operation, label] of [["spread", "Spread evenly"], ["adjust", "Preserve spacing"]] as const) {
+          menu.addItem((item) => item.setTitle(label).onClick(() =>
+            this.showDistributionEditor(distribute, ids, operation, label)));
+        }
+        menu.showAtMouseEvent(event);
+      };
     }
-    if (this.commitDelete) {
-      const btn = actions.createEl("button", {
-        cls: "ir-tree-selection-bar-btn mod-warning",
-        text: "Delete",
-      });
-      btn.addEventListener("click", () => void this.bulkDelete(ids));
-    }
-    const clear = actions.createEl("button", {
-      cls: "ir-tree-selection-bar-btn",
-      text: "Clear",
-    });
-    clear.addEventListener("click", () => {
-      this.selectedIds.clear();
-      this.selectionAnchorId = null;
-      void this.render();
-    });
+    const more = actions.createEl("button", { cls: "ir-tree-selection-bar-btn", text: "…",
+      attr: { "aria-label": "More selection actions" } });
+    more.onclick = (event) => {
+      const menu = new Menu();
+      if (this.commitDismiss && activeCount > 0) menu.addItem((item) => item.setTitle("Dismiss").setIcon("eye-off")
+        .onClick(() => void this.bulkDismiss(true, ids)));
+      if (this.commitDismiss && dismissedCount > 0) menu.addItem((item) => item.setTitle("Restore").setIcon("eye")
+        .onClick(() => void this.bulkDismiss(false, ids)));
+      if (this.commitPostpone && activeCount > 0) {
+        for (const days of [1, 3, 7, 14, 30]) menu.addItem((item) => item
+          .setTitle(`Postpone ${days} day${days === 1 ? "" : "s"}`).setIcon("clock")
+          .onClick(() => void this.bulkPostpone(days, ids)));
+      }
+      if (this.commitDelete) {
+        menu.addSeparator();
+        menu.addItem((item) => item.setTitle("Delete selected…").setIcon("trash-2")
+          .onClick(() => void this.bulkDelete(ids)));
+      }
+      menu.addSeparator();
+      menu.addItem((item) => item.setTitle("Clear selection").onClick(() => {
+        this.selectedIds.clear(); this.selectionAnchorId = null; void this.render();
+      }));
+      menu.showAtMouseEvent(event);
+    };
+  }
+
+  private createAdaptiveSurface(trigger: HTMLElement, title: string): { surface: HTMLElement; close: () => void } {
+    const surface = Platform.isMobile
+      ? this.openSheet(title, trigger)
+      : this.contentEl.createDiv({ cls: "ir-adaptive-popover ir-bulk-preview" });
+    if (!Platform.isMobile) surface.createEl("h3", { text: title });
+    const close = () => { surface.remove(); trigger.focus(); };
+    return { surface, close };
+  }
+
+  private showBulkMoveEditor(trigger: HTMLElement, ids: ElementId[]): void {
+    const { surface, close } = this.createAdaptiveSurface(trigger, `Move ${ids.length} elements`);
+    const field = surface.createEl("label", { cls: "ir-priority-field" });
+    field.createSpan({ text: "Position" });
+    const input = field.createEl("input", { type: "number" });
+    input.min = "1";
+    input.max = String(this.elementsById.size);
+    input.value = "1";
+    const preview = surface.createDiv({ cls: "ir-bulk-preview-summary" });
+    let plan = planBlockInsertion(legacyPriorityOrder(this.elementsById.values()), ids, 1);
+    const render = () => {
+      plan = planBlockInsertion(legacyPriorityOrder(this.elementsById.values()), ids, Number(input.value));
+      const first = plan.finalOrder.indexOf(plan.selectedIds[0]);
+      preview.setText(`${plan.selectedIds.length} elements · positions ${first + 1}–${first + plan.selectedIds.length}`);
+    };
+    input.oninput = render;
+    const actions = surface.createDiv({ cls: "ir-priority-actions" });
+    actions.createEl("button", { text: "Move", cls: "mod-cta" }).onclick = () => {
+      close();
+      void this.commitPriorityPlan!(plan);
+    };
+    actions.createEl("button", { text: "Cancel" }).onclick = close;
+    render();
+    input.focus();
+  }
+
+  private showDistributionEditor(
+    trigger: HTMLElement,
+    ids: ElementId[],
+    operation: "spread" | "adjust",
+    label: string,
+  ): void {
+    const { surface, close } = this.createAdaptiveSurface(trigger, label);
+    const range = surface.createDiv({ cls: "ir-bulk-range" });
+    const start = range.createEl("input", { type: "number", attr: { "aria-label": "Start percentage" } });
+    const end = range.createEl("input", { type: "number", attr: { "aria-label": "End percentage" } });
+    start.value = "0"; end.value = "100"; start.min = end.min = "0"; start.max = end.max = "100";
+    const preview = surface.createDiv({ cls: "ir-bulk-preview-summary" });
+    let plan: PriorityBatchPlan;
+    const render = () => {
+      const order = legacyPriorityOrder(this.elementsById.values());
+      plan = operation === "spread"
+        ? planSpread(order, ids, Number(start.value), Number(end.value))
+        : planAdjust(order, ids, Number(start.value), Number(end.value));
+      const positions = plan.selectedIds.map((id) => plan.finalOrder.indexOf(id) + 1);
+      preview.setText(`${plan.selectedIds.length} elements · positions ${Math.min(...positions)}–${Math.max(...positions)} · ${start.value}% to ${end.value}%`);
+    };
+    start.oninput = end.oninput = render;
+    const actions = surface.createDiv({ cls: "ir-priority-actions" });
+    actions.createEl("button", { text: "Apply", cls: "mod-cta" }).onclick = () => {
+      close();
+      void this.commitPriorityPlan!(plan);
+    };
+    actions.createEl("button", { text: "Cancel" }).onclick = close;
+    render();
   }
 
   /**
@@ -1580,7 +1677,11 @@ export class IrTreeView extends ItemView {
   private renderNode(parent: HTMLElement, node: TreeNode, depth = 1): void {
     const li = parent.createEl("li", { cls: "ir-tree-node" });
 
-    const row = li.createDiv({ cls: "ir-tree-row" });
+    const row = li.createDiv({
+      cls: this.displayMode === "priority"
+        ? "ir-tree-row ir-collection-row ir-collection-row--priority"
+        : "ir-tree-row ir-collection-row ir-collection-row--sources",
+    });
     row.setAttribute("data-ir-tree-id", node.id);
     row.setAttribute("role", "treeitem");
     row.setAttribute("tabindex", this.focusedId === node.id ? "0" : "-1");
@@ -1597,7 +1698,7 @@ export class IrTreeView extends ItemView {
     if (this.selectedIds.has(node.id)) {
       row.addClass("ir-tree-row--selected");
     }
-    const hasChildren = node.children.length > 0;
+    const hasChildren = this.displayMode === "sources" && node.children.length > 0;
     const isCollapsed = this.rowIsCollapsed(node.id);
     if (hasChildren) {
       row.setAttribute("aria-expanded", String(!isCollapsed));
@@ -1616,24 +1717,76 @@ export class IrTreeView extends ItemView {
         else this.collapsed.add(node.id);
         void this.render();
       };
-    } else {
+    } else if (this.displayMode === "sources") {
       // Spacer keeps leaf rows aligned with their non-leaf siblings.
       row.createSpan({ cls: "ir-tree-toggle-empty" });
     }
 
-    const iconSpan = row.createSpan({ cls: "ir-tree-icon" });
-    setIcon(iconSpan, ICONS[node.type] ?? "circle");
-
     const label = this.rowLabel(node.element);
-    const titleEl = row.createSpan({
-      cls: "ir-tree-title",
-      text: label,
-    });
     const titleTarget =
       node.element.notePath ?? node.element.anchor?.sourcePath ?? null;
-    if (titleTarget) {
-      titleEl.addClass("ir-tree-link");
+    let titleEl: HTMLElement;
+    let priWrap: HTMLElement;
+    if (this.displayMode === "priority") {
+      const rank = [...this.elementsById.values()]
+        .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+        .findIndex((element) => element.id === node.id) + 1;
+      const content = row.createDiv({ cls: "ir-collection-row-content" });
+      const primary = content.createDiv({ cls: "ir-collection-row-primary" });
+      priWrap = primary.createSpan({
+        cls: "ir-tree-priority-wrap ir-collection-rank",
+        text: `#${rank}`,
+        attr: {
+          "data-ir-element-id": node.id,
+          "data-ir-note-path": node.element.notePath ?? "",
+          "data-ir-priority": formatPriority(node.element.priority),
+        },
+      });
+      titleEl = primary.createSpan({ cls: "ir-tree-title", text: label });
+      primary.createSpan({
+        cls: "ir-collection-percentage",
+        text: formatPriority(node.element.priority),
+      });
+      const secondary = content.createDiv({ cls: "ir-collection-row-secondary" });
+      secondary.createSpan({ cls: "ir-collection-type", text: node.type === "item" ? "Cloze item" : node.type[0].toUpperCase() + node.type.slice(1) });
+      const due = dueMsOf(node.element);
+      secondary.createSpan({
+        cls: due <= Date.now() && !node.element.dismissed
+          ? "ir-collection-state ir-collection-state--due"
+          : "ir-collection-state",
+        text: formatScheduleState(Number.isFinite(due) ? due : undefined, node.element.dismissed, Date.now()),
+      });
+      const parents: string[] = [];
+      const seen = new Set<string>([node.id]);
+      let parentId = node.element.parentId;
+      while (parentId && !seen.has(parentId)) {
+        seen.add(parentId);
+        const parentElement = this.elementsById.get(parentId);
+        if (!parentElement) break;
+        parents.unshift(this.rowLabel(parentElement));
+        parentId = parentElement.parentId;
+      }
+      if (parents.length > 0) {
+        secondary.createSpan({ cls: "ir-collection-breadcrumb", text: parents.join(" › ") });
+      }
+    } else {
+      const iconSpan = row.createSpan({ cls: "ir-tree-icon" });
+      setIcon(iconSpan, ICONS[node.type] ?? "circle");
+      titleEl = row.createSpan({ cls: "ir-tree-title", text: label });
+      const rank = [...this.elementsById.values()]
+        .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+        .findIndex((element) => element.id === node.id) + 1;
+      priWrap = row.createSpan({
+        cls: "ir-tree-priority-wrap ir-collection-source-rank",
+        text: `#${rank}`,
+        attr: {
+          "data-ir-element-id": node.id,
+          "data-ir-note-path": node.element.notePath ?? "",
+          "data-ir-priority": formatPriority(node.element.priority),
+        },
+      });
     }
+    if (titleTarget) titleEl.addClass("ir-tree-link");
     if (this.currentElementId && node.id === this.currentElementId) {
       row.createSpan({ cls: "ir-tree-reviewing", text: "reviewing" });
     }
@@ -1659,23 +1812,11 @@ export class IrTreeView extends ItemView {
     const abs = notePath ? this.app.vault.getAbstractFileByPath(notePath) : null;
     const file = abs instanceof TFile ? abs : null;
 
-    const priWrap = row.createSpan({
-      cls: "ir-tree-priority-wrap",
-      attr: {
-        "data-ir-element-id": node.id,
-        "data-ir-note-path": notePath,
-        "data-ir-priority": formatPriority(node.element.priority),
-      },
-    });
-    const priEl = priWrap.createSpan({
-      cls: "ir-tree-priority",
-      text: `p${formatPriority(node.element.priority)}`,
-    });
     if (this.commitPriority) {
-      priEl.addClass("ir-tree-priority--clickable");
-      priEl.setAttribute("role", "button");
-      priEl.setAttribute("tabindex", "0");
-      priEl.setAttribute("aria-label", "Edit IR priority");
+      priWrap.addClass("ir-tree-priority--clickable");
+      priWrap.setAttribute("role", "button");
+      priWrap.setAttribute("tabindex", "0");
+      priWrap.setAttribute("aria-label", `Move ${label} in collection priority`);
       const startEdit = (ev: Event) => {
         ev.stopPropagation();
         this.beginPriorityEdit(
@@ -1685,8 +1826,8 @@ export class IrTreeView extends ItemView {
           node.element.priority,
         );
       };
-      priEl.addEventListener("click", startEdit);
-      priEl.addEventListener("keydown", (e: KeyboardEvent) => {
+      priWrap.addEventListener("click", startEdit);
+      priWrap.addEventListener("keydown", (e: KeyboardEvent) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           startEdit(e);
@@ -1695,7 +1836,7 @@ export class IrTreeView extends ItemView {
     }
 
     const dueMs = dueMsOf(node.element);
-    if (Number.isFinite(dueMs)) {
+    if (this.displayMode === "sources" && Number.isFinite(dueMs)) {
       const dueLabel = formatDueLabel(dueMs, Date.now());
       const dueEl = row.createSpan({
         cls: "ir-tree-due",
@@ -1704,10 +1845,9 @@ export class IrTreeView extends ItemView {
       if (dueMs <= Date.now()) dueEl.addClass("ir-tree-due--now");
     }
 
-    row.createSpan({
-      cls: "ir-tree-type",
-      text: node.type,
-    });
+    if (this.displayMode === "sources") {
+      row.createSpan({ cls: "ir-tree-type", text: node.type });
+    }
 
     if (node.element.anchorState === "needs-reanchor") {
       const badge = row.createSpan({ cls: "ir-tree-anchor-badge ir-tree-anchor-badge--warn" });
@@ -1785,37 +1925,54 @@ export class IrTreeView extends ItemView {
       row.addEventListener("dragend", () => {
         this.dragSourceId = null;
         this.contentEl
-          .querySelectorAll(".ir-tree-row--dragging, .ir-tree-row--drop-target")
+          .querySelectorAll(".ir-tree-row--dragging, .ir-tree-row--drop-target, .ir-tree-row--drop-before, .ir-tree-row--drop-after")
           .forEach((el) => {
             el.removeClass("ir-tree-row--dragging");
             el.removeClass("ir-tree-row--drop-target");
+            el.removeClass("ir-tree-row--drop-before");
+            el.removeClass("ir-tree-row--drop-after");
           });
       });
       row.addEventListener("dragover", (e) => {
         if (!this.dragSourceId || this.dragSourceId === node.id) return;
-        if (this.isDescendantOf(this.dragSourceId, node.id)) return;
+        if (this.displayMode === "sources" && this.isDescendantOf(this.dragSourceId, node.id)) return;
         e.preventDefault();
         if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-        row.addClass("ir-tree-row--drop-target");
+        if (this.displayMode === "priority") {
+          const before = e.clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2;
+          row.toggleClass("ir-tree-row--drop-before", before);
+          row.toggleClass("ir-tree-row--drop-after", !before);
+        } else {
+          row.addClass("ir-tree-row--drop-target");
+        }
       });
       row.addEventListener("dragleave", () => {
         row.removeClass("ir-tree-row--drop-target");
+        row.removeClass("ir-tree-row--drop-before");
+        row.removeClass("ir-tree-row--drop-after");
       });
       row.addEventListener("drop", (e) => {
         e.preventDefault();
         row.removeClass("ir-tree-row--drop-target");
+        row.removeClass("ir-tree-row--drop-before");
+        row.removeClass("ir-tree-row--drop-after");
         const sourceId = this.dragSourceId;
         if (!sourceId || sourceId === node.id) return;
-        if (this.isDescendantOf(sourceId, node.id)) return;
+        if (this.displayMode === "sources" && this.isDescendantOf(sourceId, node.id)) return;
         this.dragSourceId = null;
         void (async () => {
           try {
-            await this.commitReparent!(
-              sourceId as ElementId,
-              node.id as ElementId,
-            );
+            if (this.displayMode === "priority" && this.commitPriorityPlan) {
+              const order = legacyPriorityOrder(this.elementsById.values());
+              const target = order.indexOf(node.id as ElementId);
+              const after = e.clientY >= row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2;
+              const plan = planBlockInsertion(order, [sourceId as ElementId], target + (after ? 2 : 1));
+              await this.commitPriorityPlan(plan);
+            } else if (this.commitReparent) {
+              await this.commitReparent(sourceId as ElementId, node.id as ElementId);
+            }
           } catch (err) {
-            console.error("Incremental Reading: reparent failed", err);
+            console.error("Incremental Reading: collection move failed", err);
             new Notice("Incremental Reading: could not move element.");
           }
           void this.render();
@@ -2081,60 +2238,40 @@ export class IrTreeView extends ItemView {
     file: TFile | null,
     initial: number,
   ): void {
-    const commitFn = this.commitPriority;
-    if (!commitFn) return;
-    if (priWrap.querySelector("input")) return;
-
-    priWrap.empty();
-    const input = priWrap.createEl("input", {
-      cls: "ir-tree-priority-input",
-      type: "number",
+    if (!this.commitPriorityPreview && !this.commitPriority) return;
+    if (this.contentEl.querySelector(".ir-priority-surface")) return;
+    const surface = this.contentEl.createDiv({
+      cls: Platform.isMobile
+        ? "ir-priority-surface ir-adaptive-sheet is-mobile"
+        : "ir-priority-surface ir-adaptive-popover",
     });
-    input.min = "0";
-    input.max = "100";
-    input.step = "0.0001";
-    input.value = formatPriority(initial);
-
-    let finished = false;
-    const restore = () => {
-      void this.render();
-    };
-    const cancel = () => {
-      if (finished) return;
-      finished = true;
-      restore();
-    };
-    const commit = async () => {
-      if (finished) return;
-      finished = true;
-      const n = Number(input.value);
-      if (!Number.isFinite(n)) {
-        restore();
-        return;
-      }
-      const p = clampPriority(n);
-      try {
-        await commitFn(elementId, file, p);
-      } catch (e) {
-        console.error("Incremental Reading: tree priority commit failed", e);
-        new Notice(
-          "Incremental Reading: could not save priority. See the developer console.",
-        );
-      }
-      void this.render();
-    };
-
-    input.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        void commit();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        cancel();
-      }
+    if (!Platform.isMobile) {
+      const rect = priWrap.getBoundingClientRect();
+      const parentRect = this.contentEl.getBoundingClientRect();
+      surface.style.top = `${rect.bottom - parentRect.top + 6}px`;
+      surface.style.left = `${Math.max(8, rect.left - parentRect.left)}px`;
+    }
+    const close = () => surface.remove();
+    mountPriorityEditor(surface, {
+      targetId: elementId,
+      elements: [...this.elementsById.values()],
+      labelFor: (element) => this.rowLabel(element),
+      restoreFocus: priWrap,
+      onCancel: close,
+      onCommit: (preview) => {
+        close();
+        void (async () => {
+          try {
+            if (this.commitPriorityPreview) await this.commitPriorityPreview(preview, file);
+            else await this.commitPriority!(elementId, file, preview.intent.requestedPriority);
+          } catch (e) {
+            console.error("Incremental Reading: collection priority commit failed", e);
+            new Notice("Incremental Reading: could not save priority.");
+          }
+          void this.render();
+        })();
+      },
     });
-    input.addEventListener("blur", () => void commit());
-    window.setTimeout(() => input.focus(), 0);
   }
 
   private async openNote(

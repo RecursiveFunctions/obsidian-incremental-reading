@@ -270,3 +270,14 @@ test("buildPriorityRows is globally ordered and includes dismissed/future elemen
     ["due", "dismissed", "future"]);
   assert.deepEqual(rows[0].parentIds, [root.id]);
 });
+
+test("formatScheduleState uses concise plain-language labels", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+  const now = new Date(2026, 9, 8, 10).getTime();
+  assert.equal(m.formatScheduleState(undefined, false, now), "Unscheduled");
+  assert.equal(m.formatScheduleState(now - 1, false, now), "Due");
+  assert.equal(m.formatScheduleState(now + 60_000, false, now), "Later today");
+  assert.equal(m.formatScheduleState(new Date(2026, 9, 9, 10).getTime(), false, now), "Tomorrow");
+  assert.equal(m.formatScheduleState(now, true, now), "Dismissed");
+});

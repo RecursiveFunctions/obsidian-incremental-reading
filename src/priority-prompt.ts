@@ -30,6 +30,8 @@ export interface RichPriorityEditorOptions {
   labelFor: (element: IrElement) => string;
   onCommit: (preview: PriorityPlacementPreview) => void;
   onCancel?: () => void;
+  title?: string;
+  restoreFocus?: HTMLElement;
 }
 
 export function mountPriorityEditor(
@@ -40,22 +42,35 @@ export function mountPriorityEditor(
   const initial = target?.priority ?? 50;
   host.empty();
   host.addClass("ir-priority-editor");
-  const percent = host.createEl("input", { cls: "ir-priority-input" }) as HTMLInputElement;
+  host.setAttribute("role", "dialog");
+  host.setAttribute("aria-modal", "true");
+  host.createEl("div", {
+    cls: "ir-priority-editor-title",
+    text: options.title ?? `Move “${target ? options.labelFor(target) : "element"}”`,
+  });
+  const positionField = host.createEl("label", { cls: "ir-priority-field" });
+  positionField.createSpan({ text: "Position" });
+  const position = host.createEl("input", { cls: "ir-priority-position" }) as HTMLInputElement;
+  positionField.appendChild(position);
+  position.type = "number";
+  position.min = "1";
+  position.max = String(Math.max(1, options.elements.length));
+  const total = positionField.createSpan({ cls: "ir-priority-total" });
+  const percentField = host.createEl("label", { cls: "ir-priority-field" });
+  percentField.createSpan({ text: "Percentage" });
+  const percent = percentField.createEl("input", { cls: "ir-priority-input" }) as HTMLInputElement;
   percent.type = "number";
   percent.min = String(PRIORITY_MIN);
   percent.max = String(PRIORITY_MAX);
   percent.step = "0.0001";
   percent.value = formatPriority(initial);
-  const position = host.createEl("input", { cls: "ir-priority-position" }) as HTMLInputElement;
-  position.type = "number";
-  position.min = "1";
-  position.max = String(Math.max(1, options.elements.length));
-  const total = host.createSpan({ cls: "ir-priority-total" });
   const neighbors = host.createDiv({ cls: "ir-priority-neighbors" });
-  const search = host.createEl("input", { cls: "ir-priority-search" }) as HTMLInputElement;
+  const disclosure = host.createEl("details", { cls: "ir-priority-near" });
+  disclosure.createEl("summary", { text: "Place near another element" });
+  const search = disclosure.createEl("input", { cls: "ir-priority-search" }) as HTMLInputElement;
   search.type = "search";
-  search.placeholder = "Place near element";
-  const results = host.createDiv({ cls: "ir-priority-results" });
+  search.placeholder = "Search collection";
+  const results = disclosure.createDiv({ cls: "ir-priority-results" });
   let preview = previewPriorityPlacement(options.elements, options.targetId, initial);
   let closed = false;
   const render = () => {
@@ -74,6 +89,7 @@ export function mountPriorityEditor(
     closed = true;
     if (commit) options.onCommit(preview);
     else options.onCancel?.();
+    options.restoreFocus?.focus();
   };
   percent.addEventListener("input", render);
   position.addEventListener("input", () => {
@@ -98,19 +114,34 @@ export function mountPriorityEditor(
         position.value = String(index + 1 + (after ? 1 : 0));
         position.dispatchEvent(new Event("input"));
       };
-      row.createEl("button", { text: "Before" }).onclick = () => place(false);
-      row.createEl("button", { text: "After" }).onclick = () => place(true);
+      row.createEl("button", { text: "Place before" }).onclick = () => place(false);
+      row.createEl("button", { text: "Place after" }).onclick = () => place(true);
     }
   });
   const actions = host.createDiv({ cls: "ir-priority-actions" });
-  actions.createEl("button", { text: "Apply", cls: "mod-cta" }).onclick = () => close(true);
+  actions.createEl("button", { text: "Move", cls: "mod-cta" }).onclick = () => close(true);
   actions.createEl("button", { text: "Cancel" }).onclick = () => close(false);
   host.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && event.target !== search) close(true);
     if (event.key === "Escape") close(false);
+    if (event.key === "Tab") {
+      const focusable = Array.from(host.querySelectorAll<HTMLElement>(
+        "button, input, summary, [tabindex]:not([tabindex='-1'])",
+      )).filter((element) => !element.hasAttribute("disabled"));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
   });
   render();
-  setTimeout(() => percent.focus(), 0);
+  setTimeout(() => position.focus(), 0);
   return { cancel: () => close(false) };
 }
 

@@ -8,7 +8,7 @@ Read many sources in parallel, pull the parts worth keeping out of them, and rev
 
 Incremental reading is a method from Piotr Wozniak's [SuperMemo](https://supermemo.guru). You keep many articles in flight at once, break passages out of them as you read, and see those pieces again when they come due.
 
-SuperMemo runs on Windows and keeps your knowledge in its own format. Obsidian's existing spaced-repetition plugins are flashcard tools: they schedule cards but have no element tree, no extracts, and no priority queue. This plugin implements the reading workflow itself against plain markdown files.
+SuperMemo runs on Windows and keeps your knowledge in its own format. Obsidian's existing spaced-repetition plugins are flashcard tools: they schedule cards but have no source-aware collection, no extracts, and no priority queue. This plugin implements the reading workflow itself against plain markdown files.
 
 ## Concepts
 
@@ -89,7 +89,7 @@ That block renders as the masked image anywhere Obsidian renders markdown. In re
 
 ## Views
 
-**Element tree** (`Alt+I`) shows the source to extract to item hierarchy. Keys: `j` and `k` or arrows to move, Enter to open or jump review, `o` to open the note, `p` to edit priority inline, `d` to dismiss, `m` to postpone, Space to fold.
+**Collection** (`Alt+I`) separates global Priority order from the nested Sources view. Keys: `j` and `k` or arrows to move, Enter to open or jump review, `o` to open the note, `p` to edit priority, `d` to dismiss, `m` to postpone, Space to fold Sources.
 
 Move elements by dragging, or without a mouse: `x` picks up the focused element or the current selection, every legal destination row grows a Move here button, and `v` drops onto the focused row. The banner offers Make root, and Escape cancels. A row that would swallow its own subtree is dimmed.
 
@@ -121,7 +121,7 @@ Commands with a default binding:
 | `Alt+Shift+I` | Extract an image region from the open PDF |
 | `Alt+Shift+O` | Occlusion cards from a PDF region |
 | `Alt+O` | Occlusion cards from the open image |
-| `Alt+I` | Element tree |
+| `Alt+I` | Collection |
 | `Alt+L` | Session log |
 | `Alt+S` | Stats |
 | `Alt+H` | Help and keyboard shortcuts |
@@ -140,7 +140,7 @@ These review and tree keys belong to their panes and are fixed. They only fire w
 
 ## Mobile
 
-A floating brain button stays visible across the app, including the file explorer, and carries a badge with the number of elements due. It opens the quick actions wheel, which always has Start review and Open element tree, plus Go neural when the open note is in IR.
+A floating brain button stays visible across the app, including the file explorer, and carries a badge with the number of elements due. It opens the quick actions wheel, which always has Start review and Open Collection, plus Go neural when the open note is in IR.
 
 In review, the dock keeps the primary actions and moves the rest behind an overflow menu whose contents depend on the card: reading cards get Edit, Previous, Later today, Dismiss and Undo, an unrevealed cloze gets Previous only. Priority and A-Factor collapse into a chip you tap to edit. Swipe the card to navigate and grade; a legend explains the directions and stops appearing after three sessions.
 
@@ -180,7 +180,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the complete release history.
 
 ## Roadmap
 
-Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling and a local parameter optimizer, interleaved due review, neural sessions, priority queue and mercy postpone, the element tree with keyboard and touch reparenting, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
+Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling and a local parameter optimizer, interleaved due review, neural sessions, priority queue and mercy postpone, Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
 
 PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be extracted, and cloze is markdown-only: extract from the PDF first, then cloze the extract.
 

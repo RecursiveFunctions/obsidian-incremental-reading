@@ -62,7 +62,8 @@ import {
   type IrElement,
   type IrEventKind,
 } from "./ir/model";
-import { buildPriorityPlacement, formatPriority } from "./ir/relative-priority";
+import { buildPriorityPlacement, formatPriority, type PriorityPlacementPreview } from "./ir/relative-priority";
+import { mountPriorityEditor } from "./priority-prompt";
 import { rebuildQueueTail } from "./queue";
 import {
   effectiveItemRetention,
@@ -76,6 +77,7 @@ import {
   ancestorChain,
   labelFor,
   reviewHeadlineLabel,
+  treeRowLabel,
 } from "./ir/labels";
 import { buildExtractEvent, buildTextEditedEvent } from "./ir/extract";
 import { newElementId, newEventId, type ElementId } from "./ir/ids";
@@ -215,7 +217,7 @@ export class IrReviewView extends ItemView {
   /** Avoid showing the swipe coach Notice on every `renderCard` re-render. */
   private swipeCoachShownThisSession = false;
 
-  /** Mobile: priority / A-Factor editors collapsed behind a chip until tapped. */
+  /** Priority / schedule metadata stays collapsed behind one concise trigger. */
   private priorityMetaExpanded = false;
 
   /** Reading-position bookmarks loaded once on open, saved incrementally. */
@@ -433,7 +435,7 @@ export class IrReviewView extends ItemView {
      * the first-run path (`emptyVault`), not the nothing-due path.
      */
     private readonly getUpcoming?: () => Promise<UpcomingLoad | null>,
-    /** Reveal the IR element tree from the nothing-due panel. */
+    /** Reveal Collection from the nothing-due panel. */
     private readonly openTreeFromIdlePane?: () => void,
     /** Open the help / shortcuts panel from the first-run pane. */
     private readonly openHelpFromIdlePane?: () => void,
@@ -442,6 +444,10 @@ export class IrReviewView extends ItemView {
       id: ElementId,
       file: TFile | null,
       priority: number,
+    ) => Promise<void>,
+    private readonly commitPriorityPreview?: (
+      preview: PriorityPlacementPreview,
+      file: TFile | null,
     ) => Promise<void>,
     private readonly onSessionState?: (orderedIds: ElementId[], cursor: number) => void,
   ) {
@@ -1347,39 +1353,69 @@ export class IrReviewView extends ItemView {
 
   /** Compact priority editor; reordering is a first-class IR action. */
   private renderPriorityRow(parent: HTMLElement, slot: ReviewSlot) {
-    if (Platform.isMobile && !this.priorityMetaExpanded) {
+    if (!this.priorityMetaExpanded) {
       const chip = parent.createEl("button", {
         cls: "ir-priority-chip",
         type: "button",
       });
-      const parts = [`P ${formatPriority(slot.element.priority)}`];
+      const rank = [...this.elementsById.values()]
+        .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+        .findIndex((element) => element.id === slot.id) + 1;
+      const parts = [`#${rank} · Priority ${formatPriority(slot.element.priority)}`];
       if (this.isReading(slot) && slot.element.schedule) {
         const a = Math.round(slot.element.schedule.aFactor * 100) / 100;
-        parts.push(`A ${a}`);
+        parts.push(`A-Factor ${a}`);
       }
       chip.setText(parts.join(" · "));
-      chip.setAttr("aria-label", "Priority and A-Factor — tap to edit");
-      chip.addEventListener("click", () => {
-        this.priorityMetaExpanded = true;
-        void this.renderCard();
-      });
+      chip.setAttr("aria-label", "Edit collection priority and schedule");
+      chip.addEventListener("click", () => this.openPriorityEditor(chip, parent, slot));
       return;
     }
 
     const wrap = parent.createDiv({ cls: "ir-priority-meta" });
-    if (Platform.isMobile) {
-      wrap
-        .createEl("button", {
-          cls: "ir-priority-collapse",
-          type: "button",
-          text: "Done",
-        })
-        .addEventListener("click", () => {
-          this.priorityMetaExpanded = false;
-          void this.renderCard();
-        });
-    }
+    wrap
+      .createEl("button", {
+        cls: "ir-priority-collapse",
+        type: "button",
+        text: "Done",
+      })
+      .addEventListener("click", () => {
+        this.priorityMetaExpanded = false;
+        void this.renderCard();
+      });
     this.renderPriorityInputs(wrap, slot);
+  }
+
+  private openPriorityEditor(trigger: HTMLElement, parent: HTMLElement, slot: ReviewSlot): void {
+    const surface = parent.createDiv({
+      cls: Platform.isMobile
+        ? "ir-priority-surface ir-adaptive-sheet is-mobile"
+        : "ir-priority-surface ir-adaptive-popover",
+    });
+    mountPriorityEditor(surface, {
+      targetId: slot.id,
+      elements: [...this.elementsById.values()],
+      labelFor: (element) => treeRowLabel(element, true),
+      restoreFocus: trigger,
+      onCancel: () => surface.remove(),
+      onCommit: (preview) => {
+        surface.remove();
+        void (async () => {
+          if (this.commitPriorityPreview) {
+            await this.commitPriorityPreview(preview, slot.file);
+          } else if (this.commitPriority) {
+            await this.commitPriority(slot.id, slot.file, preview.intent.requestedPriority);
+          }
+          slot.element = { ...slot.element, priority: preview.intent.requestedPriority };
+          await this.renderCard();
+        })();
+      },
+    });
+    if (this.isReading(slot) && slot.element.schedule) {
+      const schedule = surface.createEl("details", { cls: "ir-priority-schedule" });
+      schedule.createEl("summary", { text: "Schedule" });
+      this.renderAFactorRow(schedule, slot);
+    }
   }
 
   private renderPriorityInputs(parent: HTMLElement, slot: ReviewSlot) {
@@ -1414,6 +1450,7 @@ export class IrReviewView extends ItemView {
     });
 
     if (this.isReading(slot) && slot.element.schedule) {
+      parent.createEl("div", { cls: "ir-priority-section-title", text: "Schedule" });
       this.renderAFactorRow(parent, slot);
     }
   }
@@ -2652,7 +2689,7 @@ export class IrReviewView extends ItemView {
 
     const row = scroll.createDiv({ cls: "ir-review-buttons" });
     row
-      .createEl("button", { text: "Open element tree (Alt+I)", cls: "mod-cta" })
+      .createEl("button", { text: "Open Collection (Alt+I)", cls: "mod-cta" })
       .addEventListener("click", () => this.openTreeFromIdlePane?.());
     row
       .createEl("button", { text: "Close" })

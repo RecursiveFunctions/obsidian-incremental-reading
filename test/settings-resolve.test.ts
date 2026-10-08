@@ -55,3 +55,9 @@ test("resolveSettings deep-merges and clamps partial grouped settings", () => {
   assert.equal(settings.prioritySchedulingPolicy.itemHighRetention, 0.99);
   assert.equal(settings.prioritySchedulingPolicy.itemLowRetention, 0.85);
 });
+
+test("resolveSettings defaults Collection to Priority and migrates hierarchy to Sources", () => {
+  assert.equal(resolveSettings(null).treeDisplayMode, "priority");
+  assert.equal(resolveSettings({ treeDisplayMode: "hierarchy" } as never).treeDisplayMode, "sources");
+  assert.equal(resolveSettings({ treeDisplayMode: "sources" } as never).treeDisplayMode, "sources");
+});

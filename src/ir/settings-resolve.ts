@@ -91,6 +91,7 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
     largeBatchThreshold: Math.round(finite(guidance.largeBatchThreshold, 10, 1, 100_000)),
   };
   result.notices = { ...defaults.notices, ...record(saved.notices) } as IrSettings["notices"];
-  result.treeDisplayMode = saved.treeDisplayMode === "priority" ? "priority" : "hierarchy";
+  const rawMode = saved.treeDisplayMode as string | undefined;
+  result.treeDisplayMode = rawMode === "sources" || rawMode === "hierarchy" ? "sources" : "priority";
   return result;
 }

@@ -13,10 +13,31 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
+export type CollectionMode = "priority" | "sources";
+
+export function formatScheduleState(
+  dueMs: number | undefined,
+  dismissed: boolean,
+  now: number,
+): string {
+  if (dismissed) return "Dismissed";
+  if (dueMs === undefined || !Number.isFinite(dueMs)) return "Unscheduled";
+  if (dueMs <= now) return "Due";
+  const todayEnd = new Date(now);
+  todayEnd.setHours(23, 59, 59, 999);
+  if (dueMs <= todayEnd.getTime()) return "Later today";
+  const tomorrowEnd = new Date(now + 86_400_000);
+  tomorrowEnd.setHours(23, 59, 59, 999);
+  if (dueMs <= tomorrowEnd.getTime()) return "Tomorrow";
+  const days = Math.max(2, Math.round((dueMs - now) / 86_400_000));
+  return `In ${days} days`;
+}
+
 export interface PriorityTreeRow {
   element: IrElement;
   position: number;
   state: "dismissed" | "due" | "future" | "unscheduled";
+  stateLabel: string;
   parentIds: ElementId[];
 }
 
@@ -40,7 +61,8 @@ export function buildPriorityRows(
     const state = element.dismissed ? "dismissed"
       : due === undefined ? "unscheduled"
       : due <= now ? "due" : "future";
-    return { element, position: index + 1, state, parentIds };
+    const stateLabel = formatScheduleState(due, element.dismissed, now);
+    return { element, position: index + 1, state, stateLabel, parentIds };
   });
 }
 
