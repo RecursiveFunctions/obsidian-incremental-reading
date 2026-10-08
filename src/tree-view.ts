@@ -32,6 +32,7 @@ import type { IrElement, IrType } from "./ir/model";
 import {
   formatPriority,
   legacyPriorityOrder,
+  planAdjacentBlockMove,
   planAdjust,
   planBlockInsertion,
   planSpread,
@@ -1291,6 +1292,17 @@ export class IrTreeView extends ItemView {
       attr: { "aria-label": "More selection actions" } });
     more.onclick = (event) => {
       const menu = new Menu();
+      if (this.commitPriorityPlan) {
+        menu.addItem((item) => item.setTitle("Increase priority").setIcon("arrow-up")
+          .onClick(() => void this.commitPriorityPlan!(planAdjacentBlockMove(
+            legacyPriorityOrder(this.elementsById.values()), ids, -1,
+          ))));
+        menu.addItem((item) => item.setTitle("Decrease priority").setIcon("arrow-down")
+          .onClick(() => void this.commitPriorityPlan!(planAdjacentBlockMove(
+            legacyPriorityOrder(this.elementsById.values()), ids, 1,
+          ))));
+        menu.addSeparator();
+      }
       if (this.commitDismiss && activeCount > 0) menu.addItem((item) => item.setTitle("Dismiss").setIcon("eye-off")
         .onClick(() => void this.bulkDismiss(true, ids)));
       if (this.commitDismiss && dismissedCount > 0) menu.addItem((item) => item.setTitle("Restore").setIcon("eye")
@@ -1727,6 +1739,7 @@ export class IrTreeView extends ItemView {
       node.element.notePath ?? node.element.anchor?.sourcePath ?? null;
     let titleEl: HTMLElement;
     let priWrap: HTMLElement;
+    let percentage: HTMLElement | null = null;
     if (this.displayMode === "priority") {
       const rank = [...this.elementsById.values()]
         .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
@@ -1743,7 +1756,7 @@ export class IrTreeView extends ItemView {
         },
       });
       titleEl = primary.createSpan({ cls: "ir-tree-title", text: label });
-      primary.createSpan({
+      percentage = primary.createSpan({
         cls: "ir-collection-percentage",
         text: formatPriority(node.element.priority),
       });
@@ -1833,6 +1846,19 @@ export class IrTreeView extends ItemView {
           startEdit(e);
         }
       });
+      if (this.displayMode === "priority") {
+        percentage?.addClass("ir-tree-priority--clickable");
+        percentage?.setAttribute("role", "button");
+        percentage?.setAttribute("tabindex", "0");
+        percentage?.setAttribute("aria-label", `Move ${label} in collection priority`);
+        percentage?.addEventListener("click", startEdit);
+        percentage?.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            startEdit(e);
+          }
+        });
+      }
     }
 
     const dueMs = dueMsOf(node.element);
