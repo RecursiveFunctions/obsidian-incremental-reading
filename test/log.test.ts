@@ -183,6 +183,19 @@ test("a later grade overwrites a prior mercy-postpone (lamport order wins)", () 
   assert.equal(s.elements.get(id)?.card?.due, 8000);
 });
 
+test("manual reschedule replaces interval state without fabricating a review", () => {
+  const item = newElementId();
+  const replacement = { ...card(9000), scheduledDays: 12, reps: 4 };
+  const state = fold([
+    ev({ lamport: 1, kind: "element-created", target: item,
+      payload: { element: newElement({ id: item, type: "item", priority: 50, now: 0 }) } }),
+    ev({ lamport: 2, kind: "graded", target: item, payload: { card: card(1000) } }),
+    ev({ lamport: 3, kind: "mercy-postponed", target: item,
+      payload: { newDue: 9000, operation: "manual-reschedule", card: replacement } }),
+  ]);
+  assert.deepEqual(state.elements.get(item)?.card, replacement);
+});
+
 test("graded sets the item card; topic-advanced sets the read schedule", () => {
   const item = newElementId();
   const top = newElementId();

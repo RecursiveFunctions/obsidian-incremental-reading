@@ -4,6 +4,13 @@
  */
 
 export interface IrSettings {
+  schemaVersion: 2;
+  sortingPolicy: SortingPolicySettings;
+  autoPostponePolicy: AutoPostponePolicy;
+  prioritySchedulingPolicy: PrioritySchedulingPolicy;
+  reprioritizationPolicy: ReprioritizationPolicy;
+  notices: NoticeAcknowledgements;
+  treeDisplayMode: "hierarchy" | "priority";
   /** Priority assigned to a note when it's first marked as a topic. */
   defaultPriority: number;
   /** Folder new extracts go in. Empty means beside their source note. */
@@ -81,6 +88,52 @@ export interface IrSettings {
   fsrsPreviousParams?: FittedParams | null;
 }
 
+export interface SortingPolicySettings {
+  version: 1;
+  preset: "strict" | "balanced" | "discovery" | "custom";
+  traversal: "mixed" | "priority";
+  readingProportion: number;
+  itemJitter: number;
+  readingJitter: number;
+  autoSort: boolean;
+}
+
+export interface AutoPostponePolicy {
+  version: 1;
+  enabled: boolean;
+  keepOverdue: number;
+  priorityCutoff: number;
+  advanced: boolean;
+}
+
+export interface PrioritySchedulingPolicy {
+  version: 1;
+  enabled: boolean;
+  itemHighRetention: number;
+  itemLowRetention: number;
+  readingHighAFactor: number;
+  readingLowAFactor: number;
+}
+
+export type ReprioritizationAction = "off" | "suggest" | "pause";
+
+export interface ReprioritizationPolicy {
+  version: 1;
+  repeatedFailure: ReprioritizationAction;
+  repeatedFailureThreshold: number;
+  earlySuccess: ReprioritizationAction;
+  earlySuccessCount: number;
+  articleCompletion: ReprioritizationAction;
+  largeBatch: ReprioritizationAction;
+  largeBatchThreshold: number;
+}
+
+export interface NoticeAcknowledgements {
+  prioritySuite: boolean;
+  advancedPostponeRisk: boolean;
+  randomReviewRisk: boolean;
+}
+
 /** A fitted FSRS parameter set, as persisted in plugin data. */
 export interface FittedParams {
   /** 21 FSRS-6 weights. */
@@ -97,6 +150,47 @@ export interface FittedParams {
 }
 
 export const DEFAULT_SETTINGS: IrSettings = {
+  schemaVersion: 2,
+  sortingPolicy: {
+    version: 1,
+    preset: "balanced",
+    traversal: "mixed",
+    readingProportion: 0.25,
+    itemJitter: 0.2,
+    readingJitter: 0.3,
+    autoSort: true,
+  },
+  autoPostponePolicy: {
+    version: 1,
+    enabled: false,
+    keepOverdue: 40,
+    priorityCutoff: 10,
+    advanced: false,
+  },
+  prioritySchedulingPolicy: {
+    version: 1,
+    enabled: false,
+    itemHighRetention: 0.95,
+    itemLowRetention: 0.85,
+    readingHighAFactor: 1.5,
+    readingLowAFactor: 2.5,
+  },
+  reprioritizationPolicy: {
+    version: 1,
+    repeatedFailure: "suggest",
+    repeatedFailureThreshold: 3,
+    earlySuccess: "off",
+    earlySuccessCount: 1,
+    articleCompletion: "suggest",
+    largeBatch: "suggest",
+    largeBatchThreshold: 10,
+  },
+  notices: {
+    prioritySuite: false,
+    advancedPostponeRisk: false,
+    randomReviewRisk: false,
+  },
+  treeDisplayMode: "hierarchy",
   defaultPriority: 33,
   extractFolder: "",
   extractCreatesStandaloneNote: false,
@@ -118,5 +212,5 @@ export const DEFAULT_SETTINGS: IrSettings = {
 
 /** Fresh copy so restoring defaults cannot mutate the constant. */
 export function cloneDefaultSettings(): IrSettings {
-  return { ...DEFAULT_SETTINGS };
+  return structuredClone(DEFAULT_SETTINGS);
 }

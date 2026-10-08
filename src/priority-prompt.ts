@@ -1,5 +1,12 @@
 import { clampPriority, PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
 import { formatPriority } from "./ir/relative-priority";
+import {
+  previewPriorityPlacement,
+  priorityForPosition,
+  type PriorityPlacementPreview,
+} from "./ir/relative-priority";
+import type { ElementId } from "./ir/ids";
+import type { IrElement } from "./ir/model";
 
 /**
  * Parse a status-bar priority input. Returns null on unparseable input so
@@ -15,6 +22,96 @@ export function parseCandidatePriority(raw: string): number | null {
 
 export interface PriorityPromptHandle {
   cancel(): void;
+}
+
+export interface RichPriorityEditorOptions {
+  targetId: ElementId;
+  elements: readonly IrElement[];
+  labelFor: (element: IrElement) => string;
+  onCommit: (preview: PriorityPlacementPreview) => void;
+  onCancel?: () => void;
+}
+
+export function mountPriorityEditor(
+  host: HTMLElement,
+  options: RichPriorityEditorOptions,
+): PriorityPromptHandle {
+  const target = options.elements.find((element) => element.id === options.targetId);
+  const initial = target?.priority ?? 50;
+  host.empty();
+  host.addClass("ir-priority-editor");
+  const percent = host.createEl("input", { cls: "ir-priority-input" }) as HTMLInputElement;
+  percent.type = "number";
+  percent.min = String(PRIORITY_MIN);
+  percent.max = String(PRIORITY_MAX);
+  percent.step = "0.0001";
+  percent.value = formatPriority(initial);
+  const position = host.createEl("input", { cls: "ir-priority-position" }) as HTMLInputElement;
+  position.type = "number";
+  position.min = "1";
+  position.max = String(Math.max(1, options.elements.length));
+  const total = host.createSpan({ cls: "ir-priority-total" });
+  const neighbors = host.createDiv({ cls: "ir-priority-neighbors" });
+  const search = host.createEl("input", { cls: "ir-priority-search" }) as HTMLInputElement;
+  search.type = "search";
+  search.placeholder = "Place near element";
+  const results = host.createDiv({ cls: "ir-priority-results" });
+  let preview = previewPriorityPlacement(options.elements, options.targetId, initial);
+  let closed = false;
+  const render = () => {
+    preview = previewPriorityPlacement(options.elements, options.targetId,
+      parseCandidatePriority(percent.value) ?? initial);
+    position.value = String(preview.finalPosition);
+    total.setText(`of ${preview.total}`);
+    const before = preview.beforeId
+      ? options.elements.find((element) => element.id === preview.beforeId) : undefined;
+    const after = preview.afterId
+      ? options.elements.find((element) => element.id === preview.afterId) : undefined;
+    neighbors.setText(`After: ${after ? options.labelFor(after) : "start"} · Before: ${before ? options.labelFor(before) : "end"}`);
+  };
+  const close = (commit: boolean) => {
+    if (closed) return;
+    closed = true;
+    if (commit) options.onCommit(preview);
+    else options.onCancel?.();
+  };
+  percent.addEventListener("input", render);
+  position.addEventListener("input", () => {
+    const value = Number(position.value);
+    if (!Number.isFinite(value)) return;
+    percent.value = formatPriority(priorityForPosition(value, Math.max(1, options.elements.length)));
+    render();
+  });
+  search.addEventListener("input", () => {
+    results.empty();
+    const query = search.value.trim().toLowerCase();
+    if (!query) return;
+    for (const element of options.elements.filter((candidate) => candidate.id !== options.targetId &&
+      options.labelFor(candidate).toLowerCase().includes(query)).slice(0, 8)) {
+      const row = results.createDiv({ cls: "ir-priority-result" });
+      row.createSpan({ text: options.labelFor(element) });
+      const place = (after: boolean) => {
+        const index = options.elements
+          .filter((candidate) => candidate.id !== options.targetId)
+          .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+          .findIndex((candidate) => candidate.id === element.id);
+        position.value = String(index + 1 + (after ? 1 : 0));
+        position.dispatchEvent(new Event("input"));
+      };
+      row.createEl("button", { text: "Before" }).onclick = () => place(false);
+      row.createEl("button", { text: "After" }).onclick = () => place(true);
+    }
+  });
+  const actions = host.createDiv({ cls: "ir-priority-actions" });
+  actions.createEl("button", { text: "Apply", cls: "mod-cta" }).onclick = () => close(true);
+  actions.createEl("button", { text: "Cancel" }).onclick = () => close(false);
+  host.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target !== search) close(true);
+    if (event.key === "Escape") close(false);
+  });
+  render();
+  setTimeout(() => percent.focus(), 0);
+  return { cancel: () => close(false) };
 }
 
 /**

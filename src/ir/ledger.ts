@@ -13,6 +13,8 @@ import { fold, compact, type LogState } from "./log";
 import { newDeviceId, type DeviceId, type ElementId } from "./ids";
 import { validateIrEvent, type IrEvent } from "./model";
 import type { BookmarkMap } from "./bookmark";
+import { parseSessionSnapshot, type SessionSnapshot } from "./session-snapshot";
+import { parseDailyPriorityAnalytics, type DailyPriorityAnalytics } from "./priority-analytics";
 
 // Fixed paths (constants in the module)
 export const META = ".ir/meta.json";
@@ -24,6 +26,9 @@ export const COMPACTIONDIR = ".ir/compaction";
 export const STATEDIR = ".ir/state";
 export const TOMBSTONES = ".ir/tombstones.json";
 export const BOOKMARKS = ".ir/bookmarks.json";
+export const SESSION = ".ir/session.json";
+export const AUTO_POSTPONE = ".ir/auto-postpone.json";
+export const ANALYTICS_DIR = ".ir/analytics";
 export const MIGRATION_LOG = `${LOGDIR}/dev_mig_ir_store.jsonl`;
 
 export type LedgerStatus = "absent" | "legacy" | "migrated" | "reset";
@@ -396,10 +401,33 @@ export class IrLedger {
   }
 
   async appendEvent(ev: IrEvent): Promise<void> {
+    await this.appendEvents([ev]);
+  }
+
+  async appendEvents(events: readonly IrEvent[]): Promise<{
+    landedIds: string[];
+    alreadyPresentIds: string[];
+  }> {
     await this.awaitReady();
-    const issue = validateIrEvent(ev);
-    if (issue) throw new Error(`IrLedger.appendEvent: ${issue}`);
-    await this.withShardAccess(async () => {
+    for (const event of events) {
+      const issue = validateIrEvent(event);
+      if (issue) throw new Error(`IrLedger.appendEvents: ${issue}`);
+    }
+    assertNoConflictingEvents("IrLedger.appendEvents batch", [], events);
+    return this.withShardAccess(async () => {
+      const existing = await this.loadEventsWithoutShardLock();
+      assertNoConflictingEvents("IrLedger.appendEvents", existing, events);
+      const existingById = new Map(existing.map((event) => [
+        event.id,
+        deterministicJsonStringify(event),
+      ]));
+      const pending = events.filter((event) => !existingById.has(event.id));
+      const alreadyPresentIds = events
+        .filter((event) => existingById.has(event.id))
+        .map((event) => event.id);
+      if (pending.length === 0) {
+        return { landedIds: [], alreadyPresentIds };
+      }
       const deviceId = await this.getDeviceId();
       const { logDir } = await this.paths();
       const shardPath = `${logDir}/${deviceId}.jsonl`;
@@ -407,8 +435,11 @@ export class IrLedger {
       if (pendingRepair) {
         await this.persistShardRepair(shardPath, pendingRepair);
       }
-      const eventString = JSON.stringify(ev) + "\n";
-      await this.fs.append(shardPath, eventString);
+      await this.fs.append(
+        shardPath,
+        pending.map((event) => JSON.stringify(event) + "\n").join(""),
+      );
+      return { landedIds: pending.map((event) => event.id), alreadyPresentIds };
     });
   }
 
@@ -677,6 +708,60 @@ export class IrLedger {
     const data = deterministicJsonStringify(bm);
     const { bookmarks } = await this.paths();
     await this.fs.write(bookmarks, data);
+  }
+
+  async loadSessionSnapshot(): Promise<SessionSnapshot | null> {
+    if (!(await this.fs.exists(SESSION))) return null;
+    try {
+      return parseSessionSnapshot(JSON.parse(await this.fs.read(SESSION)));
+    } catch {
+      return null;
+    }
+  }
+
+  async saveSessionSnapshot(snapshot: SessionSnapshot): Promise<void> {
+    await this.awaitReady();
+    const validated = parseSessionSnapshot(snapshot);
+    if (!validated) throw new Error("IrLedger.saveSessionSnapshot: invalid snapshot");
+    await this.fs.write(SESSION, deterministicJsonStringify(validated));
+  }
+
+  async clearSessionSnapshot(): Promise<void> {
+    if (this.fs.remove && await this.fs.exists(SESSION)) await this.fs.remove(SESSION);
+  }
+
+  async loadAutoPostponeMarker(): Promise<{ dayKey: string; batchId: string } | null> {
+    if (!(await this.fs.exists(AUTO_POSTPONE))) return null;
+    try {
+      const value = JSON.parse(await this.fs.read(AUTO_POSTPONE)) as Record<string, unknown>;
+      return typeof value.dayKey === "string" && typeof value.batchId === "string"
+        ? { dayKey: value.dayKey, batchId: value.batchId } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async saveAutoPostponeMarker(marker: { dayKey: string; batchId: string }): Promise<void> {
+    await this.awaitReady();
+    await this.fs.write(AUTO_POSTPONE, deterministicJsonStringify(marker));
+  }
+
+  async loadDailyAnalytics(deviceId: DeviceId, dayKey: string): Promise<DailyPriorityAnalytics | null> {
+    const path = `${ANALYTICS_DIR}/${deviceId}/${dayKey}.json`;
+    if (!(await this.fs.exists(path))) return null;
+    try {
+      return parseDailyPriorityAnalytics(JSON.parse(await this.fs.read(path)));
+    } catch {
+      return null;
+    }
+  }
+
+  async saveDailyAnalytics(day: DailyPriorityAnalytics): Promise<void> {
+    await this.awaitReady();
+    const parsed = parseDailyPriorityAnalytics(day);
+    if (!parsed) throw new Error("IrLedger.saveDailyAnalytics: invalid analytics");
+    await this.fs.write(`${ANALYTICS_DIR}/${day.deviceId}/${day.dayKey}.json`,
+      deterministicJsonStringify(parsed));
   }
 
   async reconcile(): Promise<LogState> {

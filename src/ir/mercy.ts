@@ -3,6 +3,11 @@ export interface MercyEntry {
   priority: number;
   dueMs: number;
   dismissed?: boolean;
+  type?: "item" | "reading";
+  interval?: number;
+  requestedRetention?: number;
+  aFactor?: number;
+  postponeCount?: number;
 }
 
 export interface MercyOptions {
@@ -27,6 +32,35 @@ export interface MercyPlan {
   postponedCount: number;
   effectiveToday: number;
   perDay: Array<{ date: string; count: number }>;
+}
+
+export interface AutoPostponeOptions {
+  keepOverdue: number;
+  priorityCutoff: number;
+}
+
+export interface AdvancedPostponePolicy {
+  operation: "postpone" | "dilute" | "advance";
+  includeItems: boolean;
+  includeReading: boolean;
+  itemDelayFactor: number;
+  readingDelayFactor: number;
+  minDelayDays: number;
+  maxDelayDays: number;
+  skipIntervalAbove?: number;
+  skipPriorityAtOrBelow?: number;
+  skipPostponeCountAbove?: number;
+  skipRetentionAtOrAbove?: number;
+  skipAFactorAtOrBelow?: number;
+  scaleByPriority?: boolean;
+  scaleByRetention?: boolean;
+  scaleByAFactor?: boolean;
+}
+
+export interface AdvancedPostponePlan {
+  assignments: MercyAssignment[];
+  protectedIds: string[];
+  skippedIds: string[];
 }
 
 /** Legacy result shape retained for callers and integrations. */
@@ -115,6 +149,102 @@ export function planMercy(
     effectiveToday: dueToday.length + protectedToday.length,
     perDay,
   };
+}
+
+export function planAutoPostpone(
+  entries: readonly MercyEntry[],
+  actionMs: number,
+  opts: AutoPostponeOptions,
+): MercyPlan {
+  const todayStart = new Date(actionMs);
+  todayStart.setHours(0, 0, 0, 0);
+  const cutoff = todayStart.getTime();
+  const overdue = entries
+    .filter((entry) => !entry.dismissed && Number.isFinite(entry.dueMs) && entry.dueMs < cutoff)
+    .sort(compareImportance);
+  const dueToday = entries
+    .filter((entry) => !entry.dismissed && Number.isFinite(entry.dueMs) &&
+      entry.dueMs >= cutoff && entry.dueMs <= actionMs)
+    .sort(compareImportance);
+  const keep = Math.max(0, Math.floor(opts.keepOverdue));
+  const keptOverdue = overdue.slice(0, keep);
+  const protectedOverdue: MercyEntry[] = [];
+  const overflow: MercyEntry[] = [];
+  for (const entry of overdue.slice(keep)) {
+    (entry.priority <= opts.priorityCutoff ? protectedOverdue : overflow).push(entry);
+  }
+  const assignments = overflow.map((entry, index) => {
+    const dayMs = addLocalDays(cutoff, index + 1);
+    return {
+      id: entry.id,
+      previousDue: entry.dueMs,
+      newDue: combineLocalDate(dayMs, entry.dueMs, actionMs),
+      targetLocalDate: localDateKey(dayMs),
+    };
+  });
+  const perDay = assignments.map((assignment) => ({ date: assignment.targetLocalDate, count: 1 }));
+  return {
+    totalDue: overdue.length + dueToday.length,
+    dueToday: [...keptOverdue, ...protectedOverdue, ...dueToday].map((entry) => entry.id),
+    protectedToday: protectedOverdue.map((entry) => entry.id),
+    assignments,
+    postponed: assignments.map((assignment) => assignment.id),
+    postponedCount: assignments.length,
+    effectiveToday: keptOverdue.length + protectedOverdue.length + dueToday.length,
+    perDay,
+  };
+}
+
+export function planAdvancedPostpone(
+  entries: readonly MercyEntry[],
+  actionMs: number,
+  policy: AdvancedPostponePolicy,
+): AdvancedPostponePlan {
+  const assignments: MercyAssignment[] = [];
+  const protectedIds: string[] = [];
+  const skippedIds: string[] = [];
+  const minDelay = Math.max(0, Math.round(policy.minDelayDays));
+  const maxDelay = Math.max(minDelay, Math.round(policy.maxDelayDays));
+  for (const entry of [...entries].sort(compareImportance)) {
+    const isItem = entry.type === "item";
+    if ((isItem && !policy.includeItems) || (!isItem && !policy.includeReading)) {
+      skippedIds.push(entry.id);
+      continue;
+    }
+    if (entry.dismissed || !Number.isFinite(entry.dueMs) ||
+      (policy.operation === "postpone" && entry.dueMs > actionMs) ||
+      (policy.skipIntervalAbove !== undefined && (entry.interval ?? 0) > policy.skipIntervalAbove) ||
+      (policy.skipPriorityAtOrBelow !== undefined && entry.priority <= policy.skipPriorityAtOrBelow) ||
+      (policy.skipPostponeCountAbove !== undefined && (entry.postponeCount ?? 0) > policy.skipPostponeCountAbove) ||
+      (policy.skipRetentionAtOrAbove !== undefined && (entry.requestedRetention ?? 0) >= policy.skipRetentionAtOrAbove) ||
+      (policy.skipAFactorAtOrBelow !== undefined && (entry.aFactor ?? Infinity) <= policy.skipAFactorAtOrBelow)) {
+      protectedIds.push(entry.id);
+      continue;
+    }
+    let factor = isItem ? policy.itemDelayFactor : policy.readingDelayFactor;
+    if (policy.scaleByPriority) factor *= 0.5 + entry.priority / 100;
+    if (policy.scaleByRetention && entry.requestedRetention !== undefined) factor *= 1.5 - entry.requestedRetention;
+    if (policy.scaleByAFactor && entry.aFactor !== undefined) factor *= entry.aFactor / 2;
+    const base = Math.max(1, entry.interval ?? 1);
+    const delay = Math.min(maxDelay, Math.max(minDelay, Math.round(base * factor)));
+    const signedDelay = policy.operation === "advance" ? -delay : delay;
+    const newDue = combineLocalDate(addLocalDays(actionMs, signedDelay), entry.dueMs, actionMs);
+    assignments.push({ id: entry.id, previousDue: entry.dueMs, newDue,
+      targetLocalDate: localDateKey(newDue) });
+  }
+  return { assignments, protectedIds, skippedIds };
+}
+
+export type BranchPolicyMode = "respect" | "ignore" | "conservative" | "liberal";
+
+export function resolveBranchDelay(
+  inherited: number,
+  branch: number | undefined,
+  mode: BranchPolicyMode,
+): number {
+  if (branch === undefined || mode === "ignore") return inherited;
+  if (mode === "respect") return branch;
+  return mode === "conservative" ? Math.min(inherited, branch) : Math.max(inherited, branch);
 }
 
 /** Compatibility wrapper for the original pure split contract. */

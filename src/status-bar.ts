@@ -35,6 +35,7 @@ export interface QueueLoad {
   inflow7d: number;
   /** `due` split by element type for the tooltip. */
   dueByType: { topic: number; extract: number; item: number };
+  protection?: { item: number | null; reading: number | null; exact: boolean };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -203,11 +204,15 @@ export function formatLoad(load: QueueLoad): string {
 }
 
 export function formatLoadTooltip(load: QueueLoad): string {
+  const protection = load.protection
+    ? ` Priority protection (${load.protection.exact ? "exact" : "approximate"}): ` +
+      `items ${load.protection.item ?? "complete"}, reading ${load.protection.reading ?? "complete"}.`
+    : "";
   return (
     `IR queue: ${load.due} due now ` +
     `(${load.dueByType.topic} topics, ${load.dueByType.extract} extracts, ` +
     `${load.dueByType.item} items), ${load.later} later today, ` +
-    `${load.postponed} postponed, ${load.inflow7d} added in last 7 days. ` +
+    `${load.postponed} postponed, ${load.inflow7d} added in last 7 days.` + protection + " " +
     `Click to start review. Right-click for tree, neural, and other IR actions.`
   );
 }

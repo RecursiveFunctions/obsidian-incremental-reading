@@ -101,3 +101,16 @@ test("configureEngine: custom weights change scheduling, invalid weights do not"
   const after = schedule(newCard(NOW), "good", NOW);
   assert.equal(after.stability, before.stability);
 });
+
+test("schedule accepts per-call retention without mutating the configured engine", () => {
+  configureEngine({ requestRetention: 0.9 });
+  const reviewed = schedule(newCard(NOW), "good", NOW);
+  const later = new Date(reviewed.due.getTime() + 86_400_000);
+  const low = schedule(reviewed, "good", later, 0.7);
+  const high = schedule(reviewed, "good", later, 0.99);
+  const baseline = schedule(reviewed, "good", later);
+  assert.ok(high.scheduled_days <= low.scheduled_days);
+  assert.notEqual(high.due.getTime(), low.due.getTime());
+  assert.equal(schedule(reviewed, "good", later).due.getTime(), baseline.due.getTime());
+  configureEngine({});
+});

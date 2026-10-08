@@ -15,6 +15,7 @@ import { promptConfirm } from "./confirm-modal";
 import { IrLedger } from "./ir/ledger";
 import {
   buildTree,
+  buildPriorityRows,
   filterTreeByPredicate,
   rangeSelectIds,
   TreeNode,
@@ -163,6 +164,7 @@ export class IrTreeView extends ItemView {
 
   /** Keyboard / click focus; independent of the review highlight. */
   private focusedId: string | null = null;
+  private displayMode: "hierarchy" | "priority";
 
   /** Delayed single-click so a double-click can cancel "reveal or open". */
   private pendingClickTimer: number | null = null;
@@ -190,13 +192,26 @@ export class IrTreeView extends ItemView {
      * false when there is no session or the id is not in that queue.
      */
     private readonly revealInReview?: (id: ElementId) => boolean,
+    displayMode: "hierarchy" | "priority" = "hierarchy",
+    private readonly saveDisplayMode?: (mode: "hierarchy" | "priority") => void,
   ) {
     super(leaf);
     this.ledger = ledger;
+    this.displayMode = displayMode;
   }
 
   getViewType(): string {
     return IR_TREE_VIEW_TYPE;
+  }
+
+  prioritySelection(): ElementId[] {
+    const selected = this.selectedIds.size > 0
+      ? new Set(this.selectedIds)
+      : new Set(this.focusedId ? [this.focusedId] : []);
+    return [...this.elementsById.values()]
+      .filter((element) => selected.has(element.id))
+      .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+      .map((element) => element.id);
   }
 
   getDisplayText(): string {
@@ -379,6 +394,17 @@ export class IrTreeView extends ItemView {
       void this.render();
     };
 
+    const modeToggle = actions.createEl("button", {
+      cls: "ir-tree-refresh",
+      text: this.displayMode === "priority" ? "Hierarchy" : "Priority",
+      attr: { "aria-label": `Switch to ${this.displayMode === "priority" ? "hierarchy" : "priority"} mode` },
+    });
+    modeToggle.onclick = () => {
+      this.displayMode = this.displayMode === "priority" ? "hierarchy" : "priority";
+      this.saveDisplayMode?.(this.displayMode);
+      void this.render();
+    };
+
     const refresh = actions.createEl("button", {
       text: "Refresh",
       cls: "ir-tree-refresh",
@@ -474,7 +500,7 @@ export class IrTreeView extends ItemView {
 
     this.elementsById = new Map(state.elements);
     const allElements = Array.from(state.elements.values());
-    const elements = this.showDismissed
+    const elements = this.displayMode === "priority" || this.showDismissed
       ? allElements
       : allElements.filter((e) => !e.dismissed);
     const dismissedCount = allElements.filter((e) => e.dismissed).length;
@@ -502,7 +528,14 @@ export class IrTreeView extends ItemView {
       }
     }
 
-    let roots = buildTree(elements);
+    let roots = this.displayMode === "priority"
+      ? buildPriorityRows(elements, Date.now()).map((entry) => ({
+          id: entry.element.id,
+          type: entry.element.type,
+          element: entry.element,
+          children: [],
+        }))
+      : buildTree(elements);
     const queryRaw = this.filterText.trim();
     const query = queryRaw.toLowerCase();
     const hasTextFilter = queryRaw.length > 0;

@@ -9,8 +9,11 @@ test("cloneDefaultSettings matches DEFAULT_SETTINGS without sharing the object",
   copy.reviewsPerReading = 0;
   copy.extractFolder = "tweaked";
   copy.showDivergencePicker = true;
+  copy.sortingPolicy.itemJitter = 1;
   assert.equal(DEFAULT_SETTINGS.reviewsPerReading, 3);
   assert.equal(DEFAULT_SETTINGS.extractFolder, "");
   assert.equal(DEFAULT_SETTINGS.showDivergencePicker, false);
   assert.equal(DEFAULT_SETTINGS.spaceAfterReveal, "good");
+  assert.equal(DEFAULT_SETTINGS.sortingPolicy.itemJitter, 0.2);
+  assert.notEqual(copy.sortingPolicy, DEFAULT_SETTINGS.sortingPolicy);
 });

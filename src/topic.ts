@@ -74,8 +74,12 @@ export function advanceTopic(
   state: TopicState,
   settings: TopicScheduleSettings,
   now: Date = new Date(),
+  effectiveAFactor?: number,
 ): TopicState {
-  const aFactor = clampAFactor(state.aFactor, settings.topicAFactor);
+  const baseAFactor = clampAFactor(state.aFactor, settings.topicAFactor);
+  const aFactor = effectiveAFactor === undefined
+    ? baseAFactor
+    : clampAFactor(effectiveAFactor, baseAFactor);
   const first = Math.max(1, Math.round(settings.topicFirstInterval || 1));
   const max = Math.max(first, Math.round(settings.topicMaxInterval || first));
 
@@ -87,7 +91,7 @@ export function advanceTopic(
 
   return {
     interval,
-    aFactor,
+    aFactor: baseAFactor,
     dueMs: now.getTime() + interval * MS_PER_DAY,
   };
 }

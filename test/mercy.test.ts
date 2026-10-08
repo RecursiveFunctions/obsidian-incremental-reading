@@ -11,7 +11,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { planMercy } from "../src/ir/mercy";
+import { planAdvancedPostpone, planAutoPostpone, planMercy, resolveBranchDelay } from "../src/ir/mercy";
 
 const SPEC = ["..", "src", "ir", "mercy.ts"].join("/");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -131,4 +131,49 @@ test("planner preserves due clock time and does not mutate inputs", () => {
   const moved = new Date(r.assignments[0]!.newDue);
   assert.deepEqual([moved.getHours(), moved.getMinutes(), moved.getSeconds(), moved.getMilliseconds()], [8, 45, 30, 12]);
   assert.deepEqual(input, copy);
+});
+
+test("auto-postpone protects work newly due today", () => {
+  const now = new Date(2026, 0, 10, 12).getTime();
+  const yesterday = new Date(2026, 0, 9, 9).getTime();
+  const today = new Date(2026, 0, 10, 8).getTime();
+  const plan = planAutoPostpone([
+    { id: "keep", priority: 1, dueMs: yesterday },
+    { id: "move", priority: 50, dueMs: yesterday },
+    { id: "today", priority: 99, dueMs: today },
+  ], now, { keepOverdue: 1, priorityCutoff: 0 });
+  assert.deepEqual(plan.dueToday, ["keep", "today"]);
+  assert.deepEqual(plan.postponed, ["move"]);
+});
+
+test("auto-postpone never includes future or dismissed work", () => {
+  const now = new Date(2026, 0, 10, 12).getTime();
+  const plan = planAutoPostpone([
+    { id: "old", priority: 50, dueMs: now - 86_400_000 },
+    { id: "future", priority: 1, dueMs: now + 1 },
+    { id: "dismissed", priority: 99, dueMs: now - 86_400_000, dismissed: true },
+  ], now, { keepOverdue: 0, priorityCutoff: 0 });
+  assert.deepEqual(plan.postponed, ["old"]);
+});
+
+test("advanced postpone applies bounds, inclusion, and skip rules", () => {
+  const plan = planAdvancedPostpone([
+    { id: "item", type: "item", priority: 50, dueMs: NOW, interval: 10 },
+    { id: "reading", type: "reading", priority: 50, dueMs: NOW, interval: 10 },
+    { id: "protected", type: "item", priority: 5, dueMs: NOW, interval: 10 },
+  ], NOW, {
+    operation: "postpone", includeItems: true, includeReading: false,
+    itemDelayFactor: 2, readingDelayFactor: 1, minDelayDays: 2, maxDelayDays: 7,
+    skipPriorityAtOrBelow: 10,
+  });
+  assert.deepEqual(plan.assignments.map((assignment) => assignment.id), ["item"]);
+  assert.deepEqual(plan.skippedIds, ["reading"]);
+  assert.deepEqual(plan.protectedIds, ["protected"]);
+});
+
+test("branch delay resolution supports every policy mode", () => {
+  assert.equal(resolveBranchDelay(5, 9, "respect"), 9);
+  assert.equal(resolveBranchDelay(5, 9, "ignore"), 5);
+  assert.equal(resolveBranchDelay(5, 9, "conservative"), 5);
+  assert.equal(resolveBranchDelay(5, 9, "liberal"), 9);
 });

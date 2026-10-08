@@ -364,7 +364,10 @@ export function validateIrEvent(value: unknown): string | null {
     case "graded": return validCard(payload.card) ? null : "card is invalid";
     case "grade-undone": return typeof payload.eventId === "string" && payload.eventId ? null : "eventId is required";
     case "topic-advanced": return validSchedule(payload.schedule) ? null : "schedule is invalid";
-    case "mercy-postponed": return finite(payload.newDue) ? null : "newDue must be finite";
+    case "mercy-postponed": return finite(payload.newDue) &&
+      (payload.card === undefined || validCard(payload.card)) &&
+      (payload.schedule === undefined || validSchedule(payload.schedule))
+      ? null : "newDue or schedule replacement is invalid";
     case "mercy-undone":
       return nonEmptyString(payload.batchId) &&
         (payload.operation === "complete" || finite(payload.newDue))

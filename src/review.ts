@@ -31,7 +31,7 @@
  */
 
 import type { App, TFile } from "obsidian";
-import { interleavedQueue, type QueueEntry } from "./queue";
+import { interleavedQueue, policyQueue, type QueueEntry, type QueuePolicy } from "./queue";
 import type { LogState } from "./ir/log";
 import type { IrElement } from "./ir/model";
 import type { ElementId } from "./ir/ids";
@@ -100,6 +100,30 @@ export function dueQueue(
   })
     .map((id) => slots.get(id))
     .filter((s): s is ReviewSlot => s !== undefined);
+}
+
+export function policyReviewQueue(
+  app: App,
+  state: LogState,
+  policy: QueuePolicy,
+  now: Date = new Date(),
+): ReviewSlot[] {
+  const slots = new Map<string, ReviewSlot>();
+  const entries: QueueEntry[] = [];
+  for (const element of state.elements.values()) {
+    let file: TFile | null = null;
+    if (element.notePath) {
+      const candidate = app.vault.getAbstractFileByPath(element.notePath);
+      file = isVaultFile(candidate) ? candidate : null;
+    }
+    if (!file && !element.text) continue;
+    slots.set(element.id, { id: element.id, element, file });
+    entries.push({ id: element.id, type: element.type, priority: element.priority,
+      dueMs: dueMsOf(element), dismissed: element.dismissed });
+  }
+  return policyQueue(entries, now.getTime(), policy)
+    .map((id) => slots.get(id))
+    .filter((slot): slot is ReviewSlot => slot !== undefined);
 }
 
 /** Neural review is SuperMemo-style subset review: real reps, not due-gated. */

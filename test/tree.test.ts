@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { newElement } from "../src/ir/model";
+import { newElement, type IrElement } from "../src/ir/model";
 import type { ElementId } from "../src/ir/ids";
 
 const SPEC = ["..", "src", "ir", "tree.ts"].join("/");
@@ -251,4 +251,22 @@ test("filterTreeByPredicate: composes a text-and-type predicate cleanly", async 
       n.type === "extract" && n.id.includes("c2"),
   );
   assert.deepEqual(flatten(filtered), ["el_root1", "el_c2"]);
+});
+
+test("buildPriorityRows is globally ordered and includes dismissed/future elements", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+  const now = 100;
+  const root = el("root", "topic", 80, null);
+  root.schedule = { due: 200, interval: 1, aFactor: 2 };
+  const child = el("child", "extract", 10, root.id);
+  child.schedule = { due: 50, interval: 1, aFactor: 2 };
+  const dismissed = el("dismissed", "item", 50, null);
+  dismissed.dismissed = true;
+  const rows = m.buildPriorityRows([root, dismissed, child], now);
+  assert.deepEqual(rows.map((row: { element: IrElement }) => row.element.id),
+    ["child", "dismissed", "root"]);
+  assert.deepEqual(rows.map((row: { state: string }) => row.state),
+    ["due", "dismissed", "future"]);
+  assert.deepEqual(rows[0].parentIds, [root.id]);
 });

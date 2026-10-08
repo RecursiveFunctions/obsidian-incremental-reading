@@ -13,7 +13,7 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
-import { resolveShowDivergencePicker } from "./src/ir/settings-resolve";
+import { resolveSettings, resolveShowDivergencePicker } from "./src/ir/settings-resolve";
 import { isSpaceAfterReveal } from "./src/ir/review-keys";
 import { buildTextQuoteAnchor } from "./src/ir/cloze-marks";
 import { IR_TREE_VIEW_TYPE, IrTreeView } from "./src/tree-view";
@@ -36,7 +36,8 @@ import {
   setPriority,
   uniqueMarkdownNotePath,
 } from "./src/ir-note";
-import { dueQueue, neuralQueue, EMPTY_COLLECTION_COPY, EMPTY_NEURAL_COPY, type ReviewSlot } from "./src/review";
+import { dueQueue, neuralQueue, policyReviewQueue, slotFromElement, EMPTY_COLLECTION_COPY, EMPTY_NEURAL_COPY, type ReviewSlot } from "./src/review";
+import type { QueuePolicy } from "./src/queue";
 import { makeLcg } from "./src/ir/neural";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
 import { openPriorityPrompt } from "./src/priority-prompt";
@@ -84,12 +85,15 @@ import {
   type IrElement,
   type IrEvent,
 } from "./src/ir/model";
-import { buildPriorityPlacement } from "./src/ir/relative-priority";
+import { buildPriorityPlacement, legacyPriorityOrder, planAdjacentBlockMove } from "./src/ir/relative-priority";
 import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 import { topicStateToSchedule } from "./src/ir/queue-adapter";
-import { addLocalDays, planMercy, type MercyEntry } from "./src/ir/mercy";
+import { addLocalDays, planAutoPostpone, planMercy, type MercyEntry } from "./src/ir/mercy";
+import { repetitionDayKey, restoreSessionSnapshot, type SessionMode, type SessionSnapshot } from "./src/ir/session-snapshot";
+import type { DailyPriorityAnalytics } from "./src/ir/priority-analytics";
+import { priorityProtection } from "./src/ir/priority-analytics";
 import { previewMercy } from "./src/ir/mercy-modal";
 import {
   bodyWithSingleClozeGroup,
@@ -305,7 +309,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private readonly irCommands: Command[] = [];
 
-  private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; emptyVault?: boolean; nothingDue?: UpcomingLoad; } | null = null;
+  private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; mode?: SessionMode; cursor?: number; emptyVault?: boolean; nothingDue?: UpcomingLoad; } | null = null;
 
   /**
    * The ledger, constructed once the layout exists (after a migration, or
@@ -397,6 +401,14 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
+    if (!this.settings.notices.prioritySuite) {
+      new Notice(
+        "Incremental Reading now includes priority queue controls, optional auto-postpone, priority-aware scheduling, and protection analytics. All automation remains off until enabled in settings.",
+        12_000,
+      );
+      this.settings.notices.prioritySuite = true;
+      await this.saveSettings();
+    }
     this.applyEngineConfig();
     const fs = new ObsidianVaultFs(
       this.app.vault.adapter as unknown as ObsidianDataAdapter,
@@ -494,8 +506,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       () => void this.startReview(),
       (evt) => this.showStatusBarMenu(evt),
     );
-    void this.refreshStatusBar();
-    void this.ledgerInit.then(() => {
+    void this.ledgerInit.then(async () => {
+      await this.runStartupAutoPostpone();
       void this.refreshStatusBar();
       // Wait for the vault index: before layout-ready, present files can
       // still read as missing and prompt for notes that exist.
@@ -547,6 +559,23 @@ export default class IncrementalReadingPlugin extends Plugin {
       hotkeys: [{ modifiers: ["Alt"], key: "r" }],
       callback: () => void this.startReview(),
     });
+    this.irCommand({
+      id: "start-random-review",
+      name: "Start random review (reschedules items)",
+      icon: "shuffle",
+      callback: () => void this.startRandomReview(),
+    });
+    this.irCommand({
+      id: "sort-review-now",
+      name: "Sort current review queue now",
+      icon: "arrow-down-up",
+      checkCallback: (checking) => {
+        const view = this.getActiveReviewView();
+        if (!view) return false;
+        if (!checking) void this.sortCurrentReviewNow(view);
+        return true;
+      },
+    });
 
     this.registerView(
       IR_TREE_VIEW_TYPE,
@@ -578,6 +607,11 @@ export default class IncrementalReadingPlugin extends Plugin {
           (elementId) => void this.startNeuralReview(elementId, null),
           (elementId) =>
             this.getActiveReviewView()?.jumpToElement(elementId) ?? false,
+          this.settings.treeDisplayMode,
+          (mode) => {
+            this.settings.treeDisplayMode = mode;
+            void this.saveSettings();
+          },
         );
       },
     );
@@ -659,6 +693,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           () => void this.openTreeView(),
           () => void this.openHelpView(),
           (id, file, priority) => this.applyIrPriorityChange(id, file, priority),
+          (orderedIds, cursor) => void this.persistSessionCursor(orderedIds, cursor),
         );
         view.multiSelect = this.multiSelect;
         return view;
@@ -697,6 +732,23 @@ export default class IncrementalReadingPlugin extends Plugin {
         return true;
       },
     });
+    for (const [id, name, direction] of [
+      ["increase-ir-priority", "Increase priority one position", -1],
+      ["decrease-ir-priority", "Decrease priority one position", 1],
+    ] as const) {
+      this.irCommand({
+        id,
+        name,
+        icon: direction < 0 ? "arrow-up" : "arrow-down",
+        checkCallback: (checking) => {
+          const tree = this.getTreeView();
+          const ids = tree?.prioritySelection() ?? [];
+          if (ids.length === 0) return false;
+          if (!checking) void this.movePrioritySelection(ids, direction);
+          return true;
+        },
+      });
+    }
 
     this.irCommand({
       id: "open-help",
@@ -1469,6 +1521,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     try {
       const { state, events } = await this.ledger.loadSnapshot();
       const load = computeLoad(state.elements.values(), events, Date.now());
+      const device = await this.ledger.getDeviceId();
+      const analytics = await this.ledger.loadDailyAnalytics(device, repetitionDayKey());
+      if (analytics) {
+        const protection = priorityProtection(analytics);
+        load.protection = { item: protection.item, reading: protection.reading, exact: true };
+      }
       // Mobile has no status bar; the FAB badge is the same number.
       setWorkspaceIrFabDue(load.due);
       renderStatusBar(
@@ -1593,20 +1651,153 @@ export default class IncrementalReadingPlugin extends Plugin {
     queue: ReviewSlot[];
     elementsById: Map<ElementId, IrElement>;
     isNeural: boolean;
+    cursor?: number;
   } | null> {
     if (!this.ledger) return null;
     await this.ledgerInit;
     const state = await this.ledger.load();
-    const queue = dueQueue(
-      this.app,
-      this.settings.reviewsPerReading,
-      state,
-      new Date(),
-      this.settings.interleaveSimilarPriority,
-    );
+    const saved = await this.ledger.loadSessionSnapshot();
+    if (saved) {
+      const available = new Set(state.elements.keys());
+      const restored = restoreSessionSnapshot(saved, available, repetitionDayKey(), 1);
+      if (restored) {
+        const slots = restored.orderedIds
+          .map((id) => {
+            const element = state.elements.get(id);
+            return element ? slotFromElement(this.app, element) : null;
+          })
+          .filter((slot): slot is ReviewSlot => slot !== null);
+        if (slots.length > 0) {
+          this.beginReviewSession();
+          return { queue: slots, elementsById: state.elements,
+            isNeural: restored.mode === "neural", cursor: restored.cursor };
+        }
+      }
+    }
+    const now = Date.now();
+    const seed = new Date(now).setHours(0, 0, 0, 0);
+    const queue = policyReviewQueue(this.app, state, this.queuePolicy("due", seed), new Date(now));
     if (queue.length === 0) return null;
     this.beginReviewSession();
+    await this.saveNewSessionSnapshot("due", queue, seed);
     return { queue, elementsById: state.elements, isNeural: false };
+  }
+
+  private queuePolicy(scope: QueuePolicy["scope"], seed: number): QueuePolicy {
+    const policy = this.settings.sortingPolicy;
+    return { version: 1, scope, traversal: policy.traversal,
+      readingProportion: policy.readingProportion, itemJitter: policy.itemJitter,
+      readingJitter: policy.readingJitter, seed, autoSort: policy.autoSort };
+  }
+
+  private async saveNewSessionSnapshot(
+    mode: SessionMode,
+    queue: readonly ReviewSlot[],
+    seed: number,
+  ): Promise<void> {
+    if (!this.ledger || queue.length === 0) return;
+    const snapshot: SessionSnapshot = {
+      schemaVersion: 1,
+      mode,
+      orderedIds: queue.map((slot) => slot.id),
+      cursor: 0,
+      seed,
+      policyVersion: 1,
+      repetitionDayKey: repetitionDayKey(),
+      createdAt: Date.now(),
+    };
+    await this.ledger.saveSessionSnapshot(snapshot).catch((error) =>
+      console.warn("Incremental Reading: could not save review session snapshot", error));
+  }
+
+  private async persistSessionCursor(orderedIds: ElementId[], cursor: number): Promise<void> {
+    if (!this.ledger) return;
+    const snapshot = await this.ledger.loadSessionSnapshot();
+    if (!snapshot) return;
+    if (cursor >= orderedIds.length) {
+      await this.ledger.clearSessionSnapshot().catch(() => undefined);
+      return;
+    }
+    await this.ledger.saveSessionSnapshot({ ...snapshot, orderedIds, cursor })
+      .catch((error) => console.warn("Incremental Reading: could not update session snapshot", error));
+  }
+
+  private async ensureDailyAnalytics(state: Awaited<ReturnType<IrLedger["load"]>>, now: number): Promise<void> {
+    if (!this.ledger) return;
+    try {
+      const deviceId = await this.ledger.getDeviceId();
+      const dayKey = repetitionDayKey(new Date(now));
+      if (await this.ledger.loadDailyAnalytics(deviceId, dayKey)) return;
+      const due: DailyPriorityAnalytics["due"] = [];
+      for (const element of state.elements.values()) {
+        const dueMs = element.card?.due ?? element.schedule?.due;
+        if (!element.dismissed && dueMs !== undefined && dueMs <= now) {
+          due.push({ id: element.id, priority: element.priority,
+            type: element.type === "item" ? "item" : "reading" });
+        }
+      }
+      await this.ledger.saveDailyAnalytics({
+        schemaVersion: 1,
+        deviceId,
+        dayKey,
+        createdAt: now,
+        utcOffsetMinutes: new Date(now).getTimezoneOffset(),
+        policyVersion: 1,
+        due,
+        sessions: [],
+        sortingPolicy: { ...this.settings.sortingPolicy },
+        autoPostpone: { ...this.settings.autoPostponePolicy },
+        capacity: this.settings.autoPostponePolicy.keepOverdue,
+        readingProportion: this.settings.sortingPolicy.readingProportion,
+      });
+    } catch (error) {
+      console.warn("Incremental Reading: could not persist daily priority analytics", error);
+    }
+  }
+
+  private async startRandomReview(): Promise<void> {
+    if (!this.ledger) return;
+    if (!this.settings.notices.randomReviewRisk) {
+      new Notice("Random review performs real mid-interval scheduling and may increase workload.");
+      this.settings.notices.randomReviewRisk = true;
+      await this.saveSettings();
+    }
+    await this.ledgerInit;
+    const state = await this.ledger.load();
+    const seed = Date.now() | 0;
+    const queue = policyReviewQueue(this.app, state, this.queuePolicy("random", seed));
+    if (queue.length === 0) {
+      new Notice("Incremental Reading: no reviewable elements for random review.");
+      return;
+    }
+    await this.saveNewSessionSnapshot("random", queue, seed);
+    this.beginReviewSession();
+    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
+    this.irReviewSession = { queue, elementsById: state.elements, mode: "random" };
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  private async sortCurrentReviewNow(view: IrReviewView): Promise<void> {
+    if (!this.ledger) return;
+    const snapshot = await this.ledger.loadSessionSnapshot();
+    if (!snapshot) return;
+    const state = await this.ledger.load();
+    let queue: ReviewSlot[];
+    if (snapshot.mode === "neural") {
+      queue = snapshot.orderedIds
+        .map((id) => {
+          const element = state.elements.get(id);
+          return element ? slotFromElement(this.app, element) : null;
+        })
+        .filter((slot): slot is ReviewSlot => slot !== null);
+    } else {
+      queue = policyReviewQueue(this.app, state,
+        this.queuePolicy(snapshot.mode, snapshot.seed));
+    }
+    await view.sortNow(queue);
+    new Notice("Incremental Reading: unprocessed review queue sorted.");
   }
 
   /**
@@ -2603,12 +2794,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     const state = await this.ledger.load();
+    const sessionSeed = Date.now() ^ 0x9e3779b9;
     const queue = neuralQueue(
       this.app,
       state,
       seedElementId,
       seedNotePath,
-      makeLcg(Date.now() ^ 0x9e3779b9),
+      makeLcg(sessionSeed),
     );
     
     if (queue.length < 2) {
@@ -2617,6 +2809,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
 
     this.beginReviewSession();
+    await this.saveNewSessionSnapshot("neural", queue, sessionSeed);
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     this.irReviewSession = { queue, elementsById: state.elements, isNeural: true };
     try {
@@ -2665,13 +2858,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
       return;
     }
-    const queue = dueQueue(
-      this.app,
-      this.settings.reviewsPerReading,
-      state,
-      new Date(),
-      this.settings.interleaveSimilarPriority,
-    );
+    const now = Date.now();
+    await this.ensureDailyAnalytics(state, now);
+    const queue = policyReviewQueue(this.app, state,
+      this.queuePolicy("due", new Date(now).setHours(0, 0, 0, 0)), new Date(now));
     if (queue.length === 0) {
       // Nothing due, but the collection is not empty: open the review pane
       // on its nothing-due panel so the user gets the next due time and the
@@ -2695,6 +2885,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
 
     this.beginReviewSession();
+    await this.saveNewSessionSnapshot("due", queue, new Date(now).setHours(0, 0, 0, 0));
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     this.irReviewSession = { queue, elementsById: state.elements };
     try {
@@ -2903,20 +3094,43 @@ export default class IncrementalReadingPlugin extends Plugin {
     const p = clampPriority(priority);
     const before = await this.ledger.load();
     const placement = buildPriorityPlacement(before.elements.values(), elementId, p);
-    await this.ledger.appendEvent({
+    await this.applyIrPriorityBatch([
+      { targetId: elementId, requestedPriority: p, placement, file },
+    ]);
+  }
+
+  private async applyIrPriorityBatch(changes: readonly {
+    targetId: ElementId;
+    requestedPriority: number;
+    placement: ReturnType<typeof buildPriorityPlacement>;
+    file?: TFile | null;
+  }[]): Promise<void> {
+    if (!this.ledger || changes.length === 0) return;
+    const existing = await this.ledger.loadEvents();
+    let lamport = nextLamport(existing);
+    const now = Date.now();
+    const device = await this.ledger.getDeviceId();
+    const events: IrEvent[] = changes.map((change) => ({
       id: newEventId(),
-      ts: Date.now(),
-      lamport: Date.now(),
-      device: await this.ledger.getDeviceId(),
+      ts: now,
+      lamport: lamport++,
+      device,
       kind: "priority-set",
-      target: elementId,
-      payload: { priority: p, placement },
-    });
-    if (file && file.extension === "md") {
-      await quietFrontmatterWrite(
-        () => setPriority(this.app, file, p).then(() => undefined),
-        "priority",
-      );
+      target: change.targetId,
+      payload: {
+        priority: clampPriority(change.requestedPriority),
+        placement: change.placement,
+      },
+    }));
+    await this.ledger.appendEvents(events);
+    for (const change of changes) {
+      if (change.file?.extension === "md") {
+        await quietFrontmatterWrite(
+          () => setPriority(this.app, change.file!, clampPriority(change.requestedPriority))
+            .then(() => undefined),
+          "priority",
+        );
+      }
     }
     const state = await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after priority failed", e);
@@ -2925,6 +3139,18 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (state) this.getActiveReviewView()?.refreshElementsInPlace(state.elements);
     await this.getTreeView()?.refresh();
     void this.refreshStatusBar();
+  }
+
+  private async movePrioritySelection(ids: ElementId[], direction: -1 | 1): Promise<void> {
+    if (!this.ledger) return;
+    const state = await this.ledger.load();
+    const plan = planAdjacentBlockMove(legacyPriorityOrder(state.elements.values()), ids, direction);
+    await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
+      targetId: intent.targetId,
+      requestedPriority: intent.requestedPriority,
+      placement: intent,
+      file: null,
+    })));
   }
 
   private async appendCreatedWithPlacement(event: IrEvent): Promise<void> {
@@ -3506,6 +3732,61 @@ export default class IncrementalReadingPlugin extends Plugin {
     const tree = this.getTreeView();
     if (tree) void tree.refresh();
     void this.refreshStatusBar();
+  }
+
+  private async runStartupAutoPostpone(): Promise<void> {
+    if (!this.ledger || !this.settings.autoPostponePolicy.enabled) return;
+    try {
+      const now = Date.now();
+      const dayKey = repetitionDayKey(new Date(now));
+      if ((await this.ledger.loadAutoPostponeMarker())?.dayKey === dayKey) return;
+      const state = await this.ledger.load();
+      const entries: MercyEntry[] = [];
+      for (const element of state.elements.values()) {
+        const dueMs = element.card?.due ?? element.schedule?.due;
+        if (dueMs !== undefined) {
+          entries.push({ id: element.id, priority: element.priority, dueMs,
+            dismissed: element.dismissed });
+        }
+      }
+      const policy = this.settings.autoPostponePolicy;
+      const plan = planAutoPostpone(entries, now, {
+        keepOverdue: policy.keepOverdue,
+        priorityCutoff: policy.priorityCutoff,
+      });
+      const batchId = `auto-postpone:${await this.ledger.getDeviceId()}:${dayKey}`;
+      if (plan.assignments.length > 0) {
+        const existing = await this.ledger.loadEvents();
+        let lamport = nextLamport(existing);
+        const device = await this.ledger.getDeviceId();
+        const events: IrEvent[] = plan.assignments.map((assignment, index) => ({
+          id: `${batchId}:${index}` as IrEvent["id"],
+          ts: now,
+          lamport: lamport++,
+          device,
+          kind: "mercy-postponed",
+          target: assignment.id as ElementId,
+          payload: {
+            batchId,
+            previousDue: assignment.previousDue,
+            newDue: assignment.newDue,
+            operation: "auto-postpone",
+            policy: { ...policy },
+            repetitionDayKey: dayKey,
+          },
+        }));
+        await this.ledger.appendEvents(events);
+        await this.ledger.reconcile();
+      }
+      await this.ledger.saveAutoPostponeMarker({ dayKey, batchId });
+      if (plan.postponedCount > 0) {
+        new Notice(`Incremental Reading: auto-postponed ${plan.postponedCount} overdue element` +
+          `${plan.postponedCount === 1 ? "" : "s"}. Use Undo last mercy to restore them.`);
+      }
+    } catch (error) {
+      console.error("Incremental Reading: startup auto-postpone failed", error);
+      new Notice("Incremental Reading: auto-postpone failed; startup continued. See console for details.");
+    }
   }
 
   private async undoLastMercy(): Promise<void> {
@@ -5588,7 +5869,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   async loadSettings() {
     const saved = (await this.loadData()) as Partial<IrSettings> | null;
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    this.settings = resolveSettings(saved);
     // New key: new vaults stay off (DEFAULT). Vaults that already had
     // plugin data without this key keep the old always-on picker.
     const resolved = resolveShowDivergencePicker(saved);

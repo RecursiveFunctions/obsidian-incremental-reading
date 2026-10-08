@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added deterministic priority queue policies with Strict, Balanced, and
+  Discovery presets, separate item/reading jitter, random mid-interval review,
+  and restart-safe session snapshots.
+- Added opt-in startup auto-postpone that preserves work newly due today, plus
+  priority-aware FSRS retention and topic A-Factor scheduling for future reviews.
+- Added exact daily priority-protection analytics storage and grade-time priority
+  audit metadata for future retention analysis.
+- Added position-aware and bulk priority planning primitives for adjacent moves,
+  multiplier changes, Spread, and Adjust.
+
 ### Fixed
 
 - Priority now forms one strict collection-wide relative order. Setting or

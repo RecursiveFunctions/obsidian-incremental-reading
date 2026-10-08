@@ -44,6 +44,9 @@ export function gradeNumber(grade: Grade): number {
 // The one scheduling engine. Starts on FSRS-6 defaults; `configureEngine`
 // rebuilds it from fitted parameters and the desired-retention setting.
 let engine = fsrs();
+let configuredWeights: number[] | undefined;
+let configuredRetention: number | undefined;
+const enginesByRetention = new Map<number, ReturnType<typeof fsrs>>();
 
 export interface EngineConfig {
   /** 21 fitted FSRS-6 weights; omit for the defaults. */
@@ -79,6 +82,9 @@ export function configureEngine(cfg: EngineConfig): boolean {
     );
   }
   engine = fsrs(params);
+  configuredWeights = params.w;
+  configuredRetention = params.request_retention;
+  enginesByRetention.clear();
   return ok;
 }
 
@@ -87,8 +93,20 @@ export function schedule(
   card: Card,
   grade: Grade,
   now: Date = new Date(),
+  requestRetention?: number,
 ): Card {
-  return engine.next(card, now, RATING[grade]).card;
+  let selected = engine;
+  if (requestRetention !== undefined && Number.isFinite(requestRetention)) {
+    const retention = Math.min(0.99, Math.max(0.7, requestRetention));
+    if (retention !== configuredRetention) {
+      selected = enginesByRetention.get(retention) ?? fsrs({
+        ...(configuredWeights ? { w: [...configuredWeights] } : {}),
+        request_retention: retention,
+      });
+      enginesByRetention.set(retention, selected);
+    }
+  }
+  return selected.next(card, now, RATING[grade]).card;
 }
 
 /**

@@ -88,7 +88,7 @@ const CONCEPTS: Array<[string, string]> = [
   ],
   [
     "Priority",
-    "Priority is a collection-wide position from 0 (first) to 100 (last). Moving an element inserts it ahead of the current occupant and shifts later elements down.",
+    "Priority is a collection-wide position from 0 (first) to 100 (last). The due session is a filtered queue built from that collection order; changing priority never makes future work due.",
   ],
   [
     "Later today",
@@ -96,7 +96,19 @@ const CONCEPTS: Array<[string, string]> = [
   ],
   [
     "Postpone (mercy)",
-    "Bulk-pushes overdue elements out when the queue has run away from you. Also not a review.",
+    "Mercy redistributes outstanding work without changing FSRS stability or reading A-Factor. Manual rescheduling is also not a review.",
+  ],
+  [
+    "Requested retention / A-Factor",
+    "FSRS items use requested retention; reading topics and extracts use A-Factor. Optional priority scheduling affects only schedules created by future reviews.",
+  ],
+  [
+    "Random / neural review",
+    "Random review samples the whole collection and really reschedules reviewed elements. Neural review is a bounded related-note graph walk; it is not random collection review.",
+  ],
+  [
+    "Frontmatter priority",
+    "The event ledger owns current collection position. A note's frontmatter priority is an import and fallback hint and may differ from the projected position.",
   ],
   [
     "Dismiss",

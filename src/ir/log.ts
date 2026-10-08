@@ -131,10 +131,14 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
         // doesn't keep its mercy due.
         if (element) {
           const newDue = event.payload.newDue as number;
-          if (element.card) {
+          if (event.payload.operation === "manual-reschedule" && event.payload.card) {
+            element.card = event.payload.card as StoredCard;
+          } else if (element.card) {
             element.card = { ...element.card, due: newDue };
           }
-          if (element.schedule) {
+          if (event.payload.operation === "manual-reschedule" && event.payload.schedule) {
+            element.schedule = event.payload.schedule as ReadSchedule;
+          } else if (element.schedule) {
             element.schedule = { ...element.schedule, due: newDue };
           }
         }

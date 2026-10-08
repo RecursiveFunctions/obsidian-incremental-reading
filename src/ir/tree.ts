@@ -13,6 +13,37 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
+export interface PriorityTreeRow {
+  element: IrElement;
+  position: number;
+  state: "dismissed" | "due" | "future" | "unscheduled";
+  parentIds: ElementId[];
+}
+
+export function buildPriorityRows(
+  elements: readonly IrElement[],
+  now: number,
+): PriorityTreeRow[] {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  return [...elements].sort(compareByPriorityThenId).map((element, index) => {
+    const parentIds: ElementId[] = [];
+    const seen = new Set<ElementId>([element.id]);
+    let parentId = element.parentId;
+    while (parentId && !seen.has(parentId)) {
+      const parent = byId.get(parentId);
+      if (!parent) break;
+      seen.add(parentId);
+      parentIds.unshift(parentId);
+      parentId = parent.parentId;
+    }
+    const due = element.card?.due ?? element.schedule?.due;
+    const state = element.dismissed ? "dismissed"
+      : due === undefined ? "unscheduled"
+      : due <= now ? "due" : "future";
+    return { element, position: index + 1, state, parentIds };
+  });
+}
+
 function compareByPriorityThenId(a: IrElement, b: IrElement): number {
   if (a.priority !== b.priority) return a.priority - b.priority;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;

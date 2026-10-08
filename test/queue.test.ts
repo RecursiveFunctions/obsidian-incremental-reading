@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { interleavedQueue, type QueueEntry } from "../src/queue";
+import {
+  interleavedQueue,
+  policyQueue,
+  queuePreset,
+  rebuildQueueTail,
+  type QueueEntry,
+} from "../src/queue";
 
 const NOW = 1_000_000;
 
@@ -200,4 +206,38 @@ test("interleave: default is on (SM-authentic)", () => {
     defaulted,
     "default behavior should differ from explicitly-off",
   );
+});
+
+test("policy strength zero is strict global priority with deterministic ties", () => {
+  const entries = [
+    entry({ id: "z", type: "topic", priority: 10, dueMs: 0 }),
+    entry({ id: "a", priority: 10, dueMs: 0 }),
+    entry({ id: "mid", priority: 20 }),
+  ];
+  assert.deepEqual(policyQueue(entries, NOW, queuePreset("strict", 1)), ["a", "z", "mid"]);
+});
+
+test("policy jitter is deterministic and does not mutate priorities", () => {
+  const entries = Array.from({ length: 20 }, (_, index) =>
+    entry({ id: `i${index}`, priority: index }));
+  const before = entries.map((candidate) => candidate.priority);
+  const policy = { ...queuePreset("discovery", 42), traversal: "priority" as const };
+  assert.deepEqual(policyQueue(entries, NOW, policy), policyQueue(entries, NOW, policy));
+  assert.deepEqual(entries.map((candidate) => candidate.priority), before);
+});
+
+test("random policy includes future work but still excludes dismissed entries", () => {
+  const policy = { ...queuePreset("strict", 1), scope: "random" as const };
+  assert.deepEqual(policyQueue([
+    entry({ id: "future", dueMs: NOW + 100 }),
+    entry({ id: "dismissed", dismissed: true }),
+  ], NOW, policy), ["future"]);
+});
+
+test("Sort now keeps prefix and current while deduplicating rebuilt tail", () => {
+  assert.deepEqual(rebuildQueueTail(
+    ["done", "current", "stale"],
+    1,
+    ["new", "current", "new", "done", "remaining"],
+  ), ["done", "current", "new", "remaining"]);
 });

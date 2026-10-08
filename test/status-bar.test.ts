@@ -231,6 +231,16 @@ test("formatLoad: zeros render explicitly, not blank", () => {
   );
 });
 
+test("formatLoadTooltip includes exact priority protection without changing compact text", () => {
+  const load = {
+    due: 2, later: 0, postponed: 0, inflow7d: 0,
+    dueByType: { topic: 1, extract: 0, item: 1 },
+    protection: { item: 12.5, reading: null, exact: true },
+  };
+  assert.match(formatLoadTooltip(load), /Priority protection \(exact\): items 12.5, reading complete/);
+  assert.equal(formatLoad(load), "2 due  ·  0 postponed  ·  +0/7d");
+});
+
 test("formatLoadTooltip: due split, later today, postponed", () => {
   const tip = formatLoadTooltip({
     due: 12,

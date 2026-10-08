@@ -5,9 +5,18 @@ import { newElement, validateIrEvent, type IrEvent } from "../src/ir/model";
 import {
   applyPriorityPlacement,
   buildPriorityPlacement,
+  buildPositionPlacement,
   formatPriority,
   insertionIndexForPriority,
   legacyPriorityOrder,
+  planAdjacentBlockMove,
+  planAdjust,
+  planBlockInsertion,
+  planMultiplierChange,
+  planSpread,
+  positionForPriority,
+  previewPriorityPlacement,
+  priorityForPosition,
   projectRelativePriorities,
 } from "../src/ir/relative-priority";
 
@@ -29,6 +38,50 @@ test("percentage maps to the final collection index", () => {
   assert.equal(insertionIndexForPriority(10, 11), 1);
   assert.equal(insertionIndexForPriority(10.9, 11), 1);
   assert.equal(insertionIndexForPriority(100, 11), 10);
+});
+
+test("one-based positions and percentages stay synchronized", () => {
+  assert.equal(positionForPriority(50, 5), 3);
+  assert.equal(priorityForPosition(3, 5), 50);
+  assert.equal(priorityForPosition(-2, 5), 0);
+  assert.equal(priorityForPosition(99, 5), 100);
+  assert.deepEqual(buildPositionPlacement([
+    element("a", 0, 1), element("b", 50, 1), element("c", 100, 1),
+  ], id("c"), 2), { requestedPriority: 50, beforeId: id("b"), afterId: id("a") });
+});
+
+test("preview removes the target and reports final neighbors", () => {
+  const preview = previewPriorityPlacement([
+    element("a", 0, 1), element("b", 50, 1), element("c", 100, 1),
+  ], id("c"), 50);
+  assert.equal(preview.finalPosition, 2);
+  assert.equal(preview.total, 3);
+  assert.equal(preview.afterId, id("a"));
+  assert.equal(preview.beforeId, id("b"));
+  assert.equal(preview.projectedPriority, 50);
+});
+
+test("stable blocks insert and move by one unselected position", () => {
+  const order = ["a", "b", "c", "d", "e"].map(id);
+  assert.deepEqual(planBlockInsertion(order, [id("b"), id("d")], 4).finalOrder,
+    [id("a"), id("c"), id("e"), id("b"), id("d")]);
+  assert.deepEqual(planAdjacentBlockMove(order, [id("b"), id("d")], -1).finalOrder,
+    [id("b"), id("d"), id("a"), id("c"), id("e")]);
+  assert.deepEqual(planAdjacentBlockMove(order, [id("b"), id("d")], 1).finalOrder,
+    [id("a"), id("c"), id("b"), id("d"), id("e")]);
+});
+
+test("multiplier, spread, and adjust preserve selected relative order", () => {
+  const order = ["a", "b", "c", "d", "e", "f"].map(id);
+  for (const plan of [
+    planMultiplierChange(order, [id("b"), id("e")], 0.5),
+    planSpread(order, [id("b"), id("e")], 25, 75),
+    planAdjust(order, [id("b"), id("e")], 25, 75),
+  ]) {
+    assert.ok(plan.finalOrder.indexOf(id("b")) < plan.finalOrder.indexOf(id("e")));
+    assert.deepEqual(plan.selectedIds, [id("b"), id("e")]);
+    assert.equal(plan.intents.length, 2);
+  }
 });
 
 test("placement moves an element and exact collisions insert before", () => {

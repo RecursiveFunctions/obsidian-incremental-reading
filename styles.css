@@ -1157,6 +1157,46 @@ img.ir-source-image.ir-cloze-source {
   width: 5em;
 }
 
+.ir-priority-editor {
+  display: grid;
+  grid-template-columns: minmax(5rem, 1fr) minmax(4rem, 0.7fr) auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.ir-priority-position {
+  min-width: 4rem;
+}
+
+.ir-priority-neighbors,
+.ir-priority-search,
+.ir-priority-results,
+.ir-priority-actions {
+  grid-column: 1 / -1;
+}
+
+.ir-priority-result,
+.ir-priority-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.ir-priority-result > span {
+  flex: 1;
+}
+
+@media (max-width: 600px) {
+  .ir-priority-editor {
+    grid-template-columns: 1fr 1fr auto;
+  }
+
+  .ir-priority-actions button,
+  .ir-priority-result button {
+    min-height: 2.75rem;
+  }
+}
+
 .ir-priority-hint {
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);

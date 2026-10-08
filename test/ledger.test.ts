@@ -12,6 +12,7 @@ import { IrLedger, META, type VaultFs } from "../src/ir/ledger";
 import type { IrEvent } from "../src/ir/model";
 import { newElement } from "../src/ir/model";
 import { newElementId, newEventId, newDeviceId, type ElementId } from "../src/ir/ids";
+import type { SessionSnapshot } from "../src/ir/session-snapshot";
 
 /** Minimal in-memory VaultFs. Paths are plain strings; dirs are implicit. */
 function memFs(): VaultFs & { dump(): Map<string, string> } {
@@ -335,6 +336,36 @@ test("appendEvent appends lines to this device's shard, never overwrites", async
   for (const l of lines) JSON.parse(l); // each line is valid JSON
 });
 
+test("appendEvents is ordered and idempotent for identical event IDs", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const first = createEvent(newElementId(), 1);
+  const second = createEvent(newElementId(), 2);
+  const result = await ledger.appendEvents([first, second]);
+  assert.deepEqual(result.landedIds, [first.id, second.id]);
+  assert.deepEqual(result.alreadyPresentIds, []);
+
+  const retry = await ledger.appendEvents([first, second]);
+  assert.deepEqual(retry.landedIds, []);
+  assert.deepEqual(retry.alreadyPresentIds, [first.id, second.id]);
+  assert.deepEqual((await ledger.loadEvents()).map((event) => event.id), [first.id, second.id]);
+});
+
+test("appendEvents validates all events and rejects conflicting retries", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const event = createEvent(newElementId(), 1);
+  await ledger.appendEvents([event]);
+  await assert.rejects(ledger.appendEvents([{ ...event, lamport: 2 }]), /conflicting duplicate event id/);
+
+  const valid = createEvent(newElementId(), 3);
+  const invalid = { ...createEvent(newElementId(), 4), lamport: -1 };
+  await assert.rejects(ledger.appendEvents([valid, invalid]), /lamport/);
+  assert.equal((await ledger.loadEvents()).some((candidate) => candidate.id === valid.id), false);
+});
+
 test("load with no shards returns an empty state", async () => {
   const fs = memFs();
   const ledger = new IrLedger(fs);
@@ -491,4 +522,37 @@ test("saveBookmarks overwrites previous bookmarks", async () => {
   assert.equal(Object.keys(loaded).length, 1);
   assert.equal(loaded[id2]?.line, 99);
   assert.equal(loaded[id1], undefined);
+});
+
+test("session snapshot storage is secondary and corrupt data is ignored", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const snapshot: SessionSnapshot = {
+    schemaVersion: 1,
+    mode: "due",
+    orderedIds: [newElementId()],
+    cursor: 0,
+    seed: 1,
+    policyVersion: 1,
+    repetitionDayKey: "2026-10-08",
+    createdAt: 1,
+  };
+  await ledger.saveSessionSnapshot(snapshot);
+  assert.deepEqual(await ledger.loadSessionSnapshot(), snapshot);
+  await fs.write(".ir/session.json", "{");
+  assert.equal(await ledger.loadSessionSnapshot(), null);
+  assert.deepEqual(await ledger.loadEvents(), []);
+});
+
+test("auto-postpone marker round-trips independently of ledger events", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  await ledger.saveAutoPostponeMarker({ dayKey: "2026-10-08", batchId: "batch" });
+  assert.deepEqual(await ledger.loadAutoPostponeMarker(), {
+    dayKey: "2026-10-08",
+    batchId: "batch",
+  });
+  assert.deepEqual(await ledger.loadEvents(), []);
 });

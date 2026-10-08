@@ -54,6 +54,12 @@ test("per-element A-Factor overrides the settings default", () => {
   assert.equal(s.interval, 30);
 });
 
+test("effective A-Factor changes one advance without replacing the base override", () => {
+  const next = advanceTopic({ dueMs: NOW.getTime(), interval: 10, aFactor: 3 }, SETTINGS, NOW, 1.5);
+  assert.equal(next.interval, 15);
+  assert.equal(next.aFactor, 3);
+});
+
 test("a degenerate A-Factor (<= 1) falls back so the interval still grows", () => {
   let s = { dueMs: NOW.getTime(), interval: 4, aFactor: 1 };
   s = advanceTopic(s, SETTINGS, NOW);

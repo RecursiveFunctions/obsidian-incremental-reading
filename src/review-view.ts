@@ -63,6 +63,12 @@ import {
   type IrEventKind,
 } from "./ir/model";
 import { buildPriorityPlacement, formatPriority } from "./ir/relative-priority";
+import { rebuildQueueTail } from "./queue";
+import {
+  effectiveItemRetention,
+  effectiveReadingAFactor,
+  PRIORITY_SCHEDULING_POLICY_VERSION,
+} from "./ir/priority-scheduling";
 import { scheduleToTopicState, topicStateToSchedule } from "./ir/queue-adapter";
 import { describeNextDue, type UpcomingLoad } from "./status-bar";
 import {
@@ -395,6 +401,7 @@ export class IrReviewView extends ItemView {
       queue: ReviewSlot[];
       elementsById: Map<ElementId, IrElement>;
       isNeural: boolean;
+      cursor?: number;
     } | null>,
     private readonly commitReanchor?: (
       id: ElementId,
@@ -436,6 +443,7 @@ export class IrReviewView extends ItemView {
       file: TFile | null,
       priority: number,
     ) => Promise<void>,
+    private readonly onSessionState?: (orderedIds: ElementId[], cursor: number) => void,
   ) {
     super(leaf);
   }
@@ -469,6 +477,7 @@ export class IrReviewView extends ItemView {
         this.queue = restored.queue;
         this.elementsById = restored.elementsById;
         this.isNeural = restored.isNeural;
+        this.index = Math.min(restored.cursor ?? 0, restored.queue.length - 1);
       } else {
         // A restored leaf with nothing due used to detach itself on a
         // timeout, so the tab the user reopened Obsidian to just vanished.
@@ -677,6 +686,7 @@ export class IrReviewView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.onSessionState?.(this.queue.map((slot) => slot.id), this.index);
     if (this.flashClearTimer != null) {
       window.clearTimeout(this.flashClearTimer);
       this.flashClearTimer = null;
@@ -2368,6 +2378,20 @@ export class IrReviewView extends ItemView {
     } else {
       this.paintSessionBar();
     }
+  }
+
+  async sortNow(fresh: readonly ReviewSlot[]): Promise<void> {
+    if (!(await this.flushEdits())) return;
+    const byId = new Map(fresh.map((slot) => [slot.id, slot]));
+    for (const slot of this.queue.slice(0, this.index + 1)) byId.set(slot.id, slot);
+    const ids = rebuildQueueTail(
+      this.queue.map((slot) => slot.id),
+      this.index,
+      fresh.map((slot) => slot.id),
+    );
+    this.queue = ids.map((id) => byId.get(id as ElementId)).filter((slot): slot is ReviewSlot => slot !== undefined);
+    this.onSessionState?.(this.queue.map((slot) => slot.id), this.index);
+    await this.renderCard();
   }
 
   /** Remove postponed cards from the current and remaining session tail. */
@@ -4190,6 +4214,7 @@ export class IrReviewView extends ItemView {
   private advance() {
     void this.persistBookmarks();
     this.index += 1;
+    this.onSessionState?.(this.queue.map((slot) => slot.id), this.index);
     this.revealed = false;
     this.editing = false;
     this.loadedSlotId = null;
@@ -4215,6 +4240,7 @@ export class IrReviewView extends ItemView {
     if (!(await this.flushEdits())) return;
     void this.persistBookmarks();
     this.index -= 1;
+    this.onSessionState?.(this.queue.map((slot) => slot.id), this.index);
     this.revealed = false;
     this.editing = false;
     this.loadedSlotId = null;
@@ -4234,7 +4260,15 @@ export class IrReviewView extends ItemView {
     // logged `grade-undone` path owns undo from here.
     this.lastReversible = null;
 
-    const next = schedule(storedToCard(slot.element.card), g);
+    const policy = this.settings.prioritySchedulingPolicy;
+    const effectiveRetention = effectiveItemRetention(
+      slot.element.priority,
+      policy.enabled,
+      this.settings.desiredRetention,
+      policy.itemHighRetention,
+      policy.itemLowRetention,
+    );
+    const next = schedule(storedToCard(slot.element.card), g, new Date(), effectiveRetention);
     const stored = cardToStored(next);
 
     const div =
@@ -4243,11 +4277,11 @@ export class IrReviewView extends ItemView {
         : null;
 
     if (div) {
-      this.showDivergencePicker(slot, g, next, stored, div);
+      this.showDivergencePicker(slot, g, next, stored, div, effectiveRetention);
       return;
     }
 
-    await this.applyGrade(slot, next, stored, g);
+    await this.applyGrade(slot, next, stored, g, false, effectiveRetention);
   }
 
   private async applyGrade(
@@ -4256,6 +4290,7 @@ export class IrReviewView extends ItemView {
     stored: import("./ir/model").StoredCard,
     g: Grade,
     intervalOverridden = false,
+    effectiveRetention = this.settings.desiredRetention,
   ) {
     // `grade` is the revlog: stats and the parameter optimizer need the
     // rating itself, not just the resulting card. `overridden` marks a
@@ -4263,6 +4298,9 @@ export class IrReviewView extends ItemView {
     const payload: Record<string, unknown> = {
       card: stored,
       grade: gradeNumber(g),
+      prioritySnapshot: slot.element.priority,
+      effectiveRetention,
+      schedulingPolicyVersion: PRIORITY_SCHEDULING_POLICY_VERSION,
     };
     if (intervalOverridden) payload.overridden = true;
     await this.emit("graded", slot.id, payload);
@@ -4287,13 +4325,14 @@ export class IrReviewView extends ItemView {
     fsrsCard: import("ts-fsrs").Card,
     fsrsStored: import("./ir/model").StoredCard,
     div: DivergenceCheck,
+    effectiveRetention: number,
   ) {
     const existing = this.contentEl.querySelector(".ir-divergence-bar");
     if (existing) existing.remove();
 
     const dock = this.contentEl.querySelector(".ir-review-dock");
     if (!dock) {
-      void this.applyGrade(slot, fsrsCard, fsrsStored, g);
+      void this.applyGrade(slot, fsrsCard, fsrsStored, g, false, effectiveRetention);
       return;
     }
 
@@ -4315,7 +4354,7 @@ export class IrReviewView extends ItemView {
       btn.addEventListener("click", () => {
         bar.remove();
         if (m.id === "FSRS") {
-          void this.applyGrade(slot, fsrsCard, fsrsStored, g);
+          void this.applyGrade(slot, fsrsCard, fsrsStored, g, false, effectiveRetention);
         } else {
           const overridden = {
             ...fsrsStored,
@@ -4323,7 +4362,7 @@ export class IrReviewView extends ItemView {
             scheduledDays: div.sm2IntervalDays,
           };
           const overriddenCard = storedToCard(overridden);
-          void this.applyGrade(slot, overriddenCard, overridden, g, true);
+          void this.applyGrade(slot, overriddenCard, overridden, g, true, effectiveRetention);
         }
       });
     }
@@ -4345,9 +4384,22 @@ export class IrReviewView extends ItemView {
         interval: 0,
         aFactor: this.settings.topicAFactor,
       } as TopicState);
-    const advanced = advanceTopic(cur, this.settings);
+    const policy = this.settings.prioritySchedulingPolicy;
+    const effectiveAFactor = effectiveReadingAFactor(
+      slot.element.priority,
+      policy.enabled,
+      cur.aFactor,
+      policy.readingHighAFactor,
+      policy.readingLowAFactor,
+    );
+    const advanced = advanceTopic(cur, this.settings, new Date(), effectiveAFactor);
     await this.emit("topic-advanced", slot.id, {
       schedule: topicStateToSchedule(advanced),
+      operation: "advance",
+      prioritySnapshot: slot.element.priority,
+      baseAFactor: cur.aFactor,
+      effectiveAFactor,
+      schedulingPolicyVersion: PRIORITY_SCHEDULING_POLICY_VERSION,
     });
     slot.element = {
       ...slot.element,
@@ -4383,6 +4435,7 @@ export class IrReviewView extends ItemView {
     const prevElement = slot.element;
     await this.emit("topic-advanced", slot.id, {
       schedule: topicStateToSchedule(postponed),
+      operation: "later-today",
     });
     slot.element = {
       ...slot.element,

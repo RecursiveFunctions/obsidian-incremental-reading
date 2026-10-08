@@ -78,6 +78,54 @@ export class IrSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Priority queue preset")
+      .setDesc("Strict follows global priority. Balanced and Discovery add deterministic, day-seeded variety without changing stored priorities.")
+      .addDropdown((dropdown) => dropdown
+        .addOption("strict", "Strict priority")
+        .addOption("balanced", "Balanced")
+        .addOption("discovery", "Discovery")
+        .addOption("custom", "Custom")
+        .setValue(this.plugin.settings.sortingPolicy.preset)
+        .onChange(async (value) => {
+          const policy = this.plugin.settings.sortingPolicy;
+          policy.preset = value === "strict" || value === "discovery" || value === "custom"
+            ? value : "balanced";
+          if (policy.preset === "strict") {
+            policy.traversal = "priority";
+            policy.itemJitter = 0;
+            policy.readingJitter = 0;
+          } else if (policy.preset === "balanced") {
+            policy.traversal = "mixed";
+            policy.readingProportion = 0.25;
+            policy.itemJitter = 0.2;
+            policy.readingJitter = 0.3;
+          } else if (policy.preset === "discovery") {
+            policy.traversal = "mixed";
+            policy.readingProportion = 0.4;
+            policy.itemJitter = 0.75;
+            policy.readingJitter = 1;
+          }
+          await this.plugin.saveSettings();
+          this.display();
+        }));
+
+    for (const [key, name, description] of [
+      ["readingProportion", "Reading proportion", "Share of mixed sessions reserved for topics and extracts."],
+      ["itemJitter", "Item randomization", "Bounded deterministic rank jitter for recall items."],
+      ["readingJitter", "Reading randomization", "Bounded deterministic rank jitter for topics and extracts."],
+    ] as const) {
+      new Setting(containerEl).setName(name).setDesc(description).addSlider((slider) => slider
+        .setLimits(0, 1, 0.05)
+        .setValue(this.plugin.settings.sortingPolicy[key])
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.sortingPolicy[key] = value;
+          this.plugin.settings.sortingPolicy.preset = "custom";
+          await this.plugin.saveSettings();
+        }));
+    }
+
+    new Setting(containerEl)
       .setName("Show scheduler divergence picker")
       .setDesc(
         "Off (default for new vaults): grades follow FSRS with no extra " +
@@ -273,6 +321,55 @@ export class IrSettingTab extends PluginSettingTab {
       );
 
     containerEl.createEl("h3", { text: "Overload" });
+
+    new Setting(containerEl)
+      .setName("Auto-postpone overdue work")
+      .setDesc("Opt in to postponing overflow on startup. Work newly due today is always kept.")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.autoPostponePolicy.enabled)
+        .onChange(async (value) => {
+          this.plugin.settings.autoPostponePolicy.enabled = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName("Overdue elements to keep")
+      .setDesc("Number of highest-priority overdue elements retained by startup auto-postpone.")
+      .addSlider((slider) => slider.setLimits(0, 200, 5)
+        .setValue(this.plugin.settings.autoPostponePolicy.keepOverdue)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.autoPostponePolicy.keepOverdue = value;
+          await this.plugin.saveSettings();
+        }));
+
+    containerEl.createEl("h3", { text: "Priority scheduling" });
+
+    new Setting(containerEl)
+      .setName("Priority-aware scheduling")
+      .setDesc("Apply priority-based retention and A-Factor only to future reviews. Existing due dates are never rewritten.")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.prioritySchedulingPolicy.enabled)
+        .onChange(async (value) => {
+          this.plugin.settings.prioritySchedulingPolicy.enabled = value;
+          await this.plugin.saveSettings();
+        }));
+
+    for (const [key, name, min, max, step] of [
+      ["itemHighRetention", "High-priority item retention", 0.7, 0.99, 0.01],
+      ["itemLowRetention", "Low-priority item retention", 0.7, 0.99, 0.01],
+      ["readingHighAFactor", "High-priority reading A-Factor", 1.1, 4, 0.1],
+      ["readingLowAFactor", "Low-priority reading A-Factor", 1.1, 4, 0.1],
+    ] as const) {
+      new Setting(containerEl).setName(name).addSlider((slider) => slider
+        .setLimits(min, max, step)
+        .setValue(this.plugin.settings.prioritySchedulingPolicy[key])
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.prioritySchedulingPolicy[key] = value;
+          await this.plugin.saveSettings();
+        }));
+    }
 
     new Setting(containerEl)
       .setName("Daily ceiling")
