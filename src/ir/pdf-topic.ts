@@ -6,7 +6,7 @@
  */
 
 import { newElement, clampPriority } from "./model";
-import type { IrEvent, ReadSchedule } from "./model";
+import type { IrEvent, PriorityPlacement, ReadSchedule } from "./model";
 import type { DeviceId, ElementId, EventId } from "./ids";
 
 export function buildPdfTopicEvent(input: {
@@ -18,6 +18,7 @@ export function buildPdfTopicEvent(input: {
   now: number;
   priority: number;
   schedule: ReadSchedule;
+  placement?: PriorityPlacement;
 }): IrEvent {
   const element = {
     ...newElement({
@@ -36,6 +37,6 @@ export function buildPdfTopicEvent(input: {
     device: input.device,
     kind: "element-created",
     target: input.elementId,
-    payload: { element },
+    payload: { element, ...(input.placement ? { placement: input.placement } : {}) },
   };
 }

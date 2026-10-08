@@ -17,6 +17,12 @@ import {
   type Anchor,
 } from "./model";
 import type { ElementId, EventId } from "./ids";
+import {
+  applyPriorityPlacement,
+  legacyPriorityOrder,
+  projectRelativePriorities,
+  type PriorityPlacement,
+} from "./relative-priority";
 
 export interface LogState {
   elements: Map<ElementId, IrElement>;
@@ -25,6 +31,10 @@ export interface LogState {
 
 export interface FoldOptions {
   conflict?: "conservative" | "clock-order";
+}
+
+function cloneElement(element: IrElement): IrElement {
+  return JSON.parse(JSON.stringify(element)) as IrElement;
 }
 
 /**
@@ -51,6 +61,7 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
   const elements = new Map<ElementId, IrElement>();
   const tombstones = new Map<string, SourceTombstone>();
   const conflictPolicy = opts?.conflict ?? "conservative";
+  const placements: Array<{ event: IrEvent; placement: PriorityPlacement }> = [];
 
   const undone = undoneEventIds(events);
 
@@ -69,13 +80,17 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
     switch (event.kind) {
       case "element-created": {
         const payloadElement = event.payload.element as IrElement;
-        elements.set(target, payloadElement);
+        elements.set(target, cloneElement(payloadElement));
+        const placement = event.payload.placement as PriorityPlacement | undefined;
+        if (placement) placements.push({ event, placement });
         break;
       }
 
       case "priority-set": {
         if (element) {
           element.priority = clampPriority(event.payload.priority as number);
+          const placement = event.payload.placement as PriorityPlacement | undefined;
+          if (placement) placements.push({ event, placement });
         }
         break;
       }
@@ -199,6 +214,9 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
 
       case "element-deleted": {
         elements.delete(target);
+        for (let index = placements.length - 1; index >= 0; index -= 1) {
+          if (placements[index].event.target === target) placements.splice(index, 1);
+        }
         break;
       }
 
@@ -209,6 +227,17 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
         break;
       }
     }
+  }
+
+  let order = legacyPriorityOrder(elements.values());
+  for (const { event, placement } of placements) {
+    if (!elements.has(event.target)) continue;
+    order = applyPriorityPlacement(order, event.target, placement);
+  }
+  const priorities = projectRelativePriorities(order);
+  for (const [id, priority] of priorities) {
+    const element = elements.get(id);
+    if (element) element.priority = priority;
   }
 
   return { elements, tombstones };

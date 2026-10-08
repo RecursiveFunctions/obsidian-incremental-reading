@@ -62,6 +62,7 @@ import {
   type IrElement,
   type IrEventKind,
 } from "./ir/model";
+import { buildPriorityPlacement, formatPriority } from "./ir/relative-priority";
 import { scheduleToTopicState, topicStateToSchedule } from "./ir/queue-adapter";
 import { describeNextDue, type UpcomingLoad } from "./status-bar";
 import {
@@ -429,6 +430,12 @@ export class IrReviewView extends ItemView {
     private readonly openTreeFromIdlePane?: () => void,
     /** Open the help / shortcuts panel from the first-run pane. */
     private readonly openHelpFromIdlePane?: () => void,
+    /** Route priority edits through the host's collection-wide placement logic. */
+    private readonly commitPriority?: (
+      id: ElementId,
+      file: TFile | null,
+      priority: number,
+    ) => Promise<void>,
   ) {
     super(leaf);
   }
@@ -1335,7 +1342,7 @@ export class IrReviewView extends ItemView {
         cls: "ir-priority-chip",
         type: "button",
       });
-      const parts = [`P ${slot.element.priority}`];
+      const parts = [`P ${formatPriority(slot.element.priority)}`];
       if (this.isReading(slot) && slot.element.schedule) {
         const a = Math.round(slot.element.schedule.aFactor * 100) / 100;
         parts.push(`A ${a}`);
@@ -1372,18 +1379,22 @@ export class IrReviewView extends ItemView {
     input.type = "number";
     input.min = "0";
     input.max = "100";
-    input.step = "1";
-    input.value = String(slot.element.priority);
+    input.step = "0.0001";
+    input.value = formatPriority(slot.element.priority);
     const commit = async () => {
       const n = Number(input.value);
       if (!Number.isFinite(n)) return;
-      await this.emit("priority-set", slot.id, { priority: n });
-      slot.element = { ...slot.element, priority: clampPriority(n) };
-      if (slot.file) {
-        await quietFrontmatterWrite(
-          () => setPriority(this.app, slot.file!, n).then(() => undefined),
-          "priority",
-        );
+      if (this.commitPriority) {
+        await this.commitPriority(slot.id, slot.file, n);
+      } else {
+        await this.emit("priority-set", slot.id, { priority: n });
+        slot.element = { ...slot.element, priority: clampPriority(n) };
+        if (slot.file) {
+          await quietFrontmatterWrite(
+            () => setPriority(this.app, slot.file!, n).then(() => undefined),
+            "priority",
+          );
+        }
       }
     };
     input.addEventListener("change", () => void commit());
@@ -2334,6 +2345,24 @@ export class IrReviewView extends ItemView {
     const currentId = this.current?.id;
     this.queue = refreshQueuedSlot(this.queue, slot);
     if (currentId === el.id) {
+      this.loadedSlotId = null;
+      void this.renderCard();
+    } else {
+      this.paintSessionBar();
+    }
+  }
+
+  /** Refresh cached state without changing session membership or slot order. */
+  refreshElementsInPlace(elements: ReadonlyMap<ElementId, IrElement>): void {
+    const currentId = this.current?.id;
+    for (const [id, element] of elements) {
+      if (this.elementsById.has(id)) this.elementsById.set(id, element);
+    }
+    this.queue = this.queue.map((slot) => {
+      const element = elements.get(slot.id);
+      return element ? { ...slot, element } : slot;
+    });
+    if (currentId && elements.has(currentId)) {
       this.loadedSlotId = null;
       void this.renderCard();
     } else {
@@ -3686,6 +3715,7 @@ export class IrReviewView extends ItemView {
     let created: IrElement | undefined;
     try {
       const now = Date.now();
+      const elementId = newElementId();
       const ev = buildExtractEvent({
         sourcePath,
         sourceText: bodyBeforeExtract,
@@ -3695,12 +3725,17 @@ export class IrReviewView extends ItemView {
         spans: spans.map((sp) => ({ start: sp.start, end: sp.end })),
         parentId: slot.id,
         priority: slot.element.priority,
-        elementId: newElementId(),
+        elementId,
         eventId: newEventId(),
         device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
         schedule: topicStateToSchedule(newTopicState(this.settings, new Date(now))),
+        placement: buildPriorityPlacement(
+          this.elementsById.values(),
+          elementId,
+          slot.element.priority,
+        ),
       });
       await this.ledger.appendEvent(ev);
       created = ev.payload.element as IrElement;
@@ -3922,6 +3957,7 @@ export class IrReviewView extends ItemView {
     }
     try {
       const now = Date.now();
+      const elementId = newElementId();
       const ev = buildExtractEvent({
         sourcePath,
         sourceText: bodyBeforeExtract,
@@ -3929,13 +3965,18 @@ export class IrReviewView extends ItemView {
         selEnd: span.end,
         parentId: slot.id,
         priority: slot.element.priority,
-        elementId: newElementId(),
+        elementId,
         eventId: newEventId(),
         device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
         schedule: topicStateToSchedule(
           newTopicState(this.settings, new Date(now)),
+        ),
+        placement: buildPriorityPlacement(
+          this.elementsById.values(),
+          elementId,
+          slot.element.priority,
         ),
       });
       await this.ledger.appendEvent(ev);
@@ -4123,6 +4164,17 @@ export class IrReviewView extends ItemView {
         Date.now(),
       );
       for (const ev of events) {
+        if (ev.kind === "element-created") {
+          const element = ev.payload.element as IrElement;
+          ev.payload = {
+            ...ev.payload,
+            placement: buildPriorityPlacement(
+              this.elementsById.values(),
+              element.id,
+              element.priority,
+            ),
+          };
+        }
         await this.ledger.appendEvent(ev);
         if (ev.kind === "element-created") {
           created = ev.payload.element as IrElement;

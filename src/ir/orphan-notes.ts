@@ -15,6 +15,7 @@ import type { DeviceId, ElementId, EventId } from "./ids";
 import { fold } from "./log";
 import { elementIdForPath, migrateNotes, type FrontmatterNote } from "./migrate";
 import type { IrElement, IrEvent } from "./model";
+import { buildPriorityPlacement } from "./relative-priority";
 import {
   inferPrefixRewrite,
   originalPathBySuffix,
@@ -277,7 +278,11 @@ export function planOrphanRecoveries(
         now,
       );
       if (!element) continue;
-      push("element-created", recoveredId, { element });
+      push("element-created", recoveredId, {
+        element,
+        placement: buildPriorityPlacement(live.values(), recoveredId, element.priority),
+      });
+      live.set(recoveredId, element);
       seenIds.add(recoveredId);
       restored += 1;
     } else {
@@ -285,7 +290,12 @@ export function planOrphanRecoveries(
       if (created.length === 0) continue;
       const ev = created[0]!;
       if (seenIds.has(ev.target) || live.has(ev.target)) continue;
-      push("element-created", ev.target, ev.payload);
+      const element = ev.payload.element as IrElement;
+      push("element-created", ev.target, {
+        ...ev.payload,
+        placement: buildPriorityPlacement(live.values(), ev.target, element.priority),
+      });
+      live.set(ev.target, element);
       seenIds.add(ev.target);
       restored += 1;
     }

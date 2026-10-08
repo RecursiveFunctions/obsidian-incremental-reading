@@ -88,7 +88,7 @@ const CONCEPTS: Array<[string, string]> = [
   ],
   [
     "Priority",
-    "0 to 100, and lower means more important. Priority 0 floats to the top of the queue.",
+    "Priority is a collection-wide position from 0 (first) to 100 (last). Moving an element inserts it ahead of the current occupant and shifts later elements down.",
   ],
   [
     "Later today",

@@ -1,5 +1,5 @@
 import { newElement, clampPriority } from "./model";
-import type { IrElement, IrEvent, PdfSelector, ReadSchedule } from "./model";
+import type { IrElement, IrEvent, PdfSelector, PriorityPlacement, ReadSchedule } from "./model";
 import type { ElementId, EventId, DeviceId } from "./ids";
 import { stripExtractMarks } from "./frontmatter-body";
 
@@ -36,6 +36,7 @@ export interface ExtractInput {
    * relocate and paint, not just the first.
    */
   spans?: ReadonlyArray<{ start: number; end: number }>;
+  placement?: PriorityPlacement;
 }
 
 export function buildExtractEvent(input: ExtractInput): IrEvent {
@@ -103,7 +104,7 @@ export function buildExtractEvent(input: ExtractInput): IrEvent {
     device: input.device,
     kind: "element-created",
     target: input.elementId,
-    payload: { element },
+    payload: { element, ...(input.placement ? { placement: input.placement } : {}) },
   };
 }
 
@@ -121,6 +122,7 @@ export interface PdfExtractInput {
   prefix?: string;
   suffix?: string;
   schedule?: ReadSchedule;
+  placement?: PriorityPlacement;
 }
 
 /**
@@ -169,7 +171,7 @@ export function buildPdfExtractEvent(input: PdfExtractInput): IrEvent {
     device: input.device,
     kind: "element-created",
     target: input.elementId,
-    payload: { element },
+    payload: { element, ...(input.placement ? { placement: input.placement } : {}) },
   };
 }
 

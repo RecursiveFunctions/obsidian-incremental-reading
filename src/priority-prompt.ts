@@ -1,4 +1,5 @@
 import { clampPriority, PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
+import { formatPriority } from "./ir/relative-priority";
 
 /**
  * Parse a status-bar priority input. Returns null on unparseable input so
@@ -46,7 +47,8 @@ export function openPriorityPrompt(
   input.type = "number";
   input.min = String(PRIORITY_MIN);
   input.max = String(PRIORITY_MAX);
-  input.value = String(clampPriority(current));
+  input.step = "0.0001";
+  input.value = formatPriority(current);
 
   let closed = false;
   const close = () => {

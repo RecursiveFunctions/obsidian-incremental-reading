@@ -84,6 +84,7 @@ import {
   type IrElement,
   type IrEvent,
 } from "./src/ir/model";
+import { buildPriorityPlacement } from "./src/ir/relative-priority";
 import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
@@ -657,6 +658,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           () => this.computeReviewUpcoming(),
           () => void this.openTreeView(),
           () => void this.openHelpView(),
+          (id, file, priority) => this.applyIrPriorityChange(id, file, priority),
         );
         view.multiSelect = this.multiSelect;
         return view;
@@ -1769,7 +1771,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           newTopicState(this.settings, new Date(now)),
         ),
       });
-      await this.ledger.appendEvent(ev);
+      await this.appendCreatedWithPlacement(ev);
       await this.ledger.reconcile();
       void this.refreshStatusBar();
       const created = ev.payload.element as IrElement;
@@ -1915,7 +1917,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           newTopicState(this.settings, new Date(now)),
         ),
       });
-      await this.ledger.appendEvent(ev);
+      await this.appendCreatedWithPlacement(ev);
       await this.ledger.reconcile();
       void this.refreshStatusBar();
       const created = ev.payload.element as IrElement;
@@ -2047,7 +2049,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           newTopicState(this.settings, new Date(now)),
         ),
       });
-      await this.ledger.appendEvent(ev);
+      await this.appendCreatedWithPlacement(ev);
       await this.ledger.reconcile();
       void this.refreshStatusBar();
       const created = ev.payload.element as IrElement;
@@ -2305,7 +2307,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             newTopicState(this.settings, new Date(now)),
           ),
         });
-        await this.ledger.appendEvent(ev);
+        await this.appendCreatedWithPlacement(ev);
         createdEls.push(ev.payload.element as IrElement);
         created += 1;
       } catch (e) {
@@ -2891,7 +2893,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     return null;
   }
 
-  /** Append `priority-set`, dual-write frontmatter, reconcile `.ir/state`. */
+  /** Move one element in the collection-wide order and refresh derived state. */
   private async applyIrPriorityChange(
     elementId: ElementId,
     file: TFile | null,
@@ -2899,6 +2901,8 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     if (!this.ledger) return;
     const p = clampPriority(priority);
+    const before = await this.ledger.load();
+    const placement = buildPriorityPlacement(before.elements.values(), elementId, p);
     await this.ledger.appendEvent({
       id: newEventId(),
       ts: Date.now(),
@@ -2906,7 +2910,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       device: await this.ledger.getDeviceId(),
       kind: "priority-set",
       target: elementId,
-      payload: { priority: p },
+      payload: { priority: p, placement },
     });
     if (file && file.extension === "md") {
       await quietFrontmatterWrite(
@@ -2914,10 +2918,28 @@ export default class IncrementalReadingPlugin extends Plugin {
         "priority",
       );
     }
-    await this.ledger.reconcile().catch((e) => {
+    const state = await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after priority failed", e);
+      return null;
     });
+    if (state) this.getActiveReviewView()?.refreshElementsInPlace(state.elements);
+    await this.getTreeView()?.refresh();
     void this.refreshStatusBar();
+  }
+
+  private async appendCreatedWithPlacement(event: IrEvent): Promise<void> {
+    if (!this.ledger || event.kind !== "element-created") return;
+    const element = event.payload.element as IrElement;
+    const state = await this.ledger.load();
+    event.payload = {
+      ...event.payload,
+      placement: buildPriorityPlacement(
+        state.elements.values(),
+        element.id,
+        element.priority,
+      ),
+    };
+    await this.ledger.appendEvent(event);
   }
 
   /** Append `dismiss-set`, dual-write frontmatter, reconcile `.ir/state`. */
@@ -4725,7 +4747,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         : undefined,
     };
 
-    await this.ledger.appendEvent({
+    const event: IrEvent = {
       id: newEventId(),
       ts: now,
       lamport: now,
@@ -4733,7 +4755,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       kind: "element-created",
       target: newEl.id,
       payload: { element: newEl },
-    });
+    };
+    await this.appendCreatedWithPlacement(event);
     await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after fork failed", e);
     });
@@ -5395,7 +5418,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           newTopicState(this.settings, new Date(now)),
         ),
       });
-      await this.ledger.appendEvent(ev);
+      await this.appendCreatedWithPlacement(ev);
       await this.ledger.reconcile();
       this.irPdfPaths.add(file.path);
       void this.refreshStatusBar();
@@ -5439,7 +5462,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         Date.now(),
       );
       for (const ev of events) {
-        await this.ledger.appendEvent(ev);
+        await this.appendCreatedWithPlacement(ev);
       }
       if (opts?.skipReconcile) return;
       await this.ledger.reconcile();

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Priority now forms one strict collection-wide relative order. Setting or
+  inheriting a percentage inserts the element at that position and shifts later
+  elements; legacy duplicate priorities migrate newest-first, then by element
+  id. Priority controls display and accept up to four decimal places.
+
 ## [0.8.2] — 2026-09-27
 
 ### Fixed

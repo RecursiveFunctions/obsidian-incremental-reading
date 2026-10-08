@@ -12,6 +12,9 @@
  */
 
 import type { ElementId, EventId, DeviceId } from "./ids";
+import type { PriorityPlacement } from "./relative-priority";
+
+export type { PriorityPlacement } from "./relative-priority";
 
 export type IrType = "topic" | "extract" | "item";
 
@@ -328,6 +331,14 @@ function validElement(value: unknown): value is IrElement {
     (element.schedulerOverride === undefined || nonEmptyString(element.schedulerOverride));
 }
 
+function validPriorityPlacement(value: unknown): value is PriorityPlacement {
+  const placement = record(value);
+  return !!placement && finite(placement.requestedPriority) &&
+    placement.requestedPriority >= PRIORITY_MIN && placement.requestedPriority <= PRIORITY_MAX &&
+    (placement.beforeId === undefined || nonEmptyString(placement.beforeId)) &&
+    (placement.afterId === undefined || nonEmptyString(placement.afterId));
+}
+
 export function validateIrEvent(value: unknown): string | null {
   const event = record(value);
   if (!event) return "event must be an object";
@@ -342,8 +353,13 @@ export function validateIrEvent(value: unknown): string | null {
 
   switch (event.kind as IrEventKind) {
     case "element-created":
-      return validElement(payload.element) && payload.element.id === event.target ? null : "element-created payload is invalid";
-    case "priority-set": return finite(payload.priority) ? null : "priority must be finite";
+      return validElement(payload.element) && payload.element.id === event.target &&
+        (payload.placement === undefined || validPriorityPlacement(payload.placement))
+        ? null : "element-created payload is invalid";
+    case "priority-set":
+      return finite(payload.priority) &&
+        (payload.placement === undefined || validPriorityPlacement(payload.placement))
+        ? null : "priority payload is invalid";
     case "dismiss-set": return typeof payload.dismissed === "boolean" ? null : "dismissed must be boolean";
     case "graded": return validCard(payload.card) ? null : "card is invalid";
     case "grade-undone": return typeof payload.eventId === "string" && payload.eventId ? null : "eventId is required";

@@ -27,6 +27,7 @@ import {
 } from "./ir/tree-nav";
 import { treeRowLabel } from "./ir/labels";
 import { clampPriority, type IrElement, type IrType } from "./ir/model";
+import { formatPriority } from "./ir/relative-priority";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
 import { findExtractEditorPosition } from "./ir/extract-range";
@@ -1630,12 +1631,12 @@ export class IrTreeView extends ItemView {
       attr: {
         "data-ir-element-id": node.id,
         "data-ir-note-path": notePath,
-        "data-ir-priority": String(node.element.priority),
+        "data-ir-priority": formatPriority(node.element.priority),
       },
     });
     const priEl = priWrap.createSpan({
       cls: "ir-tree-priority",
-      text: `p${node.element.priority}`,
+      text: `p${formatPriority(node.element.priority)}`,
     });
     if (this.commitPriority) {
       priEl.addClass("ir-tree-priority--clickable");
@@ -2058,8 +2059,8 @@ export class IrTreeView extends ItemView {
     });
     input.min = "0";
     input.max = "100";
-    input.step = "1";
-    input.value = String(initial);
+    input.step = "0.0001";
+    input.value = formatPriority(initial);
 
     let finished = false;
     const restore = () => {

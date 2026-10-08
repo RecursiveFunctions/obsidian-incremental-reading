@@ -40,8 +40,8 @@ export interface IrSettings {
    */
   makeNotesWhenSourceDeleted: boolean;
   /**
-   * SuperMemo "interwoven learning": within a priority band, shuffle the
-   * order of due items so positional memory doesn't leak into recall. Seed
+   * For imported or malformed tied priorities, shuffle the order of due items
+   * so positional memory doesn't leak into recall. Seed
    * is the calendar day, so resuming a session mid-day keeps the same
    * order; a new day produces a fresh permutation. Off restores the
    * pre-feature deterministic order (priority, then due time).

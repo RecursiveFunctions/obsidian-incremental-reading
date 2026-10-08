@@ -63,7 +63,7 @@ export class IrSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Interleave items of similar priority")
       .setDesc(
-        "SuperMemo-style: within an equal-priority band, shuffle the order " +
+        "For imported or malformed tied priorities, shuffle the tied order " +
           "so positional memory doesn't help you recall. Seeded by the " +
           "calendar day, so a paused session keeps its order when you " +
           "resume the same day. Off restores priority + due-time order.",

@@ -166,7 +166,7 @@ test("reconcile materializes one file per folded element; return == load()", asy
     );
   }
   assert.equal(fs.dump().get(statePath(a)) !== undefined, true);
-  assert.equal(JSON.parse(fs.dump().get(statePath(a))!).priority, 12);
+  assert.equal(JSON.parse(fs.dump().get(statePath(a))!).priority, 0);
   assert.equal(JSON.parse(fs.dump().get(statePath(b))!).dismissed, true);
 });
 
@@ -238,7 +238,7 @@ test("reconcile is idempotent and churn-free", async () => {
   assert.deepEqual(again, await ledger.load());
 });
 
-test("only the changed element's file is rewritten on an incremental reconcile", async () => {
+test("all elements whose projected priority changes are rewritten", async () => {
   const fs = memFs();
   const ledger = new IrLedger(fs);
   const a = newElementId();
@@ -257,8 +257,11 @@ test("only the changed element's file is rewritten on an incremental reconcile",
 
   assert.equal(fs.writes.get(statePath(a)) ?? 0, 1, "changed element rewritten once");
   assert.equal(fs.writes.get(statePath(c)) ?? 0, 1, "new element written once");
-  assert.equal(fs.writes.get(statePath(b)) ?? 0, 0, "unchanged element not rewritten");
-  assert.equal(JSON.parse(fs.dump().get(statePath(a))!).priority, 99);
+  assert.equal(fs.writes.get(statePath(b)) ?? 0, 1, "shifted element rewritten once");
+  const priorities = [a, b, c]
+    .map((id) => JSON.parse(fs.dump().get(statePath(id))!).priority)
+    .sort((left, right) => left - right);
+  assert.deepEqual(priorities, [0, 50, 100]);
 });
 
 test("serialization is deterministic regardless of event arrival order", async () => {

@@ -18,8 +18,8 @@ export interface QueueEntry {
 
 export interface QueueOptions {
   /**
-   * SuperMemo "interwoven learning": within an equal-priority band, shuffle
-   * items so the user never sees the same sequence twice. The shuffle is
+   * For malformed/external tied inputs, shuffle items so the user never sees
+   * the same sequence twice. Ledger-derived priorities are normally unique. The shuffle is
    * seeded by the calendar day so the order is stable across plugin
    * reloads within the same day — taking a break mid-session and resuming
    * keeps your "I just saw X" mental model intact — but next day's
@@ -80,7 +80,7 @@ export function interleavedQueue(
 }
 
 /**
- * Walk equal-priority runs in `arr` and shuffle each one in place. The seed
+ * Walk exceptional equal-priority runs in `arr` and shuffle each one in place. The seed
  * is mixed with the run's priority value so different priority bands get
  * independent permutations from the same day-key.
  *

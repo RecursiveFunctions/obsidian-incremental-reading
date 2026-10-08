@@ -1,5 +1,6 @@
 import type { IrElement, IrEvent, SourceTombstone } from "./model";
 import type { ElementId, EventId, DeviceId } from "./ids";
+import { buildPriorityPlacement } from "./relative-priority";
 
 export interface DeletionOptions {
   autoPromoteRootless: boolean;
@@ -286,7 +287,10 @@ export function planUndoSourceDeletion(
 
   for (const ev of deleted) {
     const el = byId.get(ev.target);
-    if (el) push("element-created", ev.target, { element: el });
+    if (el) push("element-created", ev.target, {
+      element: el,
+      placement: buildPriorityPlacement(before, ev.target, el.priority),
+    });
   }
   for (const ev of reparented) {
     const el = byId.get(ev.target);

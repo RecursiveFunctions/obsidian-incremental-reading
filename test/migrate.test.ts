@@ -127,13 +127,13 @@ test("folded migration reproduces the frontmatter-decoded state", () => {
   const item = byPath.get("IR/Cloze 1.md")!;
   const dismissed = byPath.get("IR/Old.md")!;
 
-  // Types and the clamp.
+  // Types and collection-wide relative projection.
   assert.equal(topic.type, "topic");
   assert.equal(extract.type, "extract");
   assert.equal(item.type, "item");
-  assert.equal(dismissed.priority, 100, "ir-priority 999 clamps to 100");
+  assert.equal(dismissed.priority, 100, "the clamped legacy maximum stays last");
   assert.equal(dismissed.dismissed, true);
-  assert.equal(topic.priority, 20);
+  assert.equal(topic.priority, 0);
 
   // Standalone-note mapping: own path, no anchor.
   for (const e of els) {

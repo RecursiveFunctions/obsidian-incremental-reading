@@ -104,17 +104,47 @@ test("element-created inserts; later events mutate the same element", () => {
   ]);
   const el = s.elements.get(id);
   assert.ok(el);
-  assert.equal(el.priority, 12);
+  assert.equal(el.priority, 0);
   assert.equal(el.dismissed, true);
 });
 
-test("priority is clamped on fold", () => {
-  const id = newElementId();
+test("bare priority events remain legacy ordering hints", () => {
+  const first = newElementId();
+  const last = newElementId();
   const s = fold([
-    ev({ lamport: 1, kind: "element-created", target: id, payload: { element: topic(id) } }),
-    ev({ lamport: 2, kind: "priority-set", target: id, payload: { priority: 999 } }),
+    ev({ lamport: 1, kind: "element-created", target: first, payload: { element: topic(first) } }),
+    ev({ lamport: 2, kind: "element-created", target: last, payload: { element: topic(last) } }),
+    ev({ lamport: 3, kind: "priority-set", target: last, payload: { priority: 999 } }),
   ]);
-  assert.equal(s.elements.get(id)?.priority, 100);
+  assert.equal(s.elements.get(first)?.priority, 0);
+  assert.equal(s.elements.get(last)?.priority, 100);
+});
+
+test("fold replays placements canonically without mutating event payloads", () => {
+  const a = newElementId();
+  const b = newElementId();
+  const c = newElementId();
+  const created = ev({ lamport: 1, kind: "element-created", target: a, payload: { element: { ...topic(a), created: 3 } } });
+  const events = [
+    created,
+    ev({ lamport: 2, kind: "element-created", target: b, payload: { element: { ...topic(b), created: 2 } } }),
+    ev({ lamport: 3, kind: "element-created", target: c, payload: { element: { ...topic(c), created: 1 } } }),
+    ev({ lamport: 4, kind: "priority-set", target: c, payload: {
+      priority: 50,
+      placement: { requestedPriority: 50, beforeId: b, afterId: a },
+    } }),
+  ];
+  const original = structuredClone(created.payload.element);
+  const expected = fold(events);
+  assert.deepEqual(fold(shuffle(events, 42)), expected);
+  assert.deepEqual(created.payload.element, original);
+  assert.deepEqual([...expected.elements.values()]
+    .sort((left, right) => left.priority - right.priority)
+    .map((element) => [element.id, element.priority]), [
+    [a, 0],
+    [c, 50],
+    [b, 100],
+  ]);
 });
 
 test("mercy-postponed bumps card.due and schedule.due without resetting scheduler state", () => {
