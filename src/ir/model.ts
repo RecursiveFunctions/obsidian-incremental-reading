@@ -192,6 +192,7 @@ export type IrEventKind =
   | "grade-undone"
   | "topic-advanced"
   | "mercy-postponed"
+  | "mercy-undone"
   | "anchor-repaired"
   | "anchor-detached"
   | "promoted"
@@ -219,7 +220,7 @@ export interface IrEvent {
 
 const IR_EVENT_KINDS = new Set<IrEventKind>([
   "element-created", "priority-set", "dismiss-set", "graded", "grade-undone",
-  "topic-advanced", "mercy-postponed", "anchor-repaired", "anchor-detached",
+  "topic-advanced", "mercy-postponed", "mercy-undone", "anchor-repaired", "anchor-detached",
   "promoted", "demoted", "reparented", "source-tombstoned", "source-restored",
   "source-renamed", "element-deleted", "text-edited",
 ]);
@@ -348,6 +349,11 @@ export function validateIrEvent(value: unknown): string | null {
     case "grade-undone": return typeof payload.eventId === "string" && payload.eventId ? null : "eventId is required";
     case "topic-advanced": return validSchedule(payload.schedule) ? null : "schedule is invalid";
     case "mercy-postponed": return finite(payload.newDue) ? null : "newDue must be finite";
+    case "mercy-undone":
+      return nonEmptyString(payload.batchId) &&
+        (payload.operation === "complete" || finite(payload.newDue))
+        ? null
+        : "batchId and newDue are required";
     case "reparented": return payload.parentId === null || nonEmptyString(payload.parentId) ? null : "parentId is invalid";
     case "promoted": return nonEmptyString(payload.notePath) ? null : "notePath is required";
     case "source-tombstoned": {

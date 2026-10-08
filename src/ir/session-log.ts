@@ -28,6 +28,7 @@ const KIND_LABEL: Record<IrEventKind, string> = {
   "grade-undone": "grade undone",
   "topic-advanced": "advanced",
   "mercy-postponed": "mercy postponed",
+  "mercy-undone": "mercy undone",
   "anchor-repaired": "anchor repaired",
   "anchor-detached": "anchor detached",
   promoted: "promoted",

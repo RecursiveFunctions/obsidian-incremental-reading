@@ -211,31 +211,21 @@ function obsidianLinkIndex(app: App): NoteLinkIndex {
   };
 }
 
-/**
- * Insert `child` immediately after the current index so a mid-session
- * extract/cloze joins this pass without rebuilding the due queue.
- * If the id is already in the queue, refresh its element/file in place.
- */
-export function upsertAfterCurrent(
+/** Refresh an element already present in a live queue without reordering it. */
+export function refreshQueuedSlot(
   queue: readonly ReviewSlot[],
-  index: number,
-  child: ReviewSlot,
+  element: ReviewSlot,
 ): ReviewSlot[] {
-  const existing = queue.findIndex((s) => s.id === child.id);
-  if (existing >= 0) {
-    const out = queue.slice();
-    const prev = out[existing]!;
-    out[existing] = {
-      ...prev,
-      element: child.element,
-      file: child.file ?? prev.file,
-      neuralVia: child.neuralVia ?? prev.neuralVia,
-    };
-    return out;
-  }
+  const existing = queue.findIndex((s) => s.id === element.id);
+  if (existing < 0) return queue.slice();
   const out = queue.slice();
-  const at = Math.max(0, Math.min(index + 1, out.length));
-  out.splice(at, 0, child);
+  const prev = out[existing]!;
+  out[existing] = {
+    ...prev,
+    element: element.element,
+    file: element.file ?? prev.file,
+    neuralVia: element.neuralVia ?? prev.neuralVia,
+  };
   return out;
 }
 

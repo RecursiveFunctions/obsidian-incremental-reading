@@ -88,7 +88,8 @@ import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 import { topicStateToSchedule } from "./src/ir/queue-adapter";
-import { redistribute, type MercyEntry } from "./src/ir/mercy";
+import { addLocalDays, planMercy, type MercyEntry } from "./src/ir/mercy";
+import { previewMercy } from "./src/ir/mercy-modal";
 import {
   bodyWithSingleClozeGroup,
   listClozeGroupNumbers,
@@ -725,6 +726,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "clock",
       hotkeys: [{ modifiers: ["Alt"], key: "m" }],
       callback: () => void this.runMercy(),
+    });
+
+    this.irCommand({
+      id: "undo-last-mercy",
+      name: "Undo last mercy",
+      icon: "undo-2",
+      callback: () => void this.undoLastMercy(),
     });
 
     this.irCommand({
@@ -3109,7 +3117,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     if (!this.ledger) return;
     const now = Date.now();
-    const newDue = now + days * 24 * 60 * 60 * 1000;
+    const newDue = addLocalDays(now, days);
     await this.ledger.appendEvent({
       id: newEventId(),
       ts: now,
@@ -3122,6 +3130,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after postpone failed", e);
     });
+    this.getActiveReviewView()?.removePostponed(new Set([elementId]));
+    const tree = this.getTreeView();
+    if (tree) void tree.refresh();
     void this.refreshStatusBar();
   }
 
@@ -3395,6 +3406,17 @@ export default class IncrementalReadingPlugin extends Plugin {
    * its real next-due.
    */
   private async runMercy(): Promise<void> {
+    try {
+      await this.runMercyNow();
+    } catch (error) {
+      console.error("Incremental Reading: mercy failed", error);
+      new Notice(
+        "Incremental Reading: mercy could not be applied. See console for details.",
+      );
+    }
+  }
+
+  private async runMercyNow(): Promise<void> {
     if (!this.ledger) {
       new Notice("Incremental Reading: ledger is not ready.");
       return;
@@ -3411,7 +3433,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       entries.push({ id: el.id, priority: el.priority, dueMs: due });
     }
 
-    const result = redistribute(entries, now, {
+    const result = planMercy(entries, now, {
       ceiling: this.settings.mercyCeiling,
       priorityCutoff: this.settings.mercyPriorityCutoff,
     });
@@ -3425,20 +3447,26 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
+    if (!(await previewMercy(this.app, result, this.settings.mercyCeiling))) return;
     const events = await this.ledger.loadEvents();
     let lamport = nextLamport(events);
     const device = await this.ledger.getDeviceId();
-    const newDue = now + 24 * 60 * 60 * 1000;
+    const batchId = newEventId();
 
-    for (const id of result.postponed) {
+    for (const assignment of result.assignments) {
       const ev: IrEvent = {
         id: newEventId(),
         ts: now,
         lamport,
         device,
         kind: "mercy-postponed",
-        target: id as ElementId,
-        payload: { newDue },
+        target: assignment.id as ElementId,
+        payload: {
+          batchId,
+          previousDue: assignment.previousDue,
+          newDue: assignment.newDue,
+          operation: "mercy",
+        },
       };
       await this.ledger.appendEvent(ev);
       lamport += 1;
@@ -3447,10 +3475,93 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     new Notice(
       `Incremental Reading: postponed ${result.postponedCount} element` +
-        `${result.postponedCount === 1 ? "" : "s"} to tomorrow ` +
+        `${result.postponedCount === 1 ? "" : "s"} across future days ` +
         `(${result.dueToday.length} kept due today).`,
     );
+    this.getActiveReviewView()?.removePostponed(
+      new Set(result.postponed as ElementId[]),
+    );
+    const tree = this.getTreeView();
+    if (tree) void tree.refresh();
     void this.refreshStatusBar();
+  }
+
+  private async undoLastMercy(): Promise<void> {
+    if (!this.ledger) return;
+    try {
+      const events = await this.ledger.loadEvents();
+      const undone = new Set(
+        events
+          .filter((e) => e.kind === "mercy-undone")
+          .map((e) => e.payload.batchId),
+      );
+      const batches = events.filter(
+        (e) =>
+          e.kind === "mercy-postponed" &&
+          typeof e.payload.batchId === "string" &&
+          !undone.has(e.payload.batchId),
+      );
+      const latest = batches.sort(
+        (a, b) => b.lamport - a.lamport || b.id.localeCompare(a.id),
+      )[0];
+      if (!latest) {
+        new Notice("Incremental Reading: no mercy batch to undo.");
+        return;
+      }
+      const batchId = latest.payload.batchId as string;
+      const targets = batches.filter(
+        (e) =>
+          e.payload.batchId === batchId &&
+          Number.isFinite(e.payload.previousDue),
+      );
+      let lamport = nextLamport(events);
+      const device = await this.ledger.getDeviceId();
+      let restored = 0;
+      let skipped = 0;
+      for (const target of targets) {
+        const laterDueChange = events.some(
+          (e) =>
+            e.target === target.target &&
+            e.lamport > target.lamport &&
+            ["graded", "topic-advanced", "mercy-postponed", "mercy-undone"].includes(e.kind),
+        );
+        if (laterDueChange) {
+          skipped += 1;
+          continue;
+        }
+        await this.ledger.appendEvent({
+          id: newEventId(),
+          ts: Date.now(),
+          lamport: lamport++,
+          device,
+          kind: "mercy-undone",
+          target: target.target,
+          payload: { batchId, newDue: target.payload.previousDue },
+        });
+        restored += 1;
+      }
+      await this.ledger.appendEvent({
+        id: newEventId(),
+        ts: Date.now(),
+        lamport: lamport++,
+        device,
+        kind: "mercy-undone",
+        target: latest.target,
+        payload: { batchId, operation: "complete" },
+      });
+      await this.ledger.reconcile();
+      const tree = this.getTreeView();
+      if (tree) void tree.refresh();
+      void this.refreshStatusBar();
+      new Notice(
+        `Incremental Reading: restored ${restored}; skipped ${skipped} changed element${skipped === 1 ? "" : "s"}.`,
+      );
+    } catch (error) {
+      console.error("Incremental Reading: undo mercy failed", error);
+      new Notice(
+        "Incremental Reading: could not undo mercy. See console for details.",
+      );
+    }
   }
 
   /**

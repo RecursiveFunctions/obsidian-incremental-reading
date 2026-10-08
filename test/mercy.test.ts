@@ -11,6 +11,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { planMercy } from "../src/ir/mercy";
 
 const SPEC = ["..", "src", "ir", "mercy.ts"].join("/");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -99,4 +100,35 @@ test("deterministic (identical result on re-run)", async (t) => {
   const x = JSON.stringify(m.redistribute(entries(), NOW, opts));
   const y = JSON.stringify(m.redistribute(entries(), NOW, opts));
   assert.equal(x, y);
+});
+
+test("planner accounts for existing future load and spills across days", () => {
+  const now = new Date(2026, 0, 10, 12).getTime();
+  const tomorrow = new Date(2026, 0, 11, 9).getTime();
+  const r = planMercy(
+    [
+      { id: "a", priority: 1, dueMs: now - 3 },
+      { id: "b", priority: 20, dueMs: now - 2 },
+      { id: "c", priority: 30, dueMs: now - 1 },
+      { id: "future", priority: 50, dueMs: tomorrow },
+    ],
+    now,
+    { ceiling: 1, priorityCutoff: 0 },
+  );
+  assert.equal(r.assignments[0]!.targetLocalDate, "2026-01-12");
+  assert.equal(r.assignments[1]!.targetLocalDate, "2026-01-13");
+});
+
+test("planner preserves due clock time and does not mutate inputs", () => {
+  const now = new Date(2026, 2, 7, 18, 0).getTime();
+  const due = new Date(2026, 2, 7, 8, 45, 30, 12).getTime();
+  const input = [
+    { id: "keep", priority: 1, dueMs: due - 1 },
+    { id: "move", priority: 50, dueMs: due },
+  ];
+  const copy = structuredClone(input);
+  const r = planMercy(input, now, { ceiling: 1, priorityCutoff: 0 });
+  const moved = new Date(r.assignments[0]!.newDue);
+  assert.deepEqual([moved.getHours(), moved.getMinutes(), moved.getSeconds(), moved.getMilliseconds()], [8, 45, 30, 12]);
+  assert.deepEqual(input, copy);
 });

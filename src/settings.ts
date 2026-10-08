@@ -278,7 +278,7 @@ export class IrSettingTab extends PluginSettingTab {
       .setName("Daily ceiling")
       .setDesc(
         "Maximum due elements per day. Running mercy postpones the lowest-" +
-          "priority overflow until tomorrow, preserving scheduler state.",
+          "priority overflow across future days with free capacity, preserving scheduler state.",
       )
       .addSlider((slider) =>
         slider
@@ -294,7 +294,7 @@ export class IrSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Priority cutoff")
       .setDesc(
-        `Elements with priority strictly below this (${PRIORITY_MIN} = most ` +
+        `Elements with priority at or below this (${PRIORITY_MIN} = most ` +
           "important) are never postponed by mercy, no matter the overflow.",
       )
       .addSlider((slider) =>

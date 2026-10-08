@@ -23,6 +23,7 @@ const KIND_ICON: Record<string, string> = {
   graded: "check-circle",
   "topic-advanced": "fast-forward",
   "mercy-postponed": "clock",
+  "mercy-undone": "undo-2",
   "dismiss-set": "ban",
   "priority-set": "sliders-horizontal",
   "element-created": "plus-circle",

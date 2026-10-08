@@ -5,7 +5,7 @@ import {
   EMPTY_COLLECTION_COPY,
   EMPTY_NEURAL_COPY,
   sessionBarLabel,
-  upsertAfterCurrent,
+  refreshQueuedSlot,
   type ReviewSlot,
 } from "../src/review";
 import type { IrElement } from "../src/ir/model";
@@ -32,29 +32,18 @@ function slot(id: string, type: IrElement["type"] = "extract"): ReviewSlot {
   return { id: id as ElementId, element: el(id, type), file: null };
 }
 
-test("upsertAfterCurrent: inserts immediately after the current index", () => {
+test("refreshQueuedSlot: absent ids leave queue order and length unchanged", () => {
   const q = [slot("a", "topic"), slot("b", "extract")];
-  const out = upsertAfterCurrent(q, 0, slot("child"));
-  assert.deepEqual(
-    out.map((s) => s.id),
-    ["a", "child", "b"],
-  );
+  const out = refreshQueuedSlot(q, slot("child"));
+  assert.deepEqual(out.map((s) => s.id), ["a", "b"]);
+  assert.equal(out.length, q.length);
 });
 
-test("upsertAfterCurrent: appends when current is the last card", () => {
-  const q = [slot("a", "topic")];
-  const out = upsertAfterCurrent(q, 0, slot("child"));
-  assert.deepEqual(
-    out.map((s) => s.id),
-    ["a", "child"],
-  );
-});
-
-test("upsertAfterCurrent: duplicate id refreshes in place, no second insert", () => {
+test("refreshQueuedSlot: existing id refreshes metadata in place", () => {
   const child = slot("child");
   child.element = { ...child.element, notePath: "x.md" };
   const q = [slot("a", "topic"), slot("child")];
-  const out = upsertAfterCurrent(q, 0, child);
+  const out = refreshQueuedSlot(q, child);
   assert.equal(out.length, 2);
   assert.equal(out[1]!.element.notePath, "x.md");
 });

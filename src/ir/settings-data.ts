@@ -25,7 +25,7 @@ export interface IrSettings {
   ankiDeckName: string;
   /** Daily ceiling on due elements before mercy starts postponing. */
   mercyCeiling: number;
-  /** Priority strictly below which mercy never postpones. */
+  /** Priority at or below which mercy never postpones. */
   mercyPriorityCutoff: number;
   /**
    * When you run Extract or Cloze on a plain markdown note (not yet an IR

@@ -126,6 +126,15 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
         break;
       }
 
+      case "mercy-undone": {
+        if (element && event.payload.operation !== "complete") {
+          const newDue = event.payload.newDue as number;
+          if (element.card) element.card = { ...element.card, due: newDue };
+          if (element.schedule) element.schedule = { ...element.schedule, due: newDue };
+        }
+        break;
+      }
+
       case "reparented": {
         if (element) {
           element.parentId = event.payload.parentId as ElementId | null;

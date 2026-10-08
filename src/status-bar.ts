@@ -41,6 +41,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const DUE_CHANGE_KINDS = new Set<IrEvent["kind"]>([
   "mercy-postponed",
+  "mercy-undone",
   "graded",
   "topic-advanced",
 ]);

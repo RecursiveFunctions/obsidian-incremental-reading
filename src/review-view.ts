@@ -80,7 +80,7 @@ import {
   EMPTY_COLLECTION_COPY,
   sessionBarLabel,
   slotFromElement,
-  upsertAfterCurrent,
+  refreshQueuedSlot,
 } from "./review";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import {
@@ -2324,20 +2324,43 @@ export class IrReviewView extends ItemView {
   }
 
   /**
-   * Mid-session extract/cloze/promote/fork: the new (or updated) element
-   * joins this pass immediately after the current card. Does not rebuild
-   * the due queue. Safe to call from the host plugin (hub/tree).
+   * Adopt an element for rendering and refresh it only when it is already in
+   * this session snapshot. Newly created children remain for the next pass.
    */
   adoptElement(el: IrElement): void {
     const slot = slotFromElement(this.app, el);
     if (!slot) return;
     this.elementsById.set(el.id, el);
     const currentId = this.current?.id;
-    this.queue = upsertAfterCurrent(this.queue, this.index, slot);
+    this.queue = refreshQueuedSlot(this.queue, slot);
     if (currentId === el.id) {
       this.loadedSlotId = null;
       void this.renderCard();
-    }     else {
+    } else {
+      this.paintSessionBar();
+    }
+  }
+
+  /** Remove postponed cards from the current and remaining session tail. */
+  removePostponed(ids: ReadonlySet<ElementId>): void {
+    if (ids.size === 0 || this.sessionComplete) return;
+    const currentId = this.current?.id;
+    const kept = this.queue.filter((slot, i) => i < this.index || !ids.has(slot.id));
+    this.queue = kept;
+    if (this.index >= this.queue.length) {
+      this.sessionComplete = true;
+      this.revealed = false;
+      this.editing = false;
+      this.loadedSlotId = null;
+      void this.renderCard();
+      return;
+    }
+    if (currentId && ids.has(currentId)) {
+      this.revealed = false;
+      this.editing = false;
+      this.loadedSlotId = null;
+      void this.renderCard();
+    } else {
       this.paintSessionBar();
     }
   }
