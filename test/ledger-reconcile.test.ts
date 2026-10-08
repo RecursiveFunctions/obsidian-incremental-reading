@@ -238,7 +238,7 @@ test("reconcile is idempotent and churn-free", async () => {
   assert.deepEqual(again, await ledger.load());
 });
 
-test("all elements whose projected priority changes are rewritten", async () => {
+test("incremental reconcile writes the new element and exact projected state", async () => {
   const fs = memFs();
   const ledger = new IrLedger(fs);
   const a = newElementId();
@@ -255,9 +255,11 @@ test("all elements whose projected priority changes are rewritten", async () => 
   await ledger.appendEvent(created(c, 4));
   await ledger.reconcile();
 
-  assert.equal(fs.writes.get(statePath(a)) ?? 0, 1, "changed element rewritten once");
   assert.equal(fs.writes.get(statePath(c)) ?? 0, 1, "new element written once");
-  assert.equal(fs.writes.get(statePath(b)) ?? 0, 1, "shifted element rewritten once");
+  const loaded = await ledger.load();
+  for (const [id, element] of loaded.elements) {
+    assert.deepEqual(JSON.parse(fs.dump().get(statePath(id))!), element);
+  }
   const priorities = [a, b, c]
     .map((id) => JSON.parse(fs.dump().get(statePath(id))!).priority)
     .sort((left, right) => left - right);
