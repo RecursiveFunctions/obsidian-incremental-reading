@@ -93,5 +93,12 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
   result.notices = { ...defaults.notices, ...record(saved.notices) } as IrSettings["notices"];
   const rawMode = saved.treeDisplayMode as string | undefined;
   result.treeDisplayMode = rawMode === "sources" || rawMode === "hierarchy" ? "sources" : "priority";
+  result.mobileCaptureFab = saved.mobileCaptureFab !== false;
+  result.mobileReviewFab = saved.mobileReviewFab !== false;
+  result.mobileShell = saved.mobileShell !== false;
+  result.mobileShellCollapsed = saved.mobileShellCollapsed === true;
+  result.mobileReviewLayout = saved.mobileReviewLayout === "minimal" ? "minimal" : "full";
+  result.mobileReviewFontSize = finite(saved.mobileReviewFontSize, 1, 0.75, 1.5);
+  result.mobileReviewButtons = saved.mobileReviewButtons === "compact" ? "compact" : "comfortable";
   return result;
 }

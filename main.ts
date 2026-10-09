@@ -82,6 +82,7 @@ import { labelFor } from "./src/ir/labels";
 import { newElementId, newEventId } from "./src/ir/ids";
 import {
   clampPriority,
+  newElement,
   type IrElement,
   type IrEvent,
 } from "./src/ir/model";
@@ -196,6 +197,9 @@ import {
 } from "./src/ir-mobile-fab";
 import { sessionHubKinds } from "./src/ir/mobile-hub";
 import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
+import { registerMobileCapture } from "./src/ir/mobile-capture";
+import { registerMobileReviewFab, applyMobileReviewLayout } from "./src/ir/mobile-review";
+import { registerMobileShell } from "./src/ir/mobile-shell";
 
 /**
  * The bulk-extract commands ask for confirmation above this many candidate
@@ -539,6 +543,33 @@ export default class IncrementalReadingPlugin extends Plugin {
       // The FAB is built after the first status-bar refresh fired, so paint
       // its badge now rather than leaving it blank until the next mutation.
       void this.refreshStatusBar();
+
+      // Mobile capture FAB + sheet.
+      this.register(
+        registerMobileCapture(this, this.app, {
+          createExtract: (text) => this.mobileCreateExtract(text),
+          createCloze: (text, hint) => this.mobileCreateCloze(text, hint),
+          createTopic: (text, title) => this.mobileCreateTopic(text, title),
+        }, () => this.settings.mobileCaptureFab),
+      );
+
+      // Mobile review FAB.
+      this.register(
+        registerMobileReviewFab(this, () => void this.startReview(), () => this.settings.mobileReviewFab),
+      );
+
+      // Mobile shell (bottom bar).
+      this.register(
+        registerMobileShell(this, {
+          openReview: () => void this.startReview(),
+          openCapture: () => this.mobileOpenCaptureSheet(),
+          openCollection: () => void this.openTreeView(),
+          onCollapseChange: (collapsed) => {
+            this.settings.mobileShellCollapsed = collapsed;
+            void this.saveSettings();
+          },
+        }, () => this.settings.mobileShell, () => this.settings.mobileShellCollapsed),
+      );
     }
 
     this.addRibbonIcon("brain-circuit", "Start IR review", () => {
@@ -3648,6 +3679,112 @@ export default class IncrementalReadingPlugin extends Plugin {
     new Notice(
       `Optimizer data report copied: ${r.includedReviews} usable review${r.includedReviews === 1 ? "" : "s"} across ${r.includedCards} item${r.includedCards === 1 ? "" : "s"}.`,
     );
+  }
+
+  /** Open the mobile capture sheet programmatically (from the shell). */
+  private mobileOpenCaptureSheet(): void {
+    // The capture FAB's click handler opens the sheet; for the shell we
+    // dispatch a click on the FAB element.
+    const fab = document.querySelector(".ir-mobile-capture-fab");
+    if (fab) fab.dispatchEvent(new Event("click"));
+  }
+
+  /** Create an extract from mobile capture text. */
+  private async mobileCreateExtract(text: string): Promise<ElementId | null> {
+    if (!this.ledger) return null;
+    const elementId = newElementId();
+    const eventId = newEventId();
+    const now = Date.now();
+    const device = await this.ledger.getDeviceId();
+    const element = newElement({
+      id: elementId,
+      type: "extract",
+      priority: this.settings.defaultPriority,
+      parentId: null,
+      text,
+      now,
+    });
+    const ev: IrEvent = {
+      id: eventId,
+      ts: now,
+      lamport: now,
+      device,
+      kind: "element-created",
+      target: elementId,
+      payload: { element },
+    };
+    await this.ledger.appendEvent(ev);
+    await this.ledger.reconcile().catch((e) =>
+      console.error("Incremental Reading: reconcile after mobile extract failed", e),
+    );
+    await this.refreshStatusBar();
+    return elementId;
+  }
+
+  /** Create a cloze item from mobile capture text. */
+  private async mobileCreateCloze(text: string, hint?: string): Promise<ElementId | null> {
+    if (!this.ledger) return null;
+    const elementId = newElementId();
+    const eventId = newEventId();
+    const now = Date.now();
+    const device = await this.ledger.getDeviceId();
+    const clozed = wrapCloze(text, 1, hint);
+    const element = newElement({
+      id: elementId,
+      type: "item",
+      priority: this.settings.defaultPriority,
+      parentId: null,
+      text: clozed,
+      now,
+    });
+    const ev: IrEvent = {
+      id: eventId,
+      ts: now,
+      lamport: now,
+      device,
+      kind: "element-created",
+      target: elementId,
+      payload: { element },
+    };
+    await this.ledger.appendEvent(ev);
+    await this.ledger.reconcile().catch((e) =>
+      console.error("Incremental Reading: reconcile after mobile cloze failed", e),
+    );
+    await this.refreshStatusBar();
+    return elementId;
+  }
+
+  /** Create a topic from mobile capture text. */
+  private async mobileCreateTopic(text: string, title: string): Promise<ElementId | null> {
+    if (!this.ledger) return null;
+    const elementId = newElementId();
+    const eventId = newEventId();
+    const now = Date.now();
+    const device = await this.ledger.getDeviceId();
+    const element = newElement({
+      id: elementId,
+      type: "topic",
+      priority: this.settings.defaultPriority,
+      parentId: null,
+      text,
+      notePath: title,
+      now,
+    });
+    const ev: IrEvent = {
+      id: eventId,
+      ts: now,
+      lamport: now,
+      device,
+      kind: "element-created",
+      target: elementId,
+      payload: { element },
+    };
+    await this.ledger.appendEvent(ev);
+    await this.ledger.reconcile().catch((e) =>
+      console.error("Incremental Reading: reconcile after mobile topic failed", e),
+    );
+    await this.refreshStatusBar();
+    return elementId;
   }
 
   /**

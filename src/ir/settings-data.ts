@@ -86,6 +86,20 @@ export interface IrSettings {
    * Apply has happened yet (no revert offered).
    */
   fsrsPreviousParams?: FittedParams | null;
+  /** Mobile capture FAB visibility. */
+  mobileCaptureFab: boolean;
+  /** Mobile review FAB visibility. */
+  mobileReviewFab: boolean;
+  /** Mobile shell (bottom bar) visibility. */
+  mobileShell: boolean;
+  /** Whether the mobile shell is collapsed to a pill. */
+  mobileShellCollapsed: boolean;
+  /** Mobile review layout: "full" or "minimal". */
+  mobileReviewLayout: "full" | "minimal";
+  /** Mobile review font size multiplier. */
+  mobileReviewFontSize: number;
+  /** Mobile review button size: "compact" or "comfortable". */
+  mobileReviewButtons: "compact" | "comfortable";
 }
 
 export interface SortingPolicySettings {
@@ -210,6 +224,13 @@ export const DEFAULT_SETTINGS: IrSettings = {
   spaceAfterReveal: "good",
   occlusionDefaultMode: "hide-all",
   desiredRetention: 0.9,
+  mobileCaptureFab: true,
+  mobileReviewFab: true,
+  mobileShell: true,
+  mobileShellCollapsed: false,
+  mobileReviewLayout: "full",
+  mobileReviewFontSize: 1,
+  mobileReviewButtons: "comfortable",
 };
 
 /** Fresh copy so restoring defaults cannot mutate the constant. */

@@ -405,6 +405,86 @@ export class IrSettingTab extends PluginSettingTab {
           }),
       );
 
+    containerEl.createEl("h3", { text: "Mobile" });
+
+    new Setting(containerEl)
+      .setName("Capture FAB")
+      .setDesc("Show the mobile capture button on the workspace.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.mobileCaptureFab)
+          .onChange(async (value) => {
+            this.plugin.settings.mobileCaptureFab = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Review FAB")
+      .setDesc("Show the mobile review button on the workspace.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.mobileReviewFab)
+          .onChange(async (value) => {
+            this.plugin.settings.mobileReviewFab = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Mobile shell")
+      .setDesc("Show the persistent bottom bar with Review, Capture, and Collection.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.mobileShell)
+          .onChange(async (value) => {
+            this.plugin.settings.mobileShell = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Review layout")
+      .setDesc("Full shows the source column; minimal hides it for more card space.")
+      .addDropdown((dd) =>
+        dd
+          .addOption("full", "Full")
+          .addOption("minimal", "Minimal")
+          .setValue(this.plugin.settings.mobileReviewLayout)
+          .onChange(async (value) => {
+            this.plugin.settings.mobileReviewLayout = value === "minimal" ? "minimal" : "full";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Review font size")
+      .setDesc("Scale factor for card text in mobile review.")
+      .addSlider((slider) =>
+        slider
+          .setLimits(0.75, 1.5, 0.05)
+          .setValue(this.plugin.settings.mobileReviewFontSize)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.mobileReviewFontSize = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Review buttons")
+      .setDesc("Comfortable is larger for thumbs; compact saves space.")
+      .addDropdown((dd) =>
+        dd
+          .addOption("comfortable", "Comfortable")
+          .addOption("compact", "Compact")
+          .setValue(this.plugin.settings.mobileReviewButtons)
+          .onChange(async (value) => {
+            this.plugin.settings.mobileReviewButtons = value === "compact" ? "compact" : "comfortable";
+            await this.plugin.saveSettings();
+          }),
+      );
+
     containerEl.createEl("h3", { text: "Anki export" });
 
     new Setting(containerEl)
