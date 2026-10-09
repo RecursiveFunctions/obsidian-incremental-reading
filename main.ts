@@ -86,7 +86,7 @@ import {
   type IrElement,
   type IrEvent,
 } from "./src/ir/model";
-import { buildPriorityPlacement, legacyPriorityOrder, planAdjacentBlockMove, planAdjust, planBlockInsertion, planSpread, type PriorityPlacementPreview } from "./src/ir/relative-priority";
+import { buildPriorityPlacement, collectionSortOrder, planAdjacentBlockMove, planAdjust, planBlockInsertion, planSpread, type PriorityPlacementPreview } from "./src/ir/relative-priority";
 import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
@@ -3195,7 +3195,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async movePrioritySelection(ids: ElementId[], direction: -1 | 1): Promise<void> {
     if (!this.ledger) return;
     const state = await this.ledger.load();
-    const plan = planAdjacentBlockMove(legacyPriorityOrder(state.elements.values()), ids, direction);
+    const plan = planAdjacentBlockMove(collectionSortOrder(state.elements.values()), ids, direction);
     await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
       targetId: intent.targetId,
       requestedPriority: intent.requestedPriority,
@@ -3207,7 +3207,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async movePrioritySelectionTo(ids: ElementId[], position: number): Promise<void> {
     if (!this.ledger) return;
     const state = await this.ledger.load();
-    const plan = planBlockInsertion(legacyPriorityOrder(state.elements.values()), ids, position);
+    const plan = planBlockInsertion(collectionSortOrder(state.elements.values()), ids, position);
     await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
       targetId: intent.targetId,
       requestedPriority: intent.requestedPriority,
@@ -3233,7 +3233,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     if (!this.ledger) return;
     const state = await this.ledger.load();
-    const order = legacyPriorityOrder(state.elements.values());
+    const order = collectionSortOrder(state.elements.values());
     const plan = operation === "spread"
       ? planSpread(order, ids, start, end)
       : planAdjust(order, ids, start, end);

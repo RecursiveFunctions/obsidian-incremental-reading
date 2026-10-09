@@ -19,7 +19,7 @@ import {
 import type { ElementId, EventId } from "./ids";
 import {
   applyPriorityPlacement,
-  legacyPriorityOrder,
+  collectionSortOrder,
   projectRelativePriorities,
   type PriorityPlacement,
 } from "./relative-priority";
@@ -233,7 +233,7 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
     }
   }
 
-  let order = legacyPriorityOrder(elements.values());
+  let order = collectionSortOrder(elements.values());
   for (const { event, placement } of placements) {
     if (!elements.has(event.target)) continue;
     order = applyPriorityPlacement(order, event.target, placement);

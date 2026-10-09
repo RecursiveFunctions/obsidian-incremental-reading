@@ -8,7 +8,7 @@ import {
   buildPositionPlacement,
   formatPriority,
   insertionIndexForPriority,
-  legacyPriorityOrder,
+  collectionSortOrder,
   planAdjacentBlockMove,
   planAdjust,
   planBlockInsertion,
@@ -24,8 +24,8 @@ const id = (value: string) => value as ElementId;
 const element = (value: string, priority: number, created: number) =>
   newElement({ id: id(value), type: "topic", priority, now: created });
 
-test("legacy order resolves ties newest-first then by id", () => {
-  assert.deepEqual(legacyPriorityOrder([
+test("collectionSortOrder resolves ties newest-first then by id", () => {
+  assert.deepEqual(collectionSortOrder([
     element("old", 20, 1),
     element("b", 20, 2),
     element("a", 20, 2),

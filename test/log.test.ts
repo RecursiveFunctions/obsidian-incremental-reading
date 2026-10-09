@@ -108,7 +108,7 @@ test("element-created inserts; later events mutate the same element", () => {
   assert.equal(el.dismissed, true);
 });
 
-test("bare priority events remain legacy ordering hints", () => {
+test("bare priority-set values are re-projected through collection order", () => {
   const first = newElementId();
   const last = newElementId();
   const s = fold([

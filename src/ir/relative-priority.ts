@@ -27,7 +27,11 @@ export interface PriorityBatchPlan {
   selectedIds: ElementId[];
 }
 
-export function legacyPriorityOrder(elements: Iterable<IrElement>): ElementId[] {
+/**
+ * Baseline collection order before replaying `priority-set` placements in
+ * `fold()`: lower `priority` first; ties → newer `created` first; then id.
+ */
+export function collectionSortOrder(elements: Iterable<IrElement>): ElementId[] {
   return [...elements]
     .sort((a, b) =>
       a.priority - b.priority ||
@@ -68,7 +72,7 @@ export function previewPriorityPlacement(
 ): PriorityPlacementPreview {
   const all = [...elements];
   const placement = buildPriorityPlacement(all, targetId, requestedPriority);
-  const initialOrder = legacyPriorityOrder(all);
+  const initialOrder = collectionSortOrder(all);
   const finalOrder = applyPriorityPlacement(initialOrder, targetId, placement);
   const index = finalOrder.indexOf(targetId);
   const total = finalOrder.length;
@@ -87,7 +91,7 @@ export function buildPriorityPlacement(
   targetId: ElementId,
   requestedPriority: number,
 ): PriorityPlacement {
-  const order = legacyPriorityOrder(elements).filter((id) => id !== targetId);
+  const order = collectionSortOrder(elements).filter((id) => id !== targetId);
   const index = insertionIndexForPriority(requestedPriority, order.length + 1);
   return {
     requestedPriority: clampPriority(requestedPriority),

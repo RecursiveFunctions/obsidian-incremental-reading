@@ -31,7 +31,7 @@ import { treeRowLabel } from "./ir/labels";
 import type { IrElement, IrType } from "./ir/model";
 import {
   formatPriority,
-  legacyPriorityOrder,
+  collectionSortOrder,
   planAdjacentBlockMove,
   planAdjust,
   planBlockInsertion,
@@ -1295,11 +1295,11 @@ export class IrTreeView extends ItemView {
       if (this.commitPriorityPlan) {
         menu.addItem((item) => item.setTitle("Increase priority").setIcon("arrow-up")
           .onClick(() => void this.commitPriorityPlan!(planAdjacentBlockMove(
-            legacyPriorityOrder(this.elementsById.values()), ids, -1,
+            collectionSortOrder(this.elementsById.values()), ids, -1,
           ))));
         menu.addItem((item) => item.setTitle("Decrease priority").setIcon("arrow-down")
           .onClick(() => void this.commitPriorityPlan!(planAdjacentBlockMove(
-            legacyPriorityOrder(this.elementsById.values()), ids, 1,
+            collectionSortOrder(this.elementsById.values()), ids, 1,
           ))));
         menu.addSeparator();
       }
@@ -1343,9 +1343,9 @@ export class IrTreeView extends ItemView {
     input.max = String(this.elementsById.size);
     input.value = "1";
     const preview = surface.createDiv({ cls: "ir-bulk-preview-summary" });
-    let plan = planBlockInsertion(legacyPriorityOrder(this.elementsById.values()), ids, 1);
+    let plan = planBlockInsertion(collectionSortOrder(this.elementsById.values()), ids, 1);
     const render = () => {
-      plan = planBlockInsertion(legacyPriorityOrder(this.elementsById.values()), ids, Number(input.value));
+      plan = planBlockInsertion(collectionSortOrder(this.elementsById.values()), ids, Number(input.value));
       const first = plan.finalOrder.indexOf(plan.selectedIds[0]);
       preview.setText(`${plan.selectedIds.length} elements · positions ${first + 1}–${first + plan.selectedIds.length}`);
     };
@@ -1374,7 +1374,7 @@ export class IrTreeView extends ItemView {
     const preview = surface.createDiv({ cls: "ir-bulk-preview-summary" });
     let plan: PriorityBatchPlan;
     const render = () => {
-      const order = legacyPriorityOrder(this.elementsById.values());
+      const order = collectionSortOrder(this.elementsById.values());
       plan = operation === "spread"
         ? planSpread(order, ids, Number(start.value), Number(end.value))
         : planAdjust(order, ids, Number(start.value), Number(end.value));
@@ -1989,7 +1989,7 @@ export class IrTreeView extends ItemView {
         void (async () => {
           try {
             if (this.displayMode === "priority" && this.commitPriorityPlan) {
-              const order = legacyPriorityOrder(this.elementsById.values());
+              const order = collectionSortOrder(this.elementsById.values());
               const target = order.indexOf(node.id as ElementId);
               const after = e.clientY >= row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2;
               const plan = planBlockInsertion(order, [sourceId as ElementId], target + (after ? 2 : 1));
