@@ -31,7 +31,8 @@ export const AUTO_POSTPONE = ".ir/auto-postpone.json";
 export const ANALYTICS_DIR = ".ir/analytics";
 export const MIGRATION_LOG = `${LOGDIR}/dev_mig_ir_store.jsonl`;
 
-export type LedgerStatus = "absent" | "legacy" | "migrated" | "reset";
+/** `unmigrated`: `.ir/meta.json` exists but `migration: "complete"` was never committed. */
+export type LedgerStatus = "absent" | "unmigrated" | "migrated" | "reset";
 
 interface LedgerMetaV1 {
   schemaVersion: 1;
@@ -231,8 +232,8 @@ export class IrLedger {
    * registry (DESIGN §Q2 fix): `.ir/device.json` becomes a `{devices:{host:id}}`
    * map so each physical Obsidian install gets its own id and its own log
    * shard, even though the file itself rides Obsidian Sync. Without a
-   * hostname the caller falls back to the legacy single-id schema for
-   * backward compat with tests / non-Obsidian harnesses.
+   * hostname the caller uses the single-`deviceId` device file shape (tests
+   * and non-Obsidian harnesses).
    */
   async init(opts?: { hostname?: string }): Promise<void> {
     if (!(await this.fs.exists(META))) {
@@ -247,7 +248,7 @@ export class IrLedger {
     this.generation = meta.generation;
     if (meta.reset === "inert") return "reset";
     if (meta.migration === "complete") return "migrated";
-    return "legacy";
+    return "unmigrated";
   }
 
   async initDevice(opts?: { hostname?: string }): Promise<void> {
@@ -328,8 +329,8 @@ export class IrLedger {
   }
 
   /**
-   * Read `.ir/device.json` as the per-host map (or upgrade a legacy
-   * `{deviceId}` file in place by treating the legacy id as belonging to
+   * Read `.ir/device.json` as the per-host map (or upgrade a single-
+   * `{deviceId}` file in place by treating that id as belonging to
    * *this* host — which is correct for the device that originally wrote
    * it, the most likely first-upgrade scenario). Add or read this host's
    * entry, write the file back, and return the id.
@@ -350,7 +351,7 @@ export class IrLedger {
         if (parsed.devices && typeof parsed.devices === "object") {
           devices = parsed.devices;
         } else if (typeof parsed.deviceId === "string" && parsed.deviceId) {
-          // Legacy schema → claim the id for this host. The next load on a
+          // Single-id file → claim the id for this host. The next load on a
           // DIFFERENT host will see the new schema, miss its own hostname,
           // and generate a fresh id, which is exactly what we want.
           devices[hostname] = parsed.deviceId;

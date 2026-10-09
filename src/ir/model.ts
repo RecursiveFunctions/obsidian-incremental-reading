@@ -8,7 +8,7 @@
  * total helpers; no Obsidian API, no I/O, so it is trivially unit tested.
  *
  * src/types.ts re-exports IrType, PRIORITY_MIN, and PRIORITY_MAX from here
- * so legacy callers that import from `./types` keep working.
+ * so callers that import from `./types` keep working.
  */
 
 import type { ElementId, EventId, DeviceId } from "./ids";

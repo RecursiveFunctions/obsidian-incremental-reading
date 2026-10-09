@@ -43,21 +43,21 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
   if (saved == null) return defaults;
   const result = { ...defaults, ...saved } as IrSettings;
   const sorting = record(saved.sortingPolicy);
-  const legacyProportion = typeof saved.reviewsPerReading === "number"
+  const fromReviewsPerReading = typeof saved.reviewsPerReading === "number"
     ? saved.reviewsPerReading <= 0 ? 0 : 1 / (saved.reviewsPerReading + 1)
     : defaults.sortingPolicy.readingProportion;
-  const legacyJitter = saved.interleaveSimilarPriority === false ? 0 : undefined;
+  const fromInterleaveFlag = saved.interleaveSimilarPriority === false ? 0 : undefined;
   result.schemaVersion = 2;
   result.sortingPolicy = {
     version: 1,
     preset: sorting.preset === "strict" || sorting.preset === "discovery" ||
       sorting.preset === "custom" ? sorting.preset : defaults.sortingPolicy.preset,
     traversal: sorting.traversal === "priority" ? "priority" : "mixed",
-    readingProportion: finite(sorting.readingProportion, legacyProportion, 0, 1),
+    readingProportion: finite(sorting.readingProportion, fromReviewsPerReading, 0, 1),
     itemJitter: finite(sorting.itemJitter,
-      legacyJitter ?? defaults.sortingPolicy.itemJitter, 0, 1),
+      fromInterleaveFlag ?? defaults.sortingPolicy.itemJitter, 0, 1),
     readingJitter: finite(sorting.readingJitter,
-      legacyJitter ?? defaults.sortingPolicy.readingJitter, 0, 1),
+      fromInterleaveFlag ?? defaults.sortingPolicy.readingJitter, 0, 1),
     autoSort: sorting.autoSort === undefined ? defaults.sortingPolicy.autoSort : sorting.autoSort === true,
   };
   const postpone = record(saved.autoPostponePolicy);

@@ -204,10 +204,10 @@ test("migration verification rejects same-count event substitution", async () =>
   assert.equal(await ledger.status(), "absent");
 });
 
-test("legacy schema v1 metadata remains a committed legacy store", async () => {
+test("meta without migration flag reports unmigrated", async () => {
   const fs = memFs();
   await fs.write(META, JSON.stringify({ schemaVersion: 1 }));
-  assert.equal(await new IrLedger(fs).status(), "legacy");
+  assert.equal(await new IrLedger(fs).status(), "unmigrated");
 });
 
 test("unsupported ledger schemas fail closed", async () => {
@@ -258,12 +258,11 @@ test("per-host init: same hostname returns the same id on re-init", async () => 
   assert.equal(await b.getDeviceId(), idA);
 });
 
-test("per-host init: upgrades legacy single-id schema to the host that runs first", async () => {
-  // Existing users have `{deviceId: "..."}` on disk from before the fix.
-  // The first device to load with the new code claims the legacy id for
-  // its hostname — correct for the >99% case where that device is the one
-  // that originally wrote the file. A second device loading later sees the
-  // new schema, misses its hostname, and generates a fresh id.
+test("per-host init: upgrades single-id device.json to the host that runs first", async () => {
+  // Existing vaults may have `{deviceId: "..."}` on disk from before the
+  // per-host map. The first device to load claims that id for its hostname
+  // — correct when that device originally wrote the file. A second host
+  // sees the new schema, misses its hostname, and generates a fresh id.
   const fs = memFs();
   await fs.write(".ir/device.json", JSON.stringify({ deviceId: "dev_legacy_id" }));
 
@@ -271,13 +270,13 @@ test("per-host init: upgrades legacy single-id schema to the host that runs firs
   await original.init({ hostname: "alpha" });
   assert.equal(await original.getDeviceId(), "dev_legacy_id");
 
-  // File now uses the new schema with alpha claiming the legacy id.
+  // File now uses the new schema with alpha claiming the prior id.
   const after = JSON.parse(await fs.read(".ir/device.json")) as {
     devices: Record<string, string>;
   };
   assert.deepEqual(after.devices, { alpha: "dev_legacy_id" });
 
-  // A different host on the same vault gets a fresh id, not the legacy one.
+  // A different host on the same vault gets a fresh id, not the shared one.
   const other = new IrLedger(fs);
   await other.init({ hostname: "beta" });
   const idBeta = await other.getDeviceId();

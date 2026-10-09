@@ -63,7 +63,7 @@ export interface AdvancedPostponePlan {
   skippedIds: string[];
 }
 
-/** Legacy result shape retained for callers and integrations. */
+/** Compact mercy summary for status bar and notices. */
 export interface MercyResult {
   dueToday: string[];
   postponed: string[];

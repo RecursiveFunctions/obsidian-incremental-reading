@@ -7,8 +7,8 @@
  * the plugin must go through `IR_KEYS`, never string literals.
  *
  * Shared domain primitives (`IrType`, `PRIORITY_MIN`, `PRIORITY_MAX`) are
- * canonical in `src/ir/model.ts` and re-exported here so legacy callers
- * that import from `./types` keep working.
+ * canonical in `src/ir/model.ts` and re-exported here for callers that
+ * import from `./types`.
  */
 
 export type { IrType } from "./ir/model";
