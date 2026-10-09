@@ -7,24 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-10-09
+
+### Changed
+
+- **README and positioning copy** now lead with the reading workflow, overload
+  control (Mercy, daily ceiling, priority protection), and an honest alpha
+  status. Adds `docs/FORUM-SHOWCASE-DRAFT.md` for forum-style outreach.
+
+## [0.12.0] — 2026-10-09
+
 ### Added
 
-- Added deterministic priority queue policies with Strict, Balanced, and
-  Discovery presets, separate item/reading jitter, random mid-interval review,
-  and restart-safe session snapshots.
-- Added opt-in startup auto-postpone that preserves work newly due today, plus
-  priority-aware FSRS retention and topic A-Factor scheduling for future reviews.
-- Added exact daily priority-protection analytics storage and grade-time priority
-  audit metadata for future retention analysis.
-- Added position-aware and bulk priority planning primitives for adjacent moves,
-  multiplier changes, Spread, and Adjust.
+- **Mobile capture, review, and shell.** Capture FAB (extract / cloze / topic),
+  review FAB with compact and comfortable layouts, bottom navigation shell,
+  mobile settings (FAB toggles, layout, font size, buttons), and CSS for sheets
+  and docks. Pure helpers in `src/ir/mobile-capture.ts` and
+  `src/ir/mobile-review-logic.ts`.
+
+## [0.11.1] — 2026-10-08
 
 ### Fixed
 
-- Priority now forms one strict collection-wide relative order. Setting or
+- **Collection priority controls** expose percentage placement and adjacent
+  block moves in the tree (wired through the relative-priority planners).
+
+## [0.11.0] — 2026-10-08
+
+### Changed
+
+- **Collection (Alt+I)** overhauls priority and Sources UX: clearer hierarchy,
+  move/drag flows, and README wording that matches “source-aware collection”
+  instead of a generic element tree label.
+
+## [0.10.0] — 2026-10-08
+
+### Added
+
+- **Deterministic priority queue policies** with Strict, Balanced, and
+  Discovery presets, separate item/reading jitter, random mid-interval review,
+  and restart-safe session snapshots.
+- **Opt-in startup auto-postpone** that preserves work newly due today, plus
+  priority-aware FSRS retention and topic A-Factor scheduling for future
+  reviews.
+- **Priority-protection analytics** (exact daily storage) and grade-time
+  priority audit metadata for retention analysis.
+- **Position-aware and bulk priority planning** for adjacent moves, multiplier
+  changes, Spread, and Adjust.
+
+## [0.9.1] — 2026-10-08
+
+### Fixed
+
+- **Priority is one strict collection-wide relative order.** Setting or
   inheriting a percentage inserts the element at that position and shifts later
   elements; legacy duplicate priorities migrate newest-first, then by element
   id. Priority controls display and accept up to four decimal places.
+
+## [0.9.0] — 2026-10-08
+
+### Changed
+
+- **Mercy and review deferral** can postpone child elements with the parent,
+  with an expanded Mercy preview and modal flow.
+
+## [0.8.3] — 2026-09-28
+
+### Fixed
+
+- **Dismiss and other review actions** route through the ledger again so
+  persistence and action safety match the store-backed queue (recovering cases
+  where frontmatter-only dismiss could drift from `.ir/`).
 
 ## [0.8.2] — 2026-09-27
 
