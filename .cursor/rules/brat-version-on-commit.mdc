@@ -1,62 +1,42 @@
 ---
-description: A code change in this repo is not done until a GitHub Release exists with main.js, manifest.json, styles.css attached. Use `npm run ship:patch`.
+description: Commits stay small; BRAT releases only when a milestone is complete. Use npm run ship:* after updating CHANGELOG.
 alwaysApply: true
 ---
 
-# Shipping is mandatory, not optional
+# Commits on main, releases for BRAT
 
-Read `AGENTS.md` at the repo root. The non-negotiables are repeated here.
+Read `AGENTS.md` at the repo root.
 
-## The done bar
+## Commits (default)
 
-A code change is **done** when **all** of these are true:
+- **Small, sensible commits** — one logical change per commit; conventional messages (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
+- **Do not** bump `package.json`, `manifest.json`, or `versions.json` unless you are shipping (below).
+- **Do not** run `npm run ship:*` after every code change. Push commits to `main` (or a PR branch) and stop unless the user asked for a release or a milestone is explicitly done.
 
-1. `package.json`, `manifest.json`, `versions.json` are bumped in lockstep to the new version (`X.Y.Z` or intentional `(next-stable)-feat.<slug>.N` — see `docs/RELEASE.md`).
-2. A matching git tag (no `v` prefix) exists at the bump commit on `origin`.
-3. A GitHub Release exists at that tag with **`main.js`**, **`manifest.json`**, **`styles.css`** attached.
-4. The **Release** workflow run for that tag is green.
+Docs / tests / CI only → commit and push, no tag.
 
-Anything less and BRAT keeps every user pinned on the previous version. A commit on `main` without (2)-(4) is a half-finished release, not a shipped change.
+## Releases (milestone complete)
 
-**Do not flatten an intentional `…-feat.*` version to plain `X.Y.Z`.** BRAT freezes by that exact tag name. **Do not invent a higher X.Y.Z** for a feat channel than the next planned stable (e.g. after `0.5.5` → `0.5.6-feat.*`, not `0.6.0-feat.*`).
+A **BRAT-visible release** is done only when:
 
-## The one command
+1. `CHANGELOG.md` documents the version (usually move notes out of `[Unreleased]`).
+2. `npm run ship:patch|minor|major` has run (tests + build + version bump + tag + push).
+3. GitHub Release at that tag has **`main.js`**, **`manifest.json`**, **`styles.css`** and the Release workflow is green.
 
-```bash
-npm run ship:patch    # bugfix
-npm run ship:minor    # new user-facing feature
-npm run ship:major    # breaking change
-```
-
-That runs tests + build + `npm version`, which bumps all three version files, commits, tags, and (via `postversion`) pushes branch + tag. The tag push triggers `.github/workflows/release.yml`, which builds `main.js` in CI and creates the GitHub Release with the three assets.
-
-`.npmrc` in this repo pins `tag-version-prefix=""` so the tag is `0.0.23`, not `v0.0.23`. Don't override it.
-
-## Verify, then report done
-
-After `npm run ship:patch` returns, run:
+Verify:
 
 ```bash
-gh run watch    # wait for Release workflow
 gh release view "$(node -p 'require(\"./manifest.json\").version')" --json assets \
   --jq '.assets[].name' | sort
 ```
 
-You must see exactly:
+Do **not** tell the user a BRAT release is complete until that passes.
 
-```
-main.js
-manifest.json
-styles.css
-```
+## Feat-channel tags
 
-If you don't, the release is broken. Repair with the one-off commands in `docs/RELEASE.md`. **Do not** tell the user the task is done until that verification passes.
+Use intentional `X.Y.Z-feat.<slug>.N` names per `docs/RELEASE.md`. Do not flatten them to plain `X.Y.Z`.
 
-## When to skip the bump
+## Past incidents
 
-Skip only if **no** code in `src/`, `main.ts`, or `styles.css` changed. Docs-only (`README.md`, `docs/**`), test-only, or CI-only commits don't need a release. Everything else does.
-
-## Past incidents (don't repeat)
-
-- 0.0.8 (2026-05-20): agent bumped `manifest.json`, pushed the source commit, didn't tag or release. BRAT stayed on 0.0.7 until the human did it manually.
-- The auto-memory `obsidian_ir_brat_release_checklist` exists because this keeps happening. Don't add another entry to it.
+- 0.0.8: manifest bump without tag/release — BRAT stayed on the previous version.
+- Changelog `[Unreleased]` left in place after tags 0.9.0–0.12.1 — fixed by backfilling release sections; keep `[Unreleased]` accurate after each ship.

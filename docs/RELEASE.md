@@ -1,5 +1,18 @@
 # Releasing (BRAT + Obsidian)
 
+## Day-to-day development vs shipping
+
+| Step | When | Version files | BRAT |
+|------|------|---------------|------|
+| **Commit** | Each logical change (feature slice, fix, docs, tests) | Unchanged | No update |
+| **Ship** | Milestone / feature / fix batch is complete and should reach users | Bumped via `npm run ship:*` | New Release |
+
+- Keep **`main`** at or ahead of the latest **stable tag** so the default branch matches what you released.
+- Update **`CHANGELOG.md`** before or as part of ship (move `[Unreleased]` into the new `## [X.Y.Z]` section).
+- Avoid **mega commits** that combine large features with a semver bump; land features in normal commits, then ship.
+
+Agents: full rules in `AGENTS.md` and `.cursor/rules/brat-version-on-commit.mdc`.
+
 ## What actually has to happen
 
 [BRAT](https://github.com/TfTHacker/obsidian42-brat) **since v1.1.0** does **not** install from `main` or from a bare git tag. It installs from a **GitHub Release** whose **assets** include:
@@ -33,8 +46,8 @@ Rules:
 
 ## Automated path (canonical)
 
-1. Land your code on `main` (or merge a PR) and update clean `main`.
-2. Run exactly one canonical ship command:
+1. Land milestone work on `main` with **small commits** (no version bump required per commit).
+2. When the milestone is ready for users, update `CHANGELOG.md`, then run exactly one ship command:
 
    ```bash
    npm run ship:patch  # bug fix

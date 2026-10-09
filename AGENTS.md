@@ -2,65 +2,50 @@
 
 This file is the contract for any agent (Cursor, Claude, OpenCode, etc.) doing work in this repo. Read it before you touch code. The rules in `.cursor/rules/` repeat the most important parts; this file is the canonical version.
 
-## The single most important rule: ship = release
+## Commits vs releases (read this first)
 
-A code change is **not done** when the commit lands on `main`. A code change is done when a **GitHub Release** exists at the new tag with `main.js`, `manifest.json`, and `styles.css` attached and the **Release** workflow is green. BRAT installs from Releases. Skipping the release means every user of the plugin stays pinned at the previous version no matter what you committed.
+**Commits and BRAT releases are separate steps.**
 
-If you finish a code change and stop at `git push origin main`, you have broken the deploy. Do not do this.
+- **Commits** land on `main` often. Each commit should be **small and sensible**: one logical change, conventional message (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`), tests when behavior changes. Do **not** bump `package.json` / `manifest.json` / `versions.json` on every commit.
+- **Releases** happen when a **milestone is complete** — a user-facing feature, a fix set you want BRAT users to pick up, or a deliberate patch/minor bump. Only then run `npm run ship:*` (see below).
 
-## The one command you should use
+Docs-only, test-only, and CI-only changes: commit and push; **no** tag or GitHub Release.
+
+Code changes in `src/`, `main.ts`, or `styles.css` can sit on `main` unreleased until the maintainer (or you, when asked) ships. Do **not** run `ship:*` unless the user asked for a BRAT release or you are closing out a agreed milestone.
+
+## When a milestone is ready: ship for BRAT
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) installs from **GitHub Releases**, not from `main` alone. A release is **done** when a tag exists and the Release workflow attached **`main.js`**, **`manifest.json`**, and **`styles.css`**.
 
 ```bash
-npm run ship:patch    # bugfix / extract / cloze fix
-npm run ship:minor    # new user-facing feature
+npm run ship:patch    # bugfix / small completed fix milestone
+npm run ship:minor    # new user-facing feature milestone
 npm run ship:major    # breaking change (rare)
 ```
 
-This script runs tests + build, then `npm version <kind>`, which:
+Before shipping, update `CHANGELOG.md` (move `[Unreleased]` notes into the new version section, or add an entry there). Then `npm run ship:*`, which:
 
-1. Bumps `package.json` `version`.
-2. Runs `version-bump.mjs` (via the `version` npm hook) to sync `manifest.json` and append to `versions.json`.
-3. Commits with the version string as the message (e.g. `0.0.23`).
-4. Creates a semver tag (e.g. `0.0.23` — no `v` prefix; enforced by `.npmrc`).
-5. Pushes branch + tag via the `postversion` hook.
+1. Runs `npm run test:ci`.
+2. Bumps `package.json` `version` and syncs `manifest.json` / `versions.json` via `version-bump.mjs`.
+3. Commits with the version as the message (e.g. `0.12.2`).
+4. Creates a semver tag (no `v` prefix; `.npmrc`).
+5. Pushes branch + tag (`postversion`).
 
-The pushed tag triggers `.github/workflows/release.yml`, which builds `main.js` in CI and creates the GitHub Release with all three assets.
+The tag triggers `.github/workflows/release.yml` to build `main.js` in CI and publish the Release.
 
-Feature / channel builds may use intentional prerelease tags such as
-`0.5.6-feat.neural-review.1` or `0.5.6-feat.extract-to-note.1` (see
-`docs/RELEASE.md` → Version naming). Those are valid: set `package.json` /
-`manifest.json` to that string, tag the same string, and let Release publish
-it. **Never rename a deliberate feat tag to plain `X.Y.Z` to "fix BRAT"** —
-and **never jump the `X.Y.Z` prefix** past the next planned stable (after
-`0.5.5`, use `0.5.6-feat.*`, not `0.6.0-feat.*`) unless you mean a minor/major.
+Feature / channel builds may use prerelease tags such as
+`0.5.6-feat.neural-review.1` (see `docs/RELEASE.md` → Version naming). **Never flatten** a deliberate `…-feat.*` tag to plain `X.Y.Z` to “fix BRAT,” and **do not jump** the stable prefix past the next planned release without intent.
 
-## Tests and GitHub CI
+## Verify before you say “released”
 
-`npm test` (Node's test runner, `test/*.test.ts`) is the suite. **Build**
-(`.github/workflows/build.yml`) runs it plus `npm run build` on every push
-and every pull request — including feature branches, not only `main`.
-
-That is the public gate:
-
-- Open a PR (or push a branch) and wait for the **test** check. Do not
-  merge or tag a release while it is red.
-- `npm run ship:*` already runs the same tests locally *before* it pushes
-  `main` + the tag. CI is the second net, not a substitute for a red local
-  run.
-- Direct pushes to `main` still become public immediately; CI on `push`
-  cannot rewind that. Prefer a PR into `main` when you want GitHub to
-  fail the merge before the commit is on `main`.
-
-## Done bar — verify before you say "shipped"
-
-After `npm run ship:patch` returns, you must confirm:
+After `npm run ship:*`:
 
 ```bash
 gh release view "$(node -p 'require(\"./manifest.json\").version')" --json assets \
   --jq '.assets[].name' | sort
 ```
 
-Expected output (exact, three lines):
+Expected:
 
 ```
 main.js
@@ -68,28 +53,34 @@ manifest.json
 styles.css
 ```
 
-If any of those is missing, or `gh release view` errors with "release not found", the Release workflow hasn't finished or failed. Watch it with `gh run watch` or repair using `docs/RELEASE.md` ("Repair a tag that has no Release"). Do **not** report the task complete until those three assets are on the release.
+If the release is missing or the workflow failed, repair per `docs/RELEASE.md`. Do not claim a BRAT release is complete until this passes.
 
-## Common failure modes (don't repeat these)
+## Tests and GitHub CI
 
-- **Bumped `manifest.json` only, no tag, no release.** BRAT sees nothing. (Happened on 0.0.8 — see auto-memory.)
-- **Tag pushed with `v` prefix (`v0.0.23`).** Prefer no `v` prefix; `.npmrc` prevents this when you use `npm version`.
-- **Flattening an intentional `X.Y.Z-feat.*` tag to plain `X.Y.Z`.** That destroys the channel name BRAT users freeze to. Fix CI / publish under the feat tag instead.
-- **Commit on `main` without bumping any of the three version files.** Skip the bump only for non-shipping changes (docs, tests, CI). Code in `src/` or `main.ts` always ships.
-- **Saying "done" before `gh release view` shows all three assets.** Always verify.
+`npm test` (`test/*.test.ts`) and **Build** (`.github/workflows/build.yml`) run on every push and PR. Do not tag while CI is red. `npm run ship:*` runs the same gates locally first.
+
+Prefer PRs into `main` when you want GitHub to block a bad merge; direct pushes to `main` still trigger CI but cannot be undone by CI alone.
+
+## Common failure modes
+
+- **Manifest bump with no tag/release.** BRAT sees nothing. (Historical: 0.0.8.)
+- **`v`-prefixed tags.** Use `npm version` / `ship:*` so `.npmrc` keeps tags unprefixed.
+- **Flattening `…-feat.*` tags** destroys BRAT freeze names.
+- **Mega version commits** that mix a semver bump with large feature diffs. Prefer feature commits first, then a version-only bump via `ship:*` (or a tight final commit) so history stays readable.
+- **`origin/main` behind latest tag.** After shipping, ensure `main` contains the tag commit (fast-forward or merge). Tags without `main` confuse contributors.
 
 ## Other ground rules
 
 - Commits are the user's. Never add `Co-authored-by:` (Cursor or otherwise), never set the git author to an agent, and never claim authorship in the message. If a trailer is injected, strip it before push; do not rewrite pushed/tagged history to clean it up unless asked.
-- `main.js` is gitignored on purpose — CI builds it. Don't commit `main.js`.
-- Tests live in `test/*.test.ts`, run with `npm test`. Add tests for behavior you change.
-- The Workflow A handoff oracle expects a `RESULT.txt` if you're called via the delegation kit — see `~/docker/chatops/delegation/` for the format.
-- For UI changes that affect the reader/review flow, also smoke-test by loading the built `main.js` via BRAT after release (or symlink into the test vault).
-- The repo uses a worktree-based cursor lane (`cur-<thread>` branches). If you're a cursor agent, your branch will be merged into `main` by the human; you still own the release once code lands on `main`.
+- `main.js` is gitignored — CI builds it. Don't commit `main.js`.
+- Tests live in `test/*.test.ts`. Add tests for behavior you change.
+- Workflow A handoff oracle: `RESULT.txt` per `~/docker/chatops/delegation/` when delegated.
+- UI changes in review/tree: smoke-test via BRAT or a symlinked vault after a **release**, not after every commit.
+- Cursor lanes use worktrees (`cur-<thread>` branches); merge to `main` with normal commits. Release only when the milestone warrants it.
 
 ## Where to look
 
-- `docs/RELEASE.md` — release runbook, repair commands.
-- `.cursor/rules/brat-version-on-commit.mdc` — same rules, in Cursor's rule format.
-- `.github/workflows/release.yml` — the CI that builds + uploads.
+- `docs/RELEASE.md` — release runbook, repair commands, commit vs ship summary.
+- `.cursor/rules/brat-version-on-commit.mdc` — Cursor rule mirror.
+- `.github/workflows/release.yml` — CI release build.
 - `version-bump.mjs` — syncs `manifest.json` and `versions.json` from `package.json`.
