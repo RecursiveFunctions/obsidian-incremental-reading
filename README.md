@@ -1,14 +1,18 @@
 # Incremental Reading for Obsidian
 
-Read many sources in parallel, pull the parts worth keeping out of them, and review those parts on a spaced schedule. SuperMemo-style incremental reading, in your vault.
+Read many sources in parallel, extract the passages worth keeping, and review them on a spaced schedule — all inside Obsidian.
 
 **Status:** alpha. The current version is published on [GitHub Releases](https://github.com/RecursiveFunctions/obsidian-incremental-reading/releases). Install through [BRAT](#installation). A commit on `main` is not installable; BRAT reads the release assets.
 
 ## What it is
 
-Incremental reading is a method from Piotr Wozniak's [SuperMemo](https://supermemo.guru). You keep many articles in flight at once, break passages out of them as you read, and see those pieces again when they come due.
+Incremental reading is a method from Piotr Wozniak's [SuperMemo](https://supermemo.guru). You keep many articles in flight at once, break passages out of them as you read, and see those pieces again when they come due. This plugin implements that reading workflow against the markdown files and PDFs already in your vault.
 
-SuperMemo runs on Windows and keeps your knowledge in its own format. Obsidian's existing spaced-repetition plugins are flashcard tools: they schedule cards but have no source-aware collection, no extracts, and no priority queue. This plugin implements the reading workflow itself against plain markdown files.
+## Why it is different
+
+- **Source → extract → item lineage.** Every element keeps a link back to where it came from, and Collection shows the whole tree: which note a passage was cut from, which cloze was cut from a passage.
+- **Your notes stay in place.** The plugin is vault-native: topics, extracts, and items live in your existing markdown files, there is no copied content library and no external database, and the scheduling and review metadata stays inside the vault under `.ir/`.
+- **Visible, priority-aware overload control.** The status bar shows what is due, what is postponed, and what has flowed in over seven days. When the queue runs away, Mercy previews and redistributes the lower-priority overflow across future days, without recording a review or touching what you actually learned.
 
 ## Concepts
 
@@ -22,11 +26,26 @@ The plugin uses three kinds of element, and they behave differently.
 
 Every element carries a **priority** from 0 to 100, where **lower means more important**. Priority 0 floats to the top of the queue.
 
-Three ways to move work out of your way, which are all different:
+Four ways to move work out of your way, which are all different:
 
 - **Later today** pushes a reading element back a few hours. It does not count as a review.
-- **Postpone (mercy)** bulk-pushes overdue elements when the queue has run away from you. Also not a review.
+- **Postpone** moves a selected element's due date forward by a set number of days (1, 3, 7, 14, or 30). It does not count as a review.
+- **Mercy** bulk-redistributes an overloaded queue across future days. It does not count as a review. See [Stay ahead of overload](#stay-ahead-of-overload).
 - **Dismiss** takes an element out of the queue and leaves it in the tree. Reversible.
+
+## Stay ahead of overload
+
+The status bar shows three numbers at a glance: how many elements are due now, how many are currently postponed, and how many new elements landed in the last seven days. The inflow number is a leading indicator that you are importing faster than you can process.
+
+Settings, Overload sets a daily ceiling: the maximum number of due elements per day. A priority cutoff protects the work that matters most — elements with a priority at or below the cutoff are never postponed, no matter the overflow.
+
+When the queue has run away, run Mercy (`Alt+M`). It first shows a preview: how many elements stay due today, how many are protected by priority, and how the postponed overflow will be spread across future days that have free capacity. Apply it, and the overflow is redistributed without recording a review and without changing FSRS stability or reading A-Factor — the scheduler state stays exactly as your grades left it. The latest Mercy batch can be undone with Undo last mercy, which restores each element's previous due time.
+
+Manual Postpone and Later today are separate, smaller levers: Postpone moves one selected element to a chosen future date, and Later today defers a reading element within the same day. Neither is part of Mercy and neither is covered by Mercy undo.
+
+An optional startup auto-postpone is off by default. When you turn it on, it postpones overdue overflow once per launch and always leaves work newly due today alone.
+
+Keyboard bindings and per-control details are in [Keyboard](#keyboard) and [Settings](#settings).
 
 ## Getting started
 
@@ -101,7 +120,7 @@ Click a row to locate it in an open review; double-click opens the note. The car
 
 **Help** (`Alt+H`) lists the review keys, the tree keys, every command with the binding you have actually assigned, and a short vocabulary section.
 
-**Status bar** shows due, postponed, and inflow over seven days. Click to start review, right-click for the IR menu.
+**Status bar** shows due now, currently postponed, and inflow over seven days — the same three numbers described in [Stay ahead of overload](#stay-ahead-of-overload). Click to start review, right-click for the IR menu.
 
 ## Keyboard
 
@@ -152,7 +171,7 @@ If you extract from the editor, pin these to the mobile toolbar under Settings, 
 
 Six sections: Review, Extracts, Topics, Overload, Anki export, Danger zone.
 
-Review covers how many items sit between reading cards, interleaving, the scheduler divergence picker, and which grade Space applies after a cloze reveal. Overload sets the daily ceiling and the priority cutoff for postpone. Extracts covers standalone-note behavior and what happens when a source note is deleted. Danger zone can reset IR state while keeping your notes, or trash every IR note.
+Review covers how many items sit between reading cards, interleaving, the scheduler divergence picker, and which grade Space applies after a cloze reveal. Overload holds the daily ceiling, the priority cutoff, and the optional startup auto-postpone, all described in [Stay ahead of overload](#stay-ahead-of-overload). Extracts covers standalone-note behavior and what happens when a source note is deleted. Danger zone can reset IR state while keeping your notes, or trash every IR note.
 
 Restore defaults at the top returns every control to a new vault's values. It does not touch notes or review history.
 
@@ -180,7 +199,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the complete release history.
 
 ## Roadmap
 
-Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling and a local parameter optimizer, interleaved due review, neural sessions, priority queue and mercy postpone, Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
+Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling and a local parameter optimizer, interleaved due review, neural sessions, priority queue and Mercy, Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
 
 PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be extracted, and cloze is markdown-only: extract from the PDF first, then cloze the extract.
 
