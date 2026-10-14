@@ -571,3 +571,103 @@ export function parseKno(bytes: Uint8Array): KnoRecord {
 
   return record;
 }
+
+/**
+ * One `info/contents.dat` record, with `_raw` dropped.
+ *
+ * Every member is still `unknown_*`. This is not an oversight to tidy up in
+ * the port: `sm18-re:smfmt/contents.py` refuses to name them, and
+ * `sm18-re:docs/findings/contents.md` says why — the offsets and widths are
+ * byte-supported, but the records' roles in the contents *tree* have not been
+ * defended. Several of the values look like tree links, and naming them
+ * `parent` / `child` / `sibling` here would smuggle a semantic claim the
+ * campaign repository has not made into a module that reads like evidence.
+ * The fixture cannot catch that: it pins values, not meanings. The names stay
+ * offset labels until a campaign lane earns better ones.
+ */
+export interface ContentsRecord {
+  unknown_0x00: number;
+  unknown_0x01: number;
+  unknown_0x05: number;
+  unknown_0x09: number;
+  unknown_0x0d: number;
+  unknown_0x11: number;
+  unknown_0x15: number;
+  unknown_0x19: number;
+  unknown_0x1d: number;
+  unknown_0x21: number;
+}
+
+/**
+ * Every contents record is exactly 37 (`0x25`) bytes and the file is
+ * headerless, so the record count is the file length over 37.
+ *
+ * The width is not inferred from record counts — it could not be, since a
+ * collection's contents record count can exceed its `ElementInfo.dat` count.
+ * SuperMemo configures the backing stream with the literal `0x25` at
+ * `0x931254`, and its creation path configures the same width, builds a
+ * 37-byte record and clears exactly `0x25` bytes before writing it.
+ */
+export const CONTENTS_RECORD_SIZE = 37;
+
+/**
+ * Member offsets, transliterated from the `offsets` tuple in
+ * `smfmt/contents.py` and paired with `struct.Struct("<B9I")`: a `u8` at 0,
+ * then nine little-endian `u32`.
+ *
+ * Note that the `u32` members all sit at offsets `≡ 1 (mod 4)`. The Python
+ * format string is little-endian with the `<` prefix so it is unpadded, and
+ * the leading `u8` pushes every following member off a 4-byte boundary. A
+ * port must therefore read them through a `DataView`; laying a `Uint32Array`
+ * over the buffer is both misaligned and wrong by one byte per member.
+ */
+const CONTENTS_OFFSETS = [1, 5, 9, 13, 17, 21, 25, 29, 33] as const;
+
+/** Decode one 37-byte contents record from `view` at `base`. */
+function parseContentsRecord(view: DataView, base: number): ContentsRecord {
+  const [o01, o05, o09, o0d, o11, o15, o19, o1d, o21] = CONTENTS_OFFSETS;
+  return {
+    unknown_0x00: view.getUint8(base),
+    unknown_0x01: view.getUint32(base + o01, true),
+    unknown_0x05: view.getUint32(base + o05, true),
+    unknown_0x09: view.getUint32(base + o09, true),
+    unknown_0x0d: view.getUint32(base + o0d, true),
+    unknown_0x11: view.getUint32(base + o11, true),
+    unknown_0x15: view.getUint32(base + o15, true),
+    unknown_0x19: view.getUint32(base + o19, true),
+    unknown_0x1d: view.getUint32(base + o1d, true),
+    unknown_0x21: view.getUint32(base + o21, true),
+  };
+}
+
+/**
+ * Decode a whole `info/contents.dat`.
+ *
+ * Ported from `sm18-re:smfmt/contents.py`; the contract test is
+ * `test/sm18-port-format-read-contents.test.ts` against a byte-identical
+ * mirror of `sm18-re:tests/fixtures/port-format-read-contents.json`.
+ *
+ * A length that is not a multiple of 37 throws, matching the reference's
+ * `ValueError`. It is deliberately not treated as a truncation to tolerate:
+ * the one thing a variable-length codec is judged on is finding record
+ * boundaries, so a file that does not tile into 37-byte records is either
+ * truncated or not this format, and either way its leading records are not
+ * trustworthy enough to return.
+ *
+ * `_raw` is dropped from the projection, as in the `parseCompon` contract.
+ * That makes this parser read-only: `smfmt.contents.write` rebuilds the file
+ * from `_raw`, and a rewrite path needs its own parser that keeps each
+ * record's bytes.
+ */
+export function parseContents(bytes: Uint8Array): ContentsRecord[] {
+  if (bytes.byteLength % CONTENTS_RECORD_SIZE !== 0) {
+    throw new Error("contents.dat length is not a multiple of 37 bytes");
+  }
+  const view = viewOf(bytes);
+  const count = bytes.byteLength / CONTENTS_RECORD_SIZE;
+  const records: ContentsRecord[] = [];
+  for (let i = 0; i < count; i += 1) {
+    records.push(parseContentsRecord(view, i * CONTENTS_RECORD_SIZE));
+  }
+  return records;
+}
