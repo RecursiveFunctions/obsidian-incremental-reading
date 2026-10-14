@@ -242,6 +242,55 @@ export function parseElementInfo(bytes: Uint8Array): ElementInfoRecord[] {
   return records;
 }
 
+/** One packed `info/RepetitionHistory.dat` record. */
+export interface RepetitionHistoryRecord {
+  element_id: number;
+  repetition_number: number;
+  lapse_count: number;
+  interval_days: number;
+  /** Delphi `TDateTime`: raw IEEE-754 double, no calendar conversion applied. */
+  repetition_date: number;
+  /** Signed repetition grade/status code. */
+  grade: number;
+}
+
+/** RepetitionHistory.dat is a headerless sequence of packed 39-byte records. */
+export const REPETITION_HISTORY_RECORD_SIZE = 0x27;
+
+/**
+ * Decode a whole `info/RepetitionHistory.dat`.
+ *
+ * This is not a contiguous aligned struct. In particular, the little-endian
+ * float64 `repetition_date` starts at the deliberately unaligned offset 0x0a,
+ * so every projected field is read at its explicit reference offset. The
+ * remaining bytes are outside this read-side projection.
+ */
+export function parseRepetitionHistory(
+  bytes: Uint8Array,
+): RepetitionHistoryRecord[] {
+  if (bytes.byteLength % REPETITION_HISTORY_RECORD_SIZE !== 0) {
+    throw new Error("RepetitionHistory.dat ends with a partial 39-byte record");
+  }
+
+  const view = viewOf(bytes);
+  const records: RepetitionHistoryRecord[] = [];
+  for (
+    let base = 0;
+    base < bytes.byteLength;
+    base += REPETITION_HISTORY_RECORD_SIZE
+  ) {
+    records.push({
+      element_id: view.getUint32(base + 0x00, true),
+      repetition_number: view.getUint16(base + 0x04, true),
+      lapse_count: view.getUint16(base + 0x06, true),
+      interval_days: view.getUint16(base + 0x08, true),
+      repetition_date: view.getFloat64(base + 0x0a, true),
+      grade: view.getInt8(base + 0x18),
+    });
+  }
+  return records;
+}
+
 /** One component of a compon record, with its buffer dropped. */
 export interface ComponComponent {
   component_type: number;
