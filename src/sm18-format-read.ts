@@ -519,3 +519,55 @@ export function parseCompon(bytes: Uint8Array): ComponRecord[] {
   }
   return records;
 }
+
+/** One 950-byte `.KNO` collection descriptor. */
+export interface KnoRecord {
+  element_count: number;
+  deleted_element_count: number;
+  next_element_id: number;
+  format_version: number;
+  [unknown: string]: number | HexBlob;
+}
+
+/** SuperMemo 18's collection descriptor size (`0x3b6`). */
+export const KNO_RECORD_SIZE = 950;
+
+/** First byte of the opaque descriptor suffix. */
+const KNO_UNKNOWN_START = 0x0d;
+
+/** Width used by the reference's offset-labelled opaque suffix fields. */
+const KNO_UNKNOWN_SLICE_SIZE = 8;
+
+/**
+ * Decode one `.KNO` collection descriptor.
+ *
+ * The descriptor is exactly one headerless 950-byte record. Only the leading
+ * three counters and format version have defended names; every remaining byte
+ * is preserved in the same offset-labelled, at-most-eight-byte `{hex}` slice
+ * produced by `smfmt/kno.py`. The final slice is deliberately short.
+ */
+export function parseKno(bytes: Uint8Array): KnoRecord {
+  if (bytes.byteLength !== KNO_RECORD_SIZE) {
+    throw new Error(`Kno descriptor must be exactly ${KNO_RECORD_SIZE} bytes`);
+  }
+
+  const view = viewOf(bytes);
+  const record: KnoRecord = {
+    element_count: view.getUint32(0x00, true),
+    deleted_element_count: view.getUint32(0x04, true),
+    next_element_id: view.getUint32(0x08, true),
+    format_version: view.getUint8(0x0c),
+  };
+
+  for (
+    let offset = KNO_UNKNOWN_START;
+    offset < KNO_RECORD_SIZE;
+    offset += KNO_UNKNOWN_SLICE_SIZE
+  ) {
+    const name = `unknown_0x${offset.toString(16).padStart(3, "0")}`;
+    const length = Math.min(KNO_UNKNOWN_SLICE_SIZE, KNO_RECORD_SIZE - offset);
+    record[name] = { hex: hexSlice(view, offset, length) };
+  }
+
+  return record;
+}
