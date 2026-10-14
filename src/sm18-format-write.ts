@@ -58,11 +58,25 @@ export interface ComponRawRecord {
   raw_b64: string;
 }
 
+/** One stored entry shared by `info/*.sub` and `subsets/*.sub`. */
+export interface SubRecord {
+  element_id: number;
+}
+
 /** Both formats are headerless in the collections this port is pinned on. */
 export const ELEMENT_INFO_HEADER_SIZE = 0;
 
 /** @see ELEMENT_INFO_HEADER_SIZE */
 export const COMPON_HEADER_SIZE = 0;
+
+/** Both `.sub` glob families are headerless. */
+export const SUB_HEADER_SIZE = 0;
+
+/** One little-endian uint32 element id per `.sub` record. */
+export const SUB_RECORD_SIZE = 4;
+
+/** Observed saturation ceiling for `info/history.sub`. */
+export const SUB_HISTORY_CAP = 1000;
 
 /**
  * How one ElementInfo member is stored. These are the Python `struct` codes
@@ -404,6 +418,35 @@ export function writeCompon(
   for (const part of parts) {
     out.set(part, offset);
     offset += part.byteLength;
+  }
+  return out;
+}
+
+/**
+ * Encode an `info/*.sub` or `subsets/*.sub` file in stored order.
+ *
+ * This is the shared body of `smfmt.sub.write` and `smfmt.info_subs.write`:
+ * both reject a header and pack each record's 1-based element id as one
+ * little-endian uint32. Filename semantics such as `history_1.sub` siblings
+ * stay with the caller; this byte encoder neither sorts nor deduplicates.
+ */
+export function writeSub(
+  header: Uint8Array,
+  records: SubRecord[],
+): Uint8Array {
+  if (header.byteLength !== SUB_HEADER_SIZE) {
+    throw new Error(`.sub header must be ${SUB_HEADER_SIZE} bytes`);
+  }
+
+  const out = new Uint8Array(records.length * SUB_RECORD_SIZE);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  for (let i = 0; i < records.length; i += 1) {
+    const elementId = records[i] && records[i].element_id;
+    view.setUint32(
+      i * SUB_RECORD_SIZE,
+      checkInteger("element_id", "I", elementId, i),
+      true,
+    );
   }
   return out;
 }
