@@ -572,6 +572,70 @@ export function parseKno(bytes: Uint8Array): KnoRecord {
   return record;
 }
 
+/** Bytes per `.sub` entry: one little-endian `uint32` element id. */
+export const SUB_RECORD_SIZE = 4;
+
+/**
+ * Observed ceiling on `history.sub` across the Cyber-family copies.
+ * This is an observation from those files, not a constant read from the executable.
+ */
+export const HISTORY_CAP = 1000;
+
+/** The known `info/*.sub` filename stems, matched case-insensitively. */
+const SUB_KINDS: Readonly<Record<string, string>> = {
+  history: "history",
+  priority: "priority",
+  outstanding: "outstanding",
+  outstandingitems: "outstandingitems",
+  outstandingtopics: "outstandingtopics",
+};
+
+/**
+ * Decode an `info/*.sub` or `subsets/*.sub` payload in stored order.
+ *
+ * The container has no header or trailer: every four bytes are one unsigned,
+ * little-endian, 1-based element id. Resolving those ids to ElementInfo records
+ * belongs to callers rather than this decoder.
+ */
+export function parseSub(bytes: Uint8Array): number[] {
+  if (bytes.byteLength % SUB_RECORD_SIZE !== 0) {
+    throw new Error(".sub ends with a partial element id");
+  }
+  const view = viewOf(bytes);
+  const ids: number[] = [];
+  for (let offset = 0; offset < bytes.byteLength; offset += SUB_RECORD_SIZE) {
+    ids.push(view.getUint32(offset, true));
+  }
+  return ids;
+}
+
+/**
+ * Resolve a bare name, stem, or path against the known `info/*.sub` kinds.
+ * Unknown names, including arbitrary user-saved subset names, return `null`.
+ */
+export function subKind(name: string): string | null {
+  const normalized = name.replace(/\\/g, "/");
+  const leaf = normalized.slice(normalized.lastIndexOf("/") + 1);
+  const stem = leaf.toLowerCase().endsWith(".sub") ? leaf.slice(0, -4) : leaf;
+  return SUB_KINDS[stem.toLowerCase()] ?? null;
+}
+
+/**
+ * Map each element id to its zero-based ordinal position in stored order.
+ * Duplicate ids are rejected because a repeated member is not an ordering.
+ */
+export function queuePositions(bytes: Uint8Array): Map<number, number> {
+  const positions = new Map<number, number>();
+  for (const [position, elementId] of parseSub(bytes).entries()) {
+    if (positions.has(elementId)) {
+      throw new Error("info/*.sub repeats an element id; it is not an ordering");
+    }
+    positions.set(elementId, position);
+  }
+  return positions;
+}
+
+
 /**
  * One `info/contents.dat` record, with `_raw` dropped.
  *
