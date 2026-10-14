@@ -1,0 +1,453 @@
+{
+  "schema": "sm18-port-repetition-workflow/v1",
+  "state_fields": [
+    "stability",
+    "difficulty",
+    "retrievability",
+    "interval",
+    "next_interval",
+    "elapsed",
+    "lapses",
+    "repetition",
+    "a_factor",
+    "graded",
+    "has_history",
+    "priority_position",
+    "kind",
+    "postpones"
+  ],
+  "trajectories": [
+    {
+      "grades": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "start_state": {
+        "a_factor": 5.0,
+        "difficulty": 0.6481481481481481,
+        "elapsed": 10.0,
+        "graded": false,
+        "has_history": true,
+        "interval": 0.0,
+        "kind": 0,
+        "lapses": 0,
+        "next_interval": 0.0,
+        "postpones": 0,
+        "priority_position": 50.0,
+        "repetition": 3,
+        "retrievability": 1.0,
+        "stability": 10.0
+      },
+      "steps": [
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6381481481481481,
+            "elapsed": 10.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 0.0,
+            "kind": 0,
+            "lapses": 0,
+            "next_interval": 22.0,
+            "postpones": 0,
+            "priority_position": 50.0,
+            "repetition": 4,
+            "retrievability": 0.9,
+            "stability": 21.844026454917742
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6281481481481481,
+            "elapsed": 10.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 22.0,
+            "kind": 0,
+            "lapses": 0,
+            "next_interval": 22.0,
+            "postpones": 0,
+            "priority_position": 50.0,
+            "repetition": 5,
+            "retrievability": 0.9529116355571875,
+            "stability": 21.844026454917742
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6181481481481481,
+            "elapsed": 10.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 22.0,
+            "kind": 0,
+            "lapses": 0,
+            "next_interval": 22.0,
+            "postpones": 0,
+            "priority_position": 50.0,
+            "repetition": 6,
+            "retrievability": 0.9529116355571875,
+            "stability": 21.844026454917742
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6081481481481481,
+            "elapsed": 10.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 22.0,
+            "kind": 0,
+            "lapses": 0,
+            "next_interval": 22.0,
+            "postpones": 0,
+            "priority_position": 50.0,
+            "repetition": 7,
+            "retrievability": 0.9529116355571875,
+            "stability": 21.844026454917742
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.5981481481481481,
+            "elapsed": 10.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 22.0,
+            "kind": 0,
+            "lapses": 0,
+            "next_interval": 22.0,
+            "postpones": 0,
+            "priority_position": 50.0,
+            "repetition": 8,
+            "retrievability": 0.9529116355571875,
+            "stability": 21.844026454917742
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.5881481481481481,
+            "elapsed": 10.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 22.0,
+            "kind": 0,
+            "lapses": 0,
+            "next_interval": 22.0,
+            "postpones": 0,
+            "priority_position": 50.0,
+            "repetition": 9,
+            "retrievability": 0.9529116355571875,
+            "stability": 21.844026454917742
+          }
+        }
+      ],
+      "trajectory_id": "memorised_steady"
+    },
+    {
+      "grades": [
+        5,
+        5,
+        2,
+        5,
+        5
+      ],
+      "start_state": {
+        "a_factor": 4.0,
+        "difficulty": 0.7407407407407407,
+        "elapsed": 20.0,
+        "graded": false,
+        "has_history": true,
+        "interval": 0.0,
+        "kind": 0,
+        "lapses": 1,
+        "next_interval": 0.0,
+        "postpones": 0,
+        "priority_position": 100.0,
+        "repetition": 5,
+        "retrievability": 1.0,
+        "stability": 20.0
+      },
+      "steps": [
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 4.0,
+            "difficulty": 0.7307407407407407,
+            "elapsed": 20.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 0.0,
+            "kind": 0,
+            "lapses": 1,
+            "next_interval": 41.0,
+            "postpones": 0,
+            "priority_position": 100.0,
+            "repetition": 6,
+            "retrievability": 0.9,
+            "stability": 40.76239470088212
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 4.0,
+            "difficulty": 0.7207407407407407,
+            "elapsed": 20.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 41.0,
+            "kind": 0,
+            "lapses": 1,
+            "next_interval": 41.0,
+            "postpones": 0,
+            "priority_position": 100.0,
+            "repetition": 7,
+            "retrievability": 0.9496184954665324,
+            "stability": 40.76239470088212
+          }
+        },
+        {
+          "grade": 2,
+          "state_after": {
+            "a_factor": 4.0,
+            "difficulty": 0.7607407407407407,
+            "elapsed": 20.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 41.0,
+            "kind": 0,
+            "lapses": 2,
+            "next_interval": 2.0,
+            "postpones": 0,
+            "priority_position": 100.0,
+            "repetition": 8,
+            "retrievability": 0.9496184954665324,
+            "stability": 2.0
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 4.0,
+            "difficulty": 0.7507407407407407,
+            "elapsed": 20.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 2.0,
+            "kind": 0,
+            "lapses": 2,
+            "next_interval": 41.0,
+            "postpones": 0,
+            "priority_position": 100.0,
+            "repetition": 9,
+            "retrievability": 0.34867844010000004,
+            "stability": 40.76239470088212
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 4.0,
+            "difficulty": 0.7407407407407407,
+            "elapsed": 20.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 41.0,
+            "kind": 0,
+            "lapses": 2,
+            "next_interval": 41.0,
+            "postpones": 0,
+            "priority_position": 100.0,
+            "repetition": 10,
+            "retrievability": 0.9496184954665324,
+            "stability": 40.76239470088212
+          }
+        }
+      ],
+      "trajectory_id": "lapse_recovery"
+    },
+    {
+      "grades": [
+        5,
+        5,
+        5
+      ],
+      "start_state": {
+        "a_factor": 5.0,
+        "difficulty": 0.6481481481481481,
+        "elapsed": 0.0,
+        "graded": false,
+        "has_history": false,
+        "interval": 0.0,
+        "kind": 0,
+        "lapses": 0,
+        "next_interval": 0.0,
+        "postpones": 0,
+        "priority_position": 25.0,
+        "repetition": 0,
+        "retrievability": 1.0,
+        "stability": 0.7
+      },
+      "steps": [
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6481481481481481,
+            "elapsed": 0.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 0.0,
+            "kind": 0,
+            "lapses": 0,
+            "next_interval": 1.0,
+            "postpones": 0,
+            "priority_position": 25.0,
+            "repetition": 1,
+            "retrievability": 1.0,
+            "stability": 1.0
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6381481481481481,
+            "elapsed": 0.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 1.0,
+            "kind": 0,
+            "lapses": 0,
+            "next_interval": 2.0,
+            "postpones": 0,
+            "priority_position": 25.0,
+            "repetition": 2,
+            "retrievability": 0.995,
+            "stability": 1.9948990790773549
+          }
+        },
+        {
+          "grade": 5,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6281481481481481,
+            "elapsed": 0.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 2.0,
+            "kind": 0,
+            "lapses": 0,
+            "next_interval": 2.0,
+            "postpones": 0,
+            "priority_position": 25.0,
+            "repetition": 3,
+            "retrievability": 0.995,
+            "stability": 1.9948990790773549
+          }
+        }
+      ],
+      "trajectory_id": "first_graded"
+    },
+    {
+      "grades": [
+        8,
+        8,
+        8
+      ],
+      "start_state": {
+        "a_factor": 5.0,
+        "difficulty": 0.6481481481481481,
+        "elapsed": 0.0,
+        "graded": false,
+        "has_history": false,
+        "interval": 0.0,
+        "kind": 1,
+        "lapses": 0,
+        "next_interval": 0.0,
+        "postpones": 0,
+        "priority_position": 25.0,
+        "repetition": 0,
+        "retrievability": 1.0,
+        "stability": 0.7
+      },
+      "steps": [
+        {
+          "grade": 8,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6481481481481481,
+            "elapsed": 0.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 0.0,
+            "kind": 1,
+            "lapses": 0,
+            "next_interval": 1.0,
+            "postpones": 0,
+            "priority_position": 25.0,
+            "repetition": 1,
+            "retrievability": 1.0,
+            "stability": 1.0
+          }
+        },
+        {
+          "grade": 8,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6381481481481481,
+            "elapsed": 0.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 1.0,
+            "kind": 1,
+            "lapses": 0,
+            "next_interval": 2.0,
+            "postpones": 0,
+            "priority_position": 25.0,
+            "repetition": 2,
+            "retrievability": 0.995,
+            "stability": 1.9948990790773549
+          }
+        },
+        {
+          "grade": 8,
+          "state_after": {
+            "a_factor": 5.0,
+            "difficulty": 0.6281481481481481,
+            "elapsed": 0.0,
+            "graded": true,
+            "has_history": true,
+            "interval": 2.0,
+            "kind": 1,
+            "lapses": 0,
+            "next_interval": 2.0,
+            "postpones": 0,
+            "priority_position": 25.0,
+            "repetition": 3,
+            "retrievability": 0.995,
+            "stability": 1.9948990790773549
+          }
+        }
+      ],
+      "trajectory_id": "first_topic"
+    }
+  ]
+}
