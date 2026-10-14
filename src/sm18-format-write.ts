@@ -39,11 +39,18 @@
  * the 39-bit Real48 significand carries and `Number` does not.
  */
 
-import type { ElementInfoRecord, HexBlob } from "./sm18-format-read";
-import { ELEMENT_INFO_RECORD_SIZE } from "./sm18-format-read";
+import type {
+  ContentsRecord,
+  ElementInfoRecord,
+  HexBlob,
+} from "./sm18-format-read";
+import {
+  CONTENTS_RECORD_SIZE,
+  ELEMENT_INFO_RECORD_SIZE,
+} from "./sm18-format-read";
 
-export type { ElementInfoRecord, HexBlob };
-export { ELEMENT_INFO_RECORD_SIZE };
+export type { ContentsRecord, ElementInfoRecord, HexBlob };
+export { CONTENTS_RECORD_SIZE, ELEMENT_INFO_RECORD_SIZE };
 
 /**
  * One `info/compon.dat` record as the writer takes it: the exact stored bytes
@@ -68,6 +75,9 @@ export const ELEMENT_INFO_HEADER_SIZE = 0;
 
 /** @see ELEMENT_INFO_HEADER_SIZE */
 export const COMPON_HEADER_SIZE = 0;
+
+/** `info/contents.dat` is also headerless. */
+export const CONTENTS_HEADER_SIZE = 0;
 
 /** Both `.sub` glob families are headerless. */
 export const SUB_HEADER_SIZE = 0;
@@ -447,6 +457,55 @@ export function writeSub(
       checkInteger("element_id", "I", elementId, i),
       true,
     );
+  }
+  return out;
+}
+
+const CONTENTS_U32_FIELDS = [
+  ["unknown_0x01", 0x01],
+  ["unknown_0x05", 0x05],
+  ["unknown_0x09", 0x09],
+  ["unknown_0x0d", 0x0d],
+  ["unknown_0x11", 0x11],
+  ["unknown_0x15", 0x15],
+  ["unknown_0x19", 0x19],
+  ["unknown_0x1d", 0x1d],
+  ["unknown_0x21", 0x21],
+] as const satisfies ReadonlyArray<readonly [keyof ContentsRecord, number]>;
+
+/**
+ * Encode a whole `info/contents.dat` from its ten-member projection.
+ *
+ * The record is the reference's packed `<B9I`: one byte at offset zero and
+ * nine little-endian u32 members at deliberately unaligned offsets. Unlike
+ * `smfmt.contents.write`, which joins each parser record's `_raw`, this typed
+ * inverse repacks the decoded members so a caller's tree edit is persisted.
+ * Both forms are byte-identical for records returned by the reference parser.
+ */
+export function writeContents(
+  header: Uint8Array,
+  records: ContentsRecord[],
+): Uint8Array {
+  if (header.byteLength !== CONTENTS_HEADER_SIZE) {
+    throw new Error(`contents.dat header must be ${CONTENTS_HEADER_SIZE} bytes`);
+  }
+
+  const out = new Uint8Array(records.length * CONTENTS_RECORD_SIZE);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  for (let i = 0; i < records.length; i += 1) {
+    const record = records[i];
+    const base = i * CONTENTS_RECORD_SIZE;
+    view.setUint8(
+      base,
+      checkInteger("unknown_0x00", "B", record?.unknown_0x00, i),
+    );
+    for (const [name, offset] of CONTENTS_U32_FIELDS) {
+      view.setUint32(
+        base + offset,
+        checkInteger(name, "I", record?.[name], i),
+        true,
+      );
+    }
   }
   return out;
 }
