@@ -196,7 +196,8 @@ for (const file of fixture.files) {
     );
   });
 
-  if (file.queue_positions !== null) {
+  const queuePositions = file.queue_positions;
+  if (queuePositions !== null) {
     test(`format-read-sub: ${file.path} queuePositions`, async (t) => {
       const port = await loadPort();
       if (port === null) {
@@ -206,8 +207,8 @@ for (const file of fixture.files) {
       const bytes = decodeBase64(file.bytes_b64);
       const positions = port.queuePositions(bytes);
       assert.ok(positions instanceof Map, "queuePositions must return a Map");
-      assert.equal(positions.size, file.queue_positions.length);
-      for (const entry of file.queue_positions) {
+      assert.equal(positions.size, queuePositions.length);
+      for (const entry of queuePositions) {
         assert.equal(
           positions.get(entry.element_id),
           entry.position,
