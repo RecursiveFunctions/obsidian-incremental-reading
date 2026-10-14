@@ -52,9 +52,10 @@
  * ## Component skeleton
  *
  * `component_types` is the sequence of `component_type` bytes on the child's
- * `compon.dat` record. Type 13 (`0x1c`-byte buffer in the type/size table in
- * `sm18-re:docs/findings/compon.md`) is the dominant text component. An extract
- * gets one — the extracted passage. A cloze gets two — question and answer.
+ * `compon.dat` record — the component shape, carrying no user text. Type 13
+ * (`0x1c`-byte buffer in the type/size table in
+ * `sm18-re:docs/findings/compon.md`) is the dominant type. An extract gets one
+ * component — the extracted passage. A cloze gets two — question and answer.
  * Both hold across all 12 fixture rows.
  *
  * ## DIVERGENCE (one fixture row cannot pass)
@@ -79,10 +80,15 @@ export const ELEMENT_TYPE_TOPIC = 0;
 export const ELEMENT_TYPE_ITEM = 1;
 
 /**
- * The dominant `compon.dat` text component type: a `0x1c`-byte buffer in the
- * type/size table `FUN_00902ba8` enforces.
+ * `compon.dat` component type 13: a `0x1c`-byte buffer in the type/size table
+ * that `FUN_00902ba8` enforces, and the type that dominates observed component
+ * frequencies across all six collection copies.
+ *
+ * Deliberately not named `TEXT`: `sm18-re:docs/findings/compon.md` settles the
+ * type's size and its frequency but does not pin which entry of the
+ * `Text`/`Spell`/`HTML`/... name table code 13 maps to.
  */
-export const COMPONENT_TYPE_TEXT = 13;
+export const COMPONENT_TYPE_DEFAULT = 13;
 
 /** The projection of an SM-18 `ElementInfo` record these factories may read. */
 export interface ParentFields {
@@ -133,8 +139,8 @@ function inheritCommon(
  * pulled it out as its own element.
  *
  * An extract preserves its source's `element_type` — an extract of a Topic is a
- * Topic you can keep reading — and gets a single text component for the
- * extracted passage.
+ * Topic you can keep reading — and gets a single component for the extracted
+ * passage.
  */
 export function makeExtractChild(
   parent: ParentFields,
@@ -143,7 +149,7 @@ export function makeExtractChild(
   return {
     ...inheritCommon(parent, opts),
     element_type: parent.element_type,
-    component_types: [COMPONENT_TYPE_TEXT],
+    component_types: [COMPONENT_TYPE_DEFAULT],
   };
 }
 
@@ -152,7 +158,7 @@ export function makeExtractChild(
  * turning it into a question.
  *
  * A cloze is always an Item regardless of the source's type, and carries two
- * text components — question and answer.
+ * components — question and answer.
  */
 export function makeClozeChild(
   parent: ParentFields,
@@ -161,6 +167,6 @@ export function makeClozeChild(
   return {
     ...inheritCommon(parent, opts),
     element_type: ELEMENT_TYPE_ITEM,
-    component_types: [COMPONENT_TYPE_TEXT, COMPONENT_TYPE_TEXT],
+    component_types: [COMPONENT_TYPE_DEFAULT, COMPONENT_TYPE_DEFAULT],
   };
 }
