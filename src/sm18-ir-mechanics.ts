@@ -34,7 +34,10 @@
  *   32,104 records ... exactly the live member set of `registry/comment.ptr`,
  *   one-to-one." Also a per-element registry slot, assigned when a comment is
  *   attached to that element and never by descent. A new child has no comment,
- *   so it is 0. See DIVERGENCE below.
+ *   so it is 0. The field was initially listed in the fixture's
+ *   `INHERITED_FIELDS` set, which made one row (`parent=13 child=19`)
+ *   unsatisfiable; the exporter now drops it from the comparison set
+ *   (`sm18-re@d3f0ce9`). The port still returns 0 so the shape matches.
  * - `element_type` (`0x00`) — **action-dependent.** An extract preserves its
  *   source's type; a cloze deletion always yields an Item, because the cloze
  *   *is* the question/answer pair.
@@ -57,22 +60,6 @@
  * `sm18-re:docs/findings/compon.md`) is the dominant type. An extract gets one
  * component — the extracted passage. A cloze gets two — question and answer.
  * Both hold across all 12 fixture rows.
- *
- * ## DIVERGENCE (one fixture row cannot pass)
- *
- * Fixture row `parent=13 child=19` (an extract) expects
- * `comment_registry_member = 3` while its parent's is 0. Children 17, 18 and 19
- * all have `source_article` 13, byte-identical parent projections and the same
- * `extraction_date`, yet expect 0, 0 and 3. No deterministic function of
- * `(parent, opts)` can return three different values for three identical
- * inputs, so that row is unsatisfiable by construction.
- *
- * It is also not a real inheritance: element 19 is an extract that later had a
- * comment attached, taking Comment registry slot 3. The fixture generator's
- * `INHERITED_FIELDS` tuple lists `comment_registry_member` as inheritable,
- * which our own evidence contradicts. This port keeps the evidence-backed rule
- * (a new child has no comment) and lets that row fail rather than gaming it
- * with a call counter. `sm18-re:docs/findings/port-ir-mechanics.md` records it.
  */
 
 /** `element_type` values, from `ELEMENT_TYPES` in `smfmt/element_info.py`. */
