@@ -43,14 +43,25 @@ import type {
   ContentsRecord,
   ElementInfoRecord,
   HexBlob,
+  RepetitionHistoryRecord,
 } from "./sm18-format-read";
 import {
   CONTENTS_RECORD_SIZE,
   ELEMENT_INFO_RECORD_SIZE,
+  REPETITION_HISTORY_RECORD_SIZE,
 } from "./sm18-format-read";
 
-export type { ContentsRecord, ElementInfoRecord, HexBlob };
-export { CONTENTS_RECORD_SIZE, ELEMENT_INFO_RECORD_SIZE };
+export type {
+  ContentsRecord,
+  ElementInfoRecord,
+  HexBlob,
+  RepetitionHistoryRecord,
+};
+export {
+  CONTENTS_RECORD_SIZE,
+  ELEMENT_INFO_RECORD_SIZE,
+  REPETITION_HISTORY_RECORD_SIZE,
+};
 
 /**
  * One `info/compon.dat` record as the writer takes it: the exact stored bytes
@@ -62,6 +73,11 @@ export { CONTENTS_RECORD_SIZE, ELEMENT_INFO_RECORD_SIZE };
  * through the fixture unchanged.
  */
 export interface ComponRawRecord {
+  raw_b64: string;
+}
+
+/** One exact 39-byte `info/RepetitionHistory.dat` record. */
+export interface RepetitionHistoryRawRecord {
   raw_b64: string;
 }
 
@@ -433,30 +449,39 @@ export function writeCompon(
 }
 
 /**
- * Encode an `info/*.sub` or `subsets/*.sub` file in stored order.
+ * Rebuild a headerless `info/RepetitionHistory.dat` byte for byte.
  *
- * This is the shared body of `smfmt.sub.write` and `smfmt.info_subs.write`:
- * both reject a header and pack each record's 1-based element id as one
- * little-endian uint32. Filename semantics such as `history_1.sub` siblings
- * stay with the caller; this byte encoder neither sorts nor deduplicates.
+ * This transliterates `smfmt.repetition_history.write`: the projected reader
+ * drops the opaque ranges at 0x12..0x17 and 0x19..0x26, so the reference keeps
+ * each complete record as `_raw` and the writer concatenates those bytes. The
+ * JSON boundary carries the same bytes as strict base64. A typed encoder from
+ * `RepetitionHistoryRecord` would zero or invent 20 bytes per record and is not
+ * this byte-preserving contract.
  */
-export function writeSub(
-  header: Uint8Array,
-  records: SubRecord[],
+export function writeRepetitionHistory(
+  records: RepetitionHistoryRawRecord[],
 ): Uint8Array {
-  if (header.byteLength !== SUB_HEADER_SIZE) {
-    throw new Error(`.sub header must be ${SUB_HEADER_SIZE} bytes`);
+  const parts: Uint8Array[] = [];
+  for (let i = 0; i < records.length; i += 1) {
+    const raw = records[i] && records[i].raw_b64;
+    if (typeof raw !== "string") {
+      throw new Error(
+        `RepetitionHistory.dat: record ${i} lacks raw_b64 bytes`,
+      );
+    }
+    const bytes = decodeBase64(raw, `RepetitionHistory.dat: record ${i}`);
+    if (bytes.byteLength !== REPETITION_HISTORY_RECORD_SIZE) {
+      throw new Error(
+        `RepetitionHistory.dat: record ${i} must carry exactly ` +
+          `${REPETITION_HISTORY_RECORD_SIZE} raw bytes`,
+      );
+    }
+    parts.push(bytes);
   }
 
-  const out = new Uint8Array(records.length * SUB_RECORD_SIZE);
-  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
-  for (let i = 0; i < records.length; i += 1) {
-    const elementId = records[i] && records[i].element_id;
-    view.setUint32(
-      i * SUB_RECORD_SIZE,
-      checkInteger("element_id", "I", elementId, i),
-      true,
-    );
+  const out = new Uint8Array(parts.length * REPETITION_HISTORY_RECORD_SIZE);
+  for (let i = 0; i < parts.length; i += 1) {
+    out.set(parts[i], i * REPETITION_HISTORY_RECORD_SIZE);
   }
   return out;
 }
@@ -506,6 +531,35 @@ export function writeContents(
         true,
       );
     }
+  }
+  return out;
+}
+
+/**
+ * Encode an `info/*.sub` or `subsets/*.sub` file in stored order.
+ *
+ * This is the shared body of `smfmt.sub.write` and `smfmt.info_subs.write`:
+ * both reject a header and pack each record's 1-based element id as one
+ * little-endian uint32. Filename semantics such as `history_1.sub` siblings
+ * stay with the caller; this byte encoder neither sorts nor deduplicates.
+ */
+export function writeSub(
+  header: Uint8Array,
+  records: SubRecord[],
+): Uint8Array {
+  if (header.byteLength !== SUB_HEADER_SIZE) {
+    throw new Error(`.sub header must be ${SUB_HEADER_SIZE} bytes`);
+  }
+
+  const out = new Uint8Array(records.length * SUB_RECORD_SIZE);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  for (let i = 0; i < records.length; i += 1) {
+    const elementId = records[i] && records[i].element_id;
+    view.setUint32(
+      i * SUB_RECORD_SIZE,
+      checkInteger("element_id", "I", elementId, i),
+      true,
+    );
   }
   return out;
 }
