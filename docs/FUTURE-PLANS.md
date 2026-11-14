@@ -1,216 +1,105 @@
-# Future plans (SuperMemo parity and beyond)
+# Unified Incremental Reading Roadmap
 
-Living plan for features not yet shipped. This is not a commitment order or
-a release schedule. For what is already released, see the README roadmap and
-`CHANGELOG.md`. For locked architecture, see `DESIGN.md`.
+Single authoritative product roadmap across the **Obsidian plugin** (`obsidian-incremental-reading`) and the **local-first PWA** (`PWA-alpha` / `PWA-WIP`), incorporating our scheduling, queue-mechanics, collection-portability, and diagnostics specifications.
 
-## Explicitly not planned
+For what is already released in the plugin, see `CHANGELOG.md` and `DESIGN.md`. For the PWA's automated execution queue and architectural decision records, see `PWA-alpha-roadmap/docs/ROADMAP-QUEUE.md` and `PWA-alpha-roadmap/docs/IMPLEMENTATION-STATUS.md`.
 
-- **SuperMemo Plan** (day planner / tasklists as a subsystem). Use Obsidian
-  tasks, calendar, or daily notes for life scheduling; IR stays the review
-  queue.
-- **Sleep, circadian, and auto-sleep** subsystems. Overload is handled with
-  Mercy, postpone, dismiss, and priority protection instead.
-- **Propagating reference registry** like SuperMemo. Obsidian wikilinks,
-  backlinks, and transclusion are the reference layer.
-- **Reimplementing SM-15/17/18** as schedulers. FSRS is the recall engine;
-  the divergence picker is expert tooling, not a second product.
+---
 
-## Near-term product roadmap (README order)
+## 1. Delivered Foundation (Through v0.13.0 & PWA Epoch 2)
 
-These stay the current execution focus before large new subsystems:
+| Capability | Obsidian Plugin (`v0.13.0`) | Local-First PWA (`PWA-alpha`) |
+|---|---|---|
+| **Core Domain & Storage** | Append-only `.ir/` event ledger, block-anchored extracts, markdown clozes, PDF topics, image occlusion | SQLite-wasm + OPFS physical schema 4, Domain 2 revisions/heads/placements/trash, Epoch 2 E2EE cell & blob sync |
+| **5-Dimension Mercy & Postpone** | **Shipped (`v0.13.0`)**: 5 weighted dimensions (*Importance*, *Lateness*, *Easiness*, *Investment*, *Recency*) against a 400-point baseline interval-growth curve; interactive `Alt+M` preview; separate `totalPostponeCount` and `recentPostponeCount` (resetting on review) | Basic day-aligned spread `postpone v2` shipped; **5-dimension Mercy scoring and `recentPostponeCount` starvation protection queued next** |
+| **Schedulers & Divergence** | **Shipped (`v0.13.0`)**: FSRS-6 primary recall engine + local optimizer; 3-model Divergence Picker (`FSRS-6` / power-law `DSR` / `SM-2`); priority-scaled first topic intervals (`[1, 44530]`-day clamp) | `ts-fsrs` (`fsrs-7` profile revision) + local-day rollover semantics ratified (ADR 0003); **priority-scaled topic intervals and DSR divergence queued** |
+| **Queue & Overload Controls** | Deterministic priority queue policies (`Strict`, `Balanced`, `Discovery`), item/reading jitter, daily ceiling, priority cutoff, startup auto-postpone | Soft daily new-item cap (`20/day`), canonical `dueOf()` helper, 8-slot / 2-minute `Again` requeue, queue-load chip |
+| **Capture & Mobile** | Mobile capture/review FAB, bottom navigation shell, Ctrl multi-span extracts, PDF region crop & occlusion | Native PDF canvas + canonical text fallback, durable read-point tracking, offline service worker, account-less device pairing |
 
-1. Community directory submission (likely plugin id / name change + BRAT note).
-2. Full mobile parity on real devices.
-3. Stats: calendar heatmap and retention trend.
-4. Browser extension for one-click web import (separate artifact; writes into
-   the vault).
+---
 
-## High priority — review sessions and scheduling UX
+## 2. Phase 1 — Rich Collection Portability & Duplicate Guards (Immediate Priority)
 
-### Semantic review (branch, subset, search)
+Unblock full-fidelity collection migration (solving the v0 plaintext/title-only limitations) and cross-app portability between desktop collections, the Obsidian vault, and the PWA.
 
-**Goal:** SuperMemo’s “review a part of the collection” without copying SM’s
-exact UI if something vault-native works better.
+### 2.1 Rich-Content Collection Import
+- **Component Stream Decoding (`compon` records):**
+  - Decode rich HTML (`Type 13` / `0x1c`-byte buffer at text slot `+0x11`) and attached image (`Type 2`) component records by resolving registry member paths and filespace slots into clean Markdown notes and local attachments instead of falling back to plaintext registry titles.
+  - Use byte-level resynchronization (`stride = 1`) when scanning component streams so records with under-reported `body_length` do not swallow subsequent valid records.
+- **Question / Answer & Cloze Synthesis (`DisplayAt` bitmask):**
+  - Inspect the component `DisplayAt` bitmask (`+0x08`) on multi-component items (`[13, 13]` or `[0, 0]`): components with `0xff` render on Question + Answer, while components with `0xd7` / `0xdf` (clearing bit `0x20`) render on Answer only. Automatically synthesize `{{c1::...}}` clozes or Q&A splits.
+- **Extract vs. Topic Provenance & Lineage:**
+  - Distinguish **Extracts** from root **Topics** during import using `source_article` (`+0x5d`) and `extraction_date` (`+0x4d`) metadata (non-zero if and only if extracted from a parent source), preserving parent-child lineage and concept-group affiliation (`+0x41`).
+  - Preserve floating-point priority percentiles from `priority.sub` (`projectRelativePriorities`) rather than rounding to integers so collections with `>100` elements do not suffer tie-breaking order loss.
+- **Read-Point Caret & Scroll Bookmark Recovery:**
+  - Decode the 43-byte `element_parameters` block (`read_point_start`, `read_point_length`, `read_point_component`, `read_point_scroll_top`) and map reading carets directly into `.ir/` ledger bookmarks (Plugin) and Topic read points (PWA).
 
-**Directions to explore (not final design):**
+### 2.2 Duplicate-Source Detection & Vault Bridge
+- **Duplicate URL / Source Guard on Import:**
+  - Before minting a new topic from web capture, RSS feeds, or bulk import, normalize incoming URLs and content hashes against existing ledger/Source records (`IsURLDuplicate` parity) and offer to jump to the existing topic or append as a new extract.
+- **Obsidian ↔ PWA Lossless Bridge:**
+  - Complete the 1:1 Markdown vault + `.ir/` event ledger importer/exporter (`EXPORT.md` #3) so topics, block-anchored extracts, items, FSRS/DSR scheduling history, and postpone counts round-trip cleanly between the Obsidian plugin and `PWA-alpha`.
 
-- **Branch session:** start from a topic or extract → queue only descendants
-  (reading + items), optional “due only” vs “include not yet due.”
-- **Subset session:** multi-select in Collection → run a pass on that set
-  (similar to neural, but user-chosen, not graph-walk).
-- **Search session:** Obsidian search hits (or a saved query) → filter to IR
-  elements whose notes match → review pass.
+---
 
-**Implementation note:** Likely reuses the same review leaf and session
-builder as neural/due queue, with a different **eligibility filter** and
-provenance line (“via branch”, “via subset”, “via search”). No second modal
-review surface.
+## 3. Phase 2 — Review Session Modes, Final Drill & Queue Diagnostics
 
-### Early review tools (Advance, add to outstanding)
+Bring high-leverage session mechanics and visual calibration tools to both surfaces without cluttering the single-leaf review flow.
 
-**Goal:** SM Vital options users recognize — pull work forward without lying
-to FSRS or faking a repetition.
+### 3.1 Final Drill & Early Review Tools
+- **In-Session Final Drill Queue (`drill` parity):**
+  - Track items graded below threshold (`Again` / lapsed or explicitly flagged during the pass) in a dedicated end-of-session **Final Drill** stage that cycles until every item achieves a passing recall grade, without mutating long-term FSRS stability after the first graded exposure of the day.
+- **Semantic Review Passes (Branch, Subset, Search):**
+  - **Branch session:** Start from any topic or extract in Collection (`Alt+I`) and queue only its descendant tree (reading + items), with an eligibility toggle for *Due only* vs. *Include unscheduled / not-yet-due*.
+  - **Subset & Search sessions:** Multi-select rows in Collection or pipe an Obsidian/PWA search query into a focused review pass using the standard review leaf and provenance badge (`via branch`, `via subset`, `via search`).
+- **Advance & Add to Outstanding:**
+  - **Advance:** Pull future items forward safely (recomputing elapsed retrievability `R` honestly at review time).
+  - **Add to today's pass:** Inject selected topics, extracts, or items into today's active queue without recording a synthetic review or altering Mercy/postpone counters.
 
-**To define precisely before coding:**
+### 3.2 Dynamic Neural Review (`Alt+N`)
+- **Incremental Spreading-Activation Expansion:**
+  - Upgrade Neural Review from a static upfront 3-layer BFS walk to dynamic spreading activation: re-seed activation from the element just reviewed/graded and expand deeper graph layers incrementally using bounded per-step budgets (`15` then `30` nodes) whenever the active neural queue drops below threshold.
+  - Add an optional **Due-today filter** inside Neural sessions so users can restrict graph exploration to overdue/due material when desired.
 
-- **Advance** (items): reschedule earlier with explicit semantics (FSRS-safe
-  vs “display-only for today”).
-- **Add to today’s pass** (topics/extracts/items): inject into the current
-  session or today’s outstanding set without counting as Mercy/postpone/review.
+### 3.3 Queue Randomization Preview & Leech Manager
+- **Queue Randomization Curve Preview:**
+  - Add a compact visual probability-curve preview in Settings beside `itemJitter` / `readingJitter` (`Strict`, `Balanced`, `Discovery` presets) plotting the cumulative selection probability and `(position, 100 - priority)` stair-step curve.
+- **Multi-Criteria Leech Diagnostics & Triage (`Stats` view):**
+  - Expand `Stats` (`Alt+S`) with a dedicated **Leech & Lapses** panel filtering items by combined criteria (lapses vs. threshold, interval ceiling, forgetting index / retention rate, and difficulty/A-Factor), paired with one-click triage actions (**Dismiss**, **Reset / Forget**, **Rewrite / Split**, or **Duplicate as sibling item**).
+  - Include the calendar review heatmap and rolling 30-day true retention trend.
 
-Ship only after each operation’s ledger events and scheduler interaction are
-specified in tests.
+---
 
-## Incremental video and audio
+## 4. Phase 3 — Incremental Video, Audio & Web Capture
 
-### Privacy and network (common sense)
+### 4.1 Timestamp-Anchored Media IR
+- **Resume / Start / Stop Event Model:**
+  - Ground video and audio extracts in explicit `{ resume, start, stop }` timestamp anchors stored in the ledger.
+  - **Topic:** Local media file (`mp4`, `mp3`, `m4a`) or structured stream descriptor note (YouTube / podcast URL) with automatic resume-position bookmarking.
+  - **Extract:** Ledger element carrying `timeRange: { start, end }`, parent media provenance, and optional transcript span.
+- **Side-by-Side Review Player:**
+  - Render media in the review source column alongside the extract/transcript pane, restoring `resume` on open, highlighting active extract ranges on the timeline, and supporting keyboard-driven timestamp extraction without leaving the review pass.
+  - Maintain strict offline privacy: local media works 100% offline; hosted embeds connect only on explicit user playback, with zero background network calls.
 
-The plugin’s **privacy promise** is: **no telemetry, no third-party analytics,
-no hidden phone-home in the shipped bundle**, and a **verifiable** build (see
-`SECURITY.md`). Most of the app works **fully offline** on local vault files.
+### 4.2 One-Click Web & Feed Capture
+- **Browser Extension & Feed Triage:**
+  - Ship the companion browser extension for one-click web selection/article capture into the Obsidian vault, and complete client-side RSS/OPML inbox polling with daily introduction cap integration in the PWA.
 
-**Streaming sources (YouTube, podcasts, etc.) necessarily use the network when
-you use them** — that is not a contradiction. The user (or Obsidian’s embed)
-loads the stream; the plugin does not need to exfiltrate vault data to do IR
-on a timestamped extract. **Local media** (files in the vault or attachments)
-stays offline-capable.
+---
 
-Today’s **zero-network gate** on `main.js` reflects the **current** codebase.
-Future media features may add **optional, user-initiated** network paths for
-streaming; those should stay explicit (open URL / embed), never background.
+## 5. Cross-Platform Alignment (Plugin ↔ PWA Parity Matrix)
 
-### Who owns playback and seeking?
+To keep the Obsidian plugin and `PWA-alpha` aligned as one product family, features proven in one surface are ported to the other along these shared contracts:
 
-| Owner | Pros | Cons |
-|-------|------|------|
-| **Obsidian native embed** (`![[file]]`, markdown embeds) | Theme-consistent, mobile/desktop parity, less code | Seek API limited; per-format quirks; hard to sync highlight ↔ timecode tightly |
-| **Custom `ItemView` / leaf with HTML5 `<video>` / `<audio>`** | Full control of currentTime, side-by-side layout, keyboard | Must maintain players, mobile layout, large files, codec support |
-| **External app / system player** (open at timestamp) | Simplest; SM often feels clunky here | Breaks flow; poor “incremental reading in one pane” |
+1. **Unified Postpone v2 + 5-Dimension Mercy:** Upgrade `PWA-alpha`'s `src/scheduler/postpone.ts` from flat-priority sorting to support the 5-dimension Mercy ordinal scorer (`Importance`, `Lateness`, `Easiness`, `Investment`, `Recency` against the typical-interval curve) and `recentPostponeCount` starvation protection already live in the plugin (`v0.13.0`).
+2. **Unified Topic & Item Scheduling Options:** Bring priority-scaled initial topic intervals (`max(floor, scale * pos^exponent)`, clamped to `[1, 44530]` days) and optional power-law `DSR` shadow divergence into the PWA scheduler alongside `ts-fsrs`.
+3. **Shared Portability Fixtures:** Maintain shared test fixtures across both repositories for Markdown vault export/import, review-log CSVs, Anki `.apkg`/TSV, and rich-content collection imports.
+4. **Plugin Directory & Release Milestones:** Complete Obsidian Community Plugins submission (plugin ID/name finalization + BRAT migration path) alongside PWA Phase 6/7 beta readiness.
 
-**Recommendation:** **Custom review/source column player for IR sessions** on
-desktop and tablet, with **fallback** to “open attachment at bookmark” when
-the host cannot embed (or on mobile if a dedicated player is not ready).
-Reuse the same **reading-mode split** as markdown topics: card + source column,
-not a modal.
+---
 
-**Seeking:** Ledger stores **bookmark time** (seconds or ms) per topic; review
-restores `currentTime` on enter; extract creation records **start/end** (or
-start + duration) on the anchor. Keyboard: same family as reading (space,
-advance, later today) plus optional ±N s jumps.
+## 6. Explicitly Out of Scope
 
-### Data model (recommendation)
-
-Align with PDF and markdown: **do not invent a new scheduling species** unless
-forced.
-
-- **Topic:** vault path to media file *or* a structured “stream descriptor”
-  note (YouTube URL, podcast feed entry) that the UI knows how to open.
-- **Extract:** ledger element with **anchor** carrying:
-  - `sourcePath` (file) or `streamId` + platform metadata (URL, stable id)
-  - `timeRange: { start, end }` (and optional `quote` / label)
-  - `bookmark` for resume position on the **topic** (reuse bookmark machinery)
-- **Items:** unchanged (clozes from transcript text in extract note or
-  ledger-held text).
-
-Optional **stream descriptor** frontmatter or a small JSON block in the topic
-note keeps streams auditable in git; the ledger remains authoritative for
-schedule and lineage.
-
-### Review UX target
-
-**Side-by-side player + extract**, like reading mode — goal is to be **clearer
-and faster than SuperMemo’s media readers**, not to copy SM’s chrome:
-
-- One review leaf; source column shows player + transcript/extract list;
-- Active extract highlighted on timeline (chapters / markers);
-- Extract and cloze from selection without leaving the pass;
-- Resume banner (“continue at 12:34”) like reading topics.
-
-### Phased delivery (“scope ladder”)
-
-Phases are **incremental ship targets**, not separate products:
-
-1. **Local files only** — `mp4` / `mp3` / `m4a` in vault; topic + timestamp
-   extracts; bookmarks; side-by-side review.
-2. **Hosted embeds** — YouTube (and similar) via Obsidian/embed or controlled
-   iframe in the IR source column; anchors store URL + time range; network only
-   when playing.
-3. **Import pipeline** — extension or companion writes local copies or
-   descriptor notes; optional duplicate-source detection on import.
-
-Out of scope for the plugin: bundled **yt-dlp** or circumvention tools; users
-who want offline YouTube use their own downloader.
-
-### How competitors roughly handle media
-
-| Product | Playback | Anchors | Offline |
-|---------|----------|---------|---------|
-| **SuperMemo** | Built-in readers per format; long history of quirks | Timestamp + extract tree | Mixed; often local collection |
-| **EtchMind / Incremento** (standalone) | Native players; video/audio as first-class | Timestamp endpoints, extract cards | Local-first; streams where supported |
-| **Obsidian IR plugins (Syro, etc.)** | Usually markdown/PDF-first; limited media IR | Varies | Vault-local |
-| **This plugin (target)** | IR review column player + embed fallback | Ledger anchors like PDF | Local files offline; streams when user plays |
-
-## Items, clozes, and “duplicate element” (clarification)
-
-SuperMemo users often **duplicate** an extract or item to make **another cloze
-or another card from the same passage** without losing lineage.
-
-**Planned direction (needs design pass):**
-
-- **Duplicate as sibling item** under the same extract (or topic): new element
-  id, copy body or selected cloze variant, inherit priority parent policy.
-- **Split clozes** into separate notes (partially exists via commands) made
-  discoverable and tree-visible.
-
-**Not committed:** per-cloze **independent FSRS state inside one markdown
-note** (Anki-style `c1`/`c2` scheduling per field). That is a large model change;
-duplicate/sibling items are the likely first step.
-
-## Formats and import
-
-| Area | Intent | Priority |
-|------|--------|----------|
-| **SuperMemo collection import** | One-way import of collection/knowledge tree; scheduling will not map 1:1 to FSRS | **Want** — spec SM versions and failure modes |
-| **Duplicate-source on import** | Detect same URL/file/RSS item before creating a second topic | **Want** |
-| **EPUB** | First-class or “convert to managed copy” like competitors | Explore |
-| **PowerPoint / OneNote** | Plausible if import path exists (export → markdown/html) | Explore with evidence |
-| **Mail** | Only if users ask with examples | **Skeptical** — need evidence |
-| **Browser / RSS import** | Extension writing into vault | Near-term (README) |
-
-## Scheduling, Queue & Import Refinements
-
-Planned workflow and fidelity improvements across queue management, collection import, and diagnostics:
-
-1. **Multi-Factor Mercy & Postpone:**
-   - Score due overflow across five weighted dimensions (*Importance*, *Lateness*, *Easiness*, *Investment*, *Recency*, plus scoring *Mode*) alongside a typical-interval baseline curve.
-   - Wire the 5 dimension weights and scoring mode into `src/ir/mercy.ts`, the Mercy preview modal (`src/ir/mercy-modal.ts`), and plugin settings (`src/settings.ts`).
-   - Track total vs. recent postpone counts (resetting recent postpones on a graded review) so advanced postpone policies do not permanently lock out older elements.
-2. **Rich-Content Collection Import:**
-   - Decode HTML and image component records to import full formatted bodies and attached media rather than falling back to plaintext titles.
-   - Synthesize Q&A and cloze items from multi-component records by inspecting question/answer display flags.
-   - Distinguish **Extracts vs. Topics** on import via source-article provenance and extraction timestamps, and restore reading caret/scroll bookmarks into `.ir/` ledger bookmarks.
-   - Handle variable-stride record resynchronization when scanning component streams with surplus bytes.
-3. **Multi-Scheduler Divergence Ensemble:**
-   - Expand `src/ir/grade-divergence.ts` beyond FSRS-6 vs. SM-2 by adding a power-law DSR shadow scheduler with priority-scaled initial intervals and bounded interval clamping.
-4. **Dynamic Neural Review & Queue Diagnostics:**
-   - Support incremental spreading-activation expansion when the active neural queue runs low, plus optional due-today filtering.
-   - Add a randomization probability curve preview in Settings and multi-criteria leech filtering in Stats.
-   - Ground Incremental Video/Audio bookmark anchors in `resume / start / stop` timestamp event semantics and check incoming URLs for duplicates on import.
-
-## Stats and analytics (lower priority)
-
-- Calendar heatmap and retention trend (README near-term).
-- Leech detection, branch-level FSRS parameters, richer learning diagnostics —
-  **later**, after core sessions and media MVP.
-
-## Under consideration (unchanged)
-
-- One-way **export** toward something SuperMemo could import (structure only;
-  scheduling does not transfer).
-
-## Design doc alignment
-
-`DESIGN.md` records what shipped in v1. **Direction** for video/audio and
-other post-v1 work lives here until a feature ships and `DESIGN.md` is updated
-in the release that adds it.
+- **Day-planner / tasklist subsystems:** Use native Obsidian tasks/daily notes or dedicated calendar tools; IR owns the reading and review queue.
+- **Sleep / circadian tracking subsystems:** Overload is solved via 5-dimension Mercy, postpone, daily caps, and priority protection.
+- **Streaks or guilt mechanics:** Both the plugin and PWA deliberately exclude streaks in favor of honest 7-day load forecasts and true retention metrics.

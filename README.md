@@ -199,23 +199,21 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the complete release history.
 
 ## Roadmap
 
-Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling and a local parameter optimizer, interleaved due review, neural sessions, priority queue and Mercy, Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile FAB with due count, and undo for grades, later, and dismiss.
+Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling and a local parameter optimizer, 3-model scheduler divergence (`FSRS-6` / `DSR` / `SM-2`), priority-scaled first topic intervals, interleaved due review, neural sessions, deterministic priority queue policies, 5-dimension Mercy scoring and interactive postpone preview (`Alt+M`), Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile capture/review FAB, and undo for grades, Mercy, later, and dismiss.
 
 PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be extracted, and cloze is markdown-only: extract from the PDF first, then cloze the extract.
 
-Planned, in order:
+Planned, in order (full details in [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md)):
 
-- [ ] Community directory submission. The id `incremental-reading` is taken, so this includes a one-time plugin id and name change with a migration note for BRAT installs.
-- [ ] Full mobile parity, meaning whatever a real device still gets wrong on small screens.
-- [ ] Calendar heatmap and retention trend in stats.
-- [ ] Browser extension for one-click import of web pages. Ships as a separate tool that writes markdown into the vault, so the plugin itself stays free of network code.
-- [ ] Rich-content collection import (HTML/image/Q&A components, extract provenance, reading bookmarks) and expanded scheduler divergence comparisons.
+- [ ] **Rich-content collection import & duplicate-source guards:** Full HTML and image component decoding, automatic Q&A/cloze synthesis from display flags, extract-vs-topic provenance detection, read-point caret/scroll bookmark recovery, and URL/source deduplication on import.
+- [ ] **Final Drill, semantic review passes & dynamic Neural Review:** End-of-session Final Drill stage for lapsed items, branch/subset/search review passes, safe Advance / Add-to-outstanding tools, and incremental spreading-activation expansion in Neural Review (`Alt+N`).
+- [ ] **Queue diagnostics, leech triage & stats trends:** Visual queue-randomization probability curve in Settings, multi-criteria leech filtering and one-click triage actions in Stats, plus calendar heatmap and rolling retention trend.
+- [ ] **Incremental video, audio & web capture:** Timestamp-anchored media extracts (`resume / start / stop`), side-by-side review player, and a companion browser extension for one-click web import.
+- [ ] **Community directory submission & mobile polish:** Final plugin ID/name migration path from BRAT and real-device mobile refinements.
 
-Under consideration: a one-way export of the tree that SuperMemo could import. Scheduling would not transfer, since FSRS and SM-15/17/18 do not share parameters.
+Under consideration: a one-way structure export for external collections.
 
-Not planned: reimplementing SM-15/17/18 (too much work; FSRS is 'good enough' tbh and I doubt reverse-engineered implementations are accurate)
-
-If you're interested in the design decisions I've made, check [`docs/DESIGN.md`](docs/DESIGN.md).
+If you're interested in the architecture and full roadmap, check [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md).
 
 ## Changelog
 
