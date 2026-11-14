@@ -2296,6 +2296,51 @@ img.ir-source-image.ir-cloze-source {
   gap: 6px;
 }
 
+/* Proportional interval bar: one segment per model, sized by its proposal. */
+.ir-divergence-track {
+  display: flex;
+  gap: 2px;
+  height: 20px;
+  width: 100%;
+}
+
+.ir-divergence-seg {
+  align-items: center;
+  border-radius: var(--radius-s);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  display: flex;
+  font-size: 0.72em;
+  font-variant-numeric: tabular-nums;
+  justify-content: center;
+  /* Floor: an extreme outlier still shows its colour and its number. */
+  min-width: 8%;
+  overflow: hidden;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.ir-divergence-seg:hover {
+  filter: brightness(1.1);
+}
+
+.ir-divergence-seg--fsrs {
+  background: var(--color-accent);
+}
+
+.ir-divergence-seg--dsr {
+  background: var(--color-blue);
+}
+
+.ir-divergence-seg--sm-2 {
+  background: var(--color-orange);
+}
+
+.ir-divergence-seg-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Anchor state badges in tree view */
 .ir-tree-anchor-badge {
   display: inline-flex;
