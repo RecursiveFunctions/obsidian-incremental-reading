@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-11-14
+
+### Added
+
+- **14-day Mercy load distribution chart** (`src/ir/mercy-chart.ts`, `src/ir/mercy-modal.ts`, `styles.css`): Replaced the plain-text future load list in the `Alt+M` Mercy preview modal with a stacked horizontal bar chart comparing existing scheduled load against newly postponed `+Mercy` overflow and the daily ceiling (#14).
+
+### Fixed
+
+- **Mercy modal slider focus & drag continuity** (`src/ir/mercy-modal.ts`): Separated static control rows from the live results container so dragging **Daily ceiling** or **Priority cutoff** updates the preview in place without destroying the active slider element (#14).
+
 ## [0.13.0] — 2026-11-14
 
 ### Added
