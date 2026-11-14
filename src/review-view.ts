@@ -4310,7 +4310,7 @@ export class IrReviewView extends ItemView {
 
     const div =
       this.settings.showDivergencePicker && slot.element.card
-        ? checkGradeDivergence(slot.element.card, stored, g, Date.now())
+        ? checkGradeDivergence(slot.element.card, stored, g, Date.now(), undefined, undefined, slot.element.priority)
         : null;
 
     if (div) {
@@ -4393,10 +4393,12 @@ export class IrReviewView extends ItemView {
         if (m.id === "FSRS") {
           void this.applyGrade(slot, fsrsCard, fsrsStored, g, false, effectiveRetention);
         } else {
+          const chosenDue = m.id === "DSR" ? div.dsrDue : div.sm2Due;
+          const chosenDays = m.id === "DSR" ? div.dsrIntervalDays : div.sm2IntervalDays;
           const overridden = {
             ...fsrsStored,
-            due: div.sm2Due,
-            scheduledDays: div.sm2IntervalDays,
+            due: chosenDue,
+            scheduledDays: chosenDays,
           };
           const overriddenCard = storedToCard(overridden);
           void this.applyGrade(slot, overriddenCard, overridden, g, true, effectiveRetention);
@@ -4429,7 +4431,15 @@ export class IrReviewView extends ItemView {
       policy.readingHighAFactor,
       policy.readingLowAFactor,
     );
-    const advanced = advanceTopic(cur, this.settings, new Date(), effectiveAFactor);
+    const advanced = advanceTopic(
+      cur,
+      this.settings,
+      new Date(),
+      effectiveAFactor,
+      slot.element.priority,
+      policy.enabled,
+      this.queue.length,
+    );
     await this.emit("topic-advanced", slot.id, {
       schedule: topicStateToSchedule(advanced),
       operation: "advance",

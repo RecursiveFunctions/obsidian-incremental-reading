@@ -11,17 +11,17 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { planAdvancedPostpone, planAutoPostpone, planMercy, resolveBranchDelay } from "../src/ir/mercy";
-
-const SPEC = ["..", "src", "ir", "mercy.ts"].join("/");
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function load(): Promise<any> {
-  try {
-    return await import(SPEC);
-  } catch {
-    return null;
-  }
-}
+import {
+  DEFAULT_MERCY_WEIGHTS,
+  computeElementHistoryCounts,
+  computeMercyOrdinals,
+  planAdvancedPostpone,
+  planAutoPostpone,
+  planMercy,
+  redistribute,
+  resolveBranchDelay,
+  typicalInterval,
+} from "../src/ir/mercy";
 
 const NOW = 1000;
 const PAST = 500;
@@ -36,11 +36,8 @@ const entries = () => [
   { id: "e", priority: 5, dueMs: FUTURE },
 ];
 
-test("under ceiling: everything due stays, nothing postponed", async (t) => {
-  const m = await load();
-  if (!m) return t.skip("src/ir/mercy.ts not implemented yet");
-
-  const r = m.redistribute(entries(), NOW, {
+test("under ceiling: everything due stays, nothing postponed", () => {
+  const r = redistribute(entries(), NOW, {
     ceiling: 10,
     priorityCutoff: 0,
   });
@@ -49,42 +46,28 @@ test("under ceiling: everything due stays, nothing postponed", async (t) => {
   assert.equal(r.postponedCount, 0);
 });
 
-test("over ceiling: lowest-importance overflow is postponed in order", async (t) => {
-  const m = await load();
-  if (!m) return t.skip("src/ir/mercy.ts not implemented yet");
-
-  const r = m.redistribute(entries(), NOW, {
+test("over ceiling: lowest-importance overflow is postponed in order", () => {
+  const r = redistribute(entries(), NOW, {
     ceiling: 2,
     priorityCutoff: 15,
   });
-  // a(10), b(20) are the two most important and kept.
-  // c(30), d(40) overflow; both above the cutoff so both postponed,
-  // relative importance order preserved.
   assert.deepEqual(r.dueToday, ["a", "b"]);
   assert.deepEqual(r.postponed, ["c", "d"]);
   assert.equal(r.postponedCount, 2);
 });
 
-test("never postpone at or below the priority cutoff", async (t) => {
-  const m = await load();
-  if (!m) return t.skip("src/ir/mercy.ts not implemented yet");
-
-  const r = m.redistribute(entries(), NOW, {
+test("never postpone at or below the priority cutoff", () => {
+  const r = redistribute(entries(), NOW, {
     ceiling: 1,
     priorityCutoff: 25,
   });
-  // Keep only a(10). Overflow b,c,d. b(20) <= cutoff 25 -> stays due
-  // even though it is over the ceiling. c(30), d(40) postponed.
   assert.deepEqual(r.dueToday, ["a", "b"]);
   assert.deepEqual(r.postponed, ["c", "d"]);
   assert.equal(r.postponedCount, 2);
 });
 
-test("not-yet-due entries are excluded from both lists", async (t) => {
-  const m = await load();
-  if (!m) return t.skip("src/ir/mercy.ts not implemented yet");
-
-  const r = m.redistribute(entries(), NOW, {
+test("not-yet-due entries are excluded from both lists", () => {
+  const r = redistribute(entries(), NOW, {
     ceiling: 2,
     priorityCutoff: 0,
   });
@@ -92,13 +75,10 @@ test("not-yet-due entries are excluded from both lists", async (t) => {
   assert.ok(!all.includes("e"), "future-due entry must not appear");
 });
 
-test("deterministic (identical result on re-run)", async (t) => {
-  const m = await load();
-  if (!m) return t.skip("src/ir/mercy.ts not implemented yet");
-
+test("deterministic (identical result on re-run)", () => {
   const opts = { ceiling: 2, priorityCutoff: 15 };
-  const x = JSON.stringify(m.redistribute(entries(), NOW, opts));
-  const y = JSON.stringify(m.redistribute(entries(), NOW, opts));
+  const x = JSON.stringify(redistribute(entries(), NOW, opts));
+  const y = JSON.stringify(redistribute(entries(), NOW, opts));
   assert.equal(x, y);
 });
 
@@ -176,4 +156,89 @@ test("branch delay resolution supports every policy mode", () => {
   assert.equal(resolveBranchDelay(5, 9, "ignore"), 5);
   assert.equal(resolveBranchDelay(5, 9, "conservative"), 5);
   assert.equal(resolveBranchDelay(5, 9, "liberal"), 9);
+});
+
+test("typicalInterval matches baseline interval table vectors", () => {
+  assert.ok(Math.abs(typicalInterval(1) - 2.484) < 1e-9);
+  assert.ok(Math.abs(typicalInterval(2) - 2.9808) < 1e-9);
+  assert.ok(Math.abs(typicalInterval(5) - 5.1508224) < 1e-9);
+  assert.ok(Math.abs(typicalInterval(20) - 79.35883184366267) < 1e-9);
+  assert.equal(typicalInterval(0), typicalInterval(1));
+  assert.equal(typicalInterval(30), typicalInterval(20));
+});
+
+test("computeMercyOrdinals matches 5-dimension reference vectors", () => {
+  const v1 = computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
+    { importance: 0.05, lateness: 1, investment: 0.0, easiness: 0.5 },
+  ]);
+  assert.ok(Math.abs(v1[0]! - 0.565417329774) < 1e-9);
+
+  const v2 = computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
+    { importance: 0.5, lateness: 30, investment: 100.0, easiness: 0.8 },
+  ]);
+  assert.ok(Math.abs(v2[0]! - 0.281561713755) < 1e-9);
+
+  const v3 = computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
+    { importance: 1.0, lateness: 1, investment: 500.0, easiness: 0.9 },
+  ]);
+  assert.ok(Math.abs(v3[0]! - 0.170641489496) < 1e-9);
+
+  const zero = computeMercyOrdinals(
+    { importance: 0, lateness: 0, easiness: 0, investment: 0, recency: 0, mode: 3 },
+    [{ importance: 0.5, lateness: 10, investment: 5, easiness: 0.5 }],
+  );
+  assert.equal(zero[0], 0.0);
+
+  assert.throws(
+    () => computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
+      { importance: 0.5, lateness: -2, investment: 0, easiness: 0.5 },
+    ]),
+    /negative/,
+  );
+});
+
+test("computeElementHistoryCounts tracks readingReps, totalPostponeCount, and resets recentPostponeCount on grade or topic-advanced", () => {
+  const counts = computeElementHistoryCounts([
+    { id: "e1", lamport: 1, kind: "mercy-postponed", target: "itemA", payload: { batchId: "b1" } },
+    { id: "e2", lamport: 2, kind: "mercy-postponed", target: "itemA", payload: { batchId: "b2" } },
+    { id: "e3", lamport: 3, kind: "graded", target: "itemA", payload: {} },
+    { id: "e4", lamport: 4, kind: "mercy-postponed", target: "itemA", payload: { batchId: "b3" } },
+    { id: "e5", lamport: 5, kind: "mercy-postponed", target: "itemA", payload: { batchId: "b4" } },
+    { id: "e6", lamport: 6, kind: "mercy-undone", target: "itemA", payload: { batchId: "b4" } },
+    { id: "e7", lamport: 7, kind: "topic-advanced", target: "topicB", payload: {} },
+    { id: "e8", lamport: 8, kind: "mercy-postponed", target: "topicB", payload: { batchId: "b5" } },
+    { id: "e9", lamport: 9, kind: "topic-advanced", target: "topicB", payload: {} },
+  ]);
+  assert.deepEqual(counts.get("itemA"), {
+    readingReps: 0,
+    totalPostponeCount: 3,
+    recentPostponeCount: 1,
+  });
+  assert.deepEqual(counts.get("topicB"), {
+    readingReps: 2,
+    totalPostponeCount: 1,
+    recentPostponeCount: 0,
+  });
+});
+
+test("planMercy with multi-factor weights protects high-investment difficult items over fresh easy items", () => {
+  const now = new Date(2026, 0, 10, 12).getTime();
+  const due = now - 5 * 86_400_000;
+  // 'freshEasy' has slightly better flat priority (25 vs 30), but 0 reps and very easy (difficulty 1).
+  // 'investedHard' has 50 reps and high difficulty (9.5), so its multi-factor Mercy ordinal is much lower (keep today).
+  const entries = [
+    { id: "freshEasy", priority: 25, dueMs: due, reps: 0, difficulty: 1.0, interval: 1 },
+    { id: "investedHard", priority: 30, dueMs: due, reps: 50, difficulty: 9.5, interval: 30 },
+  ];
+  const flatPlan = planMercy(entries, now, { ceiling: 1, priorityCutoff: 0 });
+  assert.deepEqual(flatPlan.dueToday, ["freshEasy"]);
+  assert.deepEqual(flatPlan.postponed, ["investedHard"]);
+
+  const weightedPlan = planMercy(entries, now, {
+    ceiling: 1,
+    priorityCutoff: 0,
+    weights: DEFAULT_MERCY_WEIGHTS,
+  });
+  assert.deepEqual(weightedPlan.dueToday, ["investedHard"]);
+  assert.deepEqual(weightedPlan.postponed, ["freshEasy"]);
 });

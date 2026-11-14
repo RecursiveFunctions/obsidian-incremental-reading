@@ -4,6 +4,7 @@ import {
   advanceTopic,
   laterToday,
   newTopicState,
+  priorityScaledFirstInterval,
   readTopicFromFrontmatter,
   writeTopicToFrontmatter,
 } from "../src/topic";
@@ -114,4 +115,13 @@ test("garbage frontmatter falls back to a sane new schedule", () => {
   );
   assert.equal(s.interval, 0);
   assert.equal(s.aFactor, 2);
+});
+
+test("priorityScaledFirstInterval scales first topic interval by priority position", () => {
+  const top = priorityScaledFirstInterval(1, 1000, 1);
+  const low = priorityScaledFirstInterval(95, 1000, 1);
+  assert.equal(top, 1);
+  assert.ok(low > top);
+  const advanced = advanceTopic(newTopicState(SETTINGS, NOW), SETTINGS, NOW, undefined, 95, true, 1000);
+  assert.equal(advanced.interval, low);
 });

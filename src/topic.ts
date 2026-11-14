@@ -64,24 +64,53 @@ export function newTopicState(
   };
 }
 
+export const TOPIC_INTERVAL_MAX_CLAMP = 44_530;
+
+/**
+ * Priority-scaled first interval (in days) for a fresh topic at `priority` (0..100)
+ * across a collection of `collectionSize` elements. Mirrors the `[floor, scale, exponent]`
+ * curve `[2.0, 0.03036, 0.82]` keyed by 1-based priority position.
+ */
+export function priorityScaledFirstInterval(
+  priority: number,
+  collectionSize = 1000,
+  floor = 1,
+): number {
+  const clampedPriority = Math.min(100, Math.max(0, Number.isFinite(priority) ? priority : 33));
+  const pos = Math.max(1, Math.round((clampedPriority / 100) * Math.max(100, collectionSize)));
+  const scaled = Math.max(floor, 0.03036 * Math.pow(pos, 0.82));
+  return Math.max(1, Math.round(scaled));
+}
+
 /**
  * Advance a topic after a reading pass ("Next" in the review UI). First pass
- * uses `topicFirstInterval`; every later pass multiplies the interval by the
- * A-Factor. The interval is clamped to `topicMaxInterval` and the next due
- * time is `now + interval days`.
+ * uses `topicFirstInterval` (or priority-scaled first interval when `priority`
+ * is provided and `scaleFirstByPriority` is true); every later pass multiplies
+ * the interval by the A-Factor. The interval is clamped to `[1, min(topicMaxInterval, 44530)]`
+ * and the next due time is `now + interval days`.
  */
 export function advanceTopic(
   state: TopicState,
   settings: TopicScheduleSettings,
   now: Date = new Date(),
   effectiveAFactor?: number,
+  priority?: number,
+  scaleFirstByPriority = false,
+  collectionSize = 1000,
 ): TopicState {
   const baseAFactor = clampAFactor(state.aFactor, settings.topicAFactor);
   const aFactor = effectiveAFactor === undefined
     ? baseAFactor
     : clampAFactor(effectiveAFactor, baseAFactor);
-  const first = Math.max(1, Math.round(settings.topicFirstInterval || 1));
-  const max = Math.max(first, Math.round(settings.topicMaxInterval || first));
+  const baseFirst = Math.max(1, Math.round(settings.topicFirstInterval || 1));
+  const first =
+    scaleFirstByPriority && priority !== undefined
+      ? priorityScaledFirstInterval(priority, collectionSize, baseFirst)
+      : baseFirst;
+  const max = Math.min(
+    TOPIC_INTERVAL_MAX_CLAMP,
+    Math.max(first, Math.round(settings.topicMaxInterval || first)),
+  );
 
   const next =
     state.interval >= 1

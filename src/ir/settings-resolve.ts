@@ -90,6 +90,15 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
     largeBatch: action(guidance.largeBatch, defaults.reprioritizationPolicy.largeBatch),
     largeBatchThreshold: Math.round(finite(guidance.largeBatchThreshold, 10, 1, 100_000)),
   };
+  const mercy = record(saved.mercyWeights);
+  result.mercyWeights = {
+    importance: Math.round(finite(mercy.importance, defaults.mercyWeights.importance, 0, 10)),
+    lateness: Math.round(finite(mercy.lateness, defaults.mercyWeights.lateness, 0, 10)),
+    easiness: Math.round(finite(mercy.easiness, defaults.mercyWeights.easiness, 0, 10)),
+    investment: Math.round(finite(mercy.investment, defaults.mercyWeights.investment, 0, 10)),
+    recency: Math.round(finite(mercy.recency, defaults.mercyWeights.recency, 0, 10)),
+    mode: Math.round(finite(mercy.mode, defaults.mercyWeights.mode ?? 3, 0, 3)),
+  };
   result.notices = { ...defaults.notices, ...record(saved.notices) } as IrSettings["notices"];
   const rawMode = saved.treeDisplayMode as string | undefined;
   result.treeDisplayMode = rawMode === "sources" || rawMode === "hierarchy" ? "sources" : "priority";

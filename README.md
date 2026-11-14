@@ -209,12 +209,24 @@ Planned, in order:
 - [ ] Full mobile parity, meaning whatever a real device still gets wrong on small screens.
 - [ ] Calendar heatmap and retention trend in stats.
 - [ ] Browser extension for one-click import of web pages. Ships as a separate tool that writes markdown into the vault, so the plugin itself stays free of network code.
+- [ ] Rich-content collection import (HTML/image/Q&A components, extract provenance, reading bookmarks) and expanded scheduler divergence comparisons.
 
 Under consideration: a one-way export of the tree that SuperMemo could import. Scheduling would not transfer, since FSRS and SM-15/17/18 do not share parameters.
 
-Not planned: reimplementing SM-15/17/18 (too much work; FSRS is 'good enough' tbh and I doubt reverse-engineered implementations are accurate) 
+Not planned: reimplementing SM-15/17/18 (too much work; FSRS is 'good enough' tbh and I doubt reverse-engineered implementations are accurate)
 
 If you're interested in the design decisions I've made, check [`docs/DESIGN.md`](docs/DESIGN.md).
+
+## Changelog
+
+### Unreleased
+
+- **Multi-Factor Mercy Scoring:** Mercy and auto-postpone now rank due overflow across five configurable dimensions (**Importance**, **Lateness**, **Easiness**, **Investment**, and **Recency**) paired with a baseline interval-growth curve, protecting high-investment and difficult items over fresh, easy items when trimming overload.
+- **Interactive Mercy Preview (`Alt+M`):** Upgraded the Mercy modal with live sliders for **Daily ceiling**, **Priority cutoff**, and a **Multi-factor Mercy scoring** toggle. Adjusting any control recomputes the redistribution on the fly and previews the exact elements and target dates being postponed.
+- **3-Model Scheduler Divergence (`FSRS` / `DSR` / `SM-2`):** Added a power-law **DSR** shadow scheduler (`src/dsr-scheduler.ts`) alongside FSRS-6 and SM-2 in the post-grade Divergence Picker (`src/ir/grade-divergence.ts`), allowing one-click interval overrides when models disagree.
+- **Priority-Scaled First Topic Intervals:** When priority-aware scheduling is enabled, fresh topics now scale their first interval by collection priority position (clamped to `[1, 44530]` days) instead of assigning a flat 1-day interval to every newly imported topic.
+- **True Ledger Postpone & Reading History Tracking:** Derived real reading advance counts (`topic-advanced` events) and separate `totalPostponeCount` / `recentPostponeCount` metrics from the ledger (with `recentPostponeCount` resetting automatically upon grading or advancing an element).
+- **Advanced Startup Auto-Postpone:** Wired the advanced auto-postpone policy into startup execution, scaling delays by priority, retention, and A-Factor while skipping elements that have already been postponed repeatedly (`skipPostponeCountAbove`).
 
 ## Installation
 

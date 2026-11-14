@@ -53,9 +53,10 @@ test("checkGradeDivergence: detects large divergence (low reps, long FSRS interv
     assert.fail("Expected divergence to be detected");
   }
   assert.ok(result.config);
-  assert.equal(result.config.members.length, 2);
+  assert.equal(result.config.members.length, 3);
   assert.equal(result.fsrsIntervalDays, 60);
   assert.ok(result.sm2IntervalDays > 0);
+  assert.ok(result.dsrIntervalDays > 0);
 });
 
 test("checkGradeDivergence: config message includes spread info", () => {

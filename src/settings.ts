@@ -405,6 +405,47 @@ export class IrSettingTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(containerEl)
+      .setName("Multi-factor Mercy scoring")
+      .setDesc(
+        "When enabled, Mercy orders due overflow using a 5-dimension " +
+          "ordinal formula (Importance, Lateness, Easiness, Investment, Recency) " +
+          "instead of flat priority alone.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(((this.plugin.settings.mercyWeights.mode ?? 3) & 1) === 1)
+          .onChange(async (value) => {
+            this.plugin.settings.mercyWeights.mode = value ? 3 : 0;
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+
+    if (((this.plugin.settings.mercyWeights.mode ?? 3) & 1) === 1) {
+      for (const [key, name, desc] of [
+        ["importance", "Mercy weight: Importance", "Weight on investment and lateness blend (default: 5)."],
+        ["lateness", "Mercy weight: Lateness", "Weight on repetition count and typical interval (default: 1)."],
+        ["easiness", "Mercy weight: Easiness", "Weight on recency and lifetime ratio (default: 6)."],
+        ["investment", "Mercy weight: Investment", "Weight on easiness complement / difficulty (default: 10)."],
+        ["recency", "Mercy weight: Recency", "Weight on sigmoid lateness ratio (default: 8)."],
+      ] as const) {
+        new Setting(containerEl)
+          .setName(name)
+          .setDesc(desc)
+          .addSlider((slider) =>
+            slider
+              .setLimits(0, 10, 1)
+              .setValue(this.plugin.settings.mercyWeights[key])
+              .setDynamicTooltip()
+              .onChange(async (value) => {
+                this.plugin.settings.mercyWeights[key] = value;
+                await this.plugin.saveSettings();
+              }),
+          );
+      }
+    }
+
     containerEl.createEl("h3", { text: "Mobile" });
 
     new Setting(containerEl)

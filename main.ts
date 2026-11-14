@@ -91,7 +91,14 @@ import type { ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, writeTopicToFrontmatter } from "./src/topic";
 import { topicStateToSchedule } from "./src/ir/queue-adapter";
-import { addLocalDays, planAutoPostpone, planMercy, type MercyEntry } from "./src/ir/mercy";
+import {
+  addLocalDays,
+  computeElementHistoryCounts,
+  planAdvancedPostpone,
+  planAutoPostpone,
+  planMercy,
+  type MercyEntry,
+} from "./src/ir/mercy";
 import { repetitionDayKey, restoreSessionSnapshot, type SessionMode, type SessionSnapshot } from "./src/ir/session-snapshot";
 import type { DailyPriorityAnalytics } from "./src/ir/priority-analytics";
 import { priorityProtection } from "./src/ir/priority-analytics";
@@ -3862,6 +3869,37 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
   }
 
+  private buildMercyEntries(
+    elements: Iterable<IrElement>,
+    events: readonly IrEvent[],
+  ): { entries: MercyEntry[]; labelsById: Map<string, string> } {
+    const history = computeElementHistoryCounts(events);
+    const entries: MercyEntry[] = [];
+    const labelsById = new Map<string, string>();
+    for (const el of elements) {
+      const due = el.card?.due ?? el.schedule?.due;
+      if (due === undefined) continue;
+      const hist = history.get(el.id);
+      const isItem = el.type === "item";
+      labelsById.set(el.id, labelFor(el));
+      entries.push({
+        id: el.id,
+        priority: el.priority,
+        dueMs: due,
+        dismissed: el.dismissed,
+        type: isItem ? "item" : "reading",
+        interval: el.card?.scheduledDays ?? el.schedule?.interval,
+        reps: isItem ? (el.card?.reps ?? 0) : (hist?.readingReps ?? 0),
+        difficulty: el.card?.difficulty,
+        requestedRetention: this.settings.desiredRetention,
+        aFactor: el.schedule?.aFactor,
+        postponeCount: hist?.recentPostponeCount ?? 0,
+        totalPostponeCount: hist?.totalPostponeCount ?? 0,
+      });
+    }
+    return { entries, labelsById };
+  }
+
   private async runMercyNow(): Promise<void> {
     if (!this.ledger) {
       new Notice("Incremental Reading: ledger is not ready.");
@@ -3869,23 +3907,20 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const now = Date.now();
     const state = await this.ledger.load();
-    const elements = Array.from(state.elements.values());
+    const events = await this.ledger.loadEvents();
+    const { entries, labelsById } = this.buildMercyEntries(
+      state.elements.values(),
+      events,
+    );
 
-    const entries: MercyEntry[] = [];
-    for (const el of elements) {
-      if (el.dismissed) continue;
-      const due = el.card?.due ?? el.schedule?.due ?? null;
-      if (due === null) continue;
-      entries.push({ id: el.id, priority: el.priority, dueMs: due });
-    }
-
-    const result = planMercy(entries, now, {
+    const initialPlan = planMercy(entries, now, {
       ceiling: this.settings.mercyCeiling,
       priorityCutoff: this.settings.mercyPriorityCutoff,
+      weights: this.settings.mercyWeights,
     });
 
-    if (result.postponedCount === 0) {
-      const due = result.dueToday.length;
+    if (initialPlan.postponedCount === 0) {
+      const due = initialPlan.dueToday.length;
       new Notice(
         `Incremental Reading: ${due} due, within ceiling ` +
           `(${this.settings.mercyCeiling}). Nothing to postpone.`,
@@ -3893,8 +3928,30 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
-    if (!(await previewMercy(this.app, result, this.settings.mercyCeiling))) return;
-    const events = await this.ledger.loadEvents();
+    const modalResult = await previewMercy(
+      this.app,
+      initialPlan,
+      this.settings.mercyCeiling,
+      {
+        entries,
+        actionMs: now,
+        priorityCutoff: this.settings.mercyPriorityCutoff,
+        weights: this.settings.mercyWeights,
+        labelsById,
+      },
+    );
+    if (!modalResult.apply) return;
+    const result = modalResult.plan;
+    if (
+      modalResult.ceiling !== this.settings.mercyCeiling ||
+      modalResult.priorityCutoff !== this.settings.mercyPriorityCutoff ||
+      modalResult.weights.mode !== this.settings.mercyWeights.mode
+    ) {
+      this.settings.mercyCeiling = modalResult.ceiling;
+      this.settings.mercyPriorityCutoff = modalResult.priorityCutoff;
+      this.settings.mercyWeights = { ...modalResult.weights };
+      await this.saveSettings();
+    }
     let lamport = nextLamport(events);
     const device = await this.ledger.getDeviceId();
     const batchId = newEventId();
@@ -3939,25 +3996,35 @@ export default class IncrementalReadingPlugin extends Plugin {
       const dayKey = repetitionDayKey(new Date(now));
       if ((await this.ledger.loadAutoPostponeMarker())?.dayKey === dayKey) return;
       const state = await this.ledger.load();
-      const entries: MercyEntry[] = [];
-      for (const element of state.elements.values()) {
-        const dueMs = element.card?.due ?? element.schedule?.due;
-        if (dueMs !== undefined) {
-          entries.push({ id: element.id, priority: element.priority, dueMs,
-            dismissed: element.dismissed });
-        }
-      }
+      const existing = await this.ledger.loadEvents();
+      const { entries } = this.buildMercyEntries(state.elements.values(), existing);
       const policy = this.settings.autoPostponePolicy;
-      const plan = planAutoPostpone(entries, now, {
-        keepOverdue: policy.keepOverdue,
-        priorityCutoff: policy.priorityCutoff,
-      });
+      const assignments = policy.advanced
+        ? planAdvancedPostpone(entries, now, {
+            operation: "postpone",
+            includeItems: true,
+            includeReading: true,
+            itemDelayFactor: 1.5,
+            readingDelayFactor: 1.5,
+            minDelayDays: 1,
+            maxDelayDays: 30,
+            skipPriorityAtOrBelow: policy.priorityCutoff,
+            skipPostponeCountAbove: 5,
+            scaleByPriority: true,
+            scaleByRetention: true,
+            scaleByAFactor: true,
+            weights: this.settings.mercyWeights,
+          }).assignments.slice(Math.max(0, Math.floor(policy.keepOverdue)))
+        : planAutoPostpone(entries, now, {
+            keepOverdue: policy.keepOverdue,
+            priorityCutoff: policy.priorityCutoff,
+            weights: this.settings.mercyWeights,
+          }).assignments;
       const batchId = `auto-postpone:${await this.ledger.getDeviceId()}:${dayKey}`;
-      if (plan.assignments.length > 0) {
-        const existing = await this.ledger.loadEvents();
+      if (assignments.length > 0) {
         let lamport = nextLamport(existing);
         const device = await this.ledger.getDeviceId();
-        const events: IrEvent[] = plan.assignments.map((assignment, index) => ({
+        const events: IrEvent[] = assignments.map((assignment, index) => ({
           id: `${batchId}:${index}` as IrEvent["id"],
           ts: now,
           lamport: lamport++,
@@ -3977,9 +4044,9 @@ export default class IncrementalReadingPlugin extends Plugin {
         await this.ledger.reconcile();
       }
       await this.ledger.saveAutoPostponeMarker({ dayKey, batchId });
-      if (plan.postponedCount > 0) {
-        new Notice(`Incremental Reading: auto-postponed ${plan.postponedCount} overdue element` +
-          `${plan.postponedCount === 1 ? "" : "s"}. Use Undo last mercy to restore them.`);
+      if (assignments.length > 0) {
+        new Notice(`Incremental Reading: auto-postponed ${assignments.length} overdue element` +
+          `${assignments.length === 1 ? "" : "s"}. Use Undo last mercy to restore them.`);
       }
     } catch (error) {
       console.error("Incremental Reading: startup auto-postpone failed", error);

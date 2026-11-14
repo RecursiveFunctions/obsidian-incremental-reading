@@ -3,12 +3,16 @@
  * so tests can clone defaults without loading the settings tab.
  */
 
+import { DEFAULT_MERCY_WEIGHTS, type MercyWeights } from "./mercy";
+export type { MercyWeights } from "./mercy";
+
 export interface IrSettings {
   schemaVersion: 2;
   sortingPolicy: SortingPolicySettings;
   autoPostponePolicy: AutoPostponePolicy;
   prioritySchedulingPolicy: PrioritySchedulingPolicy;
   reprioritizationPolicy: ReprioritizationPolicy;
+  mercyWeights: MercyWeights;
   notices: NoticeAcknowledgements;
   treeDisplayMode: "priority" | "sources";
   /** Priority assigned to a note when it's first marked as a topic. */
@@ -200,6 +204,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
     largeBatch: "suggest",
     largeBatchThreshold: 10,
   },
+  mercyWeights: { ...DEFAULT_MERCY_WEIGHTS },
   notices: {
     prioritySuite: false,
     advancedPostponeRisk: false,
