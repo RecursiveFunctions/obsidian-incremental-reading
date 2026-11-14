@@ -2304,11 +2304,13 @@ img.ir-source-image.ir-cloze-source {
   width: 100%;
 }
 
+/* The bar is a picture, not a control: muted tints, no hover, no pointer.
+   The accent is deliberately absent — it belongs to the buttons. */
 .ir-divergence-seg {
   align-items: center;
   border-radius: var(--radius-s);
-  color: var(--text-on-accent);
-  cursor: pointer;
+  color: var(--text-normal);
+  cursor: default;
   display: flex;
   font-size: 0.72em;
   font-variant-numeric: tabular-nums;
@@ -2320,20 +2322,16 @@ img.ir-source-image.ir-cloze-source {
   white-space: nowrap;
 }
 
-.ir-divergence-seg:hover {
-  filter: brightness(1.1);
-}
-
 .ir-divergence-seg--fsrs {
-  background: var(--color-accent);
+  background: color-mix(in srgb, var(--color-blue) 45%, transparent);
 }
 
 .ir-divergence-seg--dsr {
-  background: var(--color-blue);
+  background: color-mix(in srgb, var(--color-cyan) 45%, transparent);
 }
 
 .ir-divergence-seg--sm-2 {
-  background: var(--color-orange);
+  background: color-mix(in srgb, var(--color-orange) 45%, transparent);
 }
 
 .ir-divergence-seg-label {

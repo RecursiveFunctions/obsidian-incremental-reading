@@ -4419,7 +4419,8 @@ export class IrReviewView extends ItemView {
         cls: "ir-divergence-seg-label",
         text: `${seg.id} ${trackLabel(seg.intervalDays)}`,
       });
-      cell.addEventListener("click", () => choose(seg.id));
+      // Display only: the numbered buttons below and the 1..N keys are the
+      // controls, so the picture never competes with them for a click.
     }
 
     const btnRow = bar.createDiv({ cls: "ir-divergence-buttons" });
