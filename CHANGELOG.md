@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] — 2026-11-14
+
+### Fixed
+
+- **Review pane reuse when sole tab is open** (`main.ts`, `src/review-view.ts`): Re-running `Start IR review`, `Start neural review`, `Start random review`, or resuming a reading bookmark when the review pane is the only tab in the workspace now adopts the new session in place (`IrReviewView.adoptSession`) instead of detaching the leaf and throwing `No tab group found` (#21 — reported by @smdecomp).
+- **Collection view (`Alt+I`) open latency and scale bottlenecks** (`src/tree-view.ts`, `main.ts`): Precomputed global priority ranks once per render ($O(n \log n)$ vs. $O(n^2 \log n)$ per-row sorting), eliminated the duplicate render on `openTreeView()` when a review pane is active, skipped loading cloze note bodies when spoilers are not masked, and added progressive chunked DOM rendering so 2,000–10,000 element collections paint their initial viewport in milliseconds (#22 — reported by @smdecomp).
+
 ## [0.13.1] — 2026-11-14
 
 ### Added
