@@ -93,3 +93,41 @@ Bring high-leverage session mechanics and visual calibration tools into the exis
 - **Sleep / circadian tracking subsystems:** Overload is handled with 5-dimension Mercy, postpone, dismiss, and priority protection.
 - **Propagating reference registry:** Obsidian wikilinks, backlinks, and transclusion are the reference layer.
 - **Streaks or guilt mechanics:** Excluded in favor of honest 7-day load forecasts and true retention metrics.
+- **AI card / exam generation, TTS, handwriting canvas, shared learning backends:** Competitor territory (FreeMemo exams, Piper TTS/canvas, Mycel API); conflicts with vault-native + offline focus (`SECURITY.md`, `DESIGN.md`).
+
+---
+
+## 6. Discord 2026-11 competitive notes (Incremental Learners)
+
+Evidence from guild `1507281499508965476` (readable channels only; role-gated tool channels incomplete). Reorders emphasis within §§2–4; does not add phases. Full matrix: plan `1794636029312-obsidian-ir-discord-competitive-roadmap`.
+
+### Ranked priorities (implement)
+
+| Rank | Item | Phase / cite | Discord evidence |
+|------|------|--------------|------------------|
+| P0 | Duplicate URL/hash guards + HTML/image-rich import | §2.1–2.2 | Capture→hoard; Incremento snapshot demand |
+| P0 | Browser extension one-click capture (network in extension only) | §4.2; `SECURITY.md` | Tab-Tinder / low-friction inbox |
+| P0 | EPUB → managed Markdown topics | §2.2 | Increader/Piper/Incremento books-as-core; PDF reflow hate |
+| P1 | Final Drill + branch/subset/search sessions | §3.1 | Overload without losing hard items |
+| P1 | Leech triage + retention trends | §3.3 | “Graduate early” / bury low-value cards |
+| P1 | Dynamic Neural Review (spreading activation) | §3.2 | ZK/linking desire; deepen Neural, no canvas |
+| P2 | Timestamp video/audio extracts + review player | §4.1; vault-local / no `fetch` in `main.js` | FreeMemo YouTube clips; Incremento A/V asks |
+| P2 | Community directory rename + mobile polish | §4.2 | Wrong-plugin linking; BRAT friction |
+| P3 | Optional Easy-streak graduation / soft-bury → Dismiss (opt-in; append-only ledger; never graduate priority ≤ cutoff) | New small setting; aligns with §3.3 leech triage | `#general` Leitner-graduate wishlist |
+| P3 | Multi-target PDF passage links **or** document multi-span extracts as the answer | `DESIGN.md` PDF anchors; multi-span already shipped | Incremento multi-position PDF ask |
+
+### Defer / reject (from Discord + invariants)
+
+| Idea | Verdict | Why |
+|------|---------|-----|
+| OCR for scanned PDFs | Defer | `DESIGN.md` out of early PDF scope; external OCR → MD → Alt+T |
+| Increader-style annotation queue | Defer | Scheduled extracts already cover gradual card formation |
+| Anki `.apkg` import | Defer | One-way TSV export + vault notes suffice (`DESIGN.md`) |
+| AI exams / TTS / canvas / Mycel backend | Reject | See §5; wrong architecture for offline vault-native plugin |
+| Kitchen-sink Plethora/Piper parity | Reject | Completeness praised then abandoned on bugs/lock-in |
+
+### Constraints that stay binding
+
+- `.ir/` ledger authoritative; never rewrite source notes for highlights (`DESIGN.md`).
+- Zero network in plugin `main.js`; browser capture belongs in a companion extension (`SECURITY.md`).
+- Cloze remains markdown-only (PDF → extract → cloze); Anki TSV still skips `ir-occlusion`.
