@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { trackLabel, trackSegments } from "../src/ir/divergence-track";
+import { segmentHue, trackLabel, trackSegments } from "../src/ir/divergence-track";
 
 const M = [
   { id: "FSRS", intervalDays: 5 },
@@ -87,4 +87,33 @@ test("trackLabel: days, months, years, and an empty interval", () => {
   assert.equal(trackLabel(90), "3mo");
   assert.equal(trackLabel(17000), "47y");
   assert.equal(trackLabel(0), "—");
+});
+
+test("trackSegments: returns the proposals smallest first", () => {
+  const segs = trackSegments(
+    [
+      { id: "SM-2", intervalDays: 17000 },
+      { id: "FSRS", intervalDays: 8 },
+      { id: "DSR", intervalDays: 600 },
+    ],
+    "linear",
+  );
+  assert.deepEqual(segs.map((s) => s.id), ["FSRS", "DSR", "SM-2"]);
+});
+
+/* segmentHue                                                          */
+
+test("segmentHue: three models span red, green and violet", () => {
+  assert.deepEqual([0, 1, 2].map((i) => segmentHue(i, 3)), [0, 130, 260]);
+});
+
+test("segmentHue: a single model sits at the red end", () => {
+  assert.equal(segmentHue(0, 1), 0);
+});
+
+test("segmentHue: seven models cover the ramp in even steps", () => {
+  const hues = [0, 1, 2, 3, 4, 5, 6].map((i) => segmentHue(i, 7));
+  assert.equal(hues[0], 0);
+  assert.equal(hues[6], 260);
+  assert.ok(hues.every((h, i) => i === 0 || h > hues[i - 1]));
 });
