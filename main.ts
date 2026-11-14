@@ -1818,11 +1818,11 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     await this.saveNewSessionSnapshot("random", queue, seed);
     this.beginReviewSession();
-    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
-    this.irReviewSession = { queue, elementsById: state.elements, mode: "random" };
-    const leaf = this.app.workspace.getLeaf("tab");
-    await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
-    this.app.workspace.revealLeaf(leaf);
+    await this.openReviewWithSession({
+      queue,
+      elementsById: state.elements,
+      mode: "random",
+    });
   }
 
   private async sortCurrentReviewNow(view: IrReviewView): Promise<void> {
@@ -2856,18 +2856,62 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     this.beginReviewSession();
     await this.saveNewSessionSnapshot("neural", queue, sessionSeed);
-    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
-    this.irReviewSession = { queue, elementsById: state.elements, isNeural: true };
+    await this.openReviewWithSession({
+      queue,
+      elementsById: state.elements,
+      isNeural: true,
+    });
+  }
+
+  private async openReviewWithSession(
+    session: {
+      queue: ReviewSlot[];
+      elementsById: Map<ElementId, IrElement>;
+      isNeural?: boolean;
+      mode?: SessionMode;
+      cursor?: number;
+      emptyVault?: boolean;
+      nothingDue?: UpcomingLoad;
+    },
+    fallbackNotice?: string,
+  ): Promise<boolean> {
+    const existing = this.app.workspace.getLeavesOfType(IR_REVIEW_VIEW_TYPE);
+    for (const extra of existing.slice(1)) {
+      extra.detach();
+    }
+    const primary = existing[0];
+    if (primary && primary.view instanceof IrReviewView) {
+      try {
+        await primary.view.adoptSession(session);
+        this.app.workspace.revealLeaf(primary);
+        return true;
+      } catch (e) {
+        console.error("Incremental Reading: adopting review session failed", e);
+        new Notice(
+          fallbackNotice ??
+            "Incremental Reading: could not open the review view. See the developer console.",
+        );
+        return false;
+      }
+    }
+
+    this.irReviewSession = session;
     try {
-      const leaf = this.app.workspace.getLeaf("tab");
+      // Main workspace tab (not the right sidebar) so review uses the full
+      // editor width and mobile does not keep the previous note visible in a
+      // split beside a 90vw-wide pane that overflows the narrow leaf.
+      const leaf = primary ?? this.app.workspace.getLeaf("tab");
       await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
+      return true;
     } catch (e) {
       this.irReviewSession = null;
-      console.error("Incremental Reading: opening neural review view failed", e);
+      console.error("Incremental Reading: opening review view failed", e);
       new Notice(
-        "Incremental Reading: could not open the review view. See the developer console.",
+        fallbackNotice ??
+          "Incremental Reading: could not open the review view. See the developer console.",
       );
+      return false;
     }
   }
 
@@ -2887,21 +2931,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const state = await this.ledger.load();
     if (state.elements.size === 0) {
-      this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
-      this.irReviewSession = {
-        queue: [],
-        elementsById: state.elements,
-        emptyVault: true,
-      };
-      try {
-        const leaf = this.app.workspace.getLeaf("tab");
-        await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
-        this.app.workspace.revealLeaf(leaf);
-      } catch (e) {
-        this.irReviewSession = null;
-        console.error("Incremental Reading: opening review view failed", e);
-        new Notice(EMPTY_COLLECTION_COPY);
-      }
+      await this.openReviewWithSession(
+        {
+          queue: [],
+          elementsById: state.elements,
+          emptyVault: true,
+        },
+        EMPTY_COLLECTION_COPY,
+      );
       return;
     }
     const now = Date.now();
@@ -2912,42 +2949,20 @@ export default class IncrementalReadingPlugin extends Plugin {
       // Nothing due, but the collection is not empty: open the review pane
       // on its nothing-due panel so the user gets the next due time and the
       // week's load instead of a toast that answers nothing.
-      this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
-      this.irReviewSession = {
-        queue: [],
-        elementsById: state.elements,
-        nothingDue: computeUpcoming(state.elements.values(), Date.now()),
-      };
-      try {
-        const leaf = this.app.workspace.getLeaf("tab");
-        await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
-        this.app.workspace.revealLeaf(leaf);
-      } catch (e) {
-        this.irReviewSession = null;
-        console.error("Incremental Reading: opening review view failed", e);
-        new Notice("Incremental Reading: nothing due for review.");
-      }
+      await this.openReviewWithSession(
+        {
+          queue: [],
+          elementsById: state.elements,
+          nothingDue: computeUpcoming(state.elements.values(), Date.now()),
+        },
+        "Incremental Reading: nothing due for review.",
+      );
       return;
     }
 
     this.beginReviewSession();
     await this.saveNewSessionSnapshot("due", queue, new Date(now).setHours(0, 0, 0, 0));
-    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
-    this.irReviewSession = { queue, elementsById: state.elements };
-    try {
-      // Main workspace tab (not the right sidebar) so review uses the full
-      // editor width and mobile does not keep the previous note visible in a
-      // split beside a 90vw-wide pane that overflows the narrow leaf.
-      const leaf = this.app.workspace.getLeaf("tab");
-      await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
-      this.app.workspace.revealLeaf(leaf);
-    } catch (e) {
-      this.irReviewSession = null;
-      console.error("Incremental Reading: opening review view failed", e);
-      new Notice(
-        "Incremental Reading: could not open the review view. See the developer console.",
-      );
-    }
+    await this.openReviewWithSession({ queue, elementsById: state.elements });
   }
 
   /**
@@ -3009,24 +3024,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       : null;
     const slot: ReviewSlot = { id: targetId, element: el, file };
 
-    this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
-    this.irReviewSession = {
+    return this.openReviewWithSession({
       queue: [slot],
       elementsById: state.elements,
-    };
-    try {
-      const leaf = this.app.workspace.getLeaf("tab");
-      await leaf.setViewState({ type: IR_REVIEW_VIEW_TYPE, active: true });
-      this.app.workspace.revealLeaf(leaf);
-      return true;
-    } catch (e) {
-      this.irReviewSession = null;
-      console.error("Incremental Reading: opening review for resume failed", e);
-      new Notice(
-        "Incremental Reading: could not open the review view. See the developer console.",
-      );
-      return false;
-    }
+    });
   }
 
   private async openTreeView(): Promise<void> {

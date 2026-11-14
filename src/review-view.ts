@@ -414,9 +414,9 @@ export class IrReviewView extends ItemView {
       element: IrElement,
     ) => Promise<void>,
     /** End neural and start today's due queue (session-complete / Esc). */
-    private readonly startOutstandingDue?: () => void,
+    private startOutstandingDue?: () => void,
     /** First-run: collection is empty — show onboarding, do not detach. */
-    private readonly emptyVault: boolean = false,
+    private emptyVault: boolean = false,
     /**
      * PDF extract from the open viewer (Alt+X while reviewing a PDF topic
      * or extract). Returns undefined when nothing is selected in a PDF.
@@ -2458,6 +2458,52 @@ export class IrReviewView extends ItemView {
   /** Re-paint after the host plugin mutates the session (bulk extract). */
   refreshView(): void {
     void this.renderCard();
+  }
+
+  /**
+   * Adopt a new review session in place when a review leaf is already open,
+   * avoiding detaching the sole tab in the workspace.
+   */
+  async adoptSession(session: {
+    queue: ReviewSlot[];
+    elementsById: Map<ElementId, IrElement>;
+    isNeural?: boolean;
+    emptyVault?: boolean;
+    nothingDue?: UpcomingLoad;
+  }): Promise<void> {
+    this.captureBookmark();
+    await this.flushEdits();
+    if (this.bookmarksLoaded) {
+      void this.persistBookmarks().catch((e) => {
+        console.error("Incremental Reading: persist bookmarks before session swap failed", e);
+      });
+    }
+    this.teardownLiveEditorSync();
+    this.queue = session.queue;
+    this.elementsById = session.elementsById;
+    this.isNeural = session.isNeural ?? false;
+    this.emptyVault = session.emptyVault ?? false;
+    this.nothingDue = session.nothingDue ?? null;
+    this.emptyCollectionRestore = false;
+    this.index = 0;
+    this.revealed = false;
+    this.editing = false;
+    this.editSaveError = null;
+    this.loadedSlotId = null;
+    this.sessionComplete = false;
+    this.neuralEndedEarly = false;
+    this.lastReversible = null;
+    this.resumeFromTop.clear();
+    this.pendingEditSelection = null;
+    this.clickToEditCaret = null;
+    this.skipBookmarkCursor = false;
+    this.sessionSeedLabel = this.queue[0]
+      ? labelFor(this.queue[0].element)
+      : "";
+    this.bookmarks = await this.ledger.loadBookmarks();
+    this.bookmarksLoaded = true;
+    this.contentEl.focus();
+    await this.renderCard();
   }
 
   /**
