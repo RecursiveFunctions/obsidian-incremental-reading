@@ -1,5 +1,18 @@
-import { Modal, Setting } from "obsidian";
-import { planMercy, type MercyEntry, type MercyPlan, type MercyWeights } from "./mercy";
+import { type ButtonComponent, Modal, Setting } from "obsidian";
+import {
+  buildMercyLoadChart,
+  MERCY_CHART_DAYS,
+  type MercyChartDay,
+  type MercyChartModel,
+} from "./mercy-chart";
+import {
+  planMercy,
+  type MercyEntry,
+  type MercyPlan,
+  type MercyWeights,
+} from "./mercy";
+
+export { buildMercyLoadChart, MERCY_CHART_DAYS, type MercyChartDay, type MercyChartModel };
 
 export interface MercyModalResult {
   apply: boolean;
@@ -15,6 +28,9 @@ export class MercyModal extends Modal {
   private currentCeiling: number;
   private currentCutoff: number;
   private currentWeights: MercyWeights;
+  private headlineEl?: HTMLElement;
+  private resultsContainerEl?: HTMLElement;
+  private applyButton?: ButtonComponent;
 
   constructor(
     app: ConstructorParameters<typeof Modal>[0],
@@ -36,7 +52,8 @@ export class MercyModal extends Modal {
 
   onOpen(): void {
     this.titleEl.setText("Mercy preview");
-    this.renderBody();
+    this.mountLayout();
+    this.renderResults();
   }
 
   private recompute(): void {
@@ -45,19 +62,23 @@ export class MercyModal extends Modal {
       priorityCutoff: this.currentCutoff,
       weights: this.currentWeights,
     });
-    this.renderBody();
+    this.renderResults();
   }
 
-  private renderBody(): void {
+  /**
+   * Mount the static control rows once so dragging a slider never destroys
+   * the active `<input type="range">` element or drops pointer/keyboard focus.
+   */
+  private mountLayout(): void {
     const { contentEl } = this;
     contentEl.empty();
-    const plan = this.currentPlan;
+    contentEl.addClass("ir-mercy-modal");
 
-    contentEl.createEl("p", {
-      text: `${plan.totalDue} due now. Keep ${plan.effectiveToday} today and postpone ${plan.postponedCount}.`,
-    });
+    this.headlineEl = contentEl.createEl("p", { cls: "ir-mercy-headline" });
 
-    new Setting(contentEl)
+    const controlsEl = contentEl.createDiv({ cls: "ir-mercy-controls" });
+
+    new Setting(controlsEl)
       .setName("Daily ceiling")
       .setDesc("Maximum due elements kept today before overflow is postponed.")
       .addSlider((slider) =>
@@ -71,7 +92,7 @@ export class MercyModal extends Modal {
           }),
       );
 
-    new Setting(contentEl)
+    new Setting(controlsEl)
       .setName("Priority cutoff")
       .setDesc("Elements at or below this priority are protected from postponement.")
       .addSlider((slider) =>
@@ -85,7 +106,7 @@ export class MercyModal extends Modal {
           }),
       );
 
-    new Setting(contentEl)
+    new Setting(controlsEl)
       .setName("Multi-factor Mercy scoring")
       .setDesc("Rank overflow by 5-dimension ordinal (Importance, Lateness, Easiness, Investment, Recency).")
       .addToggle((toggle) =>
@@ -97,45 +118,117 @@ export class MercyModal extends Modal {
           }),
       );
 
-    const summary = contentEl.createEl("ul");
-    summary.createEl("li", { text: `Protected by priority: ${plan.protectedToday.length}` });
-    if (plan.effectiveToday > this.currentCeiling) {
-      summary.createEl("li", { text: "Protected work keeps today above the ceiling." });
+    this.resultsContainerEl = contentEl.createDiv({ cls: "ir-mercy-results" });
+
+    new Setting(contentEl)
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => this.finish(false)))
+      .addButton((button) => {
+        this.applyButton = button
+          .setButtonText("Apply")
+          .setCta()
+          .setDisabled(this.currentPlan.postponedCount === 0)
+          .onClick(() => this.finish(true));
+      });
+  }
+
+  private renderResults(): void {
+    const plan = this.currentPlan;
+    if (this.headlineEl) {
+      this.headlineEl.setText(
+        `${plan.totalDue} due now. Keep ${plan.effectiveToday} today and postpone ${plan.postponedCount}.`,
+      );
+    }
+    if (this.applyButton) {
+      this.applyButton.setDisabled(plan.postponedCount === 0);
+      this.applyButton.setButtonText(
+        plan.postponedCount > 0 ? `Apply (${plan.postponedCount})` : "Apply",
+      );
     }
 
-    if (plan.perDay.length > 0) {
-      contentEl.createEl("h3", { text: "Future load" });
-      const list = contentEl.createEl("ul");
-      for (const day of plan.perDay.slice(0, 14)) {
-        list.createEl("li", { text: `${day.date}: ${day.count}` });
+    const host = this.resultsContainerEl;
+    if (!host) return;
+    host.empty();
+
+    const summary = host.createDiv({ cls: "ir-mercy-summary" });
+    summary.createSpan({
+      cls: "ir-mercy-chip",
+      text: `Kept today: ${plan.effectiveToday}`,
+    });
+    summary.createSpan({
+      cls: "ir-mercy-chip",
+      text: `Protected (≤${this.currentCutoff}): ${plan.protectedToday.length}`,
+    });
+    summary.createSpan({
+      cls: "ir-mercy-chip",
+      text: `Postponed: ${plan.postponedCount}`,
+    });
+    if (plan.effectiveToday > this.currentCeiling) {
+      summary.createDiv({
+        cls: "ir-mercy-warning",
+        text: "Protected work keeps today above the ceiling.",
+      });
+    }
+
+    const chartModel = buildMercyLoadChart(plan, this.actionMs, this.currentCeiling, MERCY_CHART_DAYS);
+    const hasAnyFutureLoad = chartModel.days.some((d) => d.totalCount > 0);
+    if (hasAnyFutureLoad) {
+      const chartSection = host.createDiv({ cls: "ir-mercy-chart-section" });
+      const headerRow = chartSection.createDiv({ cls: "ir-mercy-chart-header" });
+      headerRow.createEl("h4", { text: `Next ${MERCY_CHART_DAYS} days load vs. ceiling (${this.currentCeiling})` });
+      const legend = headerRow.createDiv({ cls: "ir-mercy-chart-legend" });
+      legend.createSpan({ cls: "ir-mercy-legend-item ir-mercy-legend-item--existing", text: "Existing" });
+      legend.createSpan({ cls: "ir-mercy-legend-item ir-mercy-legend-item--postponed", text: "+Mercy" });
+
+      const chart = chartSection.createDiv({ cls: "ir-mercy-chart" });
+      for (const day of chartModel.days) {
+        const row = chart.createDiv({ cls: "ir-mercy-chart-row" });
+        row.setAttr(
+          "aria-label",
+          `${day.date}: ${day.totalCount} total (${day.existingCount} existing + ${day.postponedCount} postponed)`,
+        );
+        row.createDiv({
+          cls: "ir-mercy-chart-date",
+          text: day.shortLabel,
+          attr: { title: day.date },
+        });
+        const track = row.createDiv({ cls: "ir-mercy-chart-track" });
+        if (day.existingCount > 0) {
+          const existingBar = track.createDiv({ cls: "ir-mercy-chart-bar ir-mercy-chart-bar--existing" });
+          existingBar.style.setProperty("width", `${day.existingPct.toFixed(2)}%`);
+        }
+        if (day.postponedCount > 0) {
+          const addedBar = track.createDiv({ cls: "ir-mercy-chart-bar ir-mercy-chart-bar--postponed" });
+          addedBar.style.setProperty("width", `${day.postponedPct.toFixed(2)}%`);
+        }
+        const marker = track.createDiv({ cls: "ir-mercy-chart-ceiling" });
+        marker.style.setProperty("left", `${chartModel.ceilingPct.toFixed(2)}%`);
+
+        const countLabel = day.postponedCount > 0
+          ? `${day.totalCount} (+${day.postponedCount})`
+          : String(day.totalCount);
+        row.createDiv({
+          cls: `ir-mercy-chart-count${day.overCeiling ? " is-over-ceiling" : ""}`,
+          text: countLabel,
+        });
       }
     }
 
     if (plan.assignments.length > 0) {
-      contentEl.createEl("h3", { text: `Postponing (${plan.assignments.length})` });
-      const previewList = contentEl.createEl("ul");
+      host.createEl("h4", { cls: "ir-mercy-subheading", text: `Postponing (${plan.assignments.length})` });
+      const previewList = host.createEl("ul", { cls: "ir-mercy-preview-list" });
       for (const assignment of plan.assignments.slice(0, 10)) {
         const label = this.labelsById.get(assignment.id) ?? assignment.id;
         previewList.createEl("li", {
-          text: `${label} -> ${assignment.targetLocalDate}`,
+          text: `${label} → ${assignment.targetLocalDate}`,
         });
       }
       if (plan.assignments.length > 10) {
         previewList.createEl("li", {
-          text: `...and ${plan.assignments.length - 10} more`,
+          cls: "ir-mercy-preview-more",
+          text: `…and ${plan.assignments.length - 10} more`,
         });
       }
     }
-
-    new Setting(contentEl)
-      .addButton((button) => button.setButtonText("Cancel").onClick(() => this.finish(false)))
-      .addButton((button) =>
-        button
-          .setButtonText("Apply")
-          .setCta()
-          .setDisabled(plan.postponedCount === 0)
-          .onClick(() => this.finish(true)),
-      );
   }
 
   onClose(): void {

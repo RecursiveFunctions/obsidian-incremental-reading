@@ -3186,3 +3186,166 @@ img.ir-source-image.ir-cloze-source {
 .ir-mobile-shell--collapsed .ir-mobile-shell-pill {
   display: flex;
 }
+
+/* ── Mercy Preview Modal (14-day load distribution chart) ────────────────── */
+
+.ir-mercy-headline {
+  margin: 0 0 0.5em;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ir-mercy-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0.6em 0;
+}
+
+.ir-mercy-chip {
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.ir-mercy-warning {
+  flex: 1 1 100%;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-warning);
+  margin-top: 2px;
+}
+
+.ir-mercy-chart-section {
+  margin: 0.75em 0;
+}
+
+.ir-mercy-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0.4em;
+}
+
+.ir-mercy-chart-header h4,
+.ir-mercy-subheading {
+  margin: 0.5em 0 0.35em;
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ir-mercy-chart-header h4 {
+  margin: 0;
+}
+
+.ir-mercy-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ir-mercy-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ir-mercy-legend-item::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.ir-mercy-legend-item--existing::before {
+  background: var(--text-faint);
+}
+
+.ir-mercy-legend-item--postponed::before {
+  background: var(--interactive-accent);
+}
+
+.ir-mercy-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ir-mercy-chart-row {
+  display: grid;
+  grid-template-columns: 4.2em 1fr 4.8em;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-mercy-chart-date {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ir-mercy-chart-track {
+  position: relative;
+  height: 10px;
+  display: flex;
+  align-items: stretch;
+  background: var(--background-secondary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ir-mercy-chart-bar {
+  height: 100%;
+  transition: width 0.12s ease;
+}
+
+.ir-mercy-chart-bar--existing {
+  background: var(--text-faint);
+}
+
+.ir-mercy-chart-bar--postponed {
+  background: var(--interactive-accent);
+}
+
+.ir-mercy-chart-ceiling {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-muted);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.ir-mercy-chart-count {
+  text-align: right;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ir-mercy-chart-count.is-over-ceiling {
+  color: var(--text-warning);
+  font-weight: 600;
+}
+
+.ir-mercy-preview-list {
+  margin: 0.25em 0 0.5em;
+  padding-left: 1.25em;
+  font-size: var(--font-ui-small);
+}
+
+.ir-mercy-preview-more {
+  color: var(--text-muted);
+  font-style: italic;
+}

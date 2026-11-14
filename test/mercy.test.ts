@@ -22,6 +22,7 @@ import {
   resolveBranchDelay,
   typicalInterval,
 } from "../src/ir/mercy";
+import { buildMercyLoadChart } from "../src/ir/mercy-chart";
 
 const NOW = 1000;
 const PAST = 500;
@@ -241,4 +242,53 @@ test("planMercy with multi-factor weights protects high-investment difficult ite
   });
   assert.deepEqual(weightedPlan.dueToday, ["investedHard"]);
   assert.deepEqual(weightedPlan.postponed, ["freshEasy"]);
+});
+
+test("buildMercyLoadChart separates existing scheduled load from newly postponed overflow across 14 days", () => {
+  const now = new Date(2026, 0, 10, 12).getTime();
+  const tomorrow = new Date(2026, 0, 11, 9).getTime();
+  const dayAfter = new Date(2026, 0, 12, 9).getTime();
+  const entries = [
+    { id: "due1", priority: 5, dueMs: now - 4000 },
+    { id: "due2", priority: 30, dueMs: now - 3000 },
+    { id: "due3", priority: 40, dueMs: now - 2000 },
+    { id: "due4", priority: 50, dueMs: now - 1000 },
+    { id: "fut1", priority: 20, dueMs: tomorrow },
+    { id: "fut2", priority: 25, dueMs: tomorrow },
+    { id: "fut3", priority: 35, dueMs: dayAfter },
+  ];
+  const plan = planMercy(entries, now, { ceiling: 2, priorityCutoff: 0 });
+  const chart = buildMercyLoadChart(plan, now, 2, 14);
+
+  assert.equal(chart.days.length, 14);
+  assert.equal(chart.maxCount, 2);
+  assert.equal(chart.ceilingPct, 100);
+
+  // Tomorrow (2026-01-11) already has 2 existing items (at ceiling), so 0 postponed land there.
+  const d1 = chart.days[0]!;
+  assert.equal(d1.date, "2026-01-11");
+  assert.equal(d1.existingCount, 2);
+  assert.equal(d1.postponedCount, 0);
+  assert.equal(d1.totalCount, 2);
+  assert.equal(d1.existingPct, 100);
+  assert.equal(d1.postponedPct, 0);
+  assert.equal(d1.overCeiling, false);
+
+  // Day 2 (2026-01-12) has 1 existing item and gets 1 postponed item to reach ceiling=2.
+  const d2 = chart.days[1]!;
+  assert.equal(d2.date, "2026-01-12");
+  assert.equal(d2.existingCount, 1);
+  assert.equal(d2.postponedCount, 1);
+  assert.equal(d2.totalCount, 2);
+  assert.equal(d2.existingPct, 50);
+  assert.equal(d2.postponedPct, 50);
+
+  // Day 3 (2026-01-13) has 0 existing items and gets the remaining 1 postponed item.
+  const d3 = chart.days[2]!;
+  assert.equal(d3.date, "2026-01-13");
+  assert.equal(d3.existingCount, 0);
+  assert.equal(d3.postponedCount, 1);
+  assert.equal(d3.totalCount, 1);
+  assert.equal(d3.existingPct, 0);
+  assert.equal(d3.postponedPct, 50);
 });
