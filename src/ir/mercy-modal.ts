@@ -28,7 +28,6 @@ export class MercyModal extends Modal {
   private currentCeiling: number;
   private currentCutoff: number;
   private currentWeights: MercyWeights;
-  private headlineEl?: HTMLElement;
   private resultsContainerEl?: HTMLElement;
   private applyButton?: ButtonComponent;
 
@@ -51,7 +50,7 @@ export class MercyModal extends Modal {
   }
 
   onOpen(): void {
-    this.titleEl.setText("Mercy preview");
+    this.titleEl.setText("Mercy");
     this.mountLayout();
     this.renderResults();
   }
@@ -74,13 +73,11 @@ export class MercyModal extends Modal {
     contentEl.empty();
     contentEl.addClass("ir-mercy-modal");
 
-    this.headlineEl = contentEl.createEl("p", { cls: "ir-mercy-headline" });
-
     const controlsEl = contentEl.createDiv({ cls: "ir-mercy-controls" });
 
     new Setting(controlsEl)
       .setName("Daily ceiling")
-      .setDesc("Maximum due elements kept today before overflow is postponed.")
+      .setDesc("Max due today")
       .addSlider((slider) =>
         slider
           .setLimits(5, 200, 5)
@@ -93,8 +90,8 @@ export class MercyModal extends Modal {
       );
 
     new Setting(controlsEl)
-      .setName("Priority cutoff")
-      .setDesc("Elements at or below this priority are protected from postponement.")
+      .setName("Protect priority \u2264")
+      .setDesc("Never postpone at or below this priority")
       .addSlider((slider) =>
         slider
           .setLimits(0, 100, 1)
@@ -107,8 +104,8 @@ export class MercyModal extends Modal {
       );
 
     new Setting(controlsEl)
-      .setName("Multi-factor Mercy scoring")
-      .setDesc("Rank overflow by 5-dimension ordinal (Importance, Lateness, Easiness, Investment, Recency).")
+      .setName("Multi-factor ranking")
+      .setDesc("Weight by priority, lateness, difficulty, and reps")
       .addToggle((toggle) =>
         toggle
           .setValue(((this.currentWeights.mode ?? 3) & 1) === 1)
@@ -133,15 +130,10 @@ export class MercyModal extends Modal {
 
   private renderResults(): void {
     const plan = this.currentPlan;
-    if (this.headlineEl) {
-      this.headlineEl.setText(
-        `${plan.totalDue} due now. Keep ${plan.effectiveToday} today and postpone ${plan.postponedCount}.`,
-      );
-    }
     if (this.applyButton) {
       this.applyButton.setDisabled(plan.postponedCount === 0);
       this.applyButton.setButtonText(
-        plan.postponedCount > 0 ? `Apply (${plan.postponedCount})` : "Apply",
+        plan.postponedCount > 0 ? `Postpone ${plan.postponedCount}` : "Postpone",
       );
     }
 
@@ -152,20 +144,24 @@ export class MercyModal extends Modal {
     const summary = host.createDiv({ cls: "ir-mercy-summary" });
     summary.createSpan({
       cls: "ir-mercy-chip",
-      text: `Kept today: ${plan.effectiveToday}`,
+      text: `${plan.totalDue} due`,
     });
     summary.createSpan({
       cls: "ir-mercy-chip",
-      text: `Protected (≤${this.currentCutoff}): ${plan.protectedToday.length}`,
+      text: `${plan.effectiveToday} today`,
     });
     summary.createSpan({
       cls: "ir-mercy-chip",
-      text: `Postponed: ${plan.postponedCount}`,
+      text: `${plan.protectedToday.length} protected`,
+    });
+    summary.createSpan({
+      cls: "ir-mercy-chip",
+      text: `${plan.postponedCount} postponed`,
     });
     if (plan.effectiveToday > this.currentCeiling) {
       summary.createDiv({
         cls: "ir-mercy-warning",
-        text: "Protected work keeps today above the ceiling.",
+        text: `${plan.protectedToday.length} protected over ceiling`,
       });
     }
 
@@ -174,10 +170,10 @@ export class MercyModal extends Modal {
     if (hasAnyFutureLoad) {
       const chartSection = host.createDiv({ cls: "ir-mercy-chart-section" });
       const headerRow = chartSection.createDiv({ cls: "ir-mercy-chart-header" });
-      headerRow.createEl("h4", { text: `Next ${MERCY_CHART_DAYS} days load vs. ceiling (${this.currentCeiling})` });
+      headerRow.createEl("h4", { text: `${MERCY_CHART_DAYS}-day schedule` });
       const legend = headerRow.createDiv({ cls: "ir-mercy-chart-legend" });
-      legend.createSpan({ cls: "ir-mercy-legend-item ir-mercy-legend-item--existing", text: "Existing" });
-      legend.createSpan({ cls: "ir-mercy-legend-item ir-mercy-legend-item--postponed", text: "+Mercy" });
+      legend.createSpan({ cls: "ir-mercy-legend-item ir-mercy-legend-item--existing", text: "Scheduled" });
+      legend.createSpan({ cls: "ir-mercy-legend-item ir-mercy-legend-item--postponed", text: "Postponed" });
 
       const chart = chartSection.createDiv({ cls: "ir-mercy-chart" });
       for (const day of chartModel.days) {
