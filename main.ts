@@ -628,7 +628,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             "Incremental Reading: ledger not ready for tree view.",
           );
         }
-        return new IrTreeView(
+        const view = new IrTreeView(
           leaf,
           this.ledger,
           (elementId, file, priority) =>
@@ -657,7 +657,9 @@ export default class IncrementalReadingPlugin extends Plugin {
           },
           (plan) => this.applyPriorityPlan(plan),
           (preview, file) => this.applyIrPriorityPreview(preview, file),
+          this.getActiveReviewView()?.getCurrentElementId() ?? null,
         );
+        return view;
       },
     );
 
@@ -3044,7 +3046,6 @@ export default class IncrementalReadingPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: IR_TREE_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
-    await this.syncTreeToActiveReview();
   }
 
   /**

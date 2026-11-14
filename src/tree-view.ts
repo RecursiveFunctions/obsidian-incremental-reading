@@ -165,6 +165,12 @@ export class IrTreeView extends ItemView {
 
   /** Last loaded ledger snapshot, keyed by id. Used by the Promote command. */
   private elementsById = new Map<string, IrElement>();
+  /** Precomputed 1-based global priority rank per element id for O(1) row lookup. */
+  private rankById = new Map<string, number>();
+  /** Monotonic render generation token to cancel stale chunked renders. */
+  private renderToken = 0;
+  /** Pending requestAnimationFrame id for progressive row rendering. */
+  private chunkRafId: number | null = null;
 
   /**
    * Element id under review right now (set by the review pane). When set,
@@ -209,10 +215,12 @@ export class IrTreeView extends ItemView {
     private readonly commitPriorityPreview?: (
       preview: PriorityPlacementPreview, file: TFile | null,
     ) => Promise<void>,
+    initialCurrentElementId: ElementId | null = null,
   ) {
     super(leaf);
     this.ledger = ledger;
     this.displayMode = displayMode;
+    this.currentElementId = initialCurrentElementId;
   }
 
   getViewType(): string {
@@ -245,6 +253,11 @@ export class IrTreeView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.renderToken += 1;
+    if (this.chunkRafId !== null) {
+      cancelAnimationFrame(this.chunkRafId);
+      this.chunkRafId = null;
+    }
     if (this.filterRenderTimer !== null) {
       window.clearTimeout(this.filterRenderTimer);
       this.filterRenderTimer = null;
@@ -257,19 +270,11 @@ export class IrTreeView extends ItemView {
    * Pass `null` when review closes.
    */
   async setCurrentElementId(id: ElementId | null): Promise<void> {
-    this.currentElementId = id;
-    if (id) {
-      try {
-        const state = await this.ledger.load();
-        let cur = state.elements.get(id);
-        while (cur?.parentId) {
-          this.collapsed.delete(cur.parentId);
-          cur = state.elements.get(cur.parentId);
-        }
-      } catch (e) {
-        console.error("Incremental Reading: tree current-id expand failed", e);
-      }
+    if (this.currentElementId === id && this.elementsById.size > 0) {
+      if (id) this.scrollCurrentIntoView();
+      return;
     }
+    this.currentElementId = id;
     await this.render();
     if (id) this.scrollCurrentIntoView();
   }
@@ -313,8 +318,10 @@ export class IrTreeView extends ItemView {
       this.collapsed.delete(cur.parentId);
       cur = state.elements.get(cur.parentId);
     }
+    this.focusedId = target.id;
 
     await this.render();
+    this.ensureRowRendered(target.id);
 
     const wraps = Array.from(
       this.contentEl.querySelectorAll<HTMLElement>("[data-ir-element-id]"),
@@ -370,6 +377,11 @@ export class IrTreeView extends ItemView {
   }
 
   private async render(): Promise<void> {
+    const token = ++this.renderToken;
+    if (this.chunkRafId !== null) {
+      cancelAnimationFrame(this.chunkRafId);
+      this.chunkRafId = null;
+    }
     const container = this.contentEl;
     container.empty();
     container.addClass("ir-tree-view");
@@ -476,6 +488,7 @@ export class IrTreeView extends ItemView {
     try {
       state = await this.ledger.load();
     } catch (e) {
+      if (token !== this.renderToken) return;
       console.error("Incremental Reading: tree view load failed", e);
       body.createEl("p", {
         text:
@@ -483,9 +496,20 @@ export class IrTreeView extends ItemView {
       });
       return;
     }
+    if (token !== this.renderToken) return;
+
+    if (this.currentElementId) {
+      let cur = state.elements.get(this.currentElementId);
+      while (cur?.parentId) {
+        this.collapsed.delete(cur.parentId);
+        cur = state.elements.get(cur.parentId);
+      }
+    }
 
     this.elementsById = new Map(state.elements);
     const allElements = Array.from(state.elements.values());
+    const sortedIds = collectionSortOrder(allElements);
+    this.rankById = new Map(sortedIds.map((id, idx) => [id, idx + 1]));
     const elements = this.displayMode === "priority" || this.showDismissed
       ? allElements
       : allElements.filter((e) => !e.dismissed);
@@ -501,7 +525,10 @@ export class IrTreeView extends ItemView {
     }
 
     this.maskSpoilers = this.currentElementId !== null;
-    this.itemBodies = await this.loadItemBodies(elements);
+    this.itemBodies = this.maskSpoilers
+      ? await this.loadItemBodies(elements)
+      : new Map();
+    if (token !== this.renderToken) return;
 
     // Drop selection ids whose elements were deleted between renders. We
     // walk all elements (not just visible/non-dismissed) so toggling
@@ -600,9 +627,7 @@ export class IrTreeView extends ItemView {
           ? this.currentElementId
           : orderPreview[0]) ?? null;
     }
-    for (const root of roots) {
-      this.renderNode(ul, root);
-    }
+    this.renderRootsChunked(ul, roots, token);
     if (this.currentElementId) this.scrollCurrentIntoView();
     if (!this.filterText && this.focusedId) {
       const keep = this.focusedId;
@@ -613,6 +638,101 @@ export class IrTreeView extends ItemView {
           )
           ?.focus();
       });
+    }
+  }
+
+  private pendingRootList: TreeNode[] = [];
+  private pendingRootIndex = 0;
+  private pendingRootUl: HTMLElement | null = null;
+
+  /**
+   * Render initial visible batch synchronously so the view opens immediately,
+   * and stream any remaining root subtrees across animation frames.
+   */
+  private renderRootsChunked(
+    ul: HTMLElement,
+    roots: TreeNode[],
+    token: number,
+  ): void {
+    const INITIAL_BUDGET = 120;
+    const CHUNK_BUDGET = 150;
+    const targetIds = new Set<string>();
+    if (this.currentElementId) targetIds.add(this.currentElementId);
+    if (this.focusedId) targetIds.add(this.focusedId);
+
+    const rootContainsTarget = (node: TreeNode): boolean => {
+      if (targetIds.has(node.id)) return true;
+      if (this.rowIsCollapsed(node.id)) return false;
+      return node.children.some(rootContainsTarget);
+    };
+
+    let requiredEndIndex = 0;
+    if (targetIds.size > 0) {
+      for (let i = 0; i < roots.length; i += 1) {
+        if (rootContainsTarget(roots[i])) {
+          requiredEndIndex = i + 1;
+        }
+      }
+    }
+
+    this.pendingRootList = roots;
+    this.pendingRootIndex = 0;
+    this.pendingRootUl = ul;
+
+    let renderedRows = 0;
+    while (
+      this.pendingRootIndex < roots.length &&
+      (renderedRows < INITIAL_BUDGET || this.pendingRootIndex < requiredEndIndex)
+    ) {
+      const root = roots[this.pendingRootIndex++];
+      renderedRows += this.renderNode(ul, root);
+    }
+
+    const pump = () => {
+      if (token !== this.renderToken || !this.pendingRootUl) {
+        this.chunkRafId = null;
+        return;
+      }
+      let batchRows = 0;
+      while (
+        this.pendingRootIndex < this.pendingRootList.length &&
+        batchRows < CHUNK_BUDGET
+      ) {
+        const root = this.pendingRootList[this.pendingRootIndex++];
+        batchRows += this.renderNode(this.pendingRootUl, root);
+      }
+      if (this.pendingRootIndex < this.pendingRootList.length) {
+        this.chunkRafId = requestAnimationFrame(pump);
+      } else {
+        this.chunkRafId = null;
+      }
+    };
+
+    if (this.pendingRootIndex < roots.length) {
+      this.chunkRafId = requestAnimationFrame(pump);
+    }
+  }
+
+  /** Ensure that a specific element ID has been materialized into the DOM. */
+  private ensureRowRendered(id: string): void {
+    if (
+      this.contentEl.querySelector(
+        `.ir-tree-row[data-ir-tree-id="${CSS.escape(id)}"]`,
+      )
+    ) {
+      return;
+    }
+    if (!this.pendingRootUl) return;
+    while (this.pendingRootIndex < this.pendingRootList.length) {
+      const root = this.pendingRootList[this.pendingRootIndex++];
+      this.renderNode(this.pendingRootUl, root);
+      if (
+        this.contentEl.querySelector(
+          `.ir-tree-row[data-ir-tree-id="${CSS.escape(id)}"]`,
+        )
+      ) {
+        break;
+      }
     }
   }
 
@@ -947,6 +1067,7 @@ export class IrTreeView extends ItemView {
   }
 
   private focusId(id: string | null): void {
+    if (id) this.ensureRowRendered(id);
     this.focusedId = id;
     const order = this.visibleNodeOrder();
     const rows = Array.from(
@@ -1033,6 +1154,7 @@ export class IrTreeView extends ItemView {
       return;
     }
     if (cmd.kind === "priority") {
+      this.ensureRowRendered(current);
       const wrap = this.contentEl.querySelector<HTMLElement>(
         `.ir-tree-priority-wrap[data-ir-element-id="${CSS.escape(current)}"]`,
       );
@@ -1101,6 +1223,7 @@ export class IrTreeView extends ItemView {
 
   private showPostponeMenuAtRow(id: string, node: TreeNode): void {
     if (!this.commitPostpone || node.element.dismissed) return;
+    this.ensureRowRendered(id);
     const row = this.contentEl.querySelector<HTMLElement>(
       `.ir-tree-row[data-ir-tree-id="${CSS.escape(id)}"]`,
     );
@@ -1686,7 +1809,8 @@ export class IrTreeView extends ItemView {
     return ids;
   }
 
-  private renderNode(parent: HTMLElement, node: TreeNode, depth = 1): void {
+  private renderNode(parent: HTMLElement, node: TreeNode, depth = 1): number {
+    let renderedCount = 1;
     const li = parent.createEl("li", { cls: "ir-tree-node" });
 
     const row = li.createDiv({
@@ -1740,10 +1864,8 @@ export class IrTreeView extends ItemView {
     let titleEl: HTMLElement;
     let priWrap: HTMLElement;
     let percentage: HTMLElement | null = null;
+    const rank = this.rankById.get(node.id) ?? 1;
     if (this.displayMode === "priority") {
-      const rank = [...this.elementsById.values()]
-        .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
-        .findIndex((element) => element.id === node.id) + 1;
       const content = row.createDiv({ cls: "ir-collection-row-content" });
       const primary = content.createDiv({ cls: "ir-collection-row-primary" });
       priWrap = primary.createSpan({
@@ -1786,9 +1908,6 @@ export class IrTreeView extends ItemView {
       const iconSpan = row.createSpan({ cls: "ir-tree-icon" });
       setIcon(iconSpan, ICONS[node.type] ?? "circle");
       titleEl = row.createSpan({ cls: "ir-tree-title", text: label });
-      const rank = [...this.elementsById.values()]
-        .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
-        .findIndex((element) => element.id === node.id) + 1;
       priWrap = row.createSpan({
         cls: "ir-tree-priority-wrap ir-collection-source-rank",
         text: `#${rank}`,
@@ -2014,9 +2133,10 @@ export class IrTreeView extends ItemView {
         attr: { role: "group" },
       });
       for (const child of node.children) {
-        this.renderNode(ul, child, depth + 1);
+        renderedCount += this.renderNode(ul, child, depth + 1);
       }
     }
+    return renderedCount;
   }
 
   /** Check if `candidateAncestorId` is an ancestor of `nodeId` in the current tree. */
@@ -2185,14 +2305,10 @@ export class IrTreeView extends ItemView {
       );
     }
 
-    if (
-      node.element.type === "item" &&
-      file &&
-      this.itemBodies.has(node.id)
-    ) {
-      const body = this.itemBodies.get(node.id)!;
-      const groupCount = listClozeGroups(body).length;
-      if (groupCount > 0) {
+    if (node.element.type === "item" && file) {
+      const body = this.itemBodies.get(node.id);
+      const groupCount = body ? listClozeGroups(body).length : -1;
+      if (groupCount !== 0) {
         menu.addItem((item) =>
           item
             .setTitle(
