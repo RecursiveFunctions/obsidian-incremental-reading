@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-14
+
+### Added
+
+- **Multi-factor Mercy scoring** (`src/ir/mercy.ts`, `src/settings.ts`): Mercy and auto-postpone now rank due overflow across five weighted dimensions (**Importance**, **Lateness**, **Easiness**, **Investment**, and **Recency**) paired with a baseline interval-growth curve.
+- **Interactive Mercy preview (`Alt+M`)** (`src/ir/mercy-modal.ts`): Live controls for **Daily ceiling**, **Priority cutoff**, and the **Multi-factor Mercy scoring** toggle that recompute the redistribution on the fly and preview the elements and target dates being postponed.
+- **3-model scheduler divergence (`FSRS` / `DSR` / `SM-2`)** (`src/dsr-scheduler.ts`, `src/ir/grade-divergence.ts`): Added a power-law **DSR** shadow scheduler alongside FSRS-6 and SM-2 in the post-grade Divergence Picker.
+- **Priority-scaled first topic intervals** (`src/topic.ts`): When priority-aware scheduling is enabled, fresh topics scale their initial interval by collection priority position.
+- **Ledger history and starvation protection** (`src/ir/mercy.ts`, `main.ts`): Derived real `topic-advanced` review counts and `recentPostponeCount` (resetting to `0` once reviewed) from the ledger, and wired the advanced auto-postpone policy into startup execution.
+
 ## [0.12.1] — 2026-10-09
 
 ### Changed
