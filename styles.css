@@ -2322,17 +2322,7 @@ img.ir-source-image.ir-cloze-source {
   white-space: nowrap;
 }
 
-.ir-divergence-seg--fsrs {
-  background: color-mix(in srgb, var(--color-blue) 45%, transparent);
-}
-
-.ir-divergence-seg--dsr {
-  background: color-mix(in srgb, var(--color-cyan) 45%, transparent);
-}
-
-.ir-divergence-seg--sm-2 {
-  background: color-mix(in srgb, var(--color-orange) 45%, transparent);
-}
+/* The fill is set per segment, from its position on the interval ramp. */
 
 .ir-divergence-seg-label {
   overflow: hidden;

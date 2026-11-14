@@ -17,7 +17,12 @@ import {
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
-import { trackLabel, trackSegments, type DivergenceScale } from "./ir/divergence-track";
+import {
+  segmentHue,
+  trackLabel,
+  trackSegments,
+  type DivergenceScale,
+} from "./ir/divergence-track";
 import { hasOcclusion } from "./ir/occlusion";
 import { fuzzyLocateInBody } from "./ir/fuzzy-text";
 import type { MultiSelectController } from "./ir/multi-select-dom";
@@ -4410,10 +4415,9 @@ export class IrReviewView extends ItemView {
     const segments = trackSegments(div.config.members, DIVERGENCE_TRACK_SCALE);
     const track = bar.createDiv({ cls: "ir-divergence-track" });
     for (const [i, seg] of segments.entries()) {
-      const cell = track.createDiv({
-        cls: `ir-divergence-seg ir-divergence-seg--${seg.id.toLowerCase()}`,
-      });
+      const cell = track.createDiv({ cls: "ir-divergence-seg" });
       cell.style.flexGrow = String(Math.max(seg.share, 0.0001) * 1000);
+      cell.style.background = `hsl(${segmentHue(i, segments.length)} 70% 55% / 0.45)`;
       cell.setAttribute("title", `${seg.id}: ${seg.intervalDays}d (press ${i + 1})`);
       cell.createSpan({
         cls: "ir-divergence-seg-label",

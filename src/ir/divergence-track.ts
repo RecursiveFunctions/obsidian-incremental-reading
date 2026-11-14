@@ -42,11 +42,22 @@ export function trackSegments(
   const total = weights.reduce((sum, w) => sum + w, 0);
   const share = (w: number): number =>
     total > 0 ? w / total : 1 / Math.max(1, members.length);
-  return members.map((m, i) => ({
-    id: m.id,
-    intervalDays: days[i],
-    share: share(weights[i]),
-  }));
+  return members
+    .map((m, i) => ({
+      id: m.id,
+      intervalDays: days[i],
+      share: share(weights[i]),
+    }))
+    // Smallest first, so the bar reads as a scale and its colours form a ramp.
+    .sort((a, b) => a.intervalDays - b.intervalDays);
+}
+
+/** The segment's colour: red for the shortest proposal, violet for the longest.
+ *  Sampled along one ramp, so three models get red/green/violet and seven get
+ *  the full ROYGBIV set without any special case. */
+export function segmentHue(index: number, count: number): number {
+  if (count <= 1) return 0;
+  return Math.round((index / (count - 1)) * 260);
 }
 
 /** An interval label for the bar: `10d`, `3mo`, `47y`. */
