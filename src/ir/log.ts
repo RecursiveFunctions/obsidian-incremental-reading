@@ -57,32 +57,106 @@ export function undoneEventIds(events: IrEvent[]): Set<EventId> {
   return undone;
 }
 
-export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
-  const elements = new Map<ElementId, IrElement>();
-  const tombstones = new Map<string, SourceTombstone>();
-  const conflictPolicy = opts?.conflict ?? "conservative";
-  const placements: Array<{ event: IrEvent; placement: PriorityPlacement }> = [];
+/** Last event that moved an element's due, kept for the status bar. */
+export interface DueChangeRecord {
+  kind: IrEvent["kind"];
+  lamport: number;
+  ts: number;
+}
 
-  const undone = undoneEventIds(events);
+/**
+ * The fold's pre-projection state. `finalizeFold` turns it into a `LogState`
+ * by replaying the priority placements and projecting relative priorities.
+ *
+ * This is the shape a fold checkpoint persists: it is the *input* to the
+ * projection, not its output, so appending events later reproduces exactly
+ * what a from-scratch fold would produce. Persisting the projected state
+ * instead would sort future events by rank positions rather than the raw
+ * priority values the events carry.
+ */
+export interface FoldIntermediate {
+  elements: Map<ElementId, IrElement>;
+  tombstones: Map<string, SourceTombstone>;
+  /** Priority placements in event order; replayed by `finalizeFold`. */
+  placements: Array<{ target: ElementId; placement: PriorityPlacement }>;
+  /** Ids targeted by `grade-undone` events. */
+  undone: Set<EventId>;
+  /** Last due-changing event per element (status bar's `postponed` count). */
+  dueChange: Map<ElementId, DueChangeRecord>;
+}
+
+const DUE_CHANGE_KINDS = new Set<IrEvent["kind"]>([
+  "mercy-postponed",
+  "mercy-undone",
+  "graded",
+  "topic-advanced",
+]);
+
+export function emptyFoldIntermediate(): FoldIntermediate {
+  return {
+    elements: new Map(),
+    tombstones: new Map(),
+    placements: [],
+    undone: new Set(),
+    dueChange: new Map(),
+  };
+}
+
+/**
+ * Fold `events` on top of `base` and return `base`.
+ *
+ * The event loop is a pure left fold over `(lamport, id)` order, so folding a
+ * prefix and then a suffix equals folding the whole stream — which is what
+ * makes a persisted intermediate checkpoint exact.
+ *
+ * One case cannot be replayed incrementally: a `grade-undone` that targets an
+ * event already folded into `base` (the base element has the grade applied).
+ * `IrLedger` detects that and rebuilds from archives rather than calling this.
+ */
+export function foldFrom(
+  base: FoldIntermediate,
+  events: Iterable<IrEvent>,
+  opts?: FoldOptions,
+): FoldIntermediate {
+  const conflictPolicy = opts?.conflict ?? "conservative";
+  const batch = [...events];
+
+  for (const ev of batch) {
+    if (ev.kind !== "grade-undone") continue;
+    const targetId = ev.payload.eventId as EventId | undefined;
+    if (targetId) base.undone.add(targetId);
+  }
 
   // Sort events by lamport, then by event id for deterministic ordering
-  const sortedEvents = [...events].sort((a, b) => {
+  const sortedEvents = batch.sort((a, b) => {
     if (a.lamport !== b.lamport) return a.lamport - b.lamport;
     return a.id.localeCompare(b.id);
   });
 
   for (const event of sortedEvents) {
+    if (DUE_CHANGE_KINDS.has(event.kind)) {
+      const prev = base.dueChange.get(event.target);
+      if (!prev ||
+          event.lamport > prev.lamport ||
+          (event.lamport === prev.lamport && event.ts >= prev.ts)) {
+        base.dueChange.set(event.target, {
+          kind: event.kind,
+          lamport: event.lamport,
+          ts: event.ts,
+        });
+      }
+    }
     if (event.kind === "grade-undone") continue;
-    if (undone.has(event.id)) continue;
+    if (base.undone.has(event.id)) continue;
     const target = event.target;
-    const element = elements.get(target);
+    const element = base.elements.get(target);
 
     switch (event.kind) {
       case "element-created": {
         const payloadElement = event.payload.element as IrElement;
-        elements.set(target, cloneElement(payloadElement));
+        base.elements.set(target, cloneElement(payloadElement));
         const placement = event.payload.placement as PriorityPlacement | undefined;
-        if (placement) placements.push({ event, placement });
+        if (placement) base.placements.push({ target, placement });
         break;
       }
 
@@ -90,7 +164,7 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
         if (element) {
           element.priority = clampPriority(event.payload.priority as number);
           const placement = event.payload.placement as PriorityPlacement | undefined;
-          if (placement) placements.push({ event, placement });
+          if (placement) base.placements.push({ target, placement });
         }
         break;
       }
@@ -192,13 +266,13 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
 
       case "source-tombstoned": {
         const tombstone = event.payload.tombstone as SourceTombstone;
-        tombstones.set(tombstone.path, tombstone);
+        base.tombstones.set(tombstone.path, tombstone);
         break;
       }
 
       case "source-restored": {
         const path = event.payload.path as string;
-        tombstones.delete(path);
+        base.tombstones.delete(path);
         break;
       }
 
@@ -217,9 +291,9 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
       }
 
       case "element-deleted": {
-        elements.delete(target);
-        for (let index = placements.length - 1; index >= 0; index -= 1) {
-          if (placements[index].event.target === target) placements.splice(index, 1);
+        base.elements.delete(target);
+        for (let index = base.placements.length - 1; index >= 0; index -= 1) {
+          if (base.placements[index].target === target) base.placements.splice(index, 1);
         }
         break;
       }
@@ -233,10 +307,24 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
     }
   }
 
+  return base;
+}
+
+/**
+ * Turn an intermediate fold state into the public `LogState`: replay the
+ * priority placements over the collection order and project relative
+ * priorities. The input is left untouched, so a persisted checkpoint keeps
+ * its raw priorities.
+ */
+export function finalizeFold(base: FoldIntermediate): LogState {
+  // The intermediate is a parsed checkpoint (or a freshly built one) and is
+  // not reused after this call, so the projection can run in place.
+  const elements = base.elements;
+
   let order = collectionSortOrder(elements.values());
-  for (const { event, placement } of placements) {
-    if (!elements.has(event.target)) continue;
-    order = applyPriorityPlacement(order, event.target, placement);
+  for (const { target, placement } of base.placements) {
+    if (!elements.has(target)) continue;
+    order = applyPriorityPlacement(order, target, placement);
   }
   const priorities = projectRelativePriorities(order);
   for (const [id, priority] of priorities) {
@@ -244,12 +332,94 @@ export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
     if (element) element.priority = priority;
   }
 
-  return { elements, tombstones };
+  return { elements, tombstones: new Map(base.tombstones) };
+}
+
+export function foldIntermediate(events: IrEvent[], opts?: FoldOptions): FoldIntermediate {
+  return foldFrom(emptyFoldIntermediate(), events, opts);
+}
+
+export function fold(events: IrEvent[], opts?: FoldOptions): LogState {
+  return finalizeFold(foldIntermediate(events, opts));
+}
+
+/** JSON-safe form of a checkpoint's intermediate state. */
+export interface SerializedFoldIntermediate {
+  elements: IrElement[];
+  tombstones: SourceTombstone[];
+  placements: Array<{ target: ElementId; placement: PriorityPlacement }>;
+  undone: EventId[];
+  dueChange: Array<{ id: ElementId } & DueChangeRecord>;
+}
+
+export function serializeFoldIntermediate(base: FoldIntermediate): SerializedFoldIntermediate {
+  return {
+    elements: [...base.elements.values()]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((element) => ({ ...element })),
+    tombstones: [...base.tombstones.values()]
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .map((tombstone) => ({ ...tombstone })),
+    placements: base.placements.map(({ target, placement }) => ({ target, placement })),
+    undone: [...base.undone].sort(),
+    dueChange: [...base.dueChange.entries()]
+      .map(([id, record]) => ({ id, ...record }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  };
+}
+
+export function deserializeFoldIntermediate(raw: unknown): FoldIntermediate {
+  const value = raw as Partial<SerializedFoldIntermediate> | null;
+  if (!value || typeof value !== "object" ||
+      !Array.isArray(value.elements) || !Array.isArray(value.tombstones) ||
+      !Array.isArray(value.placements) || !Array.isArray(value.undone) ||
+      !Array.isArray(value.dueChange)) {
+    throw new Error("IrLedger: invalid checkpoint state");
+  }
+  const base = emptyFoldIntermediate();
+  for (const element of value.elements) {
+    if (!element || typeof element.id !== "string") {
+      throw new Error("IrLedger: invalid checkpoint element");
+    }
+    base.elements.set(element.id, { ...element });
+  }
+  for (const tombstone of value.tombstones) {
+    if (!tombstone || typeof tombstone.path !== "string") {
+      throw new Error("IrLedger: invalid checkpoint tombstone");
+    }
+    base.tombstones.set(tombstone.path, tombstone);
+  }
+  for (const entry of value.placements) {
+    if (!entry || typeof entry.target !== "string" || !entry.placement) {
+      throw new Error("IrLedger: invalid checkpoint placement");
+    }
+    base.placements.push({ target: entry.target, placement: entry.placement });
+  }
+  for (const id of value.undone) {
+    if (typeof id !== "string") throw new Error("IrLedger: invalid checkpoint undo id");
+    base.undone.add(id);
+  }
+  for (const record of value.dueChange) {
+    if (!record || typeof record.id !== "string" || typeof record.kind !== "string") {
+      throw new Error("IrLedger: invalid checkpoint due-change record");
+    }
+    base.dueChange.set(record.id, {
+      kind: record.kind,
+      lamport: record.lamport,
+      ts: record.ts,
+    });
+  }
+  return base;
 }
 
 export interface CompactionPolicy {
   maxEvents?: number;
   maxAgeDays?: number;
+  /**
+   * Events compaction must never archive, whatever their age: the latest
+   * undoable grade, so the review pane's Undo keeps working after a prune.
+   */
+  mustKeep?: readonly IrEvent[];
 }
 
 export interface CompactionResult {
@@ -280,8 +450,17 @@ export function compact(
     }
   }
 
+  // Events that must survive whatever their age (the undoable grade).
+  const keepIds = new Set(keep.map((event) => event.id));
+  for (const event of policy?.mustKeep ?? []) {
+    if (!keepIds.has(event.id)) {
+      keep.push(event);
+      keepIds.add(event.id);
+    }
+  }
+
   // Compacted away events
-  const compactedAway = shard.filter((e) => !keep.includes(e));
+  const compactedAway = shard.filter((e) => !keepIds.has(e.id));
 
   // Snapshot from compacted away events
   const snapshot = fold(compactedAway);
