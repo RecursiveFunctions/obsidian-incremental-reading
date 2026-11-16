@@ -167,10 +167,11 @@ export function computeLoad(
   elements: Iterable<IrElement>,
   events: Iterable<IrEvent>,
   now: number,
+  lastDueChange?: Map<string, IrEvent["kind"]>,
 ): QueueLoad {
   const endToday = endOfDayMs(now);
   const sevenDaysAgo = now - 7 * DAY_MS;
-  const lastKind = lastDueChangeKind(events);
+  const lastKind = lastDueChange ?? lastDueChangeKind(events);
   let due = 0;
   let later = 0;
   let postponed = 0;

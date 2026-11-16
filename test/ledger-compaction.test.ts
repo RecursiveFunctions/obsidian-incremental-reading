@@ -26,9 +26,9 @@
  *      * appends the archived (review) events to this device's file under
  *        `RHISTDIR` (the optimizer/export feed; review events only),
  *      * never touches any other device's shard.
- *  - `load()` reads a legacy `SNAPSHOT` when present, then combines complete
- *    transaction archives with every live shard so folded state is identical
- *    before and after compaction.
+ *  - `load()` reads the fold checkpoint when present and folds it with the
+ *    events it does not cover (falling back to the archives when a rebuild is
+ *    required), so folded state is identical before and after compaction.
  */
 
 import { test } from "node:test";

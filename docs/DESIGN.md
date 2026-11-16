@@ -372,6 +372,19 @@ Sub-decisions:
      permits malformed middle lines or schema-invalid events.
 4. Element ids: stable and path-independent (already required by Q1's anchor
    model and the `queue.ts` id rework).
+5. Fold checkpoint (2026-11-16): a per-device
+   `<gen>/checkpoint/<device>-<seq>.json` stores the fold's **intermediate**
+   state (raw priorities plus the priority-placement list, not the projected
+   result), a lamport watermark and an `id → digest` coverage index. `load()`
+   folds the checkpoint plus the events it does not cover and never re-reads
+   compaction archives; the migration log is skipped once a checkpoint exists
+   (it is written once per generation and the first checkpoint always folds
+   it). Compaction is shard-only and therefore never sees a migrated
+   collection's history, so the checkpoint is built independently on load when
+   the total stream exceeds **250 events**. Any uncovered event at or below
+   the watermark, an undo of a folded grade, or an unreadable newest slot
+   forces a rebuild from the archives, which are retained as the rebuild
+   source.
 
 ## Integration (storage substrate to live plugin)
 
