@@ -1504,13 +1504,26 @@ export class IrReviewView extends ItemView {
     const commit = async () => {
       const n = Number(input.value);
       if (!Number.isFinite(n) || n <= 1) return;
+      const currentSched = slot.element.schedule ?? sched;
       const clamped = Math.min(10, Math.max(1.1, n));
-      const newSchedule = { ...sched, aFactor: clamped };
+      const newSchedule = { ...currentSched, aFactor: clamped };
       await this.emit("topic-advanced", slot.id, { schedule: newSchedule });
       slot.element = {
         ...slot.element,
         schedule: newSchedule,
       };
+      this.elementsById.set(slot.id, slot.element);
+      if (slot.file) {
+        const topicState = scheduleToTopicState(newSchedule);
+        if (topicState) {
+          await quietFrontmatterWrite(async () => {
+            await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
+              writeTopicToFrontmatter(f, topicState);
+            });
+          }, "a-factor");
+        }
+      }
+      this.onChange?.();
     };
     input.addEventListener("change", () => void commit());
     row.createEl("span", {
@@ -2689,12 +2702,14 @@ export class IrReviewView extends ItemView {
   }
 
   private endNeuralMode(): void {
-    this.neuralEndedEarly = true;
-    this.sessionComplete = true;
-    this.editing = false;
-    void this.flushEdits();
-    void this.persistBookmarks();
-    void this.renderCard();
+    void (async () => {
+      if (!(await this.flushEdits())) return;
+      this.neuralEndedEarly = true;
+      this.sessionComplete = true;
+      this.editing = false;
+      void this.persistBookmarks();
+      void this.renderCard();
+    })();
   }
 
   /**
@@ -4068,6 +4083,7 @@ export class IrReviewView extends ItemView {
     sel: { start: number; end: number } | null,
   ): number {
     if (this.editing) {
+      if (this.liveEditor) return this.liveEditor.getCaretOffset();
       const ta = this.cardHostEl?.querySelector<HTMLTextAreaElement>(
         ".ir-review-textarea",
       );
@@ -4077,7 +4093,11 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (slot && this.isReading(slot)) {
       const bm = getBookmark(this.bookmarks, slot.id);
-      if (bm) return bodyOffsetFromLineCh(this.currentRaw, bm.line, bm.ch);
+      if (bm) {
+        return bm.ch === 0
+          ? Math.min(this.currentRaw.length, Math.max(0, bm.line))
+          : bodyOffsetFromLineCh(this.currentRaw, bm.line, bm.ch);
+      }
     }
     return 0;
   }
@@ -4496,6 +4516,7 @@ export class IrReviewView extends ItemView {
     await this.emit("graded", slot.id, payload);
     this.gradedSlotIds.add(slot.id);
     slot.element = { ...slot.element, card: stored };
+    this.elementsById.set(slot.id, slot.element);
     if (slot.file) {
       await quietFrontmatterWrite(async () => {
         await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
@@ -4503,6 +4524,7 @@ export class IrReviewView extends ItemView {
         });
       }, "grade");
     }
+    this.onChange?.();
     this.advance();
   }
 
@@ -4616,7 +4638,7 @@ export class IrReviewView extends ItemView {
   private async nextNow() {
     const slot = this.current;
     if (!slot) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
 
     const cur =
       scheduleToTopicState(slot.element.schedule) ??
@@ -4654,6 +4676,7 @@ export class IrReviewView extends ItemView {
       ...slot.element,
       schedule: topicStateToSchedule(advanced),
     };
+    this.elementsById.set(slot.id, slot.element);
     if (slot.file) {
       await quietFrontmatterWrite(async () => {
         await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
@@ -4661,6 +4684,7 @@ export class IrReviewView extends ItemView {
         });
       }, "topic-advanced");
     }
+    this.onChange?.();
     this.advance();
   }
 
@@ -4671,7 +4695,7 @@ export class IrReviewView extends ItemView {
   private async laterNow() {
     const slot = this.current;
     if (!slot) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
 
     const cur =
       scheduleToTopicState(slot.element.schedule) ??
@@ -4690,6 +4714,7 @@ export class IrReviewView extends ItemView {
       ...slot.element,
       schedule: topicStateToSchedule(postponed),
     };
+    this.elementsById.set(slot.id, slot.element);
     if (slot.file) {
       await quietFrontmatterWrite(async () => {
         await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
@@ -4699,6 +4724,7 @@ export class IrReviewView extends ItemView {
     }
     this.rememberReversible("later", slot, prevElement);
     this.flash(`Later today · ${this.remainingAfterCurrent()} left`);
+    this.onChange?.();
     this.advance();
   }
 
@@ -4709,10 +4735,11 @@ export class IrReviewView extends ItemView {
   private async dismissNow() {
     const slot = this.current;
     if (!slot) return;
-    await this.flushEdits();
+    if (!(await this.flushEdits())) return;
     const prevElement = slot.element;
     await this.emit("dismiss-set", slot.id, { dismissed: true });
     slot.element = { ...slot.element, dismissed: true };
+    this.elementsById.set(slot.id, slot.element);
     if (slot.file) {
       await quietFrontmatterWrite(
         () => setDismissed(this.app, slot.file!, true).then(() => undefined),
@@ -4727,6 +4754,7 @@ export class IrReviewView extends ItemView {
     const spliced = spliceDismissedSlot(this.queue, this.index);
     this.queue = spliced.queue;
     this.index = spliced.nextIndex - 1;
+    this.onChange?.();
     this.advance();
   }
 }
