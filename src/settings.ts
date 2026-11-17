@@ -56,6 +56,8 @@ export class IrSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.reviewsPerReading = value;
+            this.plugin.settings.sortingPolicy.readingProportion =
+              value <= 0 ? 0 : 1 / (value + 1);
             await this.plugin.saveSettings();
           }),
       );
@@ -97,11 +99,13 @@ export class IrSettingTab extends PluginSettingTab {
           } else if (policy.preset === "balanced") {
             policy.traversal = "mixed";
             policy.readingProportion = 0.25;
+            this.plugin.settings.reviewsPerReading = 3;
             policy.itemJitter = 0.2;
             policy.readingJitter = 0.3;
           } else if (policy.preset === "discovery") {
             policy.traversal = "mixed";
             policy.readingProportion = 0.4;
+            this.plugin.settings.reviewsPerReading = Math.round((1 - 0.4) / 0.4);
             policy.itemJitter = 0.75;
             policy.readingJitter = 1;
           }
@@ -120,6 +124,10 @@ export class IrSettingTab extends PluginSettingTab {
         .setDynamicTooltip()
         .onChange(async (value) => {
           this.plugin.settings.sortingPolicy[key] = value;
+          if (key === "readingProportion") {
+            this.plugin.settings.reviewsPerReading =
+              value <= 0 ? 0 : Math.min(10, Math.max(0, Math.round((1 - value) / value)));
+          }
           this.plugin.settings.sortingPolicy.preset = "custom";
           await this.plugin.saveSettings();
         }));

@@ -61,3 +61,17 @@ test("resolveSettings defaults Collection to Priority and migrates hierarchy to 
   assert.equal(resolveSettings({ treeDisplayMode: "hierarchy" } as never).treeDisplayMode, "sources");
   assert.equal(resolveSettings({ treeDisplayMode: "sources" } as never).treeDisplayMode, "sources");
 });
+
+test("resolveSettings syncs readingProportion from reviewsPerReading when readingProportion is still default (#29)", () => {
+  const initial = resolveSettings(null);
+  assert.equal(initial.reviewsPerReading, 3);
+  assert.equal(initial.sortingPolicy.readingProportion, 0.25);
+
+  // Simulate user changing reviewsPerReading to 10 on a vault that already has default sortingPolicy saved
+  const saved = {
+    ...initial,
+    reviewsPerReading: 10,
+  };
+  const reloaded = resolveSettings(saved);
+  assert.ok(Math.abs(reloaded.sortingPolicy.readingProportion - 1 / 11) < 1e-12);
+});

@@ -111,9 +111,10 @@ import {
   canGradeInSession,
   isSpaceAfterReveal,
   restoreDismissedSlot,
-   spacebarReviewAction,
+  spacebarReviewAction,
   spliceDismissedSlot,
 } from "./ir/review-keys";
+import { applyMobileReviewLayout } from "./ir/mobile-review";
 import {
   buildTextQuoteAnchor,
   reviewSourceSplices,
@@ -213,6 +214,7 @@ export class IrReviewView extends ItemView {
   private swipeGestureCleanup?: () => void;
   private mobileKeyboardCleanup?: () => void;
   private mobileOrientationCleanup?: () => void;
+  private mobileLayoutCleanup?: () => void;
   /** Re-measures edit pane when the viewport or leaf size changes. */
   private mobileEditResizeObserver?: ResizeObserver;
   /** Working text for the current slot; updated live by the textarea. */
@@ -543,6 +545,12 @@ export class IrReviewView extends ItemView {
     this.cardHostEl = this.contentEl.createDiv({ cls: "ir-review-card-host" });
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
+      this.mobileLayoutCleanup?.();
+      this.mobileLayoutCleanup = applyMobileReviewLayout(this.contentEl, {
+        layout: this.settings.mobileReviewLayout,
+        fontSize: this.settings.mobileReviewFontSize,
+        buttons: this.settings.mobileReviewButtons,
+      });
       try {
         if (window.localStorage.getItem(IR_SWIPE_LEGEND_KEY) === "1") {
           this.swipeLegendDismissed = true;
@@ -734,6 +742,8 @@ export class IrReviewView extends ItemView {
     this.mobileKeyboardCleanup = undefined;
     this.mobileOrientationCleanup?.();
     this.mobileOrientationCleanup = undefined;
+    this.mobileLayoutCleanup?.();
+    this.mobileLayoutCleanup = undefined;
     this.swipeHintEl = undefined;
     this.sessionBarEl = undefined;
     this.cardHostEl = undefined;
@@ -2054,13 +2064,25 @@ export class IrReviewView extends ItemView {
     else this.contentEl.removeClass("ir-review-has-context");
 
     const columns = host.createDiv({ cls: "ir-review-columns" });
+    if (Platform.isMobile) {
+      this.mobileLayoutCleanup?.();
+      this.mobileLayoutCleanup = applyMobileReviewLayout(this.contentEl, {
+        layout: this.settings.mobileReviewLayout,
+        fontSize: this.settings.mobileReviewFontSize,
+        buttons: this.settings.mobileReviewButtons,
+      });
+    }
     const reading = this.isReading(slot);
     const isCloze = !reading && this.isClozeLike(this.currentRaw);
     const maskClozeChrome = !reading && isCloze && !this.revealed;
     const mobileCompactEdit =
       Platform.isMobile && this.editing && this.canEdit();
 
-    if (sourceCtx && (!Platform.isMobile || this.mobileSourceExpanded)) {
+    if (
+      sourceCtx &&
+      (!Platform.isMobile ||
+        (this.mobileSourceExpanded && this.settings.mobileReviewLayout !== "minimal"))
+    ) {
       const ctxCol = columns.createDiv({ cls: "ir-review-context-col" });
       const sourceHeaderText = maskClozeChrome
         ? "Source (hidden until reveal)"

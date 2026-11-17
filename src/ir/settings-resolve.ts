@@ -46,6 +46,11 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
   const fromReviewsPerReading = typeof saved.reviewsPerReading === "number"
     ? saved.reviewsPerReading <= 0 ? 0 : 1 / (saved.reviewsPerReading + 1)
     : defaults.sortingPolicy.readingProportion;
+  const useReviewsPerReading =
+    typeof saved.reviewsPerReading === "number" &&
+    (sorting.readingProportion === undefined ||
+      (sorting.readingProportion === defaults.sortingPolicy.readingProportion &&
+        saved.reviewsPerReading !== defaults.reviewsPerReading));
   const fromInterleaveFlag = saved.interleaveSimilarPriority === false ? 0 : undefined;
   result.schemaVersion = 2;
   result.sortingPolicy = {
@@ -53,7 +58,9 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
     preset: sorting.preset === "strict" || sorting.preset === "discovery" ||
       sorting.preset === "custom" ? sorting.preset : defaults.sortingPolicy.preset,
     traversal: sorting.traversal === "priority" ? "priority" : "mixed",
-    readingProportion: finite(sorting.readingProportion, fromReviewsPerReading, 0, 1),
+    readingProportion: useReviewsPerReading
+      ? finite(fromReviewsPerReading, defaults.sortingPolicy.readingProportion, 0, 1)
+      : finite(sorting.readingProportion, fromReviewsPerReading, 0, 1),
     itemJitter: finite(sorting.itemJitter,
       fromInterleaveFlag ?? defaults.sortingPolicy.itemJitter, 0, 1),
     readingJitter: finite(sorting.readingJitter,

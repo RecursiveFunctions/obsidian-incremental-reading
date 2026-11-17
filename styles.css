@@ -3135,11 +3135,14 @@ img.ir-source-image.ir-cloze-source {
   --ir-mobile-font-scale: 1;
 }
 
-.ir-mobile-review .ir-review-card {
+.ir-mobile-review .ir-review-card,
+.ir-mobile-review .ir-review-body {
   font-size: calc(var(--font-ui-medium) * var(--ir-mobile-font-scale));
 }
 
-.ir-mobile-review--minimal .ir-review-source-column {
+.ir-mobile-review--minimal .ir-review-source-column,
+.ir-mobile-review--minimal .ir-review-context-col,
+.ir-mobile-review--minimal .ir-review-source-chip {
   display: none;
 }
 
