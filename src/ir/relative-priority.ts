@@ -169,7 +169,9 @@ function planFinalOrder(
 ): PriorityBatchPlan {
   let working = [...initialOrder];
   const intents: PriorityPlacementIntent[] = [];
-  for (const targetId of selectedIds) {
+  const selectedSet = new Set(selectedIds);
+  const orderedTargets = finalOrder.filter((id) => selectedSet.has(id));
+  for (const targetId of orderedTargets) {
     const desiredIndex = finalOrder.indexOf(targetId);
     if (desiredIndex < 0) continue;
     const without = working.filter((id) => id !== targetId);

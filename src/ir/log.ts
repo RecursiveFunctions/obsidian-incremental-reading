@@ -162,9 +162,12 @@ export function foldFrom(
 
       case "priority-set": {
         if (element) {
-          element.priority = clampPriority(event.payload.priority as number);
           const placement = event.payload.placement as PriorityPlacement | undefined;
-          if (placement) base.placements.push({ target, placement });
+          if (placement) {
+            base.placements.push({ target, placement });
+          } else {
+            element.priority = clampPriority(event.payload.priority as number);
+          }
         }
         break;
       }

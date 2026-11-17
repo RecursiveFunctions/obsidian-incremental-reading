@@ -147,6 +147,40 @@ test("fold replays placements canonically without mutating event payloads", () =
   ]);
 });
 
+test("fold preserves pre-placement baseline priority when priority-set includes placement", () => {
+  const a = "a" as ElementId;
+  const b = "b" as ElementId;
+  const c = "c" as ElementId;
+  const events: IrEvent[] = [
+    ev({ lamport: 1, kind: "element-created", target: a, payload: { element: { ...topic(a), priority: 0, created: 1 } } }),
+    ev({ lamport: 2, kind: "element-created", target: b, payload: { element: { ...topic(b), priority: 50, created: 2 } } }),
+    ev({ lamport: 3, kind: "element-created", target: c, payload: { element: { ...topic(c), priority: 100, created: 3 } } }),
+    ev({
+      lamport: 4,
+      kind: "priority-set",
+      target: c,
+      payload: {
+        priority: 0,
+        placement: { requestedPriority: 0, beforeId: a },
+      },
+    }),
+    ev({
+      lamport: 5,
+      kind: "priority-set",
+      target: a,
+      payload: {
+        priority: 50,
+        placement: { requestedPriority: 50, beforeId: b, afterId: c },
+      },
+    }),
+  ];
+  const state = fold(events);
+  const ordered = [...state.elements.values()]
+    .sort((left, right) => left.priority - right.priority)
+    .map((el) => el.id);
+  assert.deepEqual(ordered, [c, a, b]);
+});
+
 test("mercy-postponed bumps card.due and schedule.due without resetting scheduler state", () => {
   const item = newElementId();
   const top = newElementId();

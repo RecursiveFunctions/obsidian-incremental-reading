@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { ElementId } from "../src/ir/ids";
-import { newElement, validateIrEvent, type IrEvent } from "../src/ir/model";
+import { newDeviceId, newEventId, type ElementId } from "../src/ir/ids";
+import { fold } from "../src/ir/log";
+import { newElement, validateIrEvent, type IrElement, type IrEvent } from "../src/ir/model";
 import {
   applyPriorityPlacement,
   buildPriorityPlacement,
@@ -18,6 +19,7 @@ import {
   previewPriorityPlacement,
   priorityForPosition,
   projectRelativePriorities,
+  type PriorityBatchPlan,
 } from "../src/ir/relative-priority";
 
 const id = (value: string) => value as ElementId;
@@ -155,4 +157,115 @@ test("placement validation is optional but rejects malformed metadata", () => {
     ...base,
     payload: { priority: 25, placement: { requestedPriority: 25, beforeId: "" } },
   }), "priority payload is invalid");
+});
+
+function replayIntentsPure(plan: PriorityBatchPlan): ElementId[] {
+  let order = [...plan.initialOrder];
+  for (const intent of plan.intents) {
+    order = applyPriorityPlacement(order, intent.targetId, intent);
+  }
+  return order;
+}
+
+function replayIntentsViaFold(
+  initialElements: readonly IrElement[],
+  plans: readonly PriorityBatchPlan[],
+): ElementId[] {
+  const device = newDeviceId();
+  let lamport = 1;
+  const events: IrEvent[] = initialElements.map((el) => ({
+    id: newEventId(),
+    ts: lamport * 1000,
+    lamport: lamport++,
+    device,
+    kind: "element-created",
+    target: el.id,
+    payload: { element: el },
+  }));
+  for (const plan of plans) {
+    for (const intent of plan.intents) {
+      events.push({
+        id: newEventId(),
+        ts: lamport * 1000,
+        lamport: lamport++,
+        device,
+        kind: "priority-set",
+        target: intent.targetId,
+        payload: {
+          priority: intent.requestedPriority,
+          placement: intent,
+        },
+      });
+    }
+  }
+  const state = fold(events);
+  return collectionSortOrder(state.elements.values());
+}
+
+test("issue #25: 3-element spread to 0/0 keeps preview, pure replay, and ledger fold identical", () => {
+  const initialElements = [
+    element("a", 0, 1),
+    element("b", 50, 2),
+    element("c", 100, 3),
+  ];
+  const initialOrder = collectionSortOrder(initialElements);
+  assert.deepEqual(initialOrder, [id("a"), id("b"), id("c")]);
+
+  const plan = planSpread(initialOrder, [id("a"), id("c")], 0, 0);
+  assert.deepEqual(plan.finalOrder, [id("c"), id("a"), id("b")]);
+  assert.deepEqual(replayIntentsPure(plan), plan.finalOrder);
+  assert.deepEqual(replayIntentsViaFold(initialElements, [plan]), plan.finalOrder);
+});
+
+test("all batch priority planners reproduce finalOrder under pure and ledger fold replay", () => {
+  const initialElements = [
+    element("a", 20, 10),
+    element("b", 20, 5),
+    element("c", 50, 30),
+    element("d", 80, 2),
+    element("e", 80, 1),
+  ];
+  const initialOrder = collectionSortOrder(initialElements);
+  const selections: ElementId[][] = [
+    [id("a"), id("c")],
+    [id("a"), id("e")],
+    [id("b"), id("d"), id("e")],
+    [id("a"), id("b"), id("c"), id("d")],
+    [id("c"), id("e")],
+  ];
+
+  for (const sel of selections) {
+    const plans: PriorityBatchPlan[] = [
+      planSpread(initialOrder, sel, 0, 0),
+      planSpread(initialOrder, sel, 100, 100),
+      planSpread(initialOrder, sel, 80, 10),
+      planSpread(initialOrder, sel, 0, 100),
+      planAdjust(initialOrder, sel, 0, 0),
+      planAdjust(initialOrder, sel, 100, 100),
+      planAdjust(initialOrder, sel, 90, 10),
+      planAdjust(initialOrder, sel, 15, 85),
+      planMultiplierChange(initialOrder, sel, 0),
+      planMultiplierChange(initialOrder, sel, 0.25),
+      planMultiplierChange(initialOrder, sel, 2.5),
+      planBlockInsertion(initialOrder, sel, 1),
+      planBlockInsertion(initialOrder, sel, 3),
+      planBlockInsertion(initialOrder, sel, 5),
+      planAdjacentBlockMove(initialOrder, sel, -1),
+      planAdjacentBlockMove(initialOrder, sel, 1),
+    ];
+
+    for (const plan of plans) {
+      assert.deepEqual(replayIntentsPure(plan), plan.finalOrder);
+      assert.deepEqual(replayIntentsViaFold(initialElements, [plan]), plan.finalOrder);
+    }
+  }
+
+  // Multi-step sequential batch plans over the same ledger
+  const step1 = planSpread(initialOrder, [id("a"), id("e")], 0, 0);
+  const step2 = planAdjust(step1.finalOrder, [id("b"), id("c"), id("a")], 75, 25);
+  const step3 = planMultiplierChange(step2.finalOrder, [id("e"), id("d")], 3);
+  assert.deepEqual(
+    replayIntentsViaFold(initialElements, [step1, step2, step3]),
+    step3.finalOrder,
+  );
 });
