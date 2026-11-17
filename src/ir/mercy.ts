@@ -104,14 +104,14 @@ export function computeMercyDimensionScores(element: MercyElementInput): [number
   const lifetimeRatio = investment / (investment + 1.0);
   const lapseRatio = lateness / (lateness + 200.0);
 
-  // d[0] (weighted by w_importance): investment + lateness axis
+  // d[0] (weighted by w_recency): investment + lateness axis
   const d0 = 0.65 * (1.0 - lifetimeRatio) + 0.35 * (1.0 - lapseRatio);
-  // d[1] (weighted by w_lateness): rep + typical interval axis
+  // d[1] (weighted by w_investment): rep + typical interval axis
   const d1 = 0.5 * (rep / (rep + 3.0)) + 0.5 * (typical / (typical + 400.0));
-  // d[3] (weighted by w_investment): easiness complement
+  // d[3] (weighted by w_importance): easiness complement
   const easinessPct = Number(element.easiness) * 100.0;
   const d3 = 1.0 - easinessPct / 100.0;
-  // d[4] (weighted by w_recency): sigmoid lateness
+  // d[4] (weighted by w_lateness): sigmoid lateness
   const ratio = typical === 0.0 ? 0.0 : lateness / typical;
   const sigmoid = 1.4 + ratio !== 0.0 ? ratio / (1.4 + ratio) : 0.0;
   const d4 = 0.6 * sigmoid + 0.4 * lapseRatio;
@@ -145,11 +145,11 @@ export function computeMercyOrdinals(
     const dims = computeMercyDimensionScores(el);
     if (weightSum <= 0.0) return 0.0;
     const weighted =
-      wImp * dims[0] +
-      wLate * dims[1] +
+      wRec * dims[0] +
+      wInv * dims[1] +
       wEasy * dims[2] +
-      wInv * dims[3] +
-      wRec * dims[4];
+      wImp * dims[3] +
+      wLate * dims[4];
     return clampOrdinal(weighted / weightSum);
   });
 }
@@ -158,12 +158,11 @@ export function computeMercyOrdinals(
  * Derive `MercyElementInput` from a plugin `MercyEntry` at `actionMs`.
  */
 export function toMercyElementInput(entry: MercyEntry, actionMs: number): MercyElementInput {
-  // Priority 0..100 (0 = most important) -> importance fraction 0..1 (1 = most important)
-  const clampedPriority = Math.min(100, Math.max(0, Number.isFinite(entry.priority) ? entry.priority : 50));
-  const importance = Math.max(0.05, (100 - clampedPriority) / 100);
+  const reps = Math.max(0, entry.reps ?? 0);
+  const importance = Math.min(1, Math.max(0.05, reps / REP_CAP));
   const overdueMs = Math.max(0, actionMs - entry.dueMs);
   const lateness = Math.max(1, overdueMs / MS_PER_DAY);
-  const investment = Math.max(0, entry.reps ?? 0);
+  const investment = reps;
 
   // Easiness in [0, 1]: for items use FSRS difficulty (1..10, 1=easiest) or retention;
   // for reading elements use A-Factor (1.1..4.0).
@@ -288,6 +287,8 @@ export interface AutoPostponeOptions {
   keepOverdue: number;
   priorityCutoff: number;
   weights?: MercyWeights;
+  /** Maximum future spread horizon in days (default: 30). */
+  maxHorizonDays?: number;
 }
 
 export interface AdvancedPostponePolicy {
@@ -477,16 +478,23 @@ export function planAutoPostpone(
   for (const entry of overdue.slice(keep)) {
     (entry.priority <= opts.priorityCutoff ? protectedOverdue : overflow).push(entry);
   }
+  const horizon = Math.max(1, Math.floor(opts.maxHorizonDays ?? 30));
+  const counts = new Map<string, number>();
   const assignments = overflow.map((entry, index) => {
-    const dayMs = addLocalDays(cutoff, index + 1);
+    const dayOffset = (index % horizon) + 1;
+    const dayMs = addLocalDays(cutoff, dayOffset);
+    const targetLocalDate = localDateKey(dayMs);
+    counts.set(targetLocalDate, (counts.get(targetLocalDate) ?? 0) + 1);
     return {
       id: entry.id,
       previousDue: entry.dueMs,
       newDue: combineLocalDate(dayMs, entry.dueMs, actionMs),
-      targetLocalDate: localDateKey(dayMs),
+      targetLocalDate,
     };
   });
-  const perDay = assignments.map((assignment) => ({ date: assignment.targetLocalDate, count: 1 }));
+  const perDay = [...counts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, count]) => ({ date, count }));
   return {
     totalDue: overdue.length + dueToday.length,
     dueToday: [...keptOverdue, ...protectedOverdue, ...dueToday].map((entry) => entry.id),

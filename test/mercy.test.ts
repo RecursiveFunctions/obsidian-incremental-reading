@@ -15,6 +15,7 @@ import {
   DEFAULT_MERCY_WEIGHTS,
   addLocalDays,
   computeElementHistoryCounts,
+  computeMercyDimensionScores,
   computeMercyOrdinals,
   planAdvancedPostpone,
   planAutoPostpone,
@@ -22,6 +23,7 @@ import {
   planMercy,
   redistribute,
   resolveBranchDelay,
+  toMercyElementInput,
   typicalInterval,
 } from "../src/ir/mercy";
 import { buildMercyLoadChart } from "../src/ir/mercy-chart";
@@ -174,17 +176,31 @@ test("computeMercyOrdinals matches 5-dimension reference vectors", () => {
   const v1 = computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
     { importance: 0.05, lateness: 1, investment: 0.0, easiness: 0.5 },
   ]);
-  assert.ok(Math.abs(v1[0]! - 0.565417329774) < 1e-9);
+  assert.ok(Math.abs(v1[0]! - 0.588604523187) < 1e-9);
 
   const v2 = computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
     { importance: 0.5, lateness: 30, investment: 100.0, easiness: 0.8 },
   ]);
-  assert.ok(Math.abs(v2[0]! - 0.281561713755) < 1e-9);
+  assert.ok(Math.abs(v2[0]! - 0.299571702717) < 1e-9);
 
   const v3 = computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
     { importance: 1.0, lateness: 1, investment: 500.0, easiness: 0.9 },
   ]);
-  assert.ok(Math.abs(v3[0]! - 0.170641489496) < 1e-9);
+  assert.ok(Math.abs(v3[0]! - 0.342484818874) < 1e-9);
+
+  // Verify one-hot weight-to-dimension pairing (#34)
+  const sample = { importance: 0.5, lateness: 30, investment: 100.0, easiness: 0.8 };
+  const dims = computeMercyDimensionScores(sample);
+  const oneHot = (key: "recency" | "investment" | "easiness" | "importance" | "lateness") =>
+    computeMercyOrdinals(
+      { importance: 0, lateness: 0, easiness: 0, investment: 0, recency: 0, [key]: 1, mode: 3 },
+      [sample],
+    )[0]!;
+  assert.ok(Math.abs(oneHot("recency") - dims[0]) < 1e-12);
+  assert.ok(Math.abs(oneHot("investment") - dims[1]) < 1e-12);
+  assert.ok(Math.abs(oneHot("easiness") - dims[2]) < 1e-12);
+  assert.ok(Math.abs(oneHot("importance") - dims[3]) < 1e-12);
+  assert.ok(Math.abs(oneHot("lateness") - dims[4]) < 1e-12);
 
   const zero = computeMercyOrdinals(
     { importance: 0, lateness: 0, easiness: 0, investment: 0, recency: 0, mode: 3 },
@@ -198,6 +214,43 @@ test("computeMercyOrdinals matches 5-dimension reference vectors", () => {
     ]),
     /negative/,
   );
+});
+
+test("toMercyElementInput maps reps to importance fraction independent of priority (#26)", () => {
+  const now = new Date(2026, 0, 10, 12).getTime();
+  const due = now - 86_400_000;
+
+  assert.equal(toMercyElementInput({ id: "r1", priority: 90, dueMs: due, reps: 1 }, now).importance, 0.05);
+  assert.equal(toMercyElementInput({ id: "r10", priority: 10, dueMs: due, reps: 10 }, now).importance, 0.5);
+  assert.equal(toMercyElementInput({ id: "r20", priority: 50, dueMs: due, reps: 20 }, now).importance, 1.0);
+  assert.equal(
+    toMercyElementInput({ id: "p5", priority: 5, dueMs: due, reps: 8 }, now).importance,
+    toMercyElementInput({ id: "p95", priority: 95, dueMs: due, reps: 8 }, now).importance,
+  );
+});
+
+test("planAutoPostpone bounds overflow spread within maxHorizonDays (#30)", () => {
+  const now = new Date(2026, 0, 10, 12).getTime();
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+  const cutoff = todayStart.getTime();
+  const yesterday = cutoff - 3600_000;
+
+  const backlog = Array.from({ length: 734 }, (_, i) => ({
+    id: `el_${i}`,
+    priority: 20 + (i % 70),
+    dueMs: yesterday - i * 1000,
+  }));
+
+  const plan = planAutoPostpone(backlog, now, { keepOverdue: 40, priorityCutoff: 0 });
+  assert.equal(plan.postponedCount, 694);
+  assert.equal(plan.perDay.length, 30);
+
+  const maxAllowedMs = addLocalDays(cutoff, 31);
+  for (const a of plan.assignments) {
+    assert.ok(a.newDue >= addLocalDays(cutoff, 1), `assignment ${a.id} before tomorrow`);
+    assert.ok(a.newDue < maxAllowedMs, `assignment ${a.id} exceeded 30-day horizon`);
+  }
 });
 
 test("computeElementHistoryCounts tracks readingReps, totalPostponeCount, and resets recentPostponeCount on grade or topic-advanced", () => {

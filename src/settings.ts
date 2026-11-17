@@ -343,6 +343,16 @@ export class IrSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    new Setting(containerEl)
+      .setName("Advanced auto-postpone")
+      .setDesc("Scale startup auto-postpone delays by interval, priority, retention, and A-Factor (up to 30 days).")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.autoPostponePolicy.advanced)
+        .onChange(async (value) => {
+          this.plugin.settings.autoPostponePolicy.advanced = value;
+          await this.plugin.saveSettings();
+        }));
+
     containerEl.createEl("h3", { text: "Priority scheduling" });
 
     new Setting(containerEl)
@@ -424,11 +434,11 @@ export class IrSettingTab extends PluginSettingTab {
 
     if (((this.plugin.settings.mercyWeights.mode ?? 3) & 1) === 1) {
       for (const [key, name, desc] of [
-        ["importance", "Mercy weight: Importance", "Weight on investment and lateness blend (default: 5)."],
-        ["lateness", "Mercy weight: Lateness", "Weight on repetition count and typical interval (default: 1)."],
+        ["importance", "Mercy weight: Importance", "Weight on difficulty / easiness complement (default: 5)."],
+        ["lateness", "Mercy weight: Lateness", "Weight on sigmoid lateness ratio (default: 1)."],
         ["easiness", "Mercy weight: Easiness", "Weight on recency and lifetime ratio (default: 6)."],
-        ["investment", "Mercy weight: Investment", "Weight on easiness complement / difficulty (default: 10)."],
-        ["recency", "Mercy weight: Recency", "Weight on sigmoid lateness ratio (default: 8)."],
+        ["investment", "Mercy weight: Investment", "Weight on repetition count and typical interval (default: 10)."],
+        ["recency", "Mercy weight: Recency", "Weight on investment and lateness blend (default: 8)."],
       ] as const) {
         new Setting(containerEl)
           .setName(name)
