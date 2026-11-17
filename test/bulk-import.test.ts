@@ -158,3 +158,15 @@ test("leading blank lines are skipped when synthesizing the title", async (t) =>
   assert.equal(plan.title, "Real Title Line");
   assert.ok(plan.body.includes("The body."));
 });
+
+test("synthesized title preserves blank lines between body paragraphs (#39)", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/bulk-import.ts not implemented yet");
+  const plan = m.planBulkImport({
+    text: "Article Title\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+    defaultPriority: DEFAULT_PRI,
+    now: NOW,
+  });
+  assert.equal(plan.title, "Article Title");
+  assert.equal(plan.body, "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.");
+});

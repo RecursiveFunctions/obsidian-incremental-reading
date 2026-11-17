@@ -111,8 +111,9 @@ function extractBody(text: string, titleHint?: string): string {
   if (wasTitleSynthesizedFromText(text, titleHint)) {
     // Title was from first line, so we need to drop it and following blank lines
     const lines = text.split('\n');
-    let bodyLines: string[] = [];
+    const bodyLines: string[] = [];
     let foundTitleLine = false;
+    let startedBody = false;
     
     for (const line of lines) {
       const trimmedLine = line.trim();
@@ -120,15 +121,15 @@ function extractBody(text: string, titleHint?: string): string {
       if (!foundTitleLine) {
         if (trimmedLine !== "") {
           foundTitleLine = true;
-          continue; // Skip the title line
         }
-      } else {
-        // After title line, skip blank lines until we find non-blank content
-        if (trimmedLine === "") {
-          continue;
-        }
-        bodyLines.push(line);
+        continue;
       }
+      // After title line, skip blank lines until we find non-blank content
+      if (!startedBody && trimmedLine === "") {
+        continue;
+      }
+      startedBody = true;
+      bodyLines.push(line);
     }
     
     return bodyLines.join('\n');
