@@ -3176,6 +3176,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     placement: ReturnType<typeof buildPriorityPlacement>;
     file?: TFile | null;
   }[]): Promise<void> {
+    const preState = this.ledger ? await this.ledger.load() : null;
     await this.commitLedgerEvents(
       "priority",
       changes.map((change) => ({
@@ -3190,12 +3191,20 @@ export default class IncrementalReadingPlugin extends Plugin {
         useLedgerLamport: true,
         beforeReconcile: async () => {
           for (const change of changes) {
-            if (change.file?.extension === "md") {
+            let file = change.file ?? null;
+            if (!file && preState) {
+              const notePath = preState.elements.get(change.targetId)?.notePath;
+              const abs = notePath
+                ? this.app.vault.getAbstractFileByPath(notePath)
+                : null;
+              if (abs instanceof TFile) file = abs;
+            }
+            if (file?.extension === "md") {
               await quietFrontmatterWrite(
                 () =>
                   setPriority(
                     this.app,
-                    change.file!,
+                    file!,
                     clampPriority(change.requestedPriority),
                   ).then(() => undefined),
                 "priority",
@@ -3227,9 +3236,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<LogState | null> {
     if (!this.ledger || specs.length === 0) return null;
     const now = opts?.now ?? Date.now();
-    let lamport = opts?.useLedgerLamport
-      ? await this.ledger.nextLamport()
-      : now;
+    let lamport = Math.max(now, await this.ledger.nextLamport());
     const device = await this.ledger.getDeviceId();
     const events: IrEvent[] = specs.map((spec) => ({
       id: newEventId(),
@@ -5947,11 +5954,16 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.app.fileManager.processFrontMatter(file, (f) => {
         fm = { ...f };
       });
+      const now = Date.now();
       const events = migrateNotes(
         [{ path: file.path, frontmatter: fm }],
-        Date.now(),
+        now,
       );
+      let lamport = Math.max(now, await this.ledger.nextLamport());
+      const device = await this.ledger.getDeviceId();
       for (const ev of events) {
+        ev.lamport = lamport++;
+        ev.device = device;
         await this.appendCreatedWithPlacement(ev);
       }
       if (opts?.skipReconcile) return;
