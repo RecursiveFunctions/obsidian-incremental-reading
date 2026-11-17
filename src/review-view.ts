@@ -23,6 +23,7 @@ import {
   trackSegments,
   type DivergenceScale,
 } from "./ir/divergence-track";
+import { formatIntervalShort, previewGradeDelays, PREVIEW_GRADES } from "./ir/grade-preview";
 import { hasOcclusion } from "./ir/occlusion";
 import { fuzzyLocateInBody } from "./ir/fuzzy-text";
 import type { MultiSelectController } from "./ir/multi-select-dom";
@@ -426,9 +427,9 @@ export class IrReviewView extends ItemView {
       element: IrElement,
     ) => Promise<void>,
     /** End neural and start today's due queue (session-complete / Esc). */
-    private readonly startOutstandingDue?: () => void,
+    private startOutstandingDue?: () => void,
     /** First-run: collection is empty — show onboarding, do not detach. */
-    private readonly emptyVault: boolean = false,
+    private emptyVault: boolean = false,
     /**
      * PDF extract from the open viewer (Alt+X while reviewing a PDF topic
      * or extract). Returns undefined when nothing is selected in a PDF.
@@ -2233,12 +2234,12 @@ export class IrReviewView extends ItemView {
       });
       this.renderChildButtons(bar);
       if (Platform.isMobile) {
-        bar
-          .createEl("button", {
-            text: "Next",
-            cls: "mod-cta ir-review-grade-btn",
-          })
-          .addEventListener("click", () => void this.next());
+        const nextBtn = bar.createEl("button", {
+          cls: "mod-cta ir-review-grade-btn",
+        });
+        this.renderGradePreviewLabel(nextBtn, this.topicNextPreview(slot));
+        nextBtn.createSpan({ cls: "ir-review-grade-label", text: "Next" });
+        nextBtn.addEventListener("click", () => void this.next());
         this.renderOverflowButton(bar, this.readingOverflowItems());
       } else {
         this.renderEditToggle(bar);
@@ -2248,12 +2249,15 @@ export class IrReviewView extends ItemView {
         });
         if (this.index === 0) prevRead.disabled = true;
         prevRead.addEventListener("click", () => void this.previous());
-        bar
-          .createEl("button", {
-            text: this.labelWithHotkey("Next", "Space"),
-            cls: "mod-cta ir-review-grade-btn",
-          })
-          .addEventListener("click", () => void this.next());
+        const nextRead = bar.createEl("button", {
+          cls: "mod-cta ir-review-grade-btn",
+        });
+        this.renderGradePreviewLabel(nextRead, this.topicNextPreview(slot));
+        nextRead.createSpan({
+          cls: "ir-review-grade-label",
+          text: this.labelWithHotkey("Next", "Space"),
+        });
+        nextRead.addEventListener("click", () => void this.next());
         bar
           .createEl("button", {
             text: this.labelWithHotkey("Later today", "L"),
@@ -2328,6 +2332,9 @@ export class IrReviewView extends ItemView {
     }
 
     this.renderPriorityRow(controls, slot);
+    // What each grade would do, shown before the grade is given (see
+    // grade-preview.ts). Empty when the element has no card yet.
+    const gradePreview = this.itemGradePreview(slot);
     const bar = controls.createEl("div", {
       cls: Platform.isMobile
         ? "ir-review-buttons ir-review-buttons--grade"
@@ -2335,12 +2342,12 @@ export class IrReviewView extends ItemView {
     });
     if (Platform.isMobile) {
       for (const { grade, label: gLabel } of GRADES) {
-        bar
-          .createEl("button", {
-            text: gLabel,
-            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
-          })
-          .addEventListener("click", () => void this.grade(grade));
+        const btn = bar.createEl("button", {
+          cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
+        });
+        this.renderGradePreviewLabel(btn, gradePreview?.[grade]);
+        btn.createSpan({ cls: "ir-review-grade-label", text: gLabel });
+        btn.addEventListener("click", () => void this.grade(grade));
       }
       this.renderOverflowButton(bar, this.gradeOverflowItems());
     } else {
@@ -2360,12 +2367,12 @@ export class IrReviewView extends ItemView {
         const text = Platform.isMobile
           ? gLabel
           : `${gLabel} (${key}${spaceHint})`;
-        bar
-          .createEl("button", {
-            text,
-            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
-          })
-          .addEventListener("click", () => void this.grade(grade));
+        const btn = bar.createEl("button", {
+          cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
+        });
+        this.renderGradePreviewLabel(btn, gradePreview?.[grade]);
+        btn.createSpan({ cls: "ir-review-grade-label", text });
+        btn.addEventListener("click", () => void this.grade(grade));
       }
       bar
         .createEl("button", {
@@ -2470,6 +2477,52 @@ export class IrReviewView extends ItemView {
   /** Re-paint after the host plugin mutates the session (bulk extract). */
   refreshView(): void {
     void this.renderCard();
+  }
+
+  /**
+   * Adopt a new review session in place when a review leaf is already open,
+   * avoiding detaching the sole tab in the workspace.
+   */
+  async adoptSession(session: {
+    queue: ReviewSlot[];
+    elementsById: Map<ElementId, IrElement>;
+    isNeural?: boolean;
+    emptyVault?: boolean;
+    nothingDue?: UpcomingLoad;
+  }): Promise<void> {
+    this.captureBookmark();
+    await this.flushEdits();
+    if (this.bookmarksLoaded) {
+      void this.persistBookmarks().catch((e) => {
+        console.error("Incremental Reading: persist bookmarks before session swap failed", e);
+      });
+    }
+    this.teardownLiveEditorSync();
+    this.queue = session.queue;
+    this.elementsById = session.elementsById;
+    this.isNeural = session.isNeural ?? false;
+    this.emptyVault = session.emptyVault ?? false;
+    this.nothingDue = session.nothingDue ?? null;
+    this.emptyCollectionRestore = false;
+    this.index = 0;
+    this.revealed = false;
+    this.editing = false;
+    this.editSaveError = null;
+    this.loadedSlotId = null;
+    this.sessionComplete = false;
+    this.neuralEndedEarly = false;
+    this.lastReversible = null;
+    this.resumeFromTop.clear();
+    this.pendingEditSelection = null;
+    this.clickToEditCaret = null;
+    this.skipBookmarkCursor = false;
+    this.sessionSeedLabel = this.queue[0]
+      ? labelFor(this.queue[0].element)
+      : "";
+    this.bookmarks = await this.ledger.loadBookmarks();
+    this.bookmarksLoaded = true;
+    this.contentEl.focus();
+    await this.renderCard();
   }
 
   /**
@@ -4295,6 +4348,71 @@ export class IrReviewView extends ItemView {
     this.loadedSlotId = null;
     this.sessionComplete = false;
     void this.renderCard();
+  }
+
+  /**
+   * The interval label each grade button shows, keyed by grade.
+   *
+   * Reads the same scheduler and the same effective retention the grade path
+   * uses, so a button's label is what pressing it will do. Returns null when
+   * there is nothing to show.
+   */
+  private itemGradePreview(slot: ReviewSlot): Record<Grade, string> | null {
+    const now = Date.now();
+    const policy = this.settings.prioritySchedulingPolicy;
+    const retention = effectiveItemRetention(
+      slot.element.priority,
+      policy.enabled,
+      this.settings.desiredRetention,
+      policy.itemHighRetention,
+      policy.itemLowRetention,
+    );
+    const delays = previewGradeDelays(storedToCard(slot.element.card), now, retention);
+    const out = {} as Record<Grade, string>;
+    for (const grade of PREVIEW_GRADES) {
+      out[grade] = formatIntervalShort(delays[grade], now);
+    }
+    return out;
+  }
+
+  /**
+   * The interval label the reading Next button shows.
+   *
+   * Topics are scheduled by `advanceTopic`, not by the card scheduler, so the
+   * preview runs the same call `nextNow` runs and reads the interval it
+   * produces.
+   */
+  private topicNextPreview(slot: ReviewSlot): string | null {
+    const cur = scheduleToTopicState(slot.element.schedule);
+    if (!cur) return null;
+    const now = Date.now();
+    const policy = this.settings.prioritySchedulingPolicy;
+    const effectiveAFactor = effectiveReadingAFactor(
+      slot.element.priority,
+      policy.enabled,
+      cur.aFactor,
+      policy.readingHighAFactor,
+      policy.readingLowAFactor,
+    );
+    const advanced = advanceTopic(
+      cur,
+      this.settings,
+      new Date(now),
+      effectiveAFactor,
+      slot.element.priority,
+      policy.enabled,
+      this.queue.length,
+    );
+    return formatIntervalShort(advanced.dueMs - now, now);
+  }
+
+  /** Render a grade-preview label above a button's own label. */
+  private renderGradePreviewLabel(
+    btn: HTMLButtonElement,
+    label: string | null | undefined,
+  ): void {
+    if (!label) return;
+    btn.createSpan({ cls: "ir-review-grade-interval", text: label });
   }
 
   private async grade(g: Grade) {

@@ -865,7 +865,20 @@ img.ir-source-image.ir-cloze-source {
  * a high-contrast theme, and a forced-colors mode.
  */
 .ir-review-grade-btn {
+  align-items: center;
   border-bottom: 2px solid transparent;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  justify-content: center;
+  line-height: 1.15;
+}
+
+/* The interval a grade would produce, shown above the button's own label. */
+.ir-review-grade-interval {
+  font-size: 0.72em;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
 }
 
 .ir-review-grade-btn--again {
