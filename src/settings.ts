@@ -129,7 +129,7 @@ export class IrSettingTab extends PluginSettingTab {
       .setName("Show scheduler divergence picker")
       .setDesc(
         "Off (default for new vaults): grades follow FSRS with no extra " +
-          "prompt. On: when FSRS and SM-2 disagree enough on the next " +
+          "prompt. On: when FSRS-6, DSR and SM-2 disagree enough on the next " +
           "interval, an inline picker lets you choose. Existing installs " +
           "keep this on until you turn it off.",
       )
