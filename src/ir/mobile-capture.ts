@@ -79,6 +79,8 @@ export function registerMobileCapture(
         for (const k of Object.keys(modeBtns) as CaptureMode[]) {
           modeBtns[k].toggleClass("is-active", k === m);
         }
+        hintInput.style.display = mode === "cloze" ? "" : "none";
+        titleInput.style.display = mode === "topic" ? "" : "none";
       });
     }
 

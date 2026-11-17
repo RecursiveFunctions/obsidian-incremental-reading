@@ -74,6 +74,7 @@ import {
 } from "./src/ir/optimizer/revlog";
 import { mostRecentBookmark } from "./src/ir/bookmark";
 import {
+  cardToStored,
   configureEngine,
   newCard,
   storedToCard,
@@ -3713,97 +3714,77 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /** Create an extract from mobile capture text. */
   private async mobileCreateExtract(text: string): Promise<ElementId | null> {
-    if (!this.ledger) return null;
-    const elementId = newElementId();
-    const eventId = newEventId();
-    const now = Date.now();
-    const device = await this.ledger.getDeviceId();
-    const element = newElement({
-      id: elementId,
+    return this.mobileCreateScheduledElement({
       type: "extract",
-      priority: this.settings.defaultPriority,
-      parentId: null,
       text,
-      now,
+      schedule: topicStateToSchedule(
+        newTopicState(this.settings, new Date()),
+      ),
     });
-    const ev: IrEvent = {
-      id: eventId,
-      ts: now,
-      lamport: now,
-      device,
-      kind: "element-created",
-      target: elementId,
-      payload: { element },
-    };
-    await this.ledger.appendEvent(ev);
-    await this.ledger.reconcile().catch((e) =>
-      console.error("Incremental Reading: reconcile after mobile extract failed", e),
-    );
-    await this.refreshStatusBar();
-    return elementId;
   }
 
   /** Create a cloze item from mobile capture text. */
   private async mobileCreateCloze(text: string, hint?: string): Promise<ElementId | null> {
-    if (!this.ledger) return null;
-    const elementId = newElementId();
-    const eventId = newEventId();
-    const now = Date.now();
-    const device = await this.ledger.getDeviceId();
-    const clozed = wrapCloze(text, 1, hint);
-    const element = newElement({
-      id: elementId,
+    return this.mobileCreateScheduledElement({
       type: "item",
-      priority: this.settings.defaultPriority,
-      parentId: null,
-      text: clozed,
-      now,
+      text: wrapCloze(text, 1, hint),
+      card: cardToStored(newCard(new Date())),
     });
-    const ev: IrEvent = {
-      id: eventId,
-      ts: now,
-      lamport: now,
-      device,
-      kind: "element-created",
-      target: elementId,
-      payload: { element },
-    };
-    await this.ledger.appendEvent(ev);
-    await this.ledger.reconcile().catch((e) =>
-      console.error("Incremental Reading: reconcile after mobile cloze failed", e),
-    );
-    await this.refreshStatusBar();
-    return elementId;
   }
 
   /** Create a topic from mobile capture text. */
   private async mobileCreateTopic(text: string, title: string): Promise<ElementId | null> {
+    const folder = this.settings.extractFolder.trim().replace(/^\/+|\/+$/g, "");
+    const stem =
+      title
+        .replace(/[\\/:*?"<>|#^[\]]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 60) || "IR capture";
+    if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
+      await this.app.vault.createFolder(folder);
+    }
+    const path = uniqueMarkdownNotePath(this.app, folder, stem);
+    const file = await this.app.vault.create(path, text.trim() + "\n");
+    await markAsTopic(this.app, file, this.settings);
+    await this.recordElement(file);
+    return elementIdForPath(file.path);
+  }
+
+  private async mobileCreateScheduledElement(opts: {
+    type: "extract" | "item";
+    text: string;
+    schedule?: IrElement["schedule"];
+    card?: IrElement["card"];
+  }): Promise<ElementId | null> {
     if (!this.ledger) return null;
     const elementId = newElementId();
-    const eventId = newEventId();
     const now = Date.now();
+    const lamport = Math.max(now, await this.ledger.nextLamport());
     const device = await this.ledger.getDeviceId();
-    const element = newElement({
-      id: elementId,
-      type: "topic",
-      priority: this.settings.defaultPriority,
-      parentId: null,
-      text,
-      notePath: title,
-      now,
-    });
-    const ev: IrEvent = {
-      id: eventId,
+    const element: IrElement = {
+      ...newElement({
+        id: elementId,
+        type: opts.type,
+        priority: this.settings.defaultPriority,
+        parentId: null,
+        text: opts.text,
+        now,
+      }),
+      ...(opts.schedule ? { schedule: opts.schedule } : {}),
+      ...(opts.card ? { card: opts.card } : {}),
+    };
+    await this.appendCreatedWithPlacement({
+      id: newEventId(),
       ts: now,
-      lamport: now,
+      lamport,
       device,
       kind: "element-created",
       target: elementId,
       payload: { element },
-    };
-    await this.ledger.appendEvent(ev);
+    });
     await this.ledger.reconcile().catch((e) =>
-      console.error("Incremental Reading: reconcile after mobile topic failed", e),
+      console.error(`Incremental Reading: reconcile after mobile ${opts.type} failed`, e),
     );
     await this.refreshStatusBar();
     return elementId;
