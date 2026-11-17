@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3] — 2026-11-17
+
+### Fixed
+
+- **Manual postpone anchor & undo metadata** (`src/ir/mercy.ts`, `main.ts`, `src/review-view.ts`): Manual postpone now anchors at `max(currentDue, now)` so future-scheduled elements always move forward, and records `previousDue`, `batchId`, and `operation` for undo (#27).
+- **Duplicate grading & dismissed-card resurfacing on Previous** (`src/review-view.ts`, `src/ir/review-navigation.ts`): Navigating backward via **Previous** no longer allows re-grading an already-graded item unless undone, and dismissed elements are spliced out of the active queue (#33).
+- **Ledger read/write error surfacing** (`src/ir/ledger.ts`, `src/review-view.ts`, `main.ts`, `src/ir/status-bar.ts`): Failed ledger writes abort in-session review transitions with an explicit notice, and corrupt ledger shards surface an error banner in review and `!` state in the status bar (#31, #32).
+- **Mercy ordinal weights, repetition count, and auto-postpone horizon** (`src/ir/mercy.ts`, `main.ts`): Fixed weight-to-dimension mapping in `mercyOrdinal`, wired actual review counts into startup auto-postpone, and spread startup overflow across the 14-day horizon (#26, #30, #34).
+- **Settings wiring for `reviewsPerReading` and mobile review layout** (`src/ir/scheduler.ts`, `src/review-view.ts`, `src/settings.ts`): Wired `reviewsPerReading` into interleaving when priority queue policy is disabled and applied `mobileReviewLayout`, `mobileFontScale`, and `mobileButtonSize` to the review pane (#29).
+- **Review reading extract guard, bookmark cursor offset, and edit flush** (`src/ir/extract-spans.ts`, `src/review-view.ts`, `main.ts`): Fixed inverted `isReading` guard in `buildHubExtractEntries`, preserved character-offset bookmarks in `reviewBodyCursor`, guarded `next` / `later` / `dismiss` / `endNeuralMode` on `flushEdits()`, and synced `elementsById` + `A-Factor` frontmatter dual-writes (#40).
+- **Anchor normalized offset mapping & frontmatter stripping on re-anchor** (`src/ir/anchor.ts`, `main.ts`): Aligned normalized index mapping with `normalizeForMatch` when notes start with markdown syntax, and stripped YAML frontmatter before resolving anchors in `applyIrReanchor` (#37).
+- **Bulk import paragraph breaks** (`src/ir/bulk-import.ts`): Preserved blank lines between body paragraphs when synthesizing a topic title from the first line (#39).
+- **Mobile capture scheduling & mode inputs** (`src/ir/mobile-capture.ts`, `main.ts`): Initialized FSRS cards and topic schedules on mobile-captured items/extracts, created vault notes for captured topics, and toggled hint/title inputs when switching capture modes (#38).
+- **Monotonic Lamport clock & batch priority dual-write** (`main.ts`): Stamped monotonic `Math.max(now, nextLamport)` across live mutations and `recordElement`, and resolved note files during batch priority updates so `ir-priority` dual-writes to YAML frontmatter (#36).
+- **Session/Stats concurrent render guards & Collection state filter expand** (`src/session-view.ts`, `src/stats-view.ts`, `src/ir/session-log.ts`, `src/tree-view.ts`): Guarded async renders with `renderToken`, fell back to `anchor.sourcePath` in session log entries, cancelled pending click timers on tree close, and expanded ancestor rows when state filters are active (#41).
+
+### Changed
+
+- **DRY/KISS refactoring** (`src/ir/extract-spans.ts`, `src/review-view.ts`, `src/tree-view.ts`, `main.ts`): Unified structural extract span discovery, replaced positional view constructors with typed `IrTreeViewHost` and `IrReviewViewHost` bags, and consolidated ledger/frontmatter mutation plumbing.
+
 ## [0.13.2] — 2026-11-14
 
 ### Fixed
