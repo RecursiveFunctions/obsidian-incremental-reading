@@ -81,6 +81,48 @@ export function lastIdForNotePath(
 }
 
 /**
+ * Elements whose latest lifecycle event is a deliberate Collection
+ * `element-deleted`, not a folder-move tombstone (`#28`). A Collection
+ * delete leaves the note on disk with `ir-type` frontmatter, so the
+ * orphan pass would resurrect it every startup. When the note was moved,
+ * its last known path sits in `tombSet` instead and recovery stays on.
+ */
+export function explicitlyDeletedIds(
+  events: IrEvent[],
+  tombSet: ReadonlySet<string>,
+): Set<ElementId> {
+  const sorted = [...events].sort((a, b) => {
+    if (a.lamport !== b.lamport) return a.lamport - b.lamport;
+    return a.id.localeCompare(b.id);
+  });
+  const pathById = new Map<ElementId, string>();
+  const deleted = new Set<ElementId>();
+  for (const ev of sorted) {
+    if (ev.kind === "element-created") {
+      const p = (ev.payload.element as IrElement | undefined)?.notePath;
+      if (typeof p === "string") pathById.set(ev.target, p);
+      deleted.delete(ev.target);
+    } else if (ev.kind === "source-renamed") {
+      if (typeof ev.payload.newPath === "string") {
+        pathById.set(ev.target, ev.payload.newPath);
+      }
+    } else if (ev.kind === "promoted") {
+      if (typeof ev.payload.notePath === "string") {
+        pathById.set(ev.target, ev.payload.notePath);
+      }
+    } else if (ev.kind === "element-deleted") {
+      deleted.add(ev.target);
+    }
+  }
+  const out = new Set<ElementId>();
+  for (const id of deleted) {
+    const p = pathById.get(id);
+    if (p === undefined || !tombSet.has(p)) out.add(id);
+  }
+  return out;
+}
+
+/**
  * Which historical path became `newPath`. Suffix / unique basename /
  * folder-prefix, preferring a tombstoned path when several names collide.
  */
@@ -213,6 +255,7 @@ export function planOrphanRecoveries(
   ).elements;
 
   const tombSet = new Set(tombstonePaths);
+  const explicitDeletes = explicitlyDeletedIds(events, tombSet);
   const historicalList = [
     ...knownNotePathsFromEvents(events),
     ...tombSet,
@@ -255,6 +298,14 @@ export function planOrphanRecoveries(
       tombSet,
       historical,
     );
+
+    if (
+      recoveredId &&
+      oldPath === null &&
+      explicitDeletes.has(recoveredId)
+    ) {
+      continue;
+    }
 
     if (recoveredId && seenIds.has(recoveredId)) continue;
 

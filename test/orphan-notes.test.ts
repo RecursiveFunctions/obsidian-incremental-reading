@@ -269,6 +269,84 @@ test("planOrphanRecoveries: resurrect deleted folder-move notes with old ids", (
   assert.equal(again.restored, 0);
 });
 
+test("planOrphanRecoveries: deliberate Collection delete is not resurrected", () => {
+  const path = "Keep/a.md";
+  const id = elementIdForPath(path);
+  const el = newElement({
+    id,
+    type: "topic",
+    priority: 50,
+    notePath: path,
+    now: 0,
+  });
+  const deleteEvent: IrEvent = {
+    id: "ev_del" as EventId,
+    ts: NOW,
+    lamport: 2,
+    device: DEV,
+    kind: "element-deleted",
+    target: id,
+    payload: {},
+  };
+  const events = [created(el, 1), deleteEvent];
+  const state = fold(events);
+  assert.equal(state.elements.has(id), false);
+
+  const notes = [{ path, frontmatter: topicFm() }];
+  const plan = planOrphanRecoveries(
+    notes,
+    state.elements.values(),
+    events,
+    state.tombstones.keys(),
+    [path],
+    NOW,
+    3,
+    DEV,
+    ids().next,
+  );
+  assert.equal(plan.events.length, 0);
+  assert.equal(plan.restored, 0);
+});
+
+test("planOrphanRecoveries: recreate after delete allows recovery again", () => {
+  const path = "Keep/a.md";
+  const id = elementIdForPath(path);
+  const el = newElement({
+    id,
+    type: "topic",
+    priority: 50,
+    notePath: path,
+    now: 0,
+  });
+  const deleted: IrEvent = {
+    id: "ev_del" as EventId,
+    ts: NOW,
+    lamport: 2,
+    device: DEV,
+    kind: "element-deleted",
+    target: id,
+    payload: {},
+  };
+  const recreated = created(el, 3, "ev_c2" as EventId);
+  const events = [created(el, 1), deleted, recreated];
+  const state = fold(events);
+  assert.equal(state.elements.has(id), true);
+
+  const plan = planOrphanRecoveries(
+    [{ path, frontmatter: topicFm() }],
+    state.elements.values(),
+    events,
+    state.tombstones.keys(),
+    [path],
+    NOW,
+    4,
+    DEV,
+    ids().next,
+  );
+  assert.equal(plan.events.length, 0);
+  assert.equal(plan.restored, 0);
+});
+
 test("planOrphanRecoveries: stale ledger path becomes source-renamed", () => {
   const oldPath = "Papers/a.md";
   const newPath = "Archive/Papers/a.md";
