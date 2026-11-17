@@ -115,7 +115,7 @@ export function resolveAnchor(anchor: Anchor, sourceText: string): AnchorResolut
   if (normIndices.length === 1) {
     const normIdx = normIndices[0];
     const map: number[] = [];
-    let normPos = 0;
+    let inWhitespace = false;
     
     for (let i = 0; i < sourceText.length; i++) {
       const c = sourceText[i];
@@ -123,15 +123,18 @@ export function resolveAnchor(anchor: Anchor, sourceText: string): AnchorResolut
         continue;
       }
       if (c === " " || c === "\t" || c === "\n" || c === "\r") {
-        if (normPos === 0 || (i > 0 && sourceText[i - 1] !== " " && sourceText[i - 1] !== "\t" && sourceText[i - 1] !== "\n" && sourceText[i - 1] !== "\r")) {
+        if (map.length > 0 && !inWhitespace) {
           map.push(i);
-          normPos++;
+          inWhitespace = true;
         }
         continue;
       }
       
       map.push(i);
-      normPos++;
+      inWhitespace = false;
+    }
+    if (inWhitespace && map.length > 0) {
+      map.pop();
     }
     
     const mStart = normIdx;

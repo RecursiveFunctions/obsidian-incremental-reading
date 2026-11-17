@@ -120,3 +120,12 @@ test("normalizeForMatch is idempotent", () => {
   const once = normalizeForMatch("##  *Hello*   World  ");
   assert.equal(normalizeForMatch(once), once);
 });
+
+test("normalized match resolves exact slice when source starts with heading or stripped syntax (#37)", () => {
+  const src = "# Heading Title\n\nThe **quick** brown\nfox jumps.";
+  const r = resolveAnchor(anchor({ exact: "The quick brown fox" }), src);
+  assert.equal(r.status, "ok");
+  if (r.status !== "ok") return;
+  assert.equal(src.slice(r.start, r.end), "The **quick** brown\nfox");
+  assert.equal(r.repaired, true);
+});

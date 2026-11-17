@@ -3418,8 +3418,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
     if (!(sourceFile instanceof TFile)) return false;
 
-    const raw = await this.app.vault.cachedRead(sourceFile);
-    const result = resolveAnchor(element.anchor, raw);
+    const body = stripFrontmatter(await this.app.vault.cachedRead(sourceFile));
+    const result = resolveAnchor(element.anchor, body);
     if (result.status !== "ok") return false;
 
     const repairedAnchor = {
