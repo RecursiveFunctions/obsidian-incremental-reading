@@ -99,6 +99,38 @@ export type CommitIrReanchorFn = (
 /** Fork a ledger extract (second reading element). */
 export type CommitIrForkFn = (elementId: ElementId) => void | Promise<void>;
 
+export interface IrTreeViewHost {
+  ledger: IrLedger;
+  commitPriority?: CommitIrPriorityFn;
+  commitDismiss?: CommitIrDismissFn;
+  commitPostpone?: CommitIrPostponeFn;
+  commitReparent?: CommitIrReparentFn;
+  commitDelete?: CommitIrDeleteFn;
+  commitPromote?: CommitIrPromoteFn;
+  commitReanchor?: CommitIrReanchorFn;
+  forkExtract?: CommitIrForkFn;
+  /**
+   * Open the review pane on the given (or most-recent-by-default)
+   * reading bookmark. Wired in by the host plugin; absent in the tests
+   * that construct the view without the resume integration.
+   */
+  resumeReading?: (id: ElementId) => Promise<boolean>;
+  startNeuralReview?: (id: ElementId) => void;
+  /**
+   * If a review session is open, jump its cursor to this id. Returns
+   * false when there is no session or the id is not in that queue.
+   */
+  revealInReview?: (id: ElementId) => boolean;
+  displayMode?: "priority" | "sources";
+  saveDisplayMode?: (mode: "priority" | "sources") => void;
+  commitPriorityPlan?: (plan: PriorityBatchPlan) => Promise<void>;
+  commitPriorityPreview?: (
+    preview: PriorityPlacementPreview,
+    file: TFile | null,
+  ) => Promise<void>;
+  initialCurrentElementId?: ElementId | null;
+}
+
 const ICONS: Record<IrType, string> = {
   topic: "book-open",
   extract: "scissors",
@@ -186,41 +218,43 @@ export class IrTreeView extends ItemView {
   /** Delayed single-click so a double-click can cancel "reveal or open". */
   private pendingClickTimer: number | null = null;
 
-  constructor(
-    leaf: WorkspaceLeaf,
-    ledger: IrLedger,
-    private readonly commitPriority?: CommitIrPriorityFn,
-    private readonly commitDismiss?: CommitIrDismissFn,
-    private readonly commitPostpone?: CommitIrPostponeFn,
-    private readonly commitReparent?: CommitIrReparentFn,
-    private readonly commitDelete?: CommitIrDeleteFn,
-    private readonly commitPromote?: CommitIrPromoteFn,
-    private readonly commitReanchor?: CommitIrReanchorFn,
-    private readonly forkExtract?: CommitIrForkFn,
-    /**
-     * Open the review pane on the given (or most-recent-by-default)
-     * reading bookmark. Wired in by the host plugin; absent in the tests
-     * that construct the view without the resume integration.
-     */
-    private readonly resumeReading?: (id: ElementId) => Promise<boolean>,
-    private readonly startNeuralReview?: (id: ElementId) => void,
-    /**
-     * If a review session is open, jump its cursor to this id. Returns
-     * false when there is no session or the id is not in that queue.
-     */
-    private readonly revealInReview?: (id: ElementId) => boolean,
-    displayMode: "priority" | "sources" = "priority",
-    private readonly saveDisplayMode?: (mode: "priority" | "sources") => void,
-    private readonly commitPriorityPlan?: (plan: PriorityBatchPlan) => Promise<void>,
-    private readonly commitPriorityPreview?: (
-      preview: PriorityPlacementPreview, file: TFile | null,
-    ) => Promise<void>,
-    initialCurrentElementId: ElementId | null = null,
-  ) {
+  private readonly commitPriority?: CommitIrPriorityFn;
+  private readonly commitDismiss?: CommitIrDismissFn;
+  private readonly commitPostpone?: CommitIrPostponeFn;
+  private readonly commitReparent?: CommitIrReparentFn;
+  private readonly commitDelete?: CommitIrDeleteFn;
+  private readonly commitPromote?: CommitIrPromoteFn;
+  private readonly commitReanchor?: CommitIrReanchorFn;
+  private readonly forkExtract?: CommitIrForkFn;
+  private readonly resumeReading?: (id: ElementId) => Promise<boolean>;
+  private readonly startNeuralReview?: (id: ElementId) => void;
+  private readonly revealInReview?: (id: ElementId) => boolean;
+  private readonly saveDisplayMode?: (mode: "priority" | "sources") => void;
+  private readonly commitPriorityPlan?: (plan: PriorityBatchPlan) => Promise<void>;
+  private readonly commitPriorityPreview?: (
+    preview: PriorityPlacementPreview,
+    file: TFile | null,
+  ) => Promise<void>;
+
+  constructor(leaf: WorkspaceLeaf, host: IrTreeViewHost) {
     super(leaf);
-    this.ledger = ledger;
-    this.displayMode = displayMode;
-    this.currentElementId = initialCurrentElementId;
+    this.ledger = host.ledger;
+    this.commitPriority = host.commitPriority;
+    this.commitDismiss = host.commitDismiss;
+    this.commitPostpone = host.commitPostpone;
+    this.commitReparent = host.commitReparent;
+    this.commitDelete = host.commitDelete;
+    this.commitPromote = host.commitPromote;
+    this.commitReanchor = host.commitReanchor;
+    this.forkExtract = host.forkExtract;
+    this.resumeReading = host.resumeReading;
+    this.startNeuralReview = host.startNeuralReview;
+    this.revealInReview = host.revealInReview;
+    this.displayMode = host.displayMode ?? "priority";
+    this.saveDisplayMode = host.saveDisplayMode;
+    this.commitPriorityPlan = host.commitPriorityPlan;
+    this.commitPriorityPreview = host.commitPriorityPreview;
+    this.currentElementId = host.initialCurrentElementId ?? null;
   }
 
   getViewType(): string {

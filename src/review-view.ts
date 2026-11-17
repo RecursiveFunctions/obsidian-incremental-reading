@@ -188,6 +188,59 @@ const GRADES: { grade: Grade; label: string; key: string }[] = [
   { grade: "easy", label: "Easy", key: "4" },
 ];
 
+export interface IrReviewViewHost {
+  plugin: Component;
+  settings: IrSettings;
+  ledger: IrLedger;
+  queue: ReviewSlot[];
+  elementsById: Map<ElementId, IrElement>;
+  isNeural?: boolean;
+  onChange?: () => void;
+  openIrHub?: () => void;
+  onSlotChange?: (id: ElementId | null) => void;
+  onMobileChromeChange?: () => void;
+  commitUndoLastGrade?: () => Promise<
+    { targetId: ElementId; targetLabel: string } | null
+  >;
+  getSourceExtractRanges?: (
+    path: string,
+  ) => ReadonlyArray<{
+    start: number;
+    end: number;
+    text?: string;
+    kind?: SourceMarkKind;
+  }>;
+  refreshDecorations?: () => Promise<void>;
+  commitPromoteExtract?: (id: ElementId, element: IrElement) => Promise<void>;
+  restoreEmptySession?: () => Promise<{
+    queue: ReviewSlot[];
+    elementsById: Map<ElementId, IrElement>;
+    isNeural: boolean;
+    cursor?: number;
+  } | null>;
+  commitReanchor?: (id: ElementId, element: IrElement) => Promise<boolean>;
+  commitDetachAnchor?: (id: ElementId, element: IrElement) => Promise<void>;
+  startOutstandingDue?: () => void;
+  emptyVault?: boolean;
+  commitPdfExtract?: (opts?: {
+    promote?: boolean;
+  }) => Promise<IrElement | undefined>;
+  nothingDue?: UpcomingLoad | null;
+  getUpcoming?: () => Promise<UpcomingLoad | null>;
+  openTreeFromIdlePane?: () => void;
+  openHelpFromIdlePane?: () => void;
+  commitPriority?: (
+    id: ElementId,
+    file: TFile | null,
+    priority: number,
+  ) => Promise<void>;
+  commitPriorityPreview?: (
+    preview: PriorityPlacementPreview,
+    file: TFile | null,
+  ) => Promise<void>;
+  onSessionState?: (orderedIds: ElementId[], cursor: number) => void;
+}
+
 export class IrReviewView extends ItemView {
   /** Drop repeated taps rather than queuing a mutation for the next card. */
   private readonly actionGate = new DropWhileBusyGate();
@@ -347,138 +400,84 @@ export class IrReviewView extends ItemView {
   /** When true, resume-bookmark must not steal the click caret. */
   private skipBookmarkCursor = false;
 
-  constructor(
-    leaf: WorkspaceLeaf,
-    /** Mirrors ReviewModal's Component; MarkdownRenderer uses `this` as Component. */
-    private readonly plugin: Component,
-    private settings: IrSettings,
-    private ledger: IrLedger,
-    private queue: ReviewSlot[],
-    /**
-     * All elements indexed by id, used to render the parent-chain
-     * breadcrumb (UI commitment #5). Passed in rather than re-derived so
-     * the view does not need to touch the ledger mid-session.
-     */
-    private elementsById: Map<ElementId, IrElement>,
-    private isNeural: boolean = false,
-    /**
-     * Fired after any state change (grade, advance, postpone, dismiss,
-     * child created) and on close. Lets the host plugin refresh the queue
-     * load indicator without this module knowing about it.
-     */
-    private onChange?: () => void,
-    /** Opens the host plugin's IR quick-actions radial (Alt+Shift+U). */
-    private readonly openIrHub?: () => void,
-    /**
-     * Fired whenever the visible slot changes. The host plugin forwards
-     * the id to the IR tree view so it can highlight the user's current
-     * position. `null` means the review pane closed.
-     */
-    private readonly onSlotChange?: (id: ElementId | null) => void,
-    /** Refreshes workspace FAB visibility when edit mode toggles. */
-    private readonly onMobileChromeChange?: () => void,
-    /**
-     * Retract the most recent grade event in the log. Returns the affected
-     * element's id and a label for the toast, or `null` if there is
-     * nothing to undo. Wired in by the host plugin so the review pane
-     * doesn't need its own knowledge of `findLastUndoableGrade` /
-     * `processFrontMatter`.
-     */
-    private readonly commitUndoLastGrade?: () => Promise<
-      | {
-          targetId: ElementId;
-          targetLabel: string;
-        }
-      | null
-    >,
-    /**
-     * Resolved body-relative ranges of every extract and cloze mark on the
-     * given source path. Used by the review side panel (§Q3) to highlight
-     * sibling extracts and already-clozed spans. The host plugin reads this
-     * from the decoration cache, which is rebuilt after every reconcile.
-     */
-    private readonly getSourceExtractRanges?: (
-      path: string,
-    ) => ReadonlyArray<{
-      start: number;
-      end: number;
-      text?: string;
-      kind?: SourceMarkKind;
-    }>,
-    /**
-     * Rebuild the host's decoration cache so a just-created extract is in
-     * `getSourceExtractRanges` before the next `renderCard`. Without this
-     * the cache refresh races the re-render and the new extract appears
-     * unhighlighted in the main body until the next reconcile.
-     */
-    private readonly refreshDecorations?: () => Promise<void>,
-    /**
-     * Promote an anchored extract to a standalone note. Used when Settings
-     * → Extract to standalone note is on, or when the caller passes
-     * `{ promote: true }`.
-     */
-    private readonly commitPromoteExtract?: (
-      id: ElementId,
-      element: IrElement,
-    ) => Promise<void>,
-    /**
-     * Workspace restore: this leaf exists with an empty queue. Return
-     * today's due queue to adopt, or null so onOpen can detach the tab
-     * instead of rendering a dead pane.
-     */
-    private readonly restoreEmptySession?: () => Promise<{
-      queue: ReviewSlot[];
-      elementsById: Map<ElementId, IrElement>;
-      isNeural: boolean;
-      cursor?: number;
-    } | null>,
-    private readonly commitReanchor?: (
-      id: ElementId,
-      element: IrElement,
-    ) => Promise<boolean>,
-    private readonly commitDetachAnchor?: (
-      id: ElementId,
-      element: IrElement,
-    ) => Promise<void>,
-    /** End neural and start today's due queue (session-complete / Esc). */
-    private startOutstandingDue?: () => void,
-    /** First-run: collection is empty — show onboarding, do not detach. */
-    private emptyVault: boolean = false,
-    /**
-     * PDF extract from the open viewer (Alt+X while reviewing a PDF topic
-     * or extract). Returns undefined when nothing is selected in a PDF.
-     */
-    private readonly commitPdfExtract?: (opts?: {
-      promote?: boolean;
-    }) => Promise<IrElement | undefined>,
-    /**
-     * Set when review started with a non-empty collection and an empty due
-     * queue: render the nothing-due panel instead of toasting and bailing.
-     */
-    private nothingDue: UpcomingLoad | null = null,
-    /**
-     * Forward-looking counts, recomputed when a restored leaf finds an
-     * empty queue. `null` means the collection itself is empty, which is
-     * the first-run path (`emptyVault`), not the nothing-due path.
-     */
-    private readonly getUpcoming?: () => Promise<UpcomingLoad | null>,
-    /** Reveal Collection from the nothing-due panel. */
-    private readonly openTreeFromIdlePane?: () => void,
-    /** Open the help / shortcuts panel from the first-run pane. */
-    private readonly openHelpFromIdlePane?: () => void,
-    /** Route priority edits through the host's collection-wide placement logic. */
-    private readonly commitPriority?: (
-      id: ElementId,
-      file: TFile | null,
-      priority: number,
-    ) => Promise<void>,
-    private readonly commitPriorityPreview?: (
-      preview: PriorityPlacementPreview,
-      file: TFile | null,
-    ) => Promise<void>,
-    private readonly onSessionState?: (orderedIds: ElementId[], cursor: number) => void,
-  ) {
+  private readonly plugin: Component;
+  private settings: IrSettings;
+  private ledger: IrLedger;
+  private queue: ReviewSlot[];
+  private elementsById: Map<ElementId, IrElement>;
+  private isNeural: boolean;
+  private onChange?: () => void;
+  private readonly openIrHub?: () => void;
+  private readonly onSlotChange?: (id: ElementId | null) => void;
+  private readonly onMobileChromeChange?: () => void;
+  private readonly commitUndoLastGrade?: IrReviewViewHost["commitUndoLastGrade"];
+  private readonly getSourceExtractRanges?: IrReviewViewHost["getSourceExtractRanges"];
+  private readonly refreshDecorations?: () => Promise<void>;
+  private readonly commitPromoteExtract?: (
+    id: ElementId,
+    element: IrElement,
+  ) => Promise<void>;
+  private readonly restoreEmptySession?: IrReviewViewHost["restoreEmptySession"];
+  private readonly commitReanchor?: (
+    id: ElementId,
+    element: IrElement,
+  ) => Promise<boolean>;
+  private readonly commitDetachAnchor?: (
+    id: ElementId,
+    element: IrElement,
+  ) => Promise<void>;
+  private startOutstandingDue?: () => void;
+  private emptyVault: boolean;
+  private readonly commitPdfExtract?: (opts?: {
+    promote?: boolean;
+  }) => Promise<IrElement | undefined>;
+  private nothingDue: UpcomingLoad | null;
+  private readonly getUpcoming?: () => Promise<UpcomingLoad | null>;
+  private readonly openTreeFromIdlePane?: () => void;
+  private readonly openHelpFromIdlePane?: () => void;
+  private readonly commitPriority?: (
+    id: ElementId,
+    file: TFile | null,
+    priority: number,
+  ) => Promise<void>;
+  private readonly commitPriorityPreview?: (
+    preview: PriorityPlacementPreview,
+    file: TFile | null,
+  ) => Promise<void>;
+  private readonly onSessionState?: (
+    orderedIds: ElementId[],
+    cursor: number,
+  ) => void;
+
+  constructor(leaf: WorkspaceLeaf, host: IrReviewViewHost) {
     super(leaf);
+    this.plugin = host.plugin;
+    this.settings = host.settings;
+    this.ledger = host.ledger;
+    this.queue = host.queue;
+    this.elementsById = host.elementsById;
+    this.isNeural = host.isNeural ?? false;
+    this.onChange = host.onChange;
+    this.openIrHub = host.openIrHub;
+    this.onSlotChange = host.onSlotChange;
+    this.onMobileChromeChange = host.onMobileChromeChange;
+    this.commitUndoLastGrade = host.commitUndoLastGrade;
+    this.getSourceExtractRanges = host.getSourceExtractRanges;
+    this.refreshDecorations = host.refreshDecorations;
+    this.commitPromoteExtract = host.commitPromoteExtract;
+    this.restoreEmptySession = host.restoreEmptySession;
+    this.commitReanchor = host.commitReanchor;
+    this.commitDetachAnchor = host.commitDetachAnchor;
+    this.startOutstandingDue = host.startOutstandingDue;
+    this.emptyVault = host.emptyVault ?? false;
+    this.commitPdfExtract = host.commitPdfExtract;
+    this.nothingDue = host.nothingDue ?? null;
+    this.getUpcoming = host.getUpcoming;
+    this.openTreeFromIdlePane = host.openTreeFromIdlePane;
+    this.openHelpFromIdlePane = host.openHelpFromIdlePane;
+    this.commitPriority = host.commitPriority;
+    this.commitPriorityPreview = host.commitPriorityPreview;
+    this.onSessionState = host.onSessionState;
   }
 
   /** Whether the review dock is on screen (FAB sits above it). */

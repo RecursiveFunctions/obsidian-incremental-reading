@@ -644,38 +644,39 @@ export default class IncrementalReadingPlugin extends Plugin {
             "Incremental Reading: ledger not ready for tree view.",
           );
         }
-        const view = new IrTreeView(
-          leaf,
-          this.ledger,
-          (elementId, file, priority) =>
+        return new IrTreeView(leaf, {
+          ledger: this.ledger,
+          commitPriority: (elementId, file, priority) =>
             this.applyIrPriorityChange(elementId, file, priority),
-          (elementId, file, dismissed) =>
+          commitDismiss: (elementId, file, dismissed) =>
             this.applyIrDismissChange(elementId, file, dismissed),
-          (elementId, file, days) =>
+          commitPostpone: (elementId, file, days) =>
             this.applyIrPostponeChange(elementId, file, days),
-          (elementId, newParentId) =>
+          commitReparent: (elementId, newParentId) =>
             this.applyIrReparent(elementId, newParentId),
-          (elementId, parentId) =>
+          commitDelete: (elementId, parentId) =>
             this.applyIrDelete(elementId, parentId),
-          (elementId, element) =>
+          commitPromote: (elementId, element) =>
             this.applyIrPromote(elementId, element),
-          (elementId, element) =>
+          commitReanchor: (elementId, element) =>
             this.applyIrReanchor(elementId, element),
-          (elementId) => void this.forkStoreExtract(elementId),
-          (elementId) => this.resumeReadingBookmark(elementId),
-          (elementId) => void this.startNeuralReview(elementId, null),
-          (elementId) =>
+          forkExtract: (elementId) => void this.forkStoreExtract(elementId),
+          resumeReading: (elementId) => this.resumeReadingBookmark(elementId),
+          startNeuralReview: (elementId) =>
+            void this.startNeuralReview(elementId, null),
+          revealInReview: (elementId) =>
             this.getActiveReviewView()?.jumpToElement(elementId) ?? false,
-          this.settings.treeDisplayMode,
-          (mode) => {
+          displayMode: this.settings.treeDisplayMode,
+          saveDisplayMode: (mode) => {
             this.settings.treeDisplayMode = mode;
             void this.saveSettings();
           },
-          (plan) => this.applyPriorityPlan(plan),
-          (preview, file) => this.applyIrPriorityPreview(preview, file),
-          this.getActiveReviewView()?.getCurrentElementId() ?? null,
-        );
-        return view;
+          commitPriorityPlan: (plan) => this.applyPriorityPlan(plan),
+          commitPriorityPreview: (preview, file) =>
+            this.applyIrPriorityPreview(preview, file),
+          initialCurrentElementId:
+            this.getActiveReviewView()?.getCurrentElementId() ?? null,
+        });
       },
     );
 
@@ -726,39 +727,41 @@ export default class IncrementalReadingPlugin extends Plugin {
         this.irReviewSession = null;
         const queue = session?.queue ?? [];
         const elementsById = session?.elementsById ?? new Map<ElementId, IrElement>();
-        const view = new IrReviewView(
-          leaf,
-          this,
-          this.settings,
-          this.ledger,
+        const view = new IrReviewView(leaf, {
+          plugin: this,
+          settings: this.settings,
+          ledger: this.ledger,
           queue,
           elementsById,
           isNeural,
-          () => void this.refreshStatusBar(),
-          () => void this.openIrActionsHub(),
-          (id) => {
+          onChange: () => void this.refreshStatusBar(),
+          openIrHub: () => void this.openIrActionsHub(),
+          onSlotChange: (id) => {
             this.notifyTreeOfReviewSlot(id);
             this.paintPdfHighlights();
           },
-          notifyWorkspaceFabSync,
-          () => this.undoLastGrade(),
-          (path) => this.decorationCache.rangesFor(path),
-          () => this.refreshExtractDecorations(),
-          (id, el) => this.applyIrPromote(id, el),
-          () => this.restoreEmptyReviewSession(),
-          (id, el) => this.applyIrReanchor(id, el),
-          (id, el) => this.applyIrDetachAnchor(id, el),
-          () => void this.startReview(),
+          onMobileChromeChange: notifyWorkspaceFabSync,
+          commitUndoLastGrade: () => this.undoLastGrade(),
+          getSourceExtractRanges: (path) => this.decorationCache.rangesFor(path),
+          refreshDecorations: () => this.refreshExtractDecorations(),
+          commitPromoteExtract: (id, el) => this.applyIrPromote(id, el),
+          restoreEmptySession: () => this.restoreEmptyReviewSession(),
+          commitReanchor: (id, el) => this.applyIrReanchor(id, el),
+          commitDetachAnchor: (id, el) => this.applyIrDetachAnchor(id, el),
+          startOutstandingDue: () => void this.startReview(),
           emptyVault,
-          (opts) => this.extractFromPdfInReview(opts),
+          commitPdfExtract: (opts) => this.extractFromPdfInReview(opts),
           nothingDue,
-          () => this.computeReviewUpcoming(),
-          () => void this.openTreeView(),
-          () => void this.openHelpView(),
-          (id, file, priority) => this.applyIrPriorityChange(id, file, priority),
-          (preview, file) => this.applyIrPriorityPreview(preview, file),
-          (orderedIds, cursor) => void this.persistSessionCursor(orderedIds, cursor),
-        );
+          getUpcoming: () => this.computeReviewUpcoming(),
+          openTreeFromIdlePane: () => void this.openTreeView(),
+          openHelpFromIdlePane: () => void this.openHelpView(),
+          commitPriority: (id, file, priority) =>
+            this.applyIrPriorityChange(id, file, priority),
+          commitPriorityPreview: (preview, file) =>
+            this.applyIrPriorityPreview(preview, file),
+          onSessionState: (orderedIds, cursor) =>
+            void this.persistSessionCursor(orderedIds, cursor),
+        });
         view.multiSelect = this.multiSelect;
         return view;
       },
