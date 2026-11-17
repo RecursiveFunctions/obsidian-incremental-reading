@@ -17,6 +17,12 @@ import {
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
+import {
+  segmentHue,
+  trackLabel,
+  trackSegments,
+  type DivergenceScale,
+} from "./ir/divergence-track";
 import { formatIntervalShort, previewGradeDelays, PREVIEW_GRADES } from "./ir/grade-preview";
 import { hasOcclusion } from "./ir/occlusion";
 import { fuzzyLocateInBody } from "./ir/fuzzy-text";
@@ -167,6 +173,10 @@ const IR_SWIPE_LEGEND_KEY = "incremental-reading:swipe-legend-seen";
 const IR_SWIPE_COACH_COUNT_KEY = "incremental-reading:swipe-coach-shown";
 const IR_SWIPE_COACH_MAX_SHOWS = 3;
 
+/** How the divergence bar sizes its segments. "log" keeps a 5-year and a
+ *  47-year proposal both visible; "linear" is proportional but hides the small one. */
+const DIVERGENCE_TRACK_SCALE: DivergenceScale = "linear";
+
 const GRADES: { grade: Grade; label: string; key: string }[] = [
   { grade: "again", label: "Again", key: "1" },
   { grade: "hard", label: "Hard", key: "2" },
@@ -177,6 +187,8 @@ const GRADES: { grade: Grade; label: string; key: string }[] = [
 export class IrReviewView extends ItemView {
   /** Drop repeated taps rather than queuing a mutation for the next card. */
   private readonly actionGate = new DropWhileBusyGate();
+  /** Removes the divergence bar's key listener, when one is installed. */
+  private divergenceKeyCleanup: (() => void) | null = null;
   /** A failed save leaves the current card and its editable buffer intact. */
   private editSaveError: string | null = null;
   private index = 0;
@@ -4494,35 +4506,79 @@ export class IrReviewView extends ItemView {
     const bar = createDiv({ cls: "ir-divergence-bar" });
     dock.prepend(bar);
 
+    const choose = (id: string) => {
+      cleanupKeys();
+      bar.remove();
+      if (id === "FSRS") {
+        void this.applyGrade(slot, fsrsCard, fsrsStored, g, false, effectiveRetention);
+        return;
+      }
+      const chosenDue = id === "DSR" ? div.dsrDue : div.sm2Due;
+      const chosenDays = id === "DSR" ? div.dsrIntervalDays : div.sm2IntervalDays;
+      const overridden = {
+        ...fsrsStored,
+        due: chosenDue,
+        scheduledDays: chosenDays,
+      };
+      void this.applyGrade(slot, storedToCard(overridden), overridden, g, true, effectiveRetention);
+    };
+
     bar.createSpan({
       cls: "ir-divergence-msg",
       text: div.config.message,
     });
 
-    const btnRow = bar.createDiv({ cls: "ir-divergence-buttons" });
+    // One segment per model, sized by its own proposal. Each is clickable, and
+    // the number keys choose the same model as the buttons below.
+    const segments = trackSegments(div.config.members, DIVERGENCE_TRACK_SCALE);
+    const track = bar.createDiv({ cls: "ir-divergence-track" });
+    for (const [i, seg] of segments.entries()) {
+      const cell = track.createDiv({ cls: "ir-divergence-seg" });
+      cell.style.flexGrow = String(Math.max(seg.share, 0.0001) * 1000);
+      cell.style.background = `hsl(${segmentHue(i, segments.length)} 70% 55% / 0.45)`;
+      cell.setAttribute("title", `${seg.id}: ${seg.intervalDays}d (press ${i + 1})`);
+      cell.createSpan({
+        cls: "ir-divergence-seg-label",
+        text: `${seg.id} ${trackLabel(seg.intervalDays)}`,
+      });
+      // Display only: the numbered buttons below and the 1..N keys are the
+      // controls, so the picture never competes with them for a click.
+    }
 
-    for (const m of div.config.members) {
+    const btnRow = bar.createDiv({ cls: "ir-divergence-buttons" });
+    for (const [i, m] of div.config.members.entries()) {
       const btn = btnRow.createEl("button", {
         cls: m.id === div.config.primaryId ? "mod-cta" : "",
-        text: `${m.id}: ${m.intervalDays}d`,
+        text: `${i + 1}. ${m.id}: ${m.intervalDays}d`,
       });
-      btn.addEventListener("click", () => {
-        bar.remove();
-        if (m.id === "FSRS") {
-          void this.applyGrade(slot, fsrsCard, fsrsStored, g, false, effectiveRetention);
-        } else {
-          const chosenDue = m.id === "DSR" ? div.dsrDue : div.sm2Due;
-          const chosenDays = m.id === "DSR" ? div.dsrIntervalDays : div.sm2IntervalDays;
-          const overridden = {
-            ...fsrsStored,
-            due: chosenDue,
-            scheduledDays: chosenDays,
-          };
-          const overriddenCard = storedToCard(overridden);
-          void this.applyGrade(slot, overriddenCard, overridden, g, true, effectiveRetention);
-        }
-      });
+      btn.addEventListener("click", () => choose(m.id));
     }
+
+    const cleanupKeys = () => {
+      document.removeEventListener("keydown", onKey, true);
+      if (this.divergenceKeyCleanup === cleanupKeys) this.divergenceKeyCleanup = null;
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (!bar.isConnected) {
+        cleanupKeys();
+        return;
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        cleanupKeys();
+        bar.remove();
+        return;
+      }
+      const idx = Number(ev.key) - 1;
+      if (!Number.isInteger(idx) || idx < 0 || idx >= div.config.members.length) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      choose(div.config.members[idx].id);
+    };
+    this.divergenceKeyCleanup?.();
+    this.divergenceKeyCleanup = cleanupKeys;
+    document.addEventListener("keydown", onKey, true);
   }
 
   private async next() {
