@@ -1,0 +1,287 @@
+{
+  "cases": [
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0,
+        "extraction_date": 42501.0,
+        "source_article": 2
+      },
+      "child_component_types": [
+        13
+      ],
+      "child_element_number": 4,
+      "kind": "extract",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 2
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0,
+        "extraction_date": 42501.0,
+        "source_article": 6
+      },
+      "child_component_types": [
+        13
+      ],
+      "child_element_number": 7,
+      "kind": "extract",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 6
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0,
+        "extraction_date": 42501.0,
+        "source_article": 14
+      },
+      "child_component_types": [
+        13
+      ],
+      "child_element_number": 15,
+      "kind": "extract",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 14
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0,
+        "extraction_date": 42501.0,
+        "source_article": 13
+      },
+      "child_component_types": [
+        13
+      ],
+      "child_element_number": 17,
+      "kind": "extract",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 13
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0,
+        "extraction_date": 42501.0,
+        "source_article": 13
+      },
+      "child_component_types": [
+        13
+      ],
+      "child_element_number": 18,
+      "kind": "extract",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 13
+    },
+    {
+      "child": {
+        "comment_registry_member": 3,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0,
+        "extraction_date": 42501.0,
+        "source_article": 13
+      },
+      "child_component_types": [
+        13
+      ],
+      "child_element_number": 19,
+      "kind": "extract",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 13
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 1,
+        "extraction_date": 42501.0,
+        "source_article": 2
+      },
+      "child_component_types": [
+        13,
+        13
+      ],
+      "child_element_number": 5,
+      "kind": "cloze",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 2
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 1,
+        "extraction_date": 42501.0,
+        "source_article": 6
+      },
+      "child_component_types": [
+        13,
+        13
+      ],
+      "child_element_number": 8,
+      "kind": "cloze",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 6
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 1,
+        "extraction_date": 42501.0,
+        "source_article": 6
+      },
+      "child_component_types": [
+        13,
+        13
+      ],
+      "child_element_number": 9,
+      "kind": "cloze",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 6
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 1,
+        "extraction_date": 42501.0,
+        "source_article": 13
+      },
+      "child_component_types": [
+        13,
+        13
+      ],
+      "child_element_number": 10,
+      "kind": "cloze",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 13
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 1,
+        "extraction_date": 42501.0,
+        "source_article": 6
+      },
+      "child_component_types": [
+        13,
+        13
+      ],
+      "child_element_number": 11,
+      "kind": "cloze",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 6
+    },
+    {
+      "child": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 1,
+        "extraction_date": 42501.0,
+        "source_article": 14
+      },
+      "child_component_types": [
+        13,
+        13
+      ],
+      "child_element_number": 16,
+      "kind": "cloze",
+      "parent": {
+        "comment_registry_member": 0,
+        "concept_definition_member": 0,
+        "concept_group_member": 1,
+        "element_type": 0
+      },
+      "parent_element_number": 14
+    }
+  ],
+  "child_only_fields": [
+    "source_article",
+    "extraction_date"
+  ],
+  "collection": "ABC of SuperMemo 18",
+  "inherited_fields": [
+    "element_type",
+    "concept_group_member",
+    "concept_definition_member",
+    "comment_registry_member"
+  ],
+  "note": "regenerate with scripts/export-port-ir-mechanics-fixture.py",
+  "schema": 1
+}
