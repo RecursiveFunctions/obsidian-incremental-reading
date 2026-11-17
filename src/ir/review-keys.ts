@@ -47,3 +47,48 @@ export function spacebarReviewAction(opts: {
   if (opts.spaceAfterReveal === "off") return { kind: "none" };
   return { kind: "grade", grade: opts.spaceAfterReveal };
 }
+
+/**
+ * True when `slotId` has not yet been graded in the active review session
+ * (or its grade was retracted via Undo). Prevents `Grade -> Previous -> Grade`
+ * from double-grading the same item in one session (`#33`).
+ */
+export function canGradeInSession(
+  slotId: string,
+  gradedSlotIds: ReadonlySet<string>,
+): boolean {
+  return !gradedSlotIds.has(slotId);
+}
+
+/**
+ * Remove a dismissed slot at `index` from the in-session queue so `Previous`
+ * cannot step back onto a dismissed card (`#33`). `nextIndex` points at the
+ * slot that shifted into `index` (or `queue.length` if the last card was
+ * dismissed).
+ */
+export function spliceDismissedSlot<T>(
+  queue: readonly T[],
+  index: number,
+): { queue: T[]; nextIndex: number; removed: T | undefined } {
+  const next = [...queue];
+  if (index < 0 || index >= next.length) {
+    return { queue: next, nextIndex: Math.max(0, Math.min(index, next.length)), removed: undefined };
+  }
+  const [removed] = next.splice(index, 1);
+  return { queue: next, nextIndex: index, removed };
+}
+
+/**
+ * Re-insert a previously dismissed slot at its original `index` when the user
+ * triggers session Undo.
+ */
+export function restoreDismissedSlot<T>(
+  queue: readonly T[],
+  index: number,
+  slot: T,
+): { queue: T[]; restoredIndex: number } {
+  const next = [...queue];
+  const restoredIndex = Math.min(Math.max(0, index), next.length);
+  next.splice(restoredIndex, 0, slot);
+  return { queue: next, restoredIndex };
+}

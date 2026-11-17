@@ -107,7 +107,13 @@ import {
 } from "./ir/reading-progress";
 import { findExtractRange } from "./ir/extract-range";
 import { resolveAnchor } from "./ir/anchor";
-import { spacebarReviewAction, isSpaceAfterReveal } from "./ir/review-keys";
+import {
+  canGradeInSession,
+  isSpaceAfterReveal,
+  restoreDismissedSlot,
+   spacebarReviewAction,
+  spliceDismissedSlot,
+} from "./ir/review-keys";
 import {
   buildTextQuoteAnchor,
   reviewSourceSplices,
@@ -298,10 +304,13 @@ export class IrReviewView extends ItemView {
   private lastReversible: {
     kind: "later" | "dismiss";
     index: number;
+    slot: ReviewSlot;
     slotId: ElementId;
     prevElement: IrElement;
     label: string;
   } | null = null;
+  /** Slots already graded in this session; prevents duplicate grading after Previous (#33). */
+  private gradedSlotIds = new Set<ElementId>();
 
   /** Thin session chrome; sibling of cardHost so it survives card re-renders. */
   private sessionBarEl?: HTMLElement;
@@ -2345,6 +2354,10 @@ export class IrReviewView extends ItemView {
         const btn = bar.createEl("button", {
           cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
         });
+        if (!canGradeInSession(slot.id, this.gradedSlotIds)) {
+          btn.disabled = true;
+          btn.title = "Already graded in this session — use Undo to re-grade";
+        }
         this.renderGradePreviewLabel(btn, gradePreview?.[grade]);
         btn.createSpan({ cls: "ir-review-grade-label", text: gLabel });
         btn.addEventListener("click", () => void this.grade(grade));
@@ -2370,6 +2383,10 @@ export class IrReviewView extends ItemView {
         const btn = bar.createEl("button", {
           cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
         });
+        if (!canGradeInSession(slot.id, this.gradedSlotIds)) {
+          btn.disabled = true;
+          btn.title = "Already graded in this session — use Undo to re-grade";
+        }
         this.renderGradePreviewLabel(btn, gradePreview?.[grade]);
         btn.createSpan({ cls: "ir-review-grade-label", text });
         btn.addEventListener("click", () => void this.grade(grade));
@@ -2512,6 +2529,7 @@ export class IrReviewView extends ItemView {
     this.sessionComplete = false;
     this.neuralEndedEarly = false;
     this.lastReversible = null;
+    this.gradedSlotIds.clear();
     this.resumeFromTop.clear();
     this.pendingEditSelection = null;
     this.clickToEditCaret = null;
@@ -2983,23 +3001,28 @@ export class IrReviewView extends ItemView {
       new Notice("Incremental Reading: nothing to undo.");
       return;
     }
+    this.gradedSlotIds.delete(result.targetId);
     this.flash(`Undid grade for "${result.targetLabel}"`);
+    try {
+      const state = await this.ledger.load();
+      const updated = state.elements.get(result.targetId);
+      if (updated) {
+        this.elementsById.set(result.targetId, updated);
+        for (const slot of this.queue) {
+          if (slot.element.id === result.targetId) {
+            slot.element = updated;
+          }
+        }
+      }
+    } catch (err) {
+      console.error(
+        "Incremental Reading: refresh after undo failed",
+        err,
+      );
+    }
     if (this.index > 0) {
       const prev = this.queue[this.index - 1];
       if (prev && prev.element.id === result.targetId) {
-        try {
-          const state = await this.ledger.load();
-          const updated = state.elements.get(result.targetId);
-          if (updated) {
-            prev.element = updated;
-            this.elementsById.set(result.targetId, updated);
-          }
-        } catch (err) {
-          console.error(
-            "Incremental Reading: refresh after undo failed",
-            err,
-          );
-        }
         void this.previous();
         return;
       }
@@ -3044,6 +3067,7 @@ export class IrReviewView extends ItemView {
     this.lastReversible = {
       kind,
       index: this.index,
+      slot,
       slotId: slot.id,
       prevElement,
       label: labelFor(prevElement),
@@ -3092,7 +3116,7 @@ export class IrReviewView extends ItemView {
     if (!undo) return;
     this.lastReversible = null;
 
-    const slot = this.queue[undo.index];
+    const slot = undo.slot ?? this.queue[undo.index];
     const restored = undo.prevElement;
     const file = slot?.file;
 
@@ -3128,6 +3152,14 @@ export class IrReviewView extends ItemView {
       slot.element = restored;
       this.elementsById.set(undo.slotId, restored);
     }
+    if (undo.kind === "dismiss" && slot) {
+      const reinsert = restoreDismissedSlot(this.queue, undo.index, slot);
+      this.queue = reinsert.queue;
+      this.index = reinsert.restoredIndex;
+    } else {
+      this.index = undo.index;
+    }
+    this.onSessionState?.(this.queue.map((s) => s.id), this.index);
     this.onChange?.();
     this.flash(
       undo.kind === "later"
@@ -3137,7 +3169,6 @@ export class IrReviewView extends ItemView {
 
     // Rewind to the card we just put back, so Undo lands you on the thing
     // you undid instead of leaving it behind in the queue.
-    this.index = undo.index;
     this.revealed = false;
     this.editing = false;
     this.loadedSlotId = null;
@@ -4422,6 +4453,10 @@ export class IrReviewView extends ItemView {
   private async gradeNow(g: Grade) {
     const slot = this.current;
     if (!slot) return;
+    if (!canGradeInSession(slot.id, this.gradedSlotIds)) {
+      new Notice("Incremental Reading: already graded in this session — use Undo to re-grade.");
+      return;
+    }
     if (!(await this.flushEdits())) return;
     // A grade is newer than any pending Later/Dismiss snapshot, and the
     // logged `grade-undone` path owns undo from here.
@@ -4471,6 +4506,7 @@ export class IrReviewView extends ItemView {
     };
     if (intervalOverridden) payload.overridden = true;
     await this.emit("graded", slot.id, payload);
+    this.gradedSlotIds.add(slot.id);
     slot.element = { ...slot.element, card: stored };
     if (slot.file) {
       await quietFrontmatterWrite(async () => {
@@ -4696,6 +4732,9 @@ export class IrReviewView extends ItemView {
     // screen, which renders the pending flash itself, so the confirmation is
     // no longer swallowed when you dismiss the thing you were finishing on.
     this.flash(`Dismissed · ${this.remainingAfterCurrent()} left`);
+    const spliced = spliceDismissedSlot(this.queue, this.index);
+    this.queue = spliced.queue;
+    this.index = spliced.nextIndex - 1;
     this.advance();
   }
 }
