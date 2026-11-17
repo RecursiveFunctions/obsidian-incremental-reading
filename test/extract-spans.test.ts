@@ -8,6 +8,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  bodyOffsetFromLineCh,
+  bodyOffsetOfFullCursor,
+  discoverStructuralExtractSpans,
   findAllBlockquotes,
   findAllListItems,
   findAllParagraphs,
@@ -208,3 +211,89 @@ test("findAllParagraphs: empty range returns []", () => {
 // bulk-extract idempotency now reads the ledger for existing anchor ranges
 // (see main.ts `existingExtractRangesForSource`) instead of scanning the
 // body for inline `<mark>` chrome.
+
+/* ------------------------------------------------------------------ */
+/* Offset translation helpers                                          */
+/* ------------------------------------------------------------------ */
+
+test("bodyOffsetOfFullCursor: accounts for YAML frontmatter and leading/trailing whitespace", () => {
+  const fullText = "---\nir-type: topic\n---\n\nFirst line\nSecond line\n\n";
+  const body = "First line\nSecond line";
+  assert.equal(bodyOffsetOfFullCursor(fullText, body, 0), 0);
+  const secondIdx = fullText.indexOf("Second");
+  assert.equal(
+    bodyOffsetOfFullCursor(fullText, body, secondIdx),
+    body.indexOf("Second"),
+  );
+  assert.equal(
+    bodyOffsetOfFullCursor(fullText, body, fullText.length),
+    body.length,
+  );
+});
+
+test("bodyOffsetFromLineCh: maps 0-based line/ch into body offset", () => {
+  const body = "alpha\nbeta\ngamma";
+  assert.equal(bodyOffsetFromLineCh(body, 0, 2), 2);
+  assert.equal(bodyOffsetFromLineCh(body, 1, 0), 6);
+  assert.equal(bodyOffsetFromLineCh(body, 2, 3), 14);
+  assert.equal(bodyOffsetFromLineCh(body, 99, 99), body.length);
+});
+
+/* ------------------------------------------------------------------ */
+/* discoverStructuralExtractSpans                                      */
+/* ------------------------------------------------------------------ */
+
+test("discoverStructuralExtractSpans: cursor-only vs selection-bounded candidates", () => {
+  const body = [
+    "# Section",
+    "",
+    "Intro paragraph.",
+    "",
+    "> Quote one",
+    "",
+    "> Quote two",
+    "",
+    "- Item A",
+    "- Item B",
+  ].join("\n");
+
+  const cursorInIntro = body.indexOf("Intro");
+  const withoutSelection = discoverStructuralExtractSpans(
+    body,
+    cursorInIntro,
+    null,
+  );
+  assert.deepEqual(
+    withoutSelection.map((c) => c.kind),
+    ["paragraph", "heading", "blockquotes"],
+  );
+  assert.equal(withoutSelection[2]!.spans.length, 2);
+
+  const selectionFull: Span = { start: 0, end: body.length };
+  const withSelection = discoverStructuralExtractSpans(
+    body,
+    cursorInIntro,
+    selectionFull,
+  );
+  assert.deepEqual(
+    withSelection.map((c) => c.kind),
+    ["paragraph", "heading", "blockquotes", "list-items", "paragraphs"],
+  );
+  assert.equal(withSelection[3]!.spans.length, 2);
+});
+
+test("discoverStructuralExtractSpans: single blockquote surfaces only when selected", () => {
+  const body = "Intro\n\n> Only quote\n";
+  const cursor = body.indexOf("Intro");
+  assert.deepEqual(
+    discoverStructuralExtractSpans(body, cursor, null).map((c) => c.kind),
+    ["paragraph"],
+  );
+  assert.deepEqual(
+    discoverStructuralExtractSpans(body, cursor, {
+      start: 0,
+      end: body.length,
+    }).map((c) => c.kind),
+    ["paragraph", "blockquotes", "paragraphs"],
+  );
+});

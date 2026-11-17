@@ -149,11 +149,8 @@ import {
   type SwipeOutcome,
 } from "./ir/review-touch-gestures";
 import {
-  findAllBlockquotes,
-  findAllListItems,
-  findAllParagraphs,
-  findHeadingSectionAtOffset,
-  findParagraphAtOffset,
+  bodyOffsetFromLineCh,
+  discoverStructuralExtractSpans,
   type Span,
 } from "./ir/extract-spans";
 import type { IrHubEntry } from "./ir-actions-radial";
@@ -4034,8 +4031,9 @@ export class IrReviewView extends ItemView {
     }
 
     const reading = this.isReading(slot);
-    if (reading || !slot.file) return out;
+    if (!reading || !slot.file) return out;
 
+    const sourceFile = slot.file;
     const body = this.currentRaw;
     const cursor = this.reviewBodyCursor(hasSel ? selRes : null);
     const range: Span | null =
@@ -4043,53 +4041,25 @@ export class IrReviewView extends ItemView {
         ? { start: selRes.start, end: selRes.end }
         : null;
 
-    if (findParagraphAtOffset(body, cursor)) {
+    for (const candidate of discoverStructuralExtractSpans(
+      body,
+      cursor,
+      range,
+    )) {
+      const singleCursorExtract =
+        candidate.kind === "paragraph" || candidate.kind === "heading";
       out.push({
-        title: "Extract paragraph at cursor",
-        icon: "pilcrow",
-        run: () => void this.extractSpanInReview(
-          findParagraphAtOffset(body, cursor)!,
-        ),
+        title: candidate.title,
+        icon: candidate.icon,
+        run: singleCursorExtract
+          ? () => void this.extractSpanInReview(candidate.spans[0]!)
+          : () =>
+              void onBulkExtract(
+                sourceFile,
+                candidate.spans,
+                candidate.headline,
+              ),
       });
-    }
-    if (findHeadingSectionAtOffset(body, cursor)) {
-      out.push({
-        title: "Extract heading section",
-        icon: "heading",
-        run: () => void this.extractSpanInReview(
-          findHeadingSectionAtOffset(body, cursor)!,
-        ),
-      });
-    }
-
-    const bqs = findAllBlockquotes(body, range ?? undefined);
-    if (bqs.length >= 2 || (bqs.length === 1 && range)) {
-      out.push({
-        title: `Extract every blockquote (${bqs.length})`,
-        icon: "quote",
-        run: () =>
-          void onBulkExtract(slot.file!, bqs, "Blockquotes extracted"),
-      });
-    }
-    if (range) {
-      const items = findAllListItems(body, range);
-      if (items.length >= 2) {
-        out.push({
-          title: `Extract every list item (${items.length})`,
-          icon: "list",
-          run: () =>
-            void onBulkExtract(slot.file!, items, "List items extracted"),
-        });
-      }
-      const paras = findAllParagraphs(body, range);
-      if (paras.length >= 2) {
-        out.push({
-          title: `Extract every paragraph (${paras.length})`,
-          icon: "align-left",
-          run: () =>
-            void onBulkExtract(slot.file!, paras, "Paragraphs extracted"),
-        });
-      }
     }
 
     return out;
@@ -4108,18 +4078,9 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (slot && this.isReading(slot)) {
       const bm = getBookmark(this.bookmarks, slot.id);
-      if (bm) return this.bodyOffsetFromLineCh(this.currentRaw, bm.line, bm.ch);
+      if (bm) return bodyOffsetFromLineCh(this.currentRaw, bm.line, bm.ch);
     }
     return 0;
-  }
-
-  private bodyOffsetFromLineCh(body: string, line: number, ch: number): number {
-    const lines = body.split("\n");
-    let off = 0;
-    const cap = Math.min(line, lines.length - 1);
-    for (let i = 0; i < cap; i += 1) off += lines[i]!.length + 1;
-    if (line < lines.length) off += Math.min(ch, lines[line]!.length);
-    return Math.min(body.length, Math.max(0, off));
   }
 
   private async extractSpanInReview(span: Span): Promise<void> {

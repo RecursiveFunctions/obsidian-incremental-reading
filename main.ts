@@ -188,12 +188,15 @@ import {
   type EditorSelectionSnapshot,
 } from "./src/ir/editor-selection-snapshot";
 import {
+  bodyOffsetOfFullCursor,
+  discoverStructuralExtractSpans,
   findAllBlockquotes,
   findAllListItems,
   findAllParagraphs,
   findHeadingSectionAtOffset,
   findParagraphAtOffset,
   type Span,
+  type StructuralExtractKind,
 } from "./src/ir/extract-spans";
 import {
   openIrRadialQuickMenu,
@@ -2353,7 +2356,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     const cursor = editor.posToOffset(editor.getCursor());
     const fullText = editor.getValue();
     const body = stripFrontmatter(fullText);
-    const cursorInBody = this.bodyOffsetOfFullCursor(fullText, body, cursor);
+    const cursorInBody = bodyOffsetOfFullCursor(fullText, body, cursor);
     const span = findParagraphAtOffset(body, cursorInBody);
     if (!span) {
       new Notice(
@@ -2372,7 +2375,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     const cursor = editor.posToOffset(editor.getCursor());
     const fullText = editor.getValue();
     const body = stripFrontmatter(fullText);
-    const cursorInBody = this.bodyOffsetOfFullCursor(fullText, body, cursor);
+    const cursorInBody = bodyOffsetOfFullCursor(fullText, body, cursor);
     const span = findHeadingSectionAtOffset(body, cursorInBody);
     if (!span) {
       new Notice(
@@ -2385,28 +2388,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       [span],
       "Heading section extracted",
     );
-  }
-
-  /**
-   * Translate a full-file cursor offset to its body-relative offset. The
-   * body the span-finders work on excludes the YAML block AND any blank
-   * lines between the frontmatter and the first prose line, so a naive
-   * `cursor - (fullText.length - body.length)` over-corrects whenever the
-   * note has trailing whitespace (which `stripFrontmatter` also trims).
-   */
-  private bodyOffsetOfFullCursor(
-    fullText: string,
-    body: string,
-    cursor: number,
-  ): number {
-    const fm = fullText.match(/^---\n[\s\S]*?\n---\n?/);
-    const fmLen = fm ? fm[0].length : 0;
-    const afterFm = fullText.slice(fmLen);
-    const leadingWs = afterFm.length - afterFm.trimStart().length;
-    const bodyStartInFull = fmLen + leadingWs;
-    if (cursor <= bodyStartInFull) return 0;
-    const offset = cursor - bodyStartInFull;
-    return Math.min(body.length, Math.max(0, offset));
   }
 
   /**
@@ -5054,90 +5035,40 @@ export default class IncrementalReadingPlugin extends Plugin {
     file: TFile,
     selection: string,
   ): IrHubEntry[] {
-    const out: IrHubEntry[] = [];
     this.restoreHubSelection(file, editor);
     const fullText = editor.getValue();
     const body = stripFrontmatter(fullText);
     const cursor = editor.posToOffset(editor.getCursor());
-    const cursorInBody = this.bodyOffsetOfFullCursor(fullText, body, cursor);
+    const cursorInBody = bodyOffsetOfFullCursor(fullText, body, cursor);
     const range = selection
       ? this.editorSelectionAsBodyRange(editor, fullText, body)
       : null;
 
-    if (findParagraphAtOffset(body, cursorInBody)) {
-      out.push({
-        title: "Extract paragraph at cursor",
-        description:
-          "Anchored extract of the paragraph the cursor sits in. No selection needed.",
-        icon: "pilcrow",
-        run: () =>
-          this.runMarkdownHubAction(file, (ed, f) =>
-            this.extractParagraphAtCursor(ed, f),
-          ),
-      });
-    }
+    return discoverStructuralExtractSpans(body, cursorInBody, range).map(
+      (candidate) => ({
+        title: candidate.title,
+        description: candidate.description,
+        icon: candidate.icon,
+        run: () => this.runStructuralExtract(file, candidate.kind),
+      }),
+    );
+  }
 
-    if (findHeadingSectionAtOffset(body, cursorInBody)) {
-      out.push({
-        title: "Extract heading section at cursor",
-        description:
-          "Anchored extract from the nearest preceding heading down to the next same-or-higher heading.",
-        icon: "heading",
-        run: () =>
-          this.runMarkdownHubAction(file, (ed, f) =>
-            this.extractHeadingSectionAtCursor(ed, f),
-          ),
-      });
-    }
-
-    // Blockquotes: scope to selection when present, else whole note. Surface
-    // when there are at least 2 (or 1 with an explicit selection — then the
-    // user clearly meant "extract this quote"). A 1-quote whole-note hit is
-    // redundant with the regular Extract command.
-    const bqs = findAllBlockquotes(body, range ?? undefined);
-    if (bqs.length >= 2 || (bqs.length === 1 && range !== null)) {
-      out.push({
-        title: `Extract every blockquote (${bqs.length})`,
-        description: range
-          ? `Anchored extract per contiguous blockquote in your selection (${bqs.length} found).`
-          : `Anchored extract per contiguous blockquote in this note (${bqs.length} found).`,
-        icon: "quote",
-        run: () =>
-          this.runMarkdownHubAction(file, (ed, f) =>
-            this.extractEveryBlockquote(ed, f),
-          ),
-      });
-    }
-
-    if (range) {
-      const items = findAllListItems(body, range);
-      if (items.length >= 2) {
-        out.push({
-          title: `Extract every list item (${items.length})`,
-          description: `One anchored extract per bullet/numbered item in the selection (${items.length} found). Indent-aware: nested items split into their own extracts.`,
-          icon: "list",
-          run: () =>
-            this.runMarkdownHubAction(file, (ed, f) =>
-              this.extractEveryListItemInSelection(ed, f),
-            ),
-        });
+  private runStructuralExtract(file: TFile, kind: StructuralExtractKind): void {
+    this.runMarkdownHubAction(file, (ed, f) => {
+      switch (kind) {
+        case "paragraph":
+          return this.extractParagraphAtCursor(ed, f);
+        case "heading":
+          return this.extractHeadingSectionAtCursor(ed, f);
+        case "blockquotes":
+          return this.extractEveryBlockquote(ed, f);
+        case "list-items":
+          return this.extractEveryListItemInSelection(ed, f);
+        case "paragraphs":
+          return this.extractEveryParagraphInSelection(ed, f);
       }
-
-      const paras = findAllParagraphs(body, range);
-      if (paras.length >= 2) {
-        out.push({
-          title: `Extract every paragraph (${paras.length})`,
-          description: `One anchored extract per blank-line-separated block in the selection (${paras.length} found).`,
-          icon: "align-left",
-          run: () =>
-            this.runMarkdownHubAction(file, (ed, f) =>
-              this.extractEveryParagraphInSelection(ed, f),
-            ),
-        });
-      }
-    }
-
-    return out;
+    });
   }
 
   /**

@@ -293,3 +293,152 @@ export function findAllParagraphs(body: string, range: Span): Span[] {
   }
   return out;
 }
+
+/* ------------------------------------------------------------------ */
+/* Offset translation helpers                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Translate a full-file cursor offset to its body-relative offset. The
+ * body the span-finders work on excludes the YAML block AND any blank
+ * lines between the frontmatter and the first prose line, so a naive
+ * `cursor - (fullText.length - body.length)` over-corrects whenever the
+ * note has trailing whitespace (which `stripFrontmatter` also trims).
+ */
+export function bodyOffsetOfFullCursor(
+  fullText: string,
+  body: string,
+  cursor: number,
+): number {
+  const fm = fullText.match(/^---\n[\s\S]*?\n---\n?/);
+  const fmLen = fm ? fm[0].length : 0;
+  const afterFm = fullText.slice(fmLen);
+  const leadingWs = afterFm.length - afterFm.trimStart().length;
+  const bodyStartInFull = fmLen + leadingWs;
+  if (cursor <= bodyStartInFull) return 0;
+  const offset = cursor - bodyStartInFull;
+  return Math.min(body.length, Math.max(0, offset));
+}
+
+/** Body offset of a 0-based `{line, ch}` position within `body`. */
+export function bodyOffsetFromLineCh(
+  body: string,
+  line: number,
+  ch: number,
+): number {
+  if (line <= 0 && ch <= 0) return 0;
+  const lines = body.split("\n");
+  if (line >= lines.length) return body.length;
+  let off = 0;
+  for (let i = 0; i < line; i += 1) off += lines[i]!.length + 1;
+  off += Math.min(Math.max(0, ch), lines[line]!.length);
+  return Math.min(body.length, Math.max(0, off));
+}
+
+/* ------------------------------------------------------------------ */
+/* discoverStructuralExtractSpans                                      */
+/* ------------------------------------------------------------------ */
+
+export type StructuralExtractKind =
+  | "paragraph"
+  | "heading"
+  | "blockquotes"
+  | "list-items"
+  | "paragraphs";
+
+export interface StructuralExtractCandidate {
+  kind: StructuralExtractKind;
+  title: string;
+  description: string;
+  icon: string;
+  spans: Span[];
+  headline: string;
+}
+
+/**
+ * Which structural extract commands apply to a cursor/selection state,
+ * in menu priority order: cursor-driven (paragraph, heading section)
+ * first, then selection-bounded bulk extracts. Both the editor radial
+ * menu and the review-pane hub menu render from this list so their
+ * applicability rules (and counts) can never drift apart; each adapter
+ * supplies its own run targets.
+ */
+export function discoverStructuralExtractSpans(
+  body: string,
+  cursor: number,
+  range?: Span | null,
+): StructuralExtractCandidate[] {
+  const out: StructuralExtractCandidate[] = [];
+
+  const paragraph = findParagraphAtOffset(body, cursor);
+  if (paragraph) {
+    out.push({
+      kind: "paragraph",
+      title: "Extract paragraph at cursor",
+      description:
+        "Anchored extract of the paragraph the cursor sits in. No selection needed.",
+      icon: "pilcrow",
+      spans: [paragraph],
+      headline: "Paragraph extracted",
+    });
+  }
+
+  const heading = findHeadingSectionAtOffset(body, cursor);
+  if (heading) {
+    out.push({
+      kind: "heading",
+      title: "Extract heading section at cursor",
+      description:
+        "Anchored extract from the nearest preceding heading down to the next same-or-higher heading.",
+      icon: "heading",
+      spans: [heading],
+      headline: "Heading section extracted",
+    });
+  }
+
+  // Blockquotes: scope to selection when present, else whole note. Surface
+  // when there are at least 2 (or 1 with an explicit selection — then the
+  // user clearly meant "extract this quote"). A 1-quote whole-note hit is
+  // redundant with the regular Extract command.
+  const bqs = findAllBlockquotes(body, range ?? undefined);
+  if (bqs.length >= 2 || (bqs.length === 1 && range)) {
+    out.push({
+      kind: "blockquotes",
+      title: `Extract every blockquote (${bqs.length})`,
+      description: range
+        ? `Anchored extract per contiguous blockquote in your selection (${bqs.length} found).`
+        : `Anchored extract per contiguous blockquote in this note (${bqs.length} found).`,
+      icon: "quote",
+      spans: bqs,
+      headline: "Blockquotes extracted",
+    });
+  }
+
+  if (range) {
+    const items = findAllListItems(body, range);
+    if (items.length >= 2) {
+      out.push({
+        kind: "list-items",
+        title: `Extract every list item (${items.length})`,
+        description: `One anchored extract per bullet/numbered item in the selection (${items.length} found). Indent-aware: nested items split into their own extracts.`,
+        icon: "list",
+        spans: items,
+        headline: "List items extracted",
+      });
+    }
+
+    const paragraphs = findAllParagraphs(body, range);
+    if (paragraphs.length >= 2) {
+      out.push({
+        kind: "paragraphs",
+        title: `Extract every paragraph (${paragraphs.length})`,
+        description: `One anchored extract per blank-line-separated block in the selection (${paragraphs.length} found).`,
+        icon: "align-left",
+        spans: paragraphs,
+        headline: "Paragraphs extracted",
+      });
+    }
+  }
+
+  return out;
+}
