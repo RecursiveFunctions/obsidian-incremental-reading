@@ -278,9 +278,7 @@
   "collection": "ABC of SuperMemo 18",
   "inherited_fields": [
     "element_type",
-    "concept_group_member",
-    "concept_definition_member",
-    "comment_registry_member"
+    "concept_group_member"
   ],
   "note": "regenerate with scripts/export-port-ir-mechanics-fixture.py",
   "schema": 1

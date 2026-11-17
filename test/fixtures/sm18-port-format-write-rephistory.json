@@ -1,0 +1,183 @@
+{
+  "excluded_oversize": [
+    "Cyber (31690 records)"
+  ],
+  "files": [
+    {
+      "byte_length": 0,
+      "collection": "ABC of SuperMemo 18",
+      "expected_bytes_b64": "",
+      "path": "systems/ABC of SuperMemo 18/info/RepetitionHistory.dat",
+      "record_count": 0,
+      "records": []
+    },
+    {
+      "byte_length": 1794,
+      "collection": "Net+",
+      "expected_bytes_b64": "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",
+      "path": "systems/Net+/info/RepetitionHistory.dat",
+      "record_count": 46,
+      "records": [
+        {
+          "raw_b64": "AgAAAAAAAAABAAAAAAAAt+VAiAAAAAB/C///AQAAAAAAAgAAAAD/"
+        },
+        {
+          "raw_b64": "AgAAAAEAAAABAEwouVI7t+VAhcjxVvAjCf//AQAAAAAAAQEAAAD/"
+        },
+        {
+          "raw_b64": "AwAAAAEAAAAAAEMIK1c7t+VAhZIxAgskCf//AQAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "AwAAAAIAAAAAAIstK1c7t+VAhUIRAwskDP//AQAAAAAAAgMAAAD/"
+        },
+        {
+          "raw_b64": "BAAAAAEAAAAAAEFBi1k7t+VAhYaHQxkkCf//AQAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "BAAAAAIAAAAAAJuFi1k7t+VAhaIhRRkkDP//AQAAAAAAAgUAAAD/"
+        },
+        {
+          "raw_b64": "BQAAAAEAAAAAAMgPqXE7t+VAhbBe9qkkCf//AQAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "BQAAAAIAAAAAALRHqXE7t+VAhTiu96kkDP//AQAAAAAAAgcAAAD/"
+        },
+        {
+          "raw_b64": "BgAAAAEAAAAAAG1CvXI7t+VAhY6Ob7AkCf//AQAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "BwAAAAEAAAAAACaYa4Y7t+VAheSQhSYlCf//AQAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "BwAAAAIAAAAAAErWa4Y7t+VAhbwFhyYlDP//AQAAAAAAAgoAAAD/"
+        },
+        {
+          "raw_b64": "CAAAAAEAAAAAAHRVPYc7t+VAhbgAcCslCf//AQAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "CQAAAAEAAAAAADpRdKE7t+VAhVznucglCf//AQAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "CQAAAAIAAAAAACeJdKE7t+VAheo2u8glDP//AQAAAAAAAg0AAAD/"
+        },
+        {
+          "raw_b64": "CgAAAAEAAAAAAKMhHqs7t+VAhdLJtAImCf//AQAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "CgAAAAIAAAAAAHg/H6s7t+VAhdB8uwImDP//AQAAAAAAAg8AAAD/"
+        },
+        {
+          "raw_b64": "CwAAAAEAAAAAAHOTZrA7t+VAhbJ0ZyImCf//AQAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "DAAAAAEAAAAAAM1Hybw7t+VAhc6ut2wmCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "DQAAAAEAAAAAAFiRIL47t+VAhRBow3QmCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "DQAAAAIAAAAAAHvPIL47t+VAheLcxHQmDP//AgAAAAAAAhMAAAD/"
+        },
+        {
+          "raw_b64": "DgAAAAEAAAAAAPHqar87t+VAhaaBgXwmCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "DgAAAAIAAAAAAHAWa787t+VAhaCGgnwmDP//AgAAAAAAAhUAAAD/"
+        },
+        {
+          "raw_b64": "DwAAAAEAAAAAAM8Nr8g7t+VAhdpSGrQmCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "EAAAAAEAAAAAAFAGINs7t+VAheAlwCInCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "EQAAAAEAAAAAAGVGeeM7t+VAhV6m11QnCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "EQAAAAIAAAAAABt4eeM7t+VAhaLQ2FQnDP//AgAAAAAAAhkAAAD/"
+        },
+        {
+          "raw_b64": "EgAAAAEAAAAAAK54h+o7t+VAhRTULH8nCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "EwAAAAEAAAAAALS/UO47t+VAhTh+5JUnCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "EwAAAAIAAAAAAKH3UO47t+VAhcbN5ZUnDP//AgAAAAAAAhwAAAD/"
+        },
+        {
+          "raw_b64": "FAAAAAEAAAAAAPn7T/I7t+VAhdbn360nCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "FAAAAAIAAAAAAPdSUPI7t+VAhcrx4a0nDP//AgAAAAAAAh4AAAD/"
+        },
+        {
+          "raw_b64": "FQAAAAEAAAAAAFYwAwM8t+VAhQQiExIoCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "FgAAAAEAAAAAANs9K0w8t+VAhSJzA8kpCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "FgAAAAIAAAAAAMh1K0w8t+VAhbDCBMkpDP//AgAAAAAAAiEAAAD/"
+        },
+        {
+          "raw_b64": "FwAAAAEAAAAAAIupCE88t+VAhUL5M9opCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "GAAAAAEAAAAAAKAvqVo8t+VAhcAd9x8qCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "GQAAAAEAAAAAAMLt42s8t+VAhYySV4cqCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "GQAAAAIAAAAAAOYr5Gs8t+VAhWQHWYcqDP//AgAAAAAAAiUAAAD/"
+        },
+        {
+          "raw_b64": "GgAAAAEAAAAAAOcHJW08t+VAhWov3o4qCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "GwAAAAEAAAAAAMrWSHc8t+VAhbwItcsqCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "GwAAAAIAAAAAAIAISXc8t+VAhQAztssqDP//AgAAAAAAAigAAAD/"
+        },
+        {
+          "raw_b64": "HAAAAAEAAAAAAP622Hs8t+VAhfRJFOcqCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "HAAAAAIAAAAAACH12Hs8t+VAhca+FecqDP//AgAAAAAAAioAAAD/"
+        },
+        {
+          "raw_b64": "HQAAAAEAAAAAANQPOX88t+VAhfheVvsqCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "HgAAAAEAAAAAAIums4M8t+VAhULnNRYrCf//AgAAAAAAAQAAAAD/"
+        },
+        {
+          "raw_b64": "HgAAAAIAAAAAAK7ks4M8t+VAhRRcNxYrDP//AgAAAAAAAi0AAAD/"
+        }
+      ]
+    },
+    {
+      "byte_length": 78,
+      "collection": "SANS",
+      "expected_bytes_b64": "AAAAAAAAAAAAAAAAAAAAAAAAiAAAAAB/C////////wAAAAAAAAD/AAAAAAAAAAAAAAAAAAAAAAAAiAAAAAB/C////////wAAAAAAAAD/",
+      "path": "systems/SANS/info/RepetitionHistory.dat",
+      "record_count": 2,
+      "records": [
+        {
+          "raw_b64": "AAAAAAAAAAAAAAAAAAAAAAAAiAAAAAB/C////////wAAAAAAAAD/"
+        },
+        {
+          "raw_b64": "AAAAAAAAAAAAAAAAAAAAAAAAiAAAAAB/C////////wAAAAAAAAD/"
+        }
+      ]
+    }
+  ],
+  "max_records_per_file": 1000,
+  "note": "regenerate with scripts/export-port-format-write-rephistory-fixture.py",
+  "schema": 1,
+  "scope": [
+    "repetition_history"
+  ]
+}

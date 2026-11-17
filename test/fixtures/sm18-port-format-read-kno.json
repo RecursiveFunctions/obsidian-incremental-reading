@@ -1,0 +1,1480 @@
+{
+  "files": [
+    {
+      "byte_length": 950,
+      "bytes_b64": "PgAAAAAAAABpAAAAFgAAAAAAANo6AQAKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACDAAAAACCDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKh/yf/fyb+/mbhQAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAADAAAAAAAAAAEAAAAAAAAABgAAAAAAAAAFAAAAAAAAAAQAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "collection": "ABC of SuperMemo 18",
+      "path": "systems/ABC of SuperMemo 18.KNO",
+      "record": {
+        "deleted_element_count": 0,
+        "element_count": 62,
+        "format_version": 22,
+        "next_element_id": 105,
+        "unknown_0x00d": {
+          "hex": "000000000000da3a"
+        },
+        "unknown_0x015": {
+          "hex": "01000a0000000000"
+        },
+        "unknown_0x01d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x025": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x02d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x035": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x03d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x045": {
+          "hex": "0000000000830000"
+        },
+        "unknown_0x04d": {
+          "hex": "0000208300000000"
+        },
+        "unknown_0x055": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x05d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x065": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x06d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x075": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x07d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x085": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x08d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x095": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x09d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0c5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x105": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x10d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x115": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x11d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x125": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x12d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x135": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x13d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x145": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x14d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x155": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x15d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x165": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x16d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x175": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x17d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x185": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x18d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x195": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x19d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1c5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x205": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x20d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x215": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x21d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x225": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x22d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x235": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x23d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x245": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x24d": {
+          "hex": "000000000a87fc9f"
+        },
+        "unknown_0x255": {
+          "hex": "fdfc9bfbf99b8500"
+        },
+        "unknown_0x25d": {
+          "hex": "0000001c00000000"
+        },
+        "unknown_0x265": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x26d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x275": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x27d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x285": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x28d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x295": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x29d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2c5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x305": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x30d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x315": {
+          "hex": "0002000000000000"
+        },
+        "unknown_0x31d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x325": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x32d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x335": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x33d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x345": {
+          "hex": "0001000000000000"
+        },
+        "unknown_0x34d": {
+          "hex": "0001000000000000"
+        },
+        "unknown_0x355": {
+          "hex": "0003000000000000"
+        },
+        "unknown_0x35d": {
+          "hex": "0001000000000000"
+        },
+        "unknown_0x365": {
+          "hex": "0006000000000000"
+        },
+        "unknown_0x36d": {
+          "hex": "0005000000000000"
+        },
+        "unknown_0x375": {
+          "hex": "0004000000000000"
+        },
+        "unknown_0x37d": {
+          "hex": "0002000000000000"
+        },
+        "unknown_0x385": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x38d": {
+          "hex": "0001000000000000"
+        },
+        "unknown_0x395": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x39d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x3a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x3ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x3b5": {
+          "hex": "00"
+        }
+      }
+    },
+    {
+      "byte_length": 950,
+      "bytes_b64": "h0EAANI2AADyRQAAFolyfHZ2Dto6mAAJhf4IjUc87iUAAAAAAACIxQpUUAKEfkokdBuCgf8ZBhV/OZXSF1eInt3H8RaDMHykQRqERs5gCC6DAAAAAAABAA4AHwBmAIYAywANAXgAYgC3BOUAswBtALUAvADDAKIA4wOYAQAAhgBLAFgAdwBpAP4BUgJqB14CEwGKARoAAQDUDTQDHAF5ACUAEQADAAEAAQAAAAEAAAAAAAAAAAAIBmcFPwQNAscANgAXAAYABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGTE8V5gi/M/8iUAAOclAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKh/yf/fyb+/mbhQAAAAB8EwAA2RIAAIl/IygnQQAAAAAAAAAAAAAAAAAAAAAAAIGtGBGhTgAAAAAAAIe9MioiRYHQhv9MIYeiPtTVUAAAAAAAAAYALAGbAGoAChN+CG8BYQM0AR8ACQALAAIAAQAAAAAAAACeAGAAsQA6AEEAfgIHBOwPSgsUAAAAAAAAABgVDgpKAwMBVAAgAAsAAwABAAEAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwCJAAAAABYJAIkAAAAAejgAjAAAAEADtACNAAAAYAbrAIwAAAAAL4gBjQAAAEBnUAKOAAAAECQLBI8AAABoJggEjwAAAKhFBQSPAAAAgG06A48AAAC4OlgBjgAAAOArKgKOAAAAsGUjAo8AAAB4Ap0CjgAAACB9RQOPAAAA0ATkAo4AAAAgZEkCjgAAAIAJLQCKAAAAAC8=",
+      "collection": "Cyber",
+      "path": "systems/Cyber.Kno",
+      "record": {
+        "deleted_element_count": 14034,
+        "element_count": 16775,
+        "format_version": 22,
+        "next_element_id": 17906,
+        "unknown_0x00d": {
+          "hex": "89727c76760eda3a"
+        },
+        "unknown_0x015": {
+          "hex": "98000985fe088d47"
+        },
+        "unknown_0x01d": {
+          "hex": "3cee250000000000"
+        },
+        "unknown_0x025": {
+          "hex": "0088c50a54500284"
+        },
+        "unknown_0x02d": {
+          "hex": "7e4a24741b8281ff"
+        },
+        "unknown_0x035": {
+          "hex": "1906157f3995d217"
+        },
+        "unknown_0x03d": {
+          "hex": "57889eddc7f11683"
+        },
+        "unknown_0x045": {
+          "hex": "307ca4411a8446ce"
+        },
+        "unknown_0x04d": {
+          "hex": "60082e8300000000"
+        },
+        "unknown_0x055": {
+          "hex": "0001000e001f0066"
+        },
+        "unknown_0x05d": {
+          "hex": "008600cb000d0178"
+        },
+        "unknown_0x065": {
+          "hex": "006200b704e500b3"
+        },
+        "unknown_0x06d": {
+          "hex": "006d00b500bc00c3"
+        },
+        "unknown_0x075": {
+          "hex": "00a200e303980100"
+        },
+        "unknown_0x07d": {
+          "hex": "0086004b00580077"
+        },
+        "unknown_0x085": {
+          "hex": "006900fe0152026a"
+        },
+        "unknown_0x08d": {
+          "hex": "075e0213018a011a"
+        },
+        "unknown_0x095": {
+          "hex": "000100d40d34031c"
+        },
+        "unknown_0x09d": {
+          "hex": "0179002500110003"
+        },
+        "unknown_0x0a5": {
+          "hex": "0001000100000001"
+        },
+        "unknown_0x0ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0b5": {
+          "hex": "00080667053f040d"
+        },
+        "unknown_0x0bd": {
+          "hex": "02c7003600170006"
+        },
+        "unknown_0x0c5": {
+          "hex": "0004000000000000"
+        },
+        "unknown_0x0cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x105": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x10d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x115": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x11d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x125": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x12d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x135": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x13d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x145": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x14d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x155": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x15d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x165": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x16d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x175": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x17d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x185": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x18d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x195": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x19d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1c5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1ed": {
+          "hex": "00000000000064c4"
+        },
+        "unknown_0x1f5": {
+          "hex": "f15e608bf33ff225"
+        },
+        "unknown_0x1fd": {
+          "hex": "0000e72500000000"
+        },
+        "unknown_0x205": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x20d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x215": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x21d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x225": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x22d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x235": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x23d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x245": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x24d": {
+          "hex": "000000000a87fc9f"
+        },
+        "unknown_0x255": {
+          "hex": "fdfc9bfbf99b8500"
+        },
+        "unknown_0x25d": {
+          "hex": "0000007c130000d9"
+        },
+        "unknown_0x265": {
+          "hex": "120000897f232827"
+        },
+        "unknown_0x26d": {
+          "hex": "4100000000000000"
+        },
+        "unknown_0x275": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x27d": {
+          "hex": "00000081ad1811a1"
+        },
+        "unknown_0x285": {
+          "hex": "4e00000000000087"
+        },
+        "unknown_0x28d": {
+          "hex": "bd322a224581d086"
+        },
+        "unknown_0x295": {
+          "hex": "ff4c2187a23ed4d5"
+        },
+        "unknown_0x29d": {
+          "hex": "5000000000000006"
+        },
+        "unknown_0x2a5": {
+          "hex": "002c019b006a000a"
+        },
+        "unknown_0x2ad": {
+          "hex": "137e086f01610334"
+        },
+        "unknown_0x2b5": {
+          "hex": "011f0009000b0002"
+        },
+        "unknown_0x2bd": {
+          "hex": "0001000000000000"
+        },
+        "unknown_0x2c5": {
+          "hex": "009e006000b1003a"
+        },
+        "unknown_0x2cd": {
+          "hex": "0041007e020704ec"
+        },
+        "unknown_0x2d5": {
+          "hex": "0f4a0b1400000000"
+        },
+        "unknown_0x2dd": {
+          "hex": "00000018150e0a4a"
+        },
+        "unknown_0x2e5": {
+          "hex": "030301540020000b"
+        },
+        "unknown_0x2ed": {
+          "hex": "0003000100010001"
+        },
+        "unknown_0x2f5": {
+          "hex": "0000000100000000"
+        },
+        "unknown_0x2fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x305": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x30d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x315": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x31d": {
+          "hex": "0003008900000000"
+        },
+        "unknown_0x325": {
+          "hex": "1609008900000000"
+        },
+        "unknown_0x32d": {
+          "hex": "7a38008c00000040"
+        },
+        "unknown_0x335": {
+          "hex": "03b4008d00000060"
+        },
+        "unknown_0x33d": {
+          "hex": "06eb008c00000000"
+        },
+        "unknown_0x345": {
+          "hex": "2f88018d00000040"
+        },
+        "unknown_0x34d": {
+          "hex": "6750028e00000010"
+        },
+        "unknown_0x355": {
+          "hex": "240b048f00000068"
+        },
+        "unknown_0x35d": {
+          "hex": "2608048f000000a8"
+        },
+        "unknown_0x365": {
+          "hex": "4505048f00000080"
+        },
+        "unknown_0x36d": {
+          "hex": "6d3a038f000000b8"
+        },
+        "unknown_0x375": {
+          "hex": "3a58018e000000e0"
+        },
+        "unknown_0x37d": {
+          "hex": "2b2a028e000000b0"
+        },
+        "unknown_0x385": {
+          "hex": "6523028f00000078"
+        },
+        "unknown_0x38d": {
+          "hex": "029d028e00000020"
+        },
+        "unknown_0x395": {
+          "hex": "7d45038f000000d0"
+        },
+        "unknown_0x39d": {
+          "hex": "04e4028e00000020"
+        },
+        "unknown_0x3a5": {
+          "hex": "6449028e00000080"
+        },
+        "unknown_0x3ad": {
+          "hex": "092d008a00000000"
+        },
+        "unknown_0x3b5": {
+          "hex": "2f"
+        }
+      }
+    },
+    {
+      "byte_length": 950,
+      "bytes_b64": "HgAAAA0AAAANAAAAFgAAAAAAAJQ7AQAKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACDAAAAACCDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKh/yf/fyb+/mbhQAAAAAAAAAAAAAAAIQAAAAAUAAAAAAAAAAAAAAAAAAAAAAAAIEAAAAAAAAAAAAAAIEAAAAAAIGamZmZGYEAAAAAAAAAAAAAAAAAAAAAAAAADQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "collection": "Net+",
+      "path": "systems/Net+.Kno",
+      "record": {
+        "deleted_element_count": 13,
+        "element_count": 30,
+        "format_version": 22,
+        "next_element_id": 13,
+        "unknown_0x00d": {
+          "hex": "000000000000943b"
+        },
+        "unknown_0x015": {
+          "hex": "01000a0000000000"
+        },
+        "unknown_0x01d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x025": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x02d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x035": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x03d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x045": {
+          "hex": "0000000000830000"
+        },
+        "unknown_0x04d": {
+          "hex": "0000208300000000"
+        },
+        "unknown_0x055": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x05d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x065": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x06d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x075": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x07d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x085": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x08d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x095": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x09d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0c5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x105": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x10d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x115": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x11d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x125": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x12d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x135": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x13d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x145": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x14d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x155": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x15d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x165": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x16d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x175": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x17d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x185": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x18d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x195": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x19d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1c5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x205": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x20d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x215": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x21d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x225": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x22d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x235": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x23d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x245": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x24d": {
+          "hex": "000000000a87fc9f"
+        },
+        "unknown_0x255": {
+          "hex": "fdfc9bfbf99b8500"
+        },
+        "unknown_0x25d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x265": {
+          "hex": "0000008400000000"
+        },
+        "unknown_0x26d": {
+          "hex": "5000000000000000"
+        },
+        "unknown_0x275": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x27d": {
+          "hex": "0000008100000000"
+        },
+        "unknown_0x285": {
+          "hex": "0000000000000081"
+        },
+        "unknown_0x28d": {
+          "hex": "0000000000819a99"
+        },
+        "unknown_0x295": {
+          "hex": "9999198100000000"
+        },
+        "unknown_0x29d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2a5": {
+          "hex": "000000000000000d"
+        },
+        "unknown_0x2ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2c5": {
+          "hex": "000d000000000000"
+        },
+        "unknown_0x2cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2dd": {
+          "hex": "0000000d00000000"
+        },
+        "unknown_0x2e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x305": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x30d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x315": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x31d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x325": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x32d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x335": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x33d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x345": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x34d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x355": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x35d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x365": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x36d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x375": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x37d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x385": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x38d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x395": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x39d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x3a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x3ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x3b5": {
+          "hex": "00"
+        }
+      }
+    },
+    {
+      "byte_length": 950,
+      "bytes_b64": "AQAAAAAAAAADAAAAFgAAAAAAAJI7AQAKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACDAAAAACCDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKh/yf/fyb+/mbhQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "collection": "SANS",
+      "path": "systems/SANS.Kno",
+      "record": {
+        "deleted_element_count": 0,
+        "element_count": 1,
+        "format_version": 22,
+        "next_element_id": 3,
+        "unknown_0x00d": {
+          "hex": "000000000000923b"
+        },
+        "unknown_0x015": {
+          "hex": "01000a0000000000"
+        },
+        "unknown_0x01d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x025": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x02d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x035": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x03d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x045": {
+          "hex": "0000000000830000"
+        },
+        "unknown_0x04d": {
+          "hex": "0000208300000000"
+        },
+        "unknown_0x055": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x05d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x065": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x06d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x075": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x07d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x085": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x08d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x095": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x09d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0c5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x0fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x105": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x10d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x115": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x11d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x125": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x12d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x135": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x13d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x145": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x14d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x155": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x15d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x165": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x16d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x175": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x17d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x185": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x18d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x195": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x19d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1c5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x1fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x205": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x20d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x215": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x21d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x225": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x22d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x235": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x23d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x245": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x24d": {
+          "hex": "000000000a87fc9f"
+        },
+        "unknown_0x255": {
+          "hex": "fdfc9bfbf99b8500"
+        },
+        "unknown_0x25d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x265": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x26d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x275": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x27d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x285": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x28d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x295": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x29d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2b5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2bd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2c5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2cd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2d5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2dd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2e5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2ed": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2f5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x2fd": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x305": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x30d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x315": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x31d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x325": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x32d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x335": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x33d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x345": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x34d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x355": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x35d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x365": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x36d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x375": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x37d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x385": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x38d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x395": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x39d": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x3a5": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x3ad": {
+          "hex": "0000000000000000"
+        },
+        "unknown_0x3b5": {
+          "hex": "00"
+        }
+      }
+    }
+  ],
+  "note": "regenerate with scripts/export-port-format-read-kno-fixture.py",
+  "record_size": 950,
+  "schema": 1,
+  "scope": [
+    "kno"
+  ],
+  "verified_fields": [
+    "element_count",
+    "deleted_element_count",
+    "next_element_id",
+    "format_version"
+  ]
+}

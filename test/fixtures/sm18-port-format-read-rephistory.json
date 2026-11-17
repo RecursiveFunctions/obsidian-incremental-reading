@@ -1,0 +1,423 @@
+{
+  "excluded_oversize": [
+    "Cyber (31690 records)"
+  ],
+  "files": [
+    {
+      "byte_length": 0,
+      "bytes_b64": "",
+      "collection": "ABC of SuperMemo 18",
+      "path": "systems/ABC of SuperMemo 18/info/RepetitionHistory.dat",
+      "record_count": 0,
+      "records": []
+    },
+    {
+      "byte_length": 1794,
+      "bytes_b64": "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",
+      "collection": "Net+",
+      "path": "systems/Net+/info/RepetitionHistory.dat",
+      "record_count": 46,
+      "records": [
+        {
+          "element_id": 2,
+          "grade": 11,
+          "interval_days": 1,
+          "lapse_count": 0,
+          "repetition_date": 44472.0,
+          "repetition_number": 0
+        },
+        {
+          "element_id": 2,
+          "grade": 9,
+          "interval_days": 1,
+          "lapse_count": 0,
+          "repetition_date": 44473.85384805556,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 3,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.854390636574,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 3,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.854390706016,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 4,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.85468065972,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 4,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.85468078704,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 5,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.85762456019,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 5,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.85762466435,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 6,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.857756261576,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 7,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86015872685,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 7,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.860158842595,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 8,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86025873842,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 9,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86345878472,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 9,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86345888889,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 10,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.864638391206,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 10,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86463892361,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 11,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.865283287036,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 12,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86679519676,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 13,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86695888889,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 13,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86695900463,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 14,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86711641204,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 14,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86711649306,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 15,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.86824753472,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 16,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.870498668985,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 17,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.871517789354,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 17,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.87151788195,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 18,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.872379050925,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 19,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.87284123842,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 19,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.87284134259,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 20,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.873329155096,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 20,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.87332931713,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 21,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.87536773148,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 22,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.88429796296,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 22,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.88429806713,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 23,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.88464768518,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 24,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.88606700231,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 25,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.88817020833,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 25,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.88817032408,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 26,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.88832332176,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 27,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.88956109954,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 27,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.88956119213,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 28,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.89011798611,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 28,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.89011810185,
+          "repetition_number": 2
+        },
+        {
+          "element_id": 29,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.89053013889,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 30,
+          "grade": 9,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.891076875,
+          "repetition_number": 1
+        },
+        {
+          "element_id": 30,
+          "grade": 12,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 44473.89107699074,
+          "repetition_number": 2
+        }
+      ]
+    },
+    {
+      "byte_length": 78,
+      "bytes_b64": "AAAAAAAAAAAAAAAAAAAAAAAAiAAAAAB/C////////wAAAAAAAAD/AAAAAAAAAAAAAAAAAAAAAAAAiAAAAAB/C////////wAAAAAAAAD/",
+      "collection": "SANS",
+      "path": "systems/SANS/info/RepetitionHistory.dat",
+      "record_count": 2,
+      "records": [
+        {
+          "element_id": 0,
+          "grade": 11,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 0.0,
+          "repetition_number": 0
+        },
+        {
+          "element_id": 0,
+          "grade": 11,
+          "interval_days": 0,
+          "lapse_count": 0,
+          "repetition_date": 0.0,
+          "repetition_number": 0
+        }
+      ]
+    }
+  ],
+  "max_records_per_file": 1000,
+  "note": "regenerate with scripts/export-port-format-read-rephistory-fixture.py",
+  "schema": 1,
+  "scope": [
+    "repetition_history"
+  ]
+}
