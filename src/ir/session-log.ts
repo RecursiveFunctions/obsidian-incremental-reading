@@ -64,7 +64,7 @@ export function sessionEntries(
       kind: ev.kind,
       elementId: ev.target,
       label: el ? treeRowLabel(el) : ev.target,
-      notePath: el?.notePath,
+      notePath: el?.notePath ?? el?.anchor?.sourcePath,
     });
   }
   out.sort((a, b) => b.ts - a.ts);

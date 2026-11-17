@@ -77,9 +77,26 @@ export class IrSessionView extends ItemView {
 
   async onClose(): Promise<void> {}
 
+  private renderToken = 0;
+
   /** Re-render from the ledger. Safe to call repeatedly. */
   async render(): Promise<void> {
+    const token = ++this.renderToken;
     const container = this.contentEl;
+
+    let entries: SessionEntry[];
+    let loadFailed = false;
+    try {
+      const state = await this.ledger.load();
+      const events = await this.ledger.loadEvents();
+      entries = sessionEntries(events, state.elements, this.sessionStartMs);
+    } catch (e) {
+      console.error("Incremental Reading: session log load failed", e);
+      entries = [];
+      loadFailed = true;
+    }
+    if (token !== this.renderToken) return;
+
     container.empty();
     container.addClass("ir-session-view");
 
@@ -87,14 +104,7 @@ export class IrSessionView extends ItemView {
     header.createEl("h4", { text: "IR session log" });
 
     const body = container.createDiv({ cls: "ir-session-body" });
-
-    let entries: SessionEntry[];
-    try {
-      const state = await this.ledger.load();
-      const events = await this.ledger.loadEvents();
-      entries = sessionEntries(events, state.elements, this.sessionStartMs);
-    } catch (e) {
-      console.error("Incremental Reading: session log load failed", e);
+    if (loadFailed) {
       body.createEl("p", {
         text: "Could not load the session log. See the developer console.",
       });

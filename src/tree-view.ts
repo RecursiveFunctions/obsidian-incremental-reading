@@ -288,6 +288,7 @@ export class IrTreeView extends ItemView {
 
   async onClose(): Promise<void> {
     this.renderToken += 1;
+    this.cancelPendingClick();
     if (this.chunkRafId !== null) {
       cancelAnimationFrame(this.chunkRafId);
       this.chunkRafId = null;
@@ -1021,7 +1022,11 @@ export class IrTreeView extends ItemView {
   }
 
   private filterForcesExpand(): boolean {
-    return this.filterText.trim().length > 0 || this.visibleTypes.size < 3;
+    return (
+      this.filterText.trim().length > 0 ||
+      this.visibleTypes.size < 3 ||
+      this.visibleStates.size < 3
+    );
   }
 
   private rowIsCollapsed(id: string): boolean {

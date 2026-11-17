@@ -74,7 +74,10 @@ export class IrStatsView extends ItemView {
     return this.render();
   }
 
+  private renderToken = 0;
+
   private async render(): Promise<void> {
+    const token = ++this.renderToken;
     const container = this.contentEl;
     container.empty();
     container.addClass("ir-stats-view");
@@ -93,6 +96,7 @@ export class IrStatsView extends ItemView {
 
     const events = await this.ledger.loadEvents();
     const state = await this.ledger.load();
+    if (token !== this.renderToken) return;
     const now = Date.now();
     const undoneEventIds = new Set<string>();
     for (const ev of events) {

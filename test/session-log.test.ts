@@ -117,3 +117,23 @@ test("sessionEntries: Infinity start (no review yet) yields empty", () => {
   );
   assert.equal(entries.length, 0);
 });
+
+test("sessionEntries: anchored extract falls back to anchor.sourcePath (#41)", () => {
+  const anchored: IrElement = {
+    ...el("ex1"),
+    type: "extract",
+    text: "Extracted quote",
+    anchor: {
+      sourcePath: "Notes/Source.md",
+      quote: { exact: "Extracted quote", prefix: "", suffix: "" },
+    },
+  };
+  const byId = new Map([[anchored.id, anchored]]);
+  const entries = sessionEntries(
+    [ev({ id: "e1", ts: NOW + 1, kind: "element-created", target: "ex1" })],
+    byId,
+    NOW,
+  );
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].notePath, "Notes/Source.md");
+});
