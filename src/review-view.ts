@@ -252,6 +252,12 @@ export class IrReviewView extends ItemView {
       this.setReviewControlsDisabled(true);
       try {
         return await action();
+      } catch (err) {
+        console.error("Incremental Reading: review action failed", err);
+        new Notice(
+          `Incremental Reading: review action failed — ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return undefined;
       } finally {
         this.contentEl.removeAttribute("aria-busy");
         this.setReviewControlsDisabled(false);
@@ -4546,7 +4552,9 @@ export class IrReviewView extends ItemView {
       cleanupKeys();
       bar.remove();
       if (id === "FSRS") {
-        void this.applyGrade(slot, fsrsCard, fsrsStored, g, false, effectiveRetention);
+        void this.runAction(() =>
+          this.applyGrade(slot, fsrsCard, fsrsStored, g, false, effectiveRetention),
+        );
         return;
       }
       const chosenDue = id === "DSR" ? div.dsrDue : div.sm2Due;
@@ -4556,7 +4564,9 @@ export class IrReviewView extends ItemView {
         due: chosenDue,
         scheduledDays: chosenDays,
       };
-      void this.applyGrade(slot, storedToCard(overridden), overridden, g, true, effectiveRetention);
+      void this.runAction(() =>
+        this.applyGrade(slot, storedToCard(overridden), overridden, g, true, effectiveRetention),
+      );
     };
 
     bar.createSpan({

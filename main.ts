@@ -47,6 +47,7 @@ import {
   computeUpcoming,
   disposeStatusBar,
   renderStatusBar,
+  renderStatusBarError,
   type UpcomingLoad,
 } from "./src/status-bar";
 import {
@@ -1599,6 +1600,12 @@ export default class IncrementalReadingPlugin extends Plugin {
       if (refreshDecorations) void this.refreshExtractDecorations(state);
     } catch (e) {
       console.error("Incremental Reading: status bar refresh failed", e);
+      setWorkspaceIrFabDue(0);
+      renderStatusBarError(
+        this.statusBarEl,
+        () => void this.startReview(),
+        (evt) => this.showStatusBarMenu(evt),
+      );
     }
   }
 
@@ -2943,40 +2950,47 @@ export default class IncrementalReadingPlugin extends Plugin {
       );
       return;
     }
-    const state = await this.ledger.load();
-    if (state.elements.size === 0) {
-      await this.openReviewWithSession(
-        {
-          queue: [],
-          elementsById: state.elements,
-          emptyVault: true,
-        },
-        EMPTY_COLLECTION_COPY,
-      );
-      return;
-    }
-    const now = Date.now();
-    await this.ensureDailyAnalytics(state, now);
-    const queue = policyReviewQueue(this.app, state,
-      this.queuePolicy("due", new Date(now).setHours(0, 0, 0, 0)), new Date(now));
-    if (queue.length === 0) {
-      // Nothing due, but the collection is not empty: open the review pane
-      // on its nothing-due panel so the user gets the next due time and the
-      // week's load instead of a toast that answers nothing.
-      await this.openReviewWithSession(
-        {
-          queue: [],
-          elementsById: state.elements,
-          nothingDue: computeUpcoming(state.elements.values(), Date.now()),
-        },
-        "Incremental Reading: nothing due for review.",
-      );
-      return;
-    }
+    try {
+      const state = await this.ledger.load();
+      if (state.elements.size === 0) {
+        await this.openReviewWithSession(
+          {
+            queue: [],
+            elementsById: state.elements,
+            emptyVault: true,
+          },
+          EMPTY_COLLECTION_COPY,
+        );
+        return;
+      }
+      const now = Date.now();
+      await this.ensureDailyAnalytics(state, now);
+      const queue = policyReviewQueue(this.app, state,
+        this.queuePolicy("due", new Date(now).setHours(0, 0, 0, 0)), new Date(now));
+      if (queue.length === 0) {
+        // Nothing due, but the collection is not empty: open the review pane
+        // on its nothing-due panel so the user gets the next due time and the
+        // week's load instead of a toast that answers nothing.
+        await this.openReviewWithSession(
+          {
+            queue: [],
+            elementsById: state.elements,
+            nothingDue: computeUpcoming(state.elements.values(), Date.now()),
+          },
+          "Incremental Reading: nothing due for review.",
+        );
+        return;
+      }
 
-    this.beginReviewSession();
-    await this.saveNewSessionSnapshot("due", queue, new Date(now).setHours(0, 0, 0, 0));
-    await this.openReviewWithSession({ queue, elementsById: state.elements });
+      this.beginReviewSession();
+      await this.saveNewSessionSnapshot("due", queue, new Date(now).setHours(0, 0, 0, 0));
+      await this.openReviewWithSession({ queue, elementsById: state.elements });
+    } catch (e) {
+      console.error("Incremental Reading: start review failed", e);
+      new Notice(
+        `Incremental Reading: could not start review — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   /**

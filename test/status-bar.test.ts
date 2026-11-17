@@ -7,6 +7,8 @@ import {
   endOfDayMs,
   formatLoad,
   formatLoadTooltip,
+  renderStatusBar,
+  renderStatusBarError,
 } from "../src/status-bar";
 import type { IrElement, IrEvent } from "../src/ir/model";
 import type { ElementId, EventId, DeviceId } from "../src/ir/ids";
@@ -378,4 +380,58 @@ test("describeNextDue: minutes, today, tomorrow, weekday, far future", () => {
 
 test("describeNextDue: a due time already past reads as now", () => {
   assert.equal(describeNextDue(NOW - 1000, NOW), "now");
+});
+
+test("renderStatusBarError replaces stale due counts and clears has-due (#32)", () => {
+  const classes = new Set<string>();
+  const attrs = new Map<string, string>();
+  const spans: Array<{ cls: string; text: string }> = [];
+  const fakeEl = {
+    empty() {
+      spans.length = 0;
+    },
+    addClass(c: string) {
+      classes.add(c);
+    },
+    removeClass(c: string) {
+      classes.delete(c);
+    },
+    createSpan(opts: { cls: string; text: string }) {
+      spans.push(opts);
+      return opts;
+    },
+    setAttribute(k: string, v: string) {
+      attrs.set(k, v);
+    },
+    onclick: null as (() => void) | null,
+    oncontextmenu: null as ((evt: MouseEvent) => void) | null,
+  } as unknown as HTMLElement;
+
+  renderStatusBar(fakeEl, {
+    due: 5,
+    later: 0,
+    postponed: 2,
+    inflow7d: 3,
+    dueByType: { topic: 2, extract: 1, item: 2 },
+  });
+  assert.equal(classes.has("has-due"), true);
+  assert.equal(classes.has("ir-status-bar-error"), false);
+  assert.equal(spans[0]?.text, "5 due");
+
+  renderStatusBarError(fakeEl);
+  assert.equal(classes.has("has-due"), false);
+  assert.equal(classes.has("ir-status-bar-error"), true);
+  assert.deepEqual(spans, [{ cls: "ir-status-bar-due", text: "IR: ledger error" }]);
+  assert.match(attrs.get("aria-label") ?? "", /could not read the ledger/);
+
+  // Recovery clears the error class and restores normal display
+  renderStatusBar(fakeEl, {
+    due: 0,
+    later: 0,
+    postponed: 0,
+    inflow7d: 0,
+    dueByType: { topic: 0, extract: 0, item: 0 },
+  });
+  assert.equal(classes.has("ir-status-bar-error"), false);
+  assert.equal(spans[0]?.text, "0 due");
 });

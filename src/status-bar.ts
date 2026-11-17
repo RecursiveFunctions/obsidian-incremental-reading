@@ -236,6 +236,7 @@ export function renderStatusBar(
 ): void {
   el.empty();
   el.addClass("ir-status-bar");
+  el.removeClass("ir-status-bar-error");
   if (load.due > 0) el.addClass("has-due");
   else el.removeClass("has-due");
 
@@ -263,10 +264,31 @@ export function renderStatusBar(
     : null;
 }
 
+export function renderStatusBarError(
+  el: HTMLElement,
+  onClick?: () => void,
+  onContextMenu?: (evt: MouseEvent) => void,
+): void {
+  el.empty();
+  el.addClass("ir-status-bar");
+  el.removeClass("has-due");
+  el.addClass("ir-status-bar-error");
+  el.createSpan({ cls: "ir-status-bar-due", text: "IR: ledger error" });
+  el.setAttribute(
+    "aria-label",
+    "IR queue: could not read the ledger. Click to inspect or see the developer console.",
+  );
+  el.onclick = onClick ? () => onClick() : null;
+  el.oncontextmenu = onContextMenu
+    ? (evt) => onContextMenu(evt)
+    : null;
+}
+
 export function disposeStatusBar(el: HTMLElement): void {
   el.empty();
   el.removeClass("ir-status-bar");
   el.removeClass("has-due");
+  el.removeClass("ir-status-bar-error");
   el.onclick = null;
   el.oncontextmenu = null;
   el.removeAttribute("aria-label");
