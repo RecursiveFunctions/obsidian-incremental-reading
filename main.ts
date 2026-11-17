@@ -96,6 +96,7 @@ import {
   computeElementHistoryCounts,
   planAdvancedPostpone,
   planAutoPostpone,
+  planManualPostpone,
   planMercy,
   type MercyEntry,
 } from "./src/ir/mercy";
@@ -3476,15 +3477,24 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     if (!this.ledger) return;
     const now = Date.now();
-    const newDue = addLocalDays(now, days);
+    const state = await this.ledger.load();
+    const el = state.elements.get(elementId);
+    const currentDue = el?.type === "item" ? el.card?.due : el?.schedule?.due;
+    const { previousDue, newDue } = planManualPostpone(currentDue, now, days);
+    const device = await this.ledger.getDeviceId();
     await this.ledger.appendEvent({
       id: newEventId(),
       ts: now,
       lamport: now,
-      device: await this.ledger.getDeviceId(),
+      device,
       kind: "mercy-postponed",
       target: elementId,
-      payload: { newDue },
+      payload: {
+        newDue,
+        ...(previousDue !== undefined ? { previousDue } : {}),
+        batchId: `manual-postpone:${device}:${now}`,
+        operation: "manual-postpone",
+      },
     });
     await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after postpone failed", e);

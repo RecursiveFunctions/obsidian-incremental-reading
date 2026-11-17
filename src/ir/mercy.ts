@@ -369,6 +369,19 @@ function addLocalDays(ms: number, days: number): number {
   return d.getTime();
 }
 
+export function planManualPostpone(
+  currentDue: number | undefined,
+  nowMs: number,
+  days: number,
+): { previousDue: number | undefined; newDue: number } {
+  const anchor =
+    currentDue !== undefined && Number.isFinite(currentDue)
+      ? Math.max(currentDue, nowMs)
+      : nowMs;
+  const newDue = addLocalDays(anchor, days);
+  return { previousDue: currentDue, newDue };
+}
+
 function combineLocalDate(dateMs: number, sourceMs: number, fallbackMs: number): number {
   const date = new Date(dateMs);
   const source = new Date(Number.isFinite(sourceMs) ? sourceMs : fallbackMs);

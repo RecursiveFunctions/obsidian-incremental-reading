@@ -13,10 +13,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_MERCY_WEIGHTS,
+  addLocalDays,
   computeElementHistoryCounts,
   computeMercyOrdinals,
   planAdvancedPostpone,
   planAutoPostpone,
+  planManualPostpone,
   planMercy,
   redistribute,
   resolveBranchDelay,
@@ -291,4 +293,29 @@ test("buildMercyLoadChart separates existing scheduled load from newly postponed
   assert.equal(d3.totalCount, 1);
   assert.equal(d3.existingPct, 0);
   assert.equal(d3.postponedPct, 50);
+});
+
+test("planManualPostpone anchors to max(currentDue, now) and never moves future-due items backwards", () => {
+  const now = new Date(2026, 2, 15, 12, 0, 0).getTime();
+
+  // Overdue or undefined currentDue anchors to now
+  const overdue = addLocalDays(now, -3);
+  const rOverdue = planManualPostpone(overdue, now, 7);
+  assert.equal(rOverdue.previousDue, overdue);
+  assert.equal(rOverdue.newDue, addLocalDays(now, 7));
+
+  const rMissing = planManualPostpone(undefined, now, 3);
+  assert.equal(rMissing.previousDue, undefined);
+  assert.equal(rMissing.newDue, addLocalDays(now, 3));
+
+  // Future-due (+5d, +34d, +100d, +400d) anchors to currentDue + days, strictly > currentDue
+  for (const futureOffsetDays of [5, 34, 100, 400]) {
+    const futureDue = addLocalDays(now, futureOffsetDays);
+    for (const days of [1, 3, 7]) {
+      const r = planManualPostpone(futureDue, now, days);
+      assert.equal(r.previousDue, futureDue);
+      assert.equal(r.newDue, addLocalDays(futureDue, days));
+      assert.ok(r.newDue > futureDue, `expected newDue > futureDue for +${futureOffsetDays}d postponed by ${days}d`);
+    }
+  }
 });
