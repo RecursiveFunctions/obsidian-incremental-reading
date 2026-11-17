@@ -1561,59 +1561,67 @@ export class IrTreeView extends ItemView {
     return abs instanceof TFile ? abs : null;
   }
 
-  private async bulkDismiss(
-    dismissed: boolean,
+  private async runBulkSelectionAction(
     ids: ElementId[],
+    verb: string,
+    errorLabel: string,
+    step: (state: LogState, el: IrElement) => Promise<boolean>,
   ): Promise<void> {
-    if (!this.commitDismiss) return;
     const state = await this.ledger.load();
     let ok = 0;
     let fail = 0;
     for (const id of ids) {
       const el = state.elements.get(id);
       if (!el) continue;
-      if (el.dismissed === dismissed) continue;
       try {
-        await this.commitDismiss(id, this.fileForElement(state, id), dismissed);
-        ok += 1;
+        if (await step(state, el)) ok += 1;
       } catch (err) {
-        console.error("Incremental Reading: bulk dismiss failed", err);
+        console.error(`Incremental Reading: ${errorLabel} failed`, err);
         fail += 1;
       }
     }
-    new Notice(this.bulkSummary(dismissed ? "Dismissed" : "Restored", ok, fail));
+    new Notice(this.bulkSummary(verb, ok, fail));
     this.selectedIds.clear();
     this.selectionAnchorId = null;
     void this.render();
+  }
+
+  private async bulkDismiss(
+    dismissed: boolean,
+    ids: ElementId[],
+  ): Promise<void> {
+    const commitDismiss = this.commitDismiss;
+    if (!commitDismiss) return;
+    await this.runBulkSelectionAction(
+      ids,
+      dismissed ? "Dismissed" : "Restored",
+      "bulk dismiss",
+      async (state, el) => {
+        if (el.dismissed === dismissed) return false;
+        await commitDismiss(el.id, this.fileForElement(state, el.id), dismissed);
+        return true;
+      },
+    );
   }
 
   private async bulkPostpone(days: number, ids: ElementId[]): Promise<void> {
-    if (!this.commitPostpone) return;
-    const state = await this.ledger.load();
-    let ok = 0;
-    let fail = 0;
-    for (const id of ids) {
-      const el = state.elements.get(id);
-      if (!el || el.dismissed) continue;
-      try {
-        await this.commitPostpone(id, this.fileForElement(state, id), days);
-        ok += 1;
-      } catch (err) {
-        console.error("Incremental Reading: bulk postpone failed", err);
-        fail += 1;
-      }
-    }
-    new Notice(
-      this.bulkSummary(`Postponed ${days}d`, ok, fail),
+    const commitPostpone = this.commitPostpone;
+    if (!commitPostpone) return;
+    await this.runBulkSelectionAction(
+      ids,
+      `Postponed ${days}d`,
+      "bulk postpone",
+      async (state, el) => {
+        if (el.dismissed) return false;
+        await commitPostpone(el.id, this.fileForElement(state, el.id), days);
+        return true;
+      },
     );
-    this.selectedIds.clear();
-    this.selectionAnchorId = null;
-    void this.render();
   }
 
   private async bulkDelete(ids: ElementId[]): Promise<void> {
-    if (!this.commitDelete) return;
-    if (ids.length === 0) return;
+    const commitDelete = this.commitDelete;
+    if (!commitDelete || ids.length === 0) return;
     const plural = ids.length !== 1;
     const okToDelete = await promptConfirm(this.app, {
       title: `Delete ${ids.length} selected element${plural ? "s" : ""}?`,
@@ -1623,24 +1631,15 @@ export class IrTreeView extends ItemView {
       ctaText: `Delete ${ids.length}`,
     });
     if (!okToDelete) return;
-    const state = await this.ledger.load();
-    let ok = 0;
-    let fail = 0;
-    for (const id of ids) {
-      const el = state.elements.get(id);
-      if (!el) continue;
-      try {
-        await this.commitDelete(id, el.parentId);
-        ok += 1;
-      } catch (err) {
-        console.error("Incremental Reading: bulk delete failed", err);
-        fail += 1;
-      }
-    }
-    new Notice(this.bulkSummary("Deleted", ok, fail));
-    this.selectedIds.clear();
-    this.selectionAnchorId = null;
-    void this.render();
+    await this.runBulkSelectionAction(
+      ids,
+      "Deleted",
+      "bulk delete",
+      async (_state, el) => {
+        await commitDelete(el.id, el.parentId);
+        return true;
+      },
+    );
   }
 
   private bulkSummary(verb: string, ok: number, fail: number): string {

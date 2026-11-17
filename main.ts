@@ -3175,63 +3175,102 @@ export default class IncrementalReadingPlugin extends Plugin {
     placement: ReturnType<typeof buildPriorityPlacement>;
     file?: TFile | null;
   }[]): Promise<void> {
-    if (!this.ledger || changes.length === 0) return;
-    let lamport = await this.ledger.nextLamport();
-    const now = Date.now();
+    await this.commitLedgerEvents(
+      "priority",
+      changes.map((change) => ({
+        kind: "priority-set" as const,
+        target: change.targetId,
+        payload: {
+          priority: clampPriority(change.requestedPriority),
+          placement: change.placement,
+        },
+      })),
+      {
+        useLedgerLamport: true,
+        beforeReconcile: async () => {
+          for (const change of changes) {
+            if (change.file?.extension === "md") {
+              await quietFrontmatterWrite(
+                () =>
+                  setPriority(
+                    this.app,
+                    change.file!,
+                    clampPriority(change.requestedPriority),
+                  ).then(() => undefined),
+                "priority",
+              );
+            }
+          }
+        },
+        refreshReviewElements: true,
+        refreshTree: true,
+      },
+    );
+  }
+
+  private async commitLedgerEvents(
+    label: string,
+    specs: ReadonlyArray<{
+      kind: IrEvent["kind"];
+      target: ElementId;
+      payload: Record<string, unknown>;
+    }>,
+    opts?: {
+      now?: number;
+      useLedgerLamport?: boolean;
+      beforeReconcile?: () => Promise<void>;
+      refreshTree?: boolean;
+      refreshReviewElements?: boolean;
+      refreshStatusBar?: boolean;
+    },
+  ): Promise<LogState | null> {
+    if (!this.ledger || specs.length === 0) return null;
+    const now = opts?.now ?? Date.now();
+    let lamport = opts?.useLedgerLamport
+      ? await this.ledger.nextLamport()
+      : now;
     const device = await this.ledger.getDeviceId();
-    const events: IrEvent[] = changes.map((change) => ({
+    const events: IrEvent[] = specs.map((spec) => ({
       id: newEventId(),
       ts: now,
       lamport: lamport++,
       device,
-      kind: "priority-set",
-      target: change.targetId,
-      payload: {
-        priority: clampPriority(change.requestedPriority),
-        placement: change.placement,
-      },
+      kind: spec.kind,
+      target: spec.target,
+      payload: spec.payload,
     }));
     await this.ledger.appendEvents(events);
-    for (const change of changes) {
-      if (change.file?.extension === "md") {
-        await quietFrontmatterWrite(
-          () => setPriority(this.app, change.file!, clampPriority(change.requestedPriority))
-            .then(() => undefined),
-          "priority",
-        );
-      }
-    }
+    if (opts?.beforeReconcile) await opts.beforeReconcile();
     const state = await this.ledger.reconcile().catch((e) => {
-      console.error("Incremental Reading: reconcile after priority failed", e);
+      console.error(`Incremental Reading: reconcile after ${label} failed`, e);
       return null;
     });
-    if (state) this.getActiveReviewView()?.refreshElementsInPlace(state.elements);
-    await this.getTreeView()?.refresh();
-    void this.refreshStatusBar();
+    if (opts?.refreshReviewElements && state) {
+      this.getActiveReviewView()?.refreshElementsInPlace(state.elements);
+    }
+    if (opts?.refreshTree) {
+      await this.getTreeView()?.refresh();
+    }
+    if (opts?.refreshStatusBar !== false) {
+      void this.refreshStatusBar();
+    }
+    return state;
   }
 
   private async movePrioritySelection(ids: ElementId[], direction: -1 | 1): Promise<void> {
     if (!this.ledger) return;
     const state = await this.ledger.load();
-    const plan = planAdjacentBlockMove(collectionSortOrder(state.elements.values()), ids, direction);
-    await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
-      targetId: intent.targetId,
-      requestedPriority: intent.requestedPriority,
-      placement: intent,
-      file: null,
-    })));
+    await this.applyPriorityPlan(
+      planAdjacentBlockMove(collectionSortOrder(state.elements.values()), ids, direction),
+    );
   }
 
   private async movePrioritySelectionTo(ids: ElementId[], position: number): Promise<void> {
     if (!this.ledger) return;
     const state = await this.ledger.load();
-    const plan = planBlockInsertion(collectionSortOrder(state.elements.values()), ids, position);
-    await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
-      targetId: intent.targetId,
-      requestedPriority: intent.requestedPriority,
-      placement: intent,
-      file: null,
-    })));
+    await this.applyPriorityPlan(
+      planBlockInsertion(collectionSortOrder(state.elements.values()), ids, position),
+    );
   }
 
   private async applyPriorityPlan(plan: ReturnType<typeof planBlockInsertion>): Promise<void> {
@@ -3255,12 +3294,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     const plan = operation === "spread"
       ? planSpread(order, ids, start, end)
       : planAdjust(order, ids, start, end);
-    await this.applyIrPriorityBatch(plan.intents.map((intent) => ({
-      targetId: intent.targetId,
-      requestedPriority: intent.requestedPriority,
-      placement: intent,
-      file: null,
-    })));
+    await this.applyPriorityPlan(plan);
   }
 
   private async appendCreatedWithPlacement(event: IrEvent): Promise<void> {
@@ -3284,29 +3318,22 @@ export default class IncrementalReadingPlugin extends Plugin {
     file: TFile | null,
     dismissed: boolean,
   ): Promise<void> {
-    if (!this.ledger) return;
-    await this.ledger.appendEvent({
-      id: newEventId(),
-      ts: Date.now(),
-      lamport: Date.now(),
-      device: await this.ledger.getDeviceId(),
-      kind: "dismiss-set",
-      target: elementId,
-      payload: { dismissed },
-    });
-    if (file && file.extension === "md") {
-      await quietFrontmatterWrite(
-        () => setDismissed(this.app, file, dismissed).then(() => undefined),
-        "dismiss",
-      );
-    }
-    await this.ledger.reconcile().catch((e) => {
-      console.error("Incremental Reading: reconcile after dismiss failed", e);
-    });
-    void this.refreshStatusBar();
+    await this.commitLedgerEvents(
+      "dismiss",
+      [{ kind: "dismiss-set", target: elementId, payload: { dismissed } }],
+      {
+        beforeReconcile: async () => {
+          if (file && file.extension === "md") {
+            await quietFrontmatterWrite(
+              () => setDismissed(this.app, file, dismissed).then(() => undefined),
+              "dismiss",
+            );
+          }
+        },
+      },
+    );
   }
 
-  /** Postpone an element by N days via a mercy-postponed event. */
   /** Delete an element, reparenting its children to its parent. */
   private async applyIrDelete(
     elementId: ElementId,
@@ -3314,38 +3341,26 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     if (!this.ledger) return;
     const state = await this.ledger.load();
-    const device = await this.ledger.getDeviceId();
-    const now = Date.now();
-    let lamport = now;
-
+    const specs: Array<{
+      kind: IrEvent["kind"];
+      target: ElementId;
+      payload: Record<string, unknown>;
+    }> = [];
     for (const el of state.elements.values()) {
       if (el.parentId === elementId) {
-        await this.ledger.appendEvent({
-          id: newEventId(),
-          ts: now,
-          lamport,
-          device,
+        specs.push({
           kind: "reparented",
           target: el.id,
           payload: { parentId },
         });
-        lamport++;
       }
     }
-
-    await this.ledger.appendEvent({
-      id: newEventId(),
-      ts: now,
-      lamport,
-      device,
+    specs.push({
       kind: "element-deleted",
       target: elementId,
       payload: {},
     });
-    await this.ledger.reconcile().catch((e) => {
-      console.error("Incremental Reading: reconcile after delete failed", e);
-    });
-    void this.refreshStatusBar();
+    await this.commitLedgerEvents("delete", specs);
   }
 
   /**
@@ -3364,21 +3379,22 @@ export default class IncrementalReadingPlugin extends Plugin {
     const notePath = this.promoteOrphanPath(element);
     await this.materializePromotedNote(notePath, element);
 
+    const now = Date.now();
     const ev = buildPromoteEvent({
       elementId,
       notePath,
       eventId: newEventId(),
       device: await this.ledger.getDeviceId(),
-      lamport: Date.now(),
-      now: Date.now(),
+      lamport: now,
+      now,
     });
-    await this.ledger.appendEvent(ev);
     element.notePath = notePath;
-    await this.ledger.reconcile().catch((e) => {
-      console.error("Incremental Reading: reconcile after promote failed", e);
-    });
+    await this.commitLedgerEvents(
+      "promote",
+      [{ kind: ev.kind, target: ev.target, payload: ev.payload }],
+      { now },
+    );
     new Notice(`Promoted extract to "${notePath}".`);
-    void this.refreshStatusBar();
     this.getActiveReviewView()?.adoptElement(element);
     const tree = this.getTreeView();
     if (tree) void tree.refresh();
@@ -3411,18 +3427,17 @@ export default class IncrementalReadingPlugin extends Plugin {
       position: { start: result.start, end: result.end },
     };
 
-    await this.ledger.appendEvent({
-      id: newEventId(),
-      ts: Date.now(),
-      lamport: Date.now(),
-      device: await this.ledger.getDeviceId(),
-      kind: "anchor-repaired",
-      target: elementId,
-      payload: { anchor: repairedAnchor },
-    });
-    await this.ledger.reconcile().catch((e) => {
-      console.error("Incremental Reading: reconcile after re-anchor failed", e);
-    });
+    await this.commitLedgerEvents(
+      "re-anchor",
+      [
+        {
+          kind: "anchor-repaired",
+          target: elementId,
+          payload: { anchor: repairedAnchor },
+        },
+      ],
+      { refreshStatusBar: false },
+    );
     return true;
   }
 
@@ -3431,20 +3446,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     elementId: ElementId,
     _element: IrElement,
   ): Promise<void> {
-    if (!this.ledger) return;
-    await this.ledger.appendEvent({
-      id: newEventId(),
-      ts: Date.now(),
-      lamport: Date.now(),
-      device: await this.ledger.getDeviceId(),
-      kind: "anchor-detached",
-      target: elementId,
-      payload: {},
-    });
-    await this.ledger.reconcile().catch((e) => {
-      console.error("Incremental Reading: reconcile after detach failed", e);
-    });
-    void this.refreshStatusBar();
+    await this.commitLedgerEvents("detach", [
+      { kind: "anchor-detached", target: elementId, payload: {} },
+    ]);
   }
 
   /** Move an element to a new parent via a reparented event. */
@@ -3452,20 +3456,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     elementId: ElementId,
     newParentId: ElementId | null,
   ): Promise<void> {
-    if (!this.ledger) return;
-    await this.ledger.appendEvent({
-      id: newEventId(),
-      ts: Date.now(),
-      lamport: Date.now(),
-      device: await this.ledger.getDeviceId(),
-      kind: "reparented",
-      target: elementId,
-      payload: { parentId: newParentId },
-    });
-    await this.ledger.reconcile().catch((e) => {
-      console.error("Incremental Reading: reconcile after reparent failed", e);
-    });
-    void this.refreshStatusBar();
+    await this.commitLedgerEvents("reparent", [
+      {
+        kind: "reparented",
+        target: elementId,
+        payload: { parentId: newParentId },
+      },
+    ]);
   }
 
   private async applyIrPostponeChange(
@@ -3480,27 +3477,25 @@ export default class IncrementalReadingPlugin extends Plugin {
     const currentDue = el?.type === "item" ? el.card?.due : el?.schedule?.due;
     const { previousDue, newDue } = planManualPostpone(currentDue, now, days);
     const device = await this.ledger.getDeviceId();
-    await this.ledger.appendEvent({
-      id: newEventId(),
-      ts: now,
-      lamport: now,
-      device,
-      kind: "mercy-postponed",
-      target: elementId,
-      payload: {
-        newDue,
-        ...(previousDue !== undefined ? { previousDue } : {}),
-        batchId: `manual-postpone:${device}:${now}`,
-        operation: "manual-postpone",
-      },
-    });
-    await this.ledger.reconcile().catch((e) => {
-      console.error("Incremental Reading: reconcile after postpone failed", e);
-    });
+    await this.commitLedgerEvents(
+      "postpone",
+      [
+        {
+          kind: "mercy-postponed",
+          target: elementId,
+          payload: {
+            newDue,
+            ...(previousDue !== undefined ? { previousDue } : {}),
+            batchId: `manual-postpone:${device}:${now}`,
+            operation: "manual-postpone",
+          },
+        },
+      ],
+      { now },
+    );
     this.getActiveReviewView()?.removePostponed(new Set([elementId]));
     const tree = this.getTreeView();
     if (tree) void tree.refresh();
-    void this.refreshStatusBar();
   }
 
   /**
