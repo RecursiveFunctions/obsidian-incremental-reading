@@ -525,6 +525,17 @@ export default class IncrementalReadingPlugin extends Plugin {
     void this.ledgerInit.then(async () => {
       await this.runStartupAutoPostpone();
       void this.refreshStatusBar();
+      // Maintenance runs after the first paint: the first load still reads the
+      // pre-checkpoint stream (unchanged behaviour), and this pass builds the
+      // checkpoint so every later load skips the archives. Fire-and-forget.
+      if (this.ledger) {
+        void this.ledger
+          .ensureCheckpoint(Date.now())
+          .then(() => this.ledger?.compactLocalShard(Date.now()))
+          .catch((e) => {
+            console.warn("Incremental Reading: ledger checkpoint/compaction on load failed", e);
+          });
+      }
       // Wait for the vault index: before layout-ready, present files can
       // still read as missing and prompt for notes that exist.
       this.app.workspace.onLayoutReady(() => {
@@ -1567,8 +1578,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (!this.statusBarEl) return;
     if (!this.ledger) return;
     try {
-      const { state, events } = await this.ledger.loadSnapshot();
-      const load = computeLoad(state.elements.values(), events, Date.now());
+      const { state, recentEvents, lastDueChange } = await this.ledger.loadView();
+      const load = computeLoad(state.elements.values(), recentEvents, Date.now(), lastDueChange);
       const device = await this.ledger.getDeviceId();
       const analytics = await this.ledger.loadDailyAnalytics(device, repetitionDayKey());
       if (analytics) {
@@ -3166,8 +3177,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     file?: TFile | null;
   }[]): Promise<void> {
     if (!this.ledger || changes.length === 0) return;
-    const existing = await this.ledger.loadEvents();
-    let lamport = nextLamport(existing);
+    let lamport = await this.ledger.nextLamport();
     const now = Date.now();
     const device = await this.ledger.getDeviceId();
     const events: IrEvent[] = changes.map((change) => ({
@@ -4616,13 +4626,12 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     }
     try {
-      const events = await this.ledger.loadEvents();
       const state = await this.ledger.load();
       const rewrites = sourcePathRewrites(state.elements.values(), from, to);
       if (rewrites.length === 0) return;
 
       const device = await this.ledger.getDeviceId();
-      let lamport = nextLamport(events);
+      let lamport = await this.ledger.nextLamport();
       const now = Date.now();
       for (const rw of rewrites) {
         await this.ledger.appendEvent({
@@ -4695,10 +4704,9 @@ export default class IncrementalReadingPlugin extends Plugin {
 
       const elements = Array.from(state.elements.values());
       const candidates = relinkCandidates(elements, tomb.path);
-      const events = await this.ledger.loadEvents();
       const device = await this.ledger.getDeviceId();
       const now = Date.now();
-      const lamport = nextLamport(events);
+      const lamport = await this.ledger.nextLamport();
 
       if (candidates.length === 0) {
         await this.appendRelinkEvents(

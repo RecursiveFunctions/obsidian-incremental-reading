@@ -9,7 +9,19 @@
  * No Obsidian API, no node fs/path, all IO via the injected VaultFs.
  */
 
-import { fold, compact, type LogState } from "./log";
+import {
+  foldFrom,
+  foldIntermediate,
+  finalizeFold,
+  emptyFoldIntermediate,
+  serializeFoldIntermediate,
+  deserializeFoldIntermediate,
+  findLastUndoableGrade,
+  compact,
+  type LogState,
+  type FoldIntermediate,
+  type SerializedFoldIntermediate,
+} from "./log";
 import { newDeviceId, type DeviceId, type ElementId } from "./ids";
 import { validateIrEvent, type IrEvent } from "./model";
 import type { BookmarkMap } from "./bookmark";
@@ -47,7 +59,112 @@ interface LedgerPaths {
   snapshot: string;
   reviewHistoryDir: string;
   compactionDir: string;
+  checkpointDir: string;
   bookmarks: string;
+}
+
+/**
+ * The hot read path's result. `state` is what `load()` returns; the other
+ * fields exist so callers do not have to re-read the full event history to
+ * answer "what is the next lamport", "where did each due last move", or
+ * "what arrived recently".
+ */
+export interface LedgerView {
+  state: LogState;
+  /** Highest lamport the ledger knows; new events must exceed it. */
+  maxLamport: number;
+  /** Last due-changing event per element (status bar's `postponed` count). */
+  lastDueChange: Map<ElementId, IrEvent["kind"]>;
+  /** Events the checkpoint does not cover — the live shards. */
+  recentEvents: IrEvent[];
+}
+
+const CHECKPOINT_SCHEMA = 1;
+/** A fold checkpoint is only worth its file once the history is non-trivial. */
+const CHECKPOINT_MIN_EVENTS = 250;
+
+interface CheckpointView {
+  seq: number;
+  watermark: number;
+  covered: Map<string, string>;
+  intermediate: FoldIntermediate;
+}
+
+interface CheckpointPayloadV1 {
+  watermark: number;
+  covered: Array<[string, string]>;
+  state: SerializedFoldIntermediate;
+  createdAt: number;
+}
+
+interface CheckpointFileV1 {
+  schemaVersion: number;
+  generation: string | null;
+  deviceId: string;
+  seq: number;
+  digest: string;
+  payload: CheckpointPayloadV1;
+}
+
+/** Two independent FNV-1a passes: 64 bits is enough to detect corruption. */
+function digest64(value: string): string {
+  let a = 2166136261;
+  let b = 0x811c9dc5 ^ 0x9e3779b9;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    a ^= code;
+    a = Math.imul(a, 16777619);
+    b ^= code;
+    b = Math.imul(b, 16777619);
+    b ^= b >>> 13;
+  }
+  return (a >>> 0).toString(16).padStart(8, "0") + (b >>> 0).toString(16).padStart(8, "0");
+}
+
+function eventDigest(event: IrEvent): string {
+  return digest64(deterministicJsonStringify(event));
+}
+
+function checkpointView(payload: CheckpointPayloadV1, seq: number): CheckpointView {
+  const covered = new Map<string, string>();
+  for (const entry of payload.covered) {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      throw new Error("IrLedger: invalid checkpoint coverage entry");
+    }
+    covered.set(String(entry[0]), String(entry[1]));
+  }
+  return {
+    seq,
+    watermark: payload.watermark,
+    covered,
+    intermediate: deserializeFoldIntermediate(payload.state),
+  };
+}
+
+function emptyLedgerView(): LedgerView {
+  return {
+    state: finalizeFold(emptyFoldIntermediate()),
+    maxLamport: 0,
+    lastDueChange: new Map(),
+    recentEvents: [],
+  };
+}
+
+function viewFromIntermediate(
+  intermediate: FoldIntermediate,
+  watermark: number,
+  recentEvents: IrEvent[],
+): LedgerView {
+  const lastDueChange = new Map<ElementId, IrEvent["kind"]>();
+  for (const [id, record] of intermediate.dueChange) lastDueChange.set(id, record.kind);
+  let maxLamport = watermark;
+  for (const event of recentEvents) if (event.lamport > maxLamport) maxLamport = event.lamport;
+  return {
+    state: finalizeFold(intermediate),
+    maxLamport,
+    lastDueChange,
+    recentEvents,
+  };
 }
 
 export interface VaultFs {
@@ -193,6 +310,14 @@ export class IrLedger {
    * keeps subsequent passes quiet.
    */
   private writeFailureLogged = new Set<string>();
+  /** One bootstrap attempt per session, so a failed write cannot loop. */
+  private checkpointAttempted = false;
+  /** Parsed checkpoint payload, keyed by generation+seq (see readCheckpoint). */
+  private checkpointCache?: {
+    generation: string | null;
+    seq: number;
+    payload: CheckpointPayloadV1;
+  };
 
   constructor(fs: VaultFs, opts?: StoreOptions) {
     this.fs = fs;
@@ -317,6 +442,7 @@ export class IrLedger {
       snapshot: `${base}/snapshot.jsonl`,
       reviewHistoryDir: `${base}/review-history`,
       compactionDir: `${base}/compaction`,
+      checkpointDir: `${base}/checkpoint`,
       bookmarks: `${base}/bookmarks.json`,
     };
   }
@@ -415,13 +541,8 @@ export class IrLedger {
       if (issue) throw new Error(`IrLedger.appendEvents: ${issue}`);
     }
     assertNoConflictingEvents("IrLedger.appendEvents batch", [], events);
-    return this.withShardAccess(async () => {
-      const existing = await this.loadEventsWithoutShardLock();
-      assertNoConflictingEvents("IrLedger.appendEvents", existing, events);
-      const existingById = new Map(existing.map((event) => [
-        event.id,
-        deterministicJsonStringify(event),
-      ]));
+    const result = await this.withShardAccess(async () => {
+      const existingById = await this.loadEventIndexWithoutShardLock(events);
       const pending = events.filter((event) => !existingById.has(event.id));
       const alreadyPresentIds = events
         .filter((event) => existingById.has(event.id))
@@ -442,6 +563,10 @@ export class IrLedger {
       );
       return { landedIds: pending.map((event) => event.id), alreadyPresentIds };
     });
+
+    // DESIGN Q2.3: compaction runs at plugin load and after a sync-fold,
+    // never mid-review, so appends never trigger it here.
+    return result;
   }
 
   private async persistShardRepair(
@@ -536,12 +661,28 @@ export class IrLedger {
     return this.withShardAccess(() => this.loadEventsWithoutShardLock());
   }
 
-  private async loadEventsWithoutShardLock(): Promise<IrEvent[]> {
+  private async readMetaForLoad(): Promise<{ reset: boolean }> {
     if (await this.fs.exists(META)) {
       const meta = this.parseMeta(await this.fs.read(META));
       this.generation = meta.generation;
-      if (meta.reset === "inert") return [];
+      if (meta.reset === "inert") return { reset: true };
     }
+    return { reset: false };
+  }
+
+  /**
+   * Read every event in the active generation.
+   *
+   * `includeArchives: false` is the hot path: a fold checkpoint stands in for
+   * the compacted-away archives, and re-reading them on every load is exactly
+   * the cost compaction exists to remove. The full stream (archives included)
+   * stays available for history consumers (`loadEvents`, stats, optimizer).
+   */
+  private async collectEventsWithoutShardLock(
+    includeArchives: boolean,
+    opts?: { skipMigrationLog?: boolean },
+  ): Promise<IrEvent[]> {
+    if ((await this.readMetaForLoad()).reset) return [];
     const paths = this.pathsFor();
     const events: IrEvent[] = [];
 
@@ -551,18 +692,26 @@ export class IrLedger {
     }
 
     const archiveEntries: Array<{ path: string; events: IrEvent[] }> = [];
-    for (const archive of await this.fs.list(paths.compactionDir)) {
-      const archiveEvents = this.parseJsonl(archive, await this.fs.read(archive));
-      archiveEntries.push({ path: archive, events: archiveEvents });
-      events.push(...archiveEvents);
+    if (includeArchives) {
+      for (const archive of await this.fs.list(paths.compactionDir)) {
+        const archiveEvents = this.parseJsonl(archive, await this.fs.read(archive));
+        archiveEntries.push({ path: archive, events: archiveEvents });
+        events.push(...archiveEvents);
+      }
     }
 
     const shards = await this.fs.list(paths.logDir);
     for (const shard of shards) {
+      // The migration log is written once per generation and the first
+      // checkpoint always folds it; skipping it is exact, not a guess.
+      if (opts?.skipMigrationLog && shard === paths.migrationLog) continue;
       const content = await this.fs.read(shard);
       try {
         events.push(...this.parseJsonl(shard, content));
       } catch (error) {
+        // Torn-shard recovery needs the transaction archive as proof, so the
+        // fast path defers to the archive-reading rebuild instead of guessing.
+        if (!includeArchives) throw error;
         const shardName = shard.slice(shard.lastIndexOf("/") + 1).replace(/\.jsonl$/, "");
         const hasRecoveryArchive = archiveEntries.some(({ path: archive, events: archiveEvents }) => {
           const archiveName = archive.slice(archive.lastIndexOf("/") + 1);
@@ -615,14 +764,314 @@ export class IrLedger {
     return [...byId.values()];
   }
 
+  private loadEventsWithoutShardLock(): Promise<IrEvent[]> {
+    return this.collectEventsWithoutShardLock(true);
+  }
+
+  private async listCheckpointFiles(
+    paths: LedgerPaths,
+    deviceId: DeviceId,
+  ): Promise<Array<{ path: string; seq: number }>> {
+    let files: string[];
+    try {
+      files = await this.fs.list(paths.checkpointDir);
+    } catch {
+      return [];
+    }
+    const prefix = `${deviceId}-`;
+    const out: Array<{ path: string; seq: number }> = [];
+    for (const path of files) {
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      if (!name.startsWith(prefix) || !name.endsWith(".json")) continue;
+      const seq = Number(name.slice(prefix.length, -".json".length));
+      if (Number.isInteger(seq) && seq > 0) out.push({ path, seq });
+    }
+    return out.sort((a, b) => b.seq - a.seq);
+  }
+
+  /**
+   * Read this device's newest valid checkpoint. Two slots are kept so a torn
+   * write falls back to the previous fold instead of forcing a full rebuild.
+   */
+  /**
+   * Device id for checkpoint paths, without the init barrier: `load()` runs
+   * during migration, before that barrier resolves.
+   */
+  private async checkpointDeviceId(): Promise<DeviceId | null> {
+    if (this.deviceId) return this.deviceId;
+    if (!(await this.fs.exists(DEVICE))) return null;
+    try {
+      const raw = JSON.parse(await this.fs.read(DEVICE)) as {
+        deviceId?: string;
+        devices?: Record<string, string>;
+      };
+      const id = raw.deviceId ?? Object.values(raw.devices ?? {})[0];
+      if (!id) return null;
+      this.deviceId = id as DeviceId;
+      return this.deviceId;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read this device's newest checkpoint.
+   *
+   * Only the newest slot is consulted. Falling back to an older slot is NOT
+   * safe: the shard may already have been pruned against the newer one, so an
+   * older checkpoint plus the live shard could silently miss compacted
+   * events. A torn newest slot therefore means "rebuild from the archives".
+   */
+  private async readCheckpointWithoutLock(): Promise<CheckpointView | null> {
+    const deviceId = await this.checkpointDeviceId();
+    if (!deviceId) return null;
+    const paths = this.pathsFor();
+    const candidate = (await this.listCheckpointFiles(paths, deviceId))[0];
+    if (!candidate) return null;
+    const cached = this.checkpointCache;
+    if (cached && cached.seq === candidate.seq &&
+        cached.generation === (this.generation ?? null)) {
+      return checkpointView(cached.payload, candidate.seq);
+    }
+    try {
+      const raw = JSON.parse(await this.fs.read(candidate.path)) as Partial<CheckpointFileV1>;
+      if (raw.schemaVersion !== CHECKPOINT_SCHEMA) return null;
+      if (raw.deviceId !== deviceId) return null;
+      if ((raw.generation ?? null) !== (this.generation ?? null)) return null;
+      if (raw.seq !== candidate.seq || !raw.payload) return null;
+      // No re-hash here: hashing would re-serialize 3-5 MB on every cold load,
+      // which is the cost this checkpoint exists to remove. A torn write fails
+      // `JSON.parse` or the shape checks; anything malformed rebuilds.
+      this.checkpointCache = {
+        generation: this.generation ?? null,
+        seq: candidate.seq,
+        payload: raw.payload,
+      };
+      return checkpointView(raw.payload, candidate.seq);
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeCheckpointWithoutLock(
+    intermediate: FoldIntermediate,
+    covered: Map<string, string>,
+    watermark: number,
+    createdAt: number,
+  ): Promise<void> {
+    const paths = this.pathsFor();
+    const deviceId = await this.checkpointDeviceId();
+    if (!deviceId) throw new Error("IrLedger: cannot write a checkpoint without a device id");
+    const existing = await this.listCheckpointFiles(paths, deviceId);
+    const seq = (existing[0]?.seq ?? 0) + 1;
+    const payload: CheckpointPayloadV1 = {
+      watermark,
+      covered: [...covered.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+      state: serializeFoldIntermediate(intermediate),
+      createdAt,
+    };
+    const file: CheckpointFileV1 = {
+      schemaVersion: CHECKPOINT_SCHEMA,
+      generation: this.generation ?? null,
+      deviceId,
+      seq,
+      digest: digest64(deterministicJsonStringify(payload)),
+      payload,
+    };
+    const path = `${paths.checkpointDir}/${deviceId}-${seq}.json`;
+    await this.fs.write(path, deterministicJsonStringify(file));
+
+    const readBack = JSON.parse(await this.fs.read(path)) as CheckpointFileV1;
+    if (readBack.digest !== digest64(deterministicJsonStringify(readBack.payload))) {
+      throw new Error("IrLedger: checkpoint write did not verify");
+    }
+
+    // Keep one previous slot as the crash fallback; drop anything older.
+    if (this.fs.remove) {
+      for (const stale of existing.slice(1)) await this.fs.remove(stale.path);
+    }
+    this.checkpointCache = {
+      generation: this.generation ?? null,
+      seq,
+      payload,
+    };
+  }
+
+  /**
+   * Id → content digest for every event the ledger knows about, from the
+   * checkpoint's coverage plus the live shards. This is what `appendEvents`
+   * checks against, so an append no longer re-reads the archive history.
+   */
+  private async loadEventIndexWithoutShardLock(
+    incoming: readonly IrEvent[],
+  ): Promise<Map<string, string>> {
+    if ((await this.readMetaForLoad()).reset) return new Map();
+    const checkpoint = await this.readCheckpointWithoutLock();
+    const byId = new Map<string, string>(checkpoint?.covered ?? []);
+    let events: IrEvent[];
+    try {
+      events = await this.collectEventsWithoutShardLock(false, {
+        skipMigrationLog: checkpoint !== null,
+      });
+    } catch {
+      events = await this.loadEventsWithoutShardLock();
+    }
+    for (const event of events) {
+      const digest = eventDigest(event);
+      const prior = byId.get(event.id);
+      if (prior !== undefined && prior !== digest) {
+        throw new Error(`IrLedger: conflicting duplicate event id ${event.id}`);
+      }
+      byId.set(event.id, digest);
+    }
+    for (const event of incoming) {
+      const prior = byId.get(event.id);
+      if (prior !== undefined && prior !== eventDigest(event)) {
+        throw new Error(`IrLedger.appendEvents: conflicting duplicate event id ${event.id}`);
+      }
+    }
+    return byId;
+  }
+
   async load(): Promise<LogState> {
-    const events = await this.loadEvents();
-    return fold(events, { conflict: this.opts.conflict });
+    return (await this.loadView()).state;
+  }
+
+  /**
+   * The hot read path: fold the checkpoint plus the events it does not cover
+   * (the live shards), without re-reading compacted archives.
+   *
+   * `maxLamport` is the watermark new events must exceed; `lastDueChange`
+   * feeds the status bar without scanning the full log; `recentEvents` is the
+   * uncovered stream (the only events a caller may treat as "new").
+   */
+  async loadView(): Promise<LedgerView> {
+    return this.withShardAccess(() => this.loadViewWithoutShardLock());
+  }
+
+  private async loadViewWithoutShardLock(): Promise<LedgerView> {
+    if ((await this.readMetaForLoad()).reset) return emptyLedgerView();
+    const checkpoint = await this.readCheckpointWithoutLock();
+    if (!checkpoint) {
+      // Rewrite when a checkpoint exists but failed validation (torn, foreign
+      // generation); a first-ever load stays read-only, because compaction is
+      // what creates the first checkpoint.
+      const deviceId = await this.checkpointDeviceId();
+      const hasFiles = deviceId
+        ? (await this.listCheckpointFiles(this.pathsFor(), deviceId)).length > 0
+        : false;
+      return this.rebuildViewWithoutShardLock(hasFiles);
+    }
+    let events: IrEvent[];
+    try {
+      events = await this.collectEventsWithoutShardLock(false, { skipMigrationLog: true });
+    } catch {
+      // A torn shard needs the transaction archive to prove its recovered
+      // prefix; rebuild from the full stream instead of guessing here.
+      return this.rebuildViewWithoutShardLock(true);
+    }
+
+    const uncovered: IrEvent[] = [];
+    for (const event of events) {
+      const digest = checkpoint.covered.get(event.id);
+      if (digest === undefined) {
+        uncovered.push(event);
+        continue;
+      }
+      if (digest !== eventDigest(event)) return this.rebuildViewWithoutShardLock(true);
+    }
+
+    // A checkpoint covers a lamport prefix. An uncovered event below the
+    // watermark would have to be replayed *before* already-folded events, so
+    // the only correct response is a full rebuild.
+    for (const event of uncovered) {
+      if (event.lamport <= checkpoint.watermark) return this.rebuildViewWithoutShardLock(true);
+    }
+
+    // An undo of a grade already folded into the checkpoint cannot be applied
+    // incrementally (the pre-grade card is gone); rebuild from the archives.
+    const uncoveredIds = new Set<string>(uncovered.map((event) => event.id));
+    for (const event of uncovered) {
+      if (event.kind !== "grade-undone") continue;
+      const target = event.payload.eventId as string | undefined;
+      if (target && checkpoint.covered.has(target) && !uncoveredIds.has(target)) {
+        return this.rebuildViewWithoutShardLock(true);
+      }
+    }
+
+    foldFrom(checkpoint.intermediate, uncovered, { conflict: this.opts.conflict });
+    return viewFromIntermediate(checkpoint.intermediate, checkpoint.watermark, uncovered);
+  }
+
+  /**
+   * Fold the complete stream (archives included) and, when `write` is set,
+   * persist a fresh checkpoint covering it. This is the one-time migration
+   * cost and the safety valve for reordered or re-synced events.
+   */
+  private async rebuildViewWithoutShardLock(write: boolean): Promise<LedgerView> {
+    const events = await this.loadEventsWithoutShardLock();
+    const intermediate = foldIntermediate(events, { conflict: this.opts.conflict });
+    let watermark = 0;
+    for (const event of events) watermark = Math.max(watermark, event.lamport);
+    if (write) {
+      const covered = new Map(events.map((event) => [event.id, eventDigest(event)] as const));
+      await this.writeCheckpointWithoutLock(intermediate, covered, watermark, Date.now());
+    }
+    return viewFromIntermediate(intermediate, watermark, events);
   }
 
   async loadSnapshot(): Promise<{ events: IrEvent[]; state: LogState }> {
-    const events = await this.loadEvents();
-    return { events, state: fold(events, { conflict: this.opts.conflict }) };
+    const view = await this.loadView();
+    return { events: view.recentEvents, state: view.state };
+  }
+
+  /** Highest lamport in the checkpoint + live shards, plus one. */
+  async nextLamport(): Promise<number> {
+    await this.awaitReady();
+    return this.withShardAccess(async () => {
+      if ((await this.readMetaForLoad()).reset) return 1;
+      const checkpoint = await this.readCheckpointWithoutLock();
+      let max = checkpoint?.watermark ?? 0;
+      try {
+        const events = await this.collectEventsWithoutShardLock(false, {
+          skipMigrationLog: checkpoint !== null,
+        });
+        for (const event of events) if (event.lamport > max) max = event.lamport;
+      } catch {
+        const events = await this.loadEventsWithoutShardLock();
+        for (const event of events) if (event.lamport > max) max = event.lamport;
+      }
+      return max + 1;
+    });
+  }
+
+  /**
+   * Build a fold checkpoint once, when the ledger has enough history to make
+   * the read worth pruning.
+   *
+   * Compaction is shard-only by design, so it never sees a migrated
+   * collection's history (that lives in the migration log). This is the path
+   * that gives those vaults a checkpoint at all. One attempt per session: a
+   * failed write must not loop on every load.
+   */
+  async ensureCheckpoint(now: number): Promise<{ built: boolean; events: number }> {
+    await this.awaitReady();
+    return this.withShardAccess(async () => {
+      if (this.checkpointAttempted) return { built: false, events: 0 };
+      this.checkpointAttempted = true;
+      if ((await this.readMetaForLoad()).reset) return { built: false, events: 0 };
+      if (await this.readCheckpointWithoutLock()) return { built: false, events: 0 };
+      const events = await this.loadEventsWithoutShardLock();
+      if (events.length < CHECKPOINT_MIN_EVENTS) {
+        return { built: false, events: events.length };
+      }
+      const intermediate = foldIntermediate(events, { conflict: this.opts.conflict });
+      const covered = new Map(events.map((event) => [event.id, eventDigest(event)] as const));
+      let watermark = 0;
+      for (const event of events) watermark = Math.max(watermark, event.lamport);
+      await this.writeCheckpointWithoutLock(intermediate, covered, watermark, now);
+      return { built: true, events: events.length };
+    });
   }
 
   async compactLocalShard(
@@ -661,7 +1110,12 @@ export class IrLedger {
       return { compacted: false, archived: 0, dropped: 0 };
     }
 
-    const result = compact(localEvents, now, { maxEvents, maxAgeDays });
+    const undoable = findLastUndoableGrade(localEvents);
+    const result = compact(localEvents, now, {
+      maxEvents,
+      maxAgeDays,
+      mustKeep: undoable ? [undoable] : [],
+    });
 
     const compactedAway = [...result.archived, ...result.dropped];
     const transactionId = localEvents.map((event) => event.id).sort().join("_");
@@ -681,6 +1135,38 @@ export class IrLedger {
         .map((event) => JSON.stringify(event) + "\n").join("");
       await this.fs.write(rhistPath, historyBody);
       this.parseJsonl(rhistPath, await this.fs.read(rhistPath));
+    }
+
+    // Fold the compacted-away events into this device's checkpoint, so the
+    // next load does not have to re-read the transaction archive.
+    const checkpoint = await this.readCheckpointWithoutLock();
+    if (!checkpoint) {
+      // First checkpoint: cover the complete stream once, not just this
+      // shard, so a later foreign shard cannot sit below the watermark.
+      const all = await this.loadEventsWithoutShardLock();
+      const intermediate = foldIntermediate(all, { conflict: this.opts.conflict });
+      const covered = new Map(all.map((event) => [event.id, eventDigest(event)] as const));
+      let watermark = 0;
+      for (const event of all) watermark = Math.max(watermark, event.lamport);
+      await this.writeCheckpointWithoutLock(intermediate, covered, watermark, now);
+    } else {
+      const newly = compactedAway.filter((event) => !checkpoint.covered.has(event.id));
+      if (newly.length > 0) {
+        let minLamport = Number.POSITIVE_INFINITY;
+        let watermark = checkpoint.watermark;
+        for (const event of newly) {
+          minLamport = Math.min(minLamport, event.lamport);
+          watermark = Math.max(watermark, event.lamport);
+        }
+        // Only extend a lamport prefix. Otherwise leave the checkpoint alone
+        // and let the next load rebuild from the full stream.
+        if (minLamport > checkpoint.watermark) {
+          foldFrom(checkpoint.intermediate, newly, { conflict: this.opts.conflict });
+          const covered = new Map(checkpoint.covered);
+          for (const event of newly) covered.set(event.id, eventDigest(event));
+          await this.writeCheckpointWithoutLock(checkpoint.intermediate, covered, watermark, now);
+        }
+      }
     }
 
     const shardBody = result.keep.map((e) => JSON.stringify(e) + "\n").join("");
