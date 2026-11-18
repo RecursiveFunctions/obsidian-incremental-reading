@@ -372,3 +372,30 @@ test("planManualPostpone anchors to max(currentDue, now) and never moves future-
     }
   }
 });
+
+test("computeElementHistoryCounts ignores extract-parent-decay topic-advanced events", () => {
+  const counts = computeElementHistoryCounts([
+    {
+      id: "ev-1",
+      lamport: 1,
+      kind: "mercy-postponed",
+      target: "el-1",
+      payload: { newDue: 2000 },
+    },
+    {
+      id: "ev-2",
+      lamport: 2,
+      kind: "topic-advanced",
+      target: "el-1",
+      payload: {
+        operation: "extract-parent-decay",
+        schedule: { due: 2000, interval: 0, aFactor: 1.9 },
+      },
+    },
+  ]);
+  const entry = counts.get("el-1");
+  assert.ok(entry);
+  assert.equal(entry.readingReps, 0);
+  assert.equal(entry.totalPostponeCount, 1);
+  assert.equal(entry.recentPostponeCount, 1);
+});

@@ -70,6 +70,7 @@ export function lastDueChangeKind(
   >();
   for (const ev of events) {
     if (!DUE_CHANGE_KINDS.has(ev.kind)) continue;
+    if (ev.kind === "topic-advanced" && ev.payload.operation === "extract-parent-decay") continue;
     const prev = last.get(ev.target);
     if (
       !prev ||

@@ -238,7 +238,10 @@ export function computeElementHistoryCounts(
     if (ev.kind === "graded" && !undoneGrades.has(ev.id)) {
       const c = ensure(ev.target);
       c.recentPostponeCount = 0;
-    } else if (ev.kind === "topic-advanced") {
+    } else if (
+      ev.kind === "topic-advanced" &&
+      ev.payload.operation !== "extract-parent-decay"
+    ) {
       const c = ensure(ev.target);
       c.readingReps += 1;
       c.recentPostponeCount = 0;

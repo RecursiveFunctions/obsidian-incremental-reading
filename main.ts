@@ -2023,28 +2023,17 @@ export default class IncrementalReadingPlugin extends Plugin {
       elementIdForPath(source.path);
     const state = await this.ledger.load();
     const parentEl = state.elements.get(parentId);
-    const parentPriority =
-      parentEl?.priority ??
-      getPriority(this.app, source, this.settings.defaultPriority);
-    const parentAf =
-      parentEl?.schedule?.aFactor ??
-      readTopicFromFrontmatter(
-        this.app.metadataCache.getFileCache(source)?.frontmatter,
-        this.settings,
-      ).aFactor;
     const extractText =
       mapped.textOverride ?? bodyBeforeExtract.slice(mapped.start, mapped.end);
-    const { childAFactor, parentAFactorAfter } = computeExtractAFactorPair(
-      parentAf,
-      extractText.length,
-    );
-    const childPriority = clampPriority(
-      spreadExtractPriority(parentPriority, extractText.length),
-    );
     const now = Date.now();
     const device = await this.ledger.getDeviceId();
-    const childState = newTopicState(this.settings, new Date(now));
-    childState.aFactor = childAFactor;
+    const { childSchedule, childPriority, parentAFactorAfter } =
+      this.prepareSourceExtractScheduleAndPriority(
+        parentEl,
+        source,
+        extractText.length,
+        now,
+      );
     try {
       const ev = buildExtractEvent({
         sourcePath: source.path,
@@ -2060,7 +2049,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         device,
         lamport: now,
         now,
-        schedule: topicStateToSchedule(childState),
+        schedule: childSchedule,
       });
       await this.appendCreatedWithPlacement(ev);
       await this.decayParentAFactorAfterExtract(
@@ -2198,28 +2187,17 @@ export default class IncrementalReadingPlugin extends Plugin {
       elementIdForPath(source.path);
     const state = await this.ledger.load();
     const parentEl = state.elements.get(parentId);
-    const parentPriority =
-      parentEl?.priority ??
-      getPriority(this.app, source, this.settings.defaultPriority);
-    const parentAf =
-      parentEl?.schedule?.aFactor ??
-      readTopicFromFrontmatter(
-        this.app.metadataCache.getFileCache(source)?.frontmatter,
-        this.settings,
-      ).aFactor;
     const extractText =
       joinedOverride ?? bodyBeforeExtract.slice(extractStart, extractEnd);
-    const { childAFactor, parentAFactorAfter } = computeExtractAFactorPair(
-      parentAf,
-      extractText.length,
-    );
-    const childPriority = clampPriority(
-      spreadExtractPriority(parentPriority, extractText.length),
-    );
     const now = Date.now();
     const device = await this.ledger.getDeviceId();
-    const childState = newTopicState(this.settings, new Date(now));
-    childState.aFactor = childAFactor;
+    const { childSchedule, childPriority, parentAFactorAfter } =
+      this.prepareSourceExtractScheduleAndPriority(
+        parentEl,
+        source,
+        extractText.length,
+        now,
+      );
     try {
       const ev = buildExtractEvent({
         sourcePath: source.path,
@@ -2234,7 +2212,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         device,
         lamport: now,
         now,
-        schedule: topicStateToSchedule(childState),
+        schedule: childSchedule,
       });
       await this.appendCreatedWithPlacement(ev);
       await this.decayParentAFactorAfterExtract(
@@ -2264,6 +2242,37 @@ export default class IncrementalReadingPlugin extends Plugin {
         "Incremental Reading: could not record the extract in the ledger. See the developer console.",
       );
     }
+  }
+
+  private prepareSourceExtractScheduleAndPriority(
+    parentEl: IrElement | undefined,
+    source: TFile,
+    extractTextLen: number,
+    now: number,
+  ) {
+    const parentPriority =
+      parentEl?.priority ??
+      getPriority(this.app, source, this.settings.defaultPriority);
+    const parentAf =
+      parentEl?.schedule?.aFactor ??
+      readTopicFromFrontmatter(
+        this.app.metadataCache.getFileCache(source)?.frontmatter,
+        this.settings,
+      ).aFactor;
+    const { childAFactor, parentAFactorAfter } = computeExtractAFactorPair(
+      parentAf,
+      extractTextLen,
+    );
+    const childPriority = clampPriority(
+      spreadExtractPriority(parentPriority, extractTextLen),
+    );
+    const childState = newTopicState(this.settings, new Date(now));
+    childState.aFactor = childAFactor;
+    return {
+      childSchedule: topicStateToSchedule(childState),
+      childPriority,
+      parentAFactorAfter,
+    };
   }
 
   /**
@@ -3708,6 +3717,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           await this.app.fileManager.processFrontMatter(file, (fm) => {
             const card = el.card ? storedToCard(el.card) : newCard();
             writeCardToFrontmatter(fm, card);
+            fm[IR_KEYS.priority] = el.priority;
           });
         } catch (err) {
           console.error(

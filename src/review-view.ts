@@ -3919,17 +3919,8 @@ export class IrReviewView extends ItemView {
       const elementId = newElementId();
       const extractText =
         textOverride ?? bodyBeforeExtract.slice(sel.start, sel.end);
-      const parentAf =
-        slot.element.schedule?.aFactor ?? this.settings.topicAFactor;
-      const { childAFactor, parentAFactorAfter } = computeExtractAFactorPair(
-        parentAf,
-        extractText.length,
-      );
-      const childPriority = clampPriority(
-        spreadExtractPriority(slot.element.priority, extractText.length),
-      );
-      const childState = newTopicState(this.settings, new Date(now));
-      childState.aFactor = childAFactor;
+      const { childSchedule, childPriority, parentAFactorAfter } =
+        this.prepareExtractScheduleAndPriority(slot, extractText.length, now);
       const ev = buildExtractEvent({
         sourcePath,
         sourceText: bodyBeforeExtract,
@@ -3944,7 +3935,7 @@ export class IrReviewView extends ItemView {
         device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
-        schedule: topicStateToSchedule(childState),
+        schedule: childSchedule,
         placement: buildPriorityPlacement(
           this.elementsById.values(),
           elementId,
@@ -3954,28 +3945,7 @@ export class IrReviewView extends ItemView {
       await this.ledger.appendEvent(ev);
       created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
-      if (slot.element.schedule) {
-        const updatedParentSchedule = {
-          ...slot.element.schedule,
-          aFactor: parentAFactorAfter,
-        };
-        await this.emit("topic-advanced", slot.id, {
-          schedule: updatedParentSchedule,
-          operation: "extract-parent-decay",
-        });
-        slot.element = { ...slot.element, schedule: updatedParentSchedule };
-        this.elementsById.set(slot.id, slot.element);
-        if (slot.file) {
-          const parentState = scheduleToTopicState(updatedParentSchedule);
-          if (parentState) {
-            await quietFrontmatterWrite(async () => {
-              await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
-                writeTopicToFrontmatter(f, parentState);
-              });
-            }, "extract-parent-decay");
-          }
-        }
-      }
+      await this.decaySlotParentAFactor(slot, parentAFactorAfter);
       const promote =
         opts?.promote ?? this.settings.extractCreatesStandaloneNote;
       if (created && promote && this.commitPromoteExtract) {
@@ -4004,6 +3974,56 @@ export class IrReviewView extends ItemView {
     await this.refreshDecorations?.();
     await this.renderCard();
     return created;
+  }
+
+  private prepareExtractScheduleAndPriority(
+    slot: ReviewSlot,
+    extractTextLen: number,
+    now: number,
+  ) {
+    const parentAf =
+      slot.element.schedule?.aFactor ?? this.settings.topicAFactor;
+    const { childAFactor, parentAFactorAfter } = computeExtractAFactorPair(
+      parentAf,
+      extractTextLen,
+    );
+    const childPriority = clampPriority(
+      spreadExtractPriority(slot.element.priority, extractTextLen),
+    );
+    const childState = newTopicState(this.settings, new Date(now));
+    childState.aFactor = childAFactor;
+    return {
+      childSchedule: topicStateToSchedule(childState),
+      childPriority,
+      parentAFactorAfter,
+    };
+  }
+
+  private async decaySlotParentAFactor(
+    slot: ReviewSlot,
+    parentAFactorAfter: number,
+  ): Promise<void> {
+    if (!slot.element.schedule) return;
+    const updatedParentSchedule = {
+      ...slot.element.schedule,
+      aFactor: parentAFactorAfter,
+    };
+    await this.emit("topic-advanced", slot.id, {
+      schedule: updatedParentSchedule,
+      operation: "extract-parent-decay",
+    });
+    slot.element = { ...slot.element, schedule: updatedParentSchedule };
+    this.elementsById.set(slot.id, slot.element);
+    if (slot.file) {
+      const parentState = scheduleToTopicState(updatedParentSchedule);
+      if (parentState) {
+        await quietFrontmatterWrite(async () => {
+          await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
+            writeTopicToFrontmatter(f, parentState);
+          });
+        }, "extract-parent-decay");
+      }
+    }
   }
 
   public async handleCloze() {
@@ -4164,17 +4184,8 @@ export class IrReviewView extends ItemView {
       const now = Date.now();
       const elementId = newElementId();
       const extractText = bodyBeforeExtract.slice(span.start, span.end);
-      const parentAf =
-        slot.element.schedule?.aFactor ?? this.settings.topicAFactor;
-      const { childAFactor, parentAFactorAfter } = computeExtractAFactorPair(
-        parentAf,
-        extractText.length,
-      );
-      const childPriority = clampPriority(
-        spreadExtractPriority(slot.element.priority, extractText.length),
-      );
-      const childState = newTopicState(this.settings, new Date(now));
-      childState.aFactor = childAFactor;
+      const { childSchedule, childPriority, parentAFactorAfter } =
+        this.prepareExtractScheduleAndPriority(slot, extractText.length, now);
       const ev = buildExtractEvent({
         sourcePath,
         sourceText: bodyBeforeExtract,
@@ -4187,7 +4198,7 @@ export class IrReviewView extends ItemView {
         device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
-        schedule: topicStateToSchedule(childState),
+        schedule: childSchedule,
         placement: buildPriorityPlacement(
           this.elementsById.values(),
           elementId,
@@ -4197,28 +4208,7 @@ export class IrReviewView extends ItemView {
       await this.ledger.appendEvent(ev);
       const created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
-      if (slot.element.schedule) {
-        const updatedParentSchedule = {
-          ...slot.element.schedule,
-          aFactor: parentAFactorAfter,
-        };
-        await this.emit("topic-advanced", slot.id, {
-          schedule: updatedParentSchedule,
-          operation: "extract-parent-decay",
-        });
-        slot.element = { ...slot.element, schedule: updatedParentSchedule };
-        this.elementsById.set(slot.id, slot.element);
-        if (slot.file) {
-          const parentState = scheduleToTopicState(updatedParentSchedule);
-          if (parentState) {
-            await quietFrontmatterWrite(async () => {
-              await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
-                writeTopicToFrontmatter(f, parentState);
-              });
-            }, "extract-parent-decay");
-          }
-        }
-      }
+      await this.decaySlotParentAFactor(slot, parentAFactorAfter);
       this.adoptElement(created);
       this.flash(`Extracted · ${this.remainingInSession()} left`);
       this.onChange?.();
@@ -4583,14 +4573,6 @@ export class IrReviewView extends ItemView {
       priorityDelta > 0
         ? clampPriority(slot.element.priority + priorityDelta)
         : slot.element.priority;
-    const priorityPlacement =
-      priorityDelta > 0
-        ? buildPriorityPlacement(
-            this.elementsById.values(),
-            slot.id,
-            nextPriority,
-          )
-        : undefined;
     const payload: Record<string, unknown> = {
       card: stored,
       grade: gradeNumber(g),
@@ -4600,7 +4582,6 @@ export class IrReviewView extends ItemView {
       ...(priorityDelta > 0
         ? {
             newPriority: nextPriority,
-            placement: priorityPlacement,
           }
         : {}),
     };

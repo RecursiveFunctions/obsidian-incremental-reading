@@ -134,7 +134,10 @@ export function foldFrom(
   });
 
   for (const event of sortedEvents) {
-    if (DUE_CHANGE_KINDS.has(event.kind)) {
+    if (
+      DUE_CHANGE_KINDS.has(event.kind) &&
+      !(event.kind === "topic-advanced" && event.payload.operation === "extract-parent-decay")
+    ) {
       const prev = base.dueChange.get(event.target);
       if (!prev ||
           event.lamport > prev.lamport ||
@@ -191,10 +194,11 @@ export function foldFrom(
           }
           const placement = event.payload.placement as PriorityPlacement | undefined;
           const newPriority = event.payload.newPriority as number | undefined;
+          if (typeof newPriority === "number" && Number.isFinite(newPriority)) {
+            element.priority = clampPriority(newPriority);
+          }
           if (placement) {
             base.placements.push({ target, placement });
-          } else if (typeof newPriority === "number" && Number.isFinite(newPriority)) {
-            element.priority = clampPriority(newPriority);
           }
         }
         break;
