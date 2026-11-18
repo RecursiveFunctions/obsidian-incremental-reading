@@ -20,9 +20,9 @@ The plugin uses three kinds of element, and they behave differently.
 
 | Element | What it is | How it is scheduled |
 |---|---|---|
-| Topic | Something you read: a note or a PDF | A reading schedule. You are never graded |
-| Extract | A span pulled out of a topic or another extract | Inherits a reading schedule, keeps a link to its source |
-| Item | A card you grade: a cloze or an image occlusion | FSRS |
+| Topic | Something you read: a note or a PDF | SuperMemo 20 reading schedule (length-based initial A-Factor, `a^3` first interval, log-uniform spread, and ease updates). Never graded |
+| Extract | A span pulled out of a topic or another extract | Blends parent A-Factor with extract length, decays parent A-Factor by 5%, spreads priority around the parent, and keeps a link to its source |
+| Item | A card you grade: a cloze or an image occlusion | FSRS-6 (with subtle priority drift on passing grades so mastered items slowly make room for fresh material) |
 
 Every element carries a **priority** from 0 to 100, where **lower means more important**. Priority 0 floats to the top of the queue.
 
@@ -183,23 +183,9 @@ Built to work offline. Full threat model, verification commands and reproducible
 - **No telemetry**, which follows from the above.
 - **One runtime dependency**, [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), pinned to an exact version with a committed lockfile.
 
-## Changelog
-
-### 0.8.2 — 2026-09-27
-
-- Torn ledger shards now repair durably before the next append, with a verified
-  recovery archive protecting complete post-compaction events if repair fails.
-- Live event and bookmark writes wait for first-run migration to commit its
-  generation, preventing acknowledged work from being stranded in the old root
-  ledger.
-- Ledger loads, appends, and compaction are serialized within a plugin session
-  so recovery cannot overwrite a concurrent local write.
-
-See [`CHANGELOG.md`](CHANGELOG.md) for the complete release history.
-
 ## Roadmap
 
-Shipped: topics, anchored extracts and standalone notes, clozes with hints, FSRS-6 scheduling and a local parameter optimizer, 3-model scheduler divergence (`FSRS-6` / `DSR` / `SM-2`), priority-scaled first topic intervals, interleaved due review, neural sessions, deterministic priority queue policies, 5-dimension Mercy scoring and interactive postpone preview (`Alt+M`), Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile capture/review FAB, and undo for grades, Mercy, later, and dismiss.
+Shipped: topics with length-based SM20 A-Factors, anchored extracts and standalone notes with SM20 A-Factor inheritance, parent A-Factor decay, and priority spreading, clozes with hints, FSRS-6 scheduling with post-grade priority drift and a local parameter optimizer, 3-model scheduler divergence (`FSRS-6` / `DSR` / `SM-2`), SM20 topic commit (`a^3` first interval, log-uniform dispersion, ease adjustment) and priority-scaled first intervals, interleaved due review, neural sessions, deterministic priority queue policies, 5-dimension Mercy scoring and interactive postpone preview (`Alt+M`), Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile capture/review FAB, and undo for grades, Mercy, later, and dismiss.
 
 PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be extracted, and cloze is markdown-only: extract from the PDF first, then cloze the extract.
 

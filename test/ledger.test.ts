@@ -555,3 +555,66 @@ test("auto-postpone marker round-trips independently of ledger events", async ()
   });
   assert.deepEqual(await ledger.loadEvents(), []);
 });
+
+test("graded event applies SM20 auto-priority drift and grade-undone reverts it", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const idA = newElementId();
+  const idB = newElementId();
+  await ledger.appendEvent({
+    ...createEvent(idA, 1),
+    payload: { element: newElement({ id: idA, type: "item", priority: 50, now: 0 }) },
+  });
+  await ledger.appendEvent({
+    ...createEvent(idB, 2),
+    payload: { element: newElement({ id: idB, type: "item", priority: 50.1, now: 0 }) },
+  });
+
+  let state = await ledger.load();
+  assert.equal(state.elements.get(idA)?.priority, 0);
+  assert.equal(state.elements.get(idB)?.priority, 100);
+
+  const gradedId = newEventId();
+  await ledger.appendEvent({
+    id: gradedId,
+    ts: 3000,
+    lamport: 3,
+    device: newDeviceId(),
+    kind: "graded",
+    target: idA,
+    payload: {
+      card: {
+        due: 99999,
+        stability: 3,
+        difficulty: 5,
+        elapsedDays: 1,
+        scheduledDays: 3,
+        reps: 1,
+        lapses: 0,
+        state: 2,
+      },
+      grade: 3,
+      newPriority: 50.15,
+    },
+  });
+
+  state = await ledger.load();
+  // idA drifted past idB (50.15 > 50.10), so relative priority projection flips their order
+  assert.equal(state.elements.get(idB)?.priority, 0);
+  assert.equal(state.elements.get(idA)?.priority, 100);
+
+  await ledger.appendEvent({
+    id: newEventId(),
+    ts: 4000,
+    lamport: 4,
+    device: newDeviceId(),
+    kind: "grade-undone",
+    target: idA,
+    payload: { eventId: gradedId },
+  });
+
+  state = await ledger.load();
+  assert.equal(state.elements.get(idA)?.priority, 0);
+  assert.equal(state.elements.get(idB)?.priority, 100);
+});

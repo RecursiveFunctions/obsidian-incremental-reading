@@ -125,3 +125,43 @@ test("priorityScaledFirstInterval scales first topic interval by priority positi
   const advanced = advanceTopic(newTopicState(SETTINGS, NOW), SETTINGS, NOW, undefined, 95, true, 1000);
   assert.equal(advanced.interval, low);
 });
+
+test("newTopicState computes SM20 length-based A-Factor when textLength is provided", () => {
+  const shortTopic = newTopicState(SETTINGS, NOW, 100);
+  const longTopic = newTopicState(SETTINGS, NOW, 10_000);
+  const imageTopic = newTopicState(SETTINGS, NOW, 0);
+  assert.ok(shortTopic.aFactor > longTopic.aFactor);
+  assert.ok(shortTopic.aFactor > 1.7 && shortTopic.aFactor <= 2.0);
+  assert.ok(longTopic.aFactor > 1.25 && longTopic.aFactor < 1.3);
+  assert.equal(imageTopic.aFactor, 1.3);
+});
+
+test("advanceTopic sm20Commit uses a^3 first interval, log-uniform dispersion, and updates aFactor", () => {
+  const initial = { dueMs: NOW.getTime(), interval: 0, aFactor: 2.0 };
+  const first = advanceTopic(
+    initial,
+    { ...SETTINGS, topicMaxInterval: 44530 },
+    NOW,
+    undefined,
+    undefined,
+    false,
+    1000,
+    { sm20Commit: true, rng: () => 0 },
+  );
+  // a^3 for a = 2.0 -> 8 days when rng returns 0 (zero perturbation)
+  assert.equal(first.interval, 8);
+  assert.ok(first.aFactor > initial.aFactor);
+
+  const second = advanceTopic(
+    first,
+    { ...SETTINGS, topicMaxInterval: 44530 },
+    NOW,
+    undefined,
+    undefined,
+    false,
+    1000,
+    { sm20Commit: true, rng: () => 0 },
+  );
+  assert.ok(second.interval > first.interval);
+  assert.ok(second.aFactor > first.aFactor);
+});

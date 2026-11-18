@@ -87,6 +87,11 @@ import {
   treeRowLabel,
 } from "./ir/labels";
 import { buildExtractEvent, buildTextEditedEvent } from "./ir/extract";
+import {
+  computeExtractAFactorPair,
+  getPriorityDeltaForItemGrade,
+  spreadExtractPriority,
+} from "./sm18-ir-mechanics";
 import { newElementId, newEventId, type ElementId } from "./ir/ids";
 import { neuralViaLabel } from "./ir/neural";
 import { shouldShowReanchorBanner } from "./ir/tree-nav";
@@ -3912,6 +3917,19 @@ export class IrReviewView extends ItemView {
     try {
       const now = Date.now();
       const elementId = newElementId();
+      const extractText =
+        textOverride ?? bodyBeforeExtract.slice(sel.start, sel.end);
+      const parentAf =
+        slot.element.schedule?.aFactor ?? this.settings.topicAFactor;
+      const { childAFactor, parentAFactorAfter } = computeExtractAFactorPair(
+        parentAf,
+        extractText.length,
+      );
+      const childPriority = clampPriority(
+        spreadExtractPriority(slot.element.priority, extractText.length),
+      );
+      const childState = newTopicState(this.settings, new Date(now));
+      childState.aFactor = childAFactor;
       const ev = buildExtractEvent({
         sourcePath,
         sourceText: bodyBeforeExtract,
@@ -3920,22 +3938,44 @@ export class IrReviewView extends ItemView {
         textOverride,
         spans: spans.map((sp) => ({ start: sp.start, end: sp.end })),
         parentId: slot.id,
-        priority: slot.element.priority,
+        priority: childPriority,
         elementId,
         eventId: newEventId(),
         device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
-        schedule: topicStateToSchedule(newTopicState(this.settings, new Date(now))),
+        schedule: topicStateToSchedule(childState),
         placement: buildPriorityPlacement(
           this.elementsById.values(),
           elementId,
-          slot.element.priority,
+          childPriority,
         ),
       });
       await this.ledger.appendEvent(ev);
       created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
+      if (slot.element.schedule) {
+        const updatedParentSchedule = {
+          ...slot.element.schedule,
+          aFactor: parentAFactorAfter,
+        };
+        await this.emit("topic-advanced", slot.id, {
+          schedule: updatedParentSchedule,
+          operation: "extract-parent-decay",
+        });
+        slot.element = { ...slot.element, schedule: updatedParentSchedule };
+        this.elementsById.set(slot.id, slot.element);
+        if (slot.file) {
+          const parentState = scheduleToTopicState(updatedParentSchedule);
+          if (parentState) {
+            await quietFrontmatterWrite(async () => {
+              await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
+                writeTopicToFrontmatter(f, parentState);
+              });
+            }, "extract-parent-decay");
+          }
+        }
+      }
       const promote =
         opts?.promote ?? this.settings.extractCreatesStandaloneNote;
       if (created && promote && this.commitPromoteExtract) {
@@ -4123,30 +4163,62 @@ export class IrReviewView extends ItemView {
     try {
       const now = Date.now();
       const elementId = newElementId();
+      const extractText = bodyBeforeExtract.slice(span.start, span.end);
+      const parentAf =
+        slot.element.schedule?.aFactor ?? this.settings.topicAFactor;
+      const { childAFactor, parentAFactorAfter } = computeExtractAFactorPair(
+        parentAf,
+        extractText.length,
+      );
+      const childPriority = clampPriority(
+        spreadExtractPriority(slot.element.priority, extractText.length),
+      );
+      const childState = newTopicState(this.settings, new Date(now));
+      childState.aFactor = childAFactor;
       const ev = buildExtractEvent({
         sourcePath,
         sourceText: bodyBeforeExtract,
         selStart: span.start,
         selEnd: span.end,
         parentId: slot.id,
-        priority: slot.element.priority,
+        priority: childPriority,
         elementId,
         eventId: newEventId(),
         device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
-        schedule: topicStateToSchedule(
-          newTopicState(this.settings, new Date(now)),
-        ),
+        schedule: topicStateToSchedule(childState),
         placement: buildPriorityPlacement(
           this.elementsById.values(),
           elementId,
-          slot.element.priority,
+          childPriority,
         ),
       });
       await this.ledger.appendEvent(ev);
       const created = ev.payload.element as IrElement;
       this.elementsById.set(created.id, created);
+      if (slot.element.schedule) {
+        const updatedParentSchedule = {
+          ...slot.element.schedule,
+          aFactor: parentAFactorAfter,
+        };
+        await this.emit("topic-advanced", slot.id, {
+          schedule: updatedParentSchedule,
+          operation: "extract-parent-decay",
+        });
+        slot.element = { ...slot.element, schedule: updatedParentSchedule };
+        this.elementsById.set(slot.id, slot.element);
+        if (slot.file) {
+          const parentState = scheduleToTopicState(updatedParentSchedule);
+          if (parentState) {
+            await quietFrontmatterWrite(async () => {
+              await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
+                writeTopicToFrontmatter(f, parentState);
+              });
+            }, "extract-parent-decay");
+          }
+        }
+      }
       this.adoptElement(created);
       this.flash(`Extracted · ${this.remainingInSession()} left`);
       this.onChange?.();
@@ -4441,6 +4513,7 @@ export class IrReviewView extends ItemView {
       slot.element.priority,
       policy.enabled,
       this.queue.length,
+      { sm20Commit: true },
     );
     return formatIntervalShort(advanced.dueMs - now, now);
   }
@@ -4505,22 +4578,48 @@ export class IrReviewView extends ItemView {
     // `grade` is the revlog: stats and the parameter optimizer need the
     // rating itself, not just the resulting card. `overridden` marks a
     // divergence-picker interval override so the optimizer can report it.
+    const priorityDelta = getPriorityDeltaForItemGrade(g, "fsrs");
+    const nextPriority =
+      priorityDelta > 0
+        ? clampPriority(slot.element.priority + priorityDelta)
+        : slot.element.priority;
+    const priorityPlacement =
+      priorityDelta > 0
+        ? buildPriorityPlacement(
+            this.elementsById.values(),
+            slot.id,
+            nextPriority,
+          )
+        : undefined;
     const payload: Record<string, unknown> = {
       card: stored,
       grade: gradeNumber(g),
       prioritySnapshot: slot.element.priority,
       effectiveRetention,
       schedulingPolicyVersion: PRIORITY_SCHEDULING_POLICY_VERSION,
+      ...(priorityDelta > 0
+        ? {
+            newPriority: nextPriority,
+            placement: priorityPlacement,
+          }
+        : {}),
     };
     if (intervalOverridden) payload.overridden = true;
     await this.emit("graded", slot.id, payload);
     this.gradedSlotIds.add(slot.id);
-    slot.element = { ...slot.element, card: stored };
+    slot.element = {
+      ...slot.element,
+      card: stored,
+      priority: nextPriority,
+    };
     this.elementsById.set(slot.id, slot.element);
     if (slot.file) {
       await quietFrontmatterWrite(async () => {
         await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
           writeCardToFrontmatter(f, next);
+          if (priorityDelta > 0) {
+            f["ir-priority"] = nextPriority;
+          }
         });
       }, "grade");
     }
@@ -4663,6 +4762,7 @@ export class IrReviewView extends ItemView {
       slot.element.priority,
       policy.enabled,
       this.queue.length,
+      { sm20Commit: true, rng: Math.random },
     );
     await this.emit("topic-advanced", slot.id, {
       schedule: topicStateToSchedule(advanced),

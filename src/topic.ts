@@ -14,6 +14,13 @@
  */
 
 import { IR_KEYS } from "./types";
+import {
+  adjustTopicAFactor,
+  computeTopicAFactorFromTextLength,
+  computeTopicNextIntervalDays,
+  SM20_IMAGE_EXTRACT_AFACTOR,
+  SM20_MAX_INTERVAL_DAYS,
+} from "./sm18-ir-mechanics";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -21,7 +28,7 @@ const MS_PER_DAY = 86_400_000;
 export interface TopicScheduleSettings {
   /** Days until a freshly advanced topic with no interval yet is due again. */
   topicFirstInterval: number;
-  /** Default interval multiplier seeded onto new topics. */
+  /** Default interval multiplier seeded onto new topics when no text length is supplied. */
   topicAFactor: number;
   /** Hard cap on the topic interval in days, so it can't run away. */
   topicMaxInterval: number;
@@ -37,8 +44,8 @@ export interface TopicState {
   aFactor: number;
 }
 
-/** Lowest sane A-Factor: anything <= 1 would never grow the interval. */
-const MIN_A_FACTOR = 1.1;
+/** Lowest sane A-Factor: SuperMemo's minimum topic A-Factor is 1.01. */
+const MIN_A_FACTOR = 1.01;
 
 function clampAFactor(value: number, fallback: number): number {
   if (!Number.isFinite(value) || value < MIN_A_FACTOR) {
@@ -51,20 +58,33 @@ function clampAFactor(value: number, fallback: number): number {
 
 /**
  * A fresh topic schedule: due now (so it enters the queue immediately, like a
- * new FSRS card), no interval yet, A-Factor from settings.
+ * new FSRS card), no interval yet. When `textLength` is provided, computes the
+ * initial A-Factor from character length (`1.25 + 150 / (L + 200)` in SM20
+ * `0x00cfee40`, or `1.3` when `textLength === 0` for image/crop topics).
+ * Otherwise falls back to `settings.topicAFactor`.
  */
 export function newTopicState(
   settings: TopicScheduleSettings,
   now: Date = new Date(),
+  textLength?: number,
 ): TopicState {
+  let initialAf: number;
+  if (typeof textLength === "number" && Number.isFinite(textLength)) {
+    initialAf =
+      textLength > 0
+        ? computeTopicAFactorFromTextLength(textLength)
+        : SM20_IMAGE_EXTRACT_AFACTOR;
+  } else {
+    initialAf = clampAFactor(settings.topicAFactor, 2);
+  }
   return {
     dueMs: now.getTime(),
     interval: 0,
-    aFactor: clampAFactor(settings.topicAFactor, 2),
+    aFactor: clampAFactor(initialAf, 2),
   };
 }
 
-export const TOPIC_INTERVAL_MAX_CLAMP = 44_530;
+export const TOPIC_INTERVAL_MAX_CLAMP = SM20_MAX_INTERVAL_DAYS;
 
 /**
  * Priority-scaled first interval (in days) for a fresh topic at `priority` (0..100)
@@ -82,12 +102,24 @@ export function priorityScaledFirstInterval(
   return Math.max(1, Math.round(scaled));
 }
 
+export interface AdvanceTopicOptions {
+  /** Optional RNG for SM20 log-uniform interval dispersion (`0x00d01870`). */
+  rng?: () => number;
+  /**
+   * When true, applies SM20's `ComputeNextRepetitionIntervalDays` (`a^3` on rep 1)
+   * and `UpdateEaseForGradedRepetition` (`0x00cff250`) to evolve `aFactor`.
+   */
+  sm20Commit?: boolean;
+}
+
 /**
- * Advance a topic after a reading pass ("Next" in the review UI). First pass
- * uses `topicFirstInterval` (or priority-scaled first interval when `priority`
- * is provided and `scaleFirstByPriority` is true); every later pass multiplies
- * the interval by the A-Factor. The interval is clamped to `[1, min(topicMaxInterval, 44530)]`
- * and the next due time is `now + interval days`.
+ * Advance a topic after a reading pass ("Next" in the review UI).
+ *
+ * Supports both the classic settings-driven first interval (`topicFirstInterval`
+ * / `priorityScaledFirstInterval`) and SuperMemo 20's `CommitTopicRepetition`
+ * (`a^3` first interval when `topicFirstInterval <= 0` or `opts.sm20Commit` is set,
+ * optional log-uniform dispersion via `opts.rng`, and ease adjustment via
+ * `adjustTopicAFactor`).
  */
 export function advanceTopic(
   state: TopicState,
@@ -97,6 +129,7 @@ export function advanceTopic(
   priority?: number,
   scaleFirstByPriority = false,
   collectionSize = 1000,
+  opts?: AdvanceTopicOptions,
 ): TopicState {
   const baseAFactor = clampAFactor(state.aFactor, settings.topicAFactor);
   const aFactor = effectiveAFactor === undefined
@@ -112,15 +145,27 @@ export function advanceTopic(
     Math.max(first, Math.round(settings.topicMaxInterval || first)),
   );
 
-  const next =
-    state.interval >= 1
-      ? Math.round(state.interval * aFactor)
-      : first;
+  let next: number;
+  if (opts?.sm20Commit) {
+    const rawNext = computeTopicNextIntervalDays(state.interval, aFactor, opts.rng);
+    next = state.interval === 0 && scaleFirstByPriority && priority !== undefined
+      ? Math.max(rawNext, first)
+      : rawNext;
+  } else if (state.interval >= 1) {
+    next = opts?.rng
+      ? computeTopicNextIntervalDays(state.interval, aFactor, opts.rng)
+      : Math.round(state.interval * aFactor);
+  } else {
+    next = first;
+  }
   const interval = Math.min(max, Math.max(1, next));
+  const nextAFactor = opts?.sm20Commit
+    ? adjustTopicAFactor(baseAFactor, Math.max(1, state.interval), interval, false)
+    : baseAFactor;
 
   return {
     interval,
-    aFactor: baseAFactor,
+    aFactor: nextAFactor,
     dueMs: now.getTime() + interval * MS_PER_DAY,
   };
 }

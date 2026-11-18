@@ -189,6 +189,13 @@ export function foldFrom(
           } else {
             element.card = card;
           }
+          const placement = event.payload.placement as PriorityPlacement | undefined;
+          const newPriority = event.payload.newPriority as number | undefined;
+          if (placement) {
+            base.placements.push({ target, placement });
+          } else if (typeof newPriority === "number" && Number.isFinite(newPriority)) {
+            element.priority = clampPriority(newPriority);
+          }
         }
         break;
       }

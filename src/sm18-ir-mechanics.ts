@@ -157,3 +157,199 @@ export function makeClozeChild(
     component_types: [COMPONENT_TYPE_DEFAULT, COMPONENT_TYPE_DEFAULT],
   };
 }
+
+// ---------------------------------------------------------------------------
+// SM-20 verified binary algorithms (Ghidra-backed from sm20-re:smfmt/scheduler.py)
+// ---------------------------------------------------------------------------
+
+/** Maximum topic/item interval in days (`0x00e38580`, ghidra:e511e6c68e42367e). */
+export const SM20_MAX_INTERVAL_DAYS = 44_530;
+
+/** Fixed A-Factor assigned to picture/image extracts (`0x00bcb0a0`). */
+export const SM20_IMAGE_EXTRACT_AFACTOR = 1.3;
+
+/**
+ * Delphi Round / x86_64 cvtsd2si round-half-to-even (`0x0040c5d0`, ghidra:3f09d90780b3e446).
+ */
+export function roundHalfToEven(x: number): number {
+  if (!Number.isFinite(x)) return 1;
+  if (Math.abs(x % 1) === 0.5) return 2 * Math.round(x / 2);
+  return Math.round(x);
+}
+
+/**
+ * Zero-guarded rational saturation `a / (a + b)` (`0x00cf9f70`, ghidra:27cb530ca75071dd).
+ */
+export function rationalSaturationZeroGuarded(a: number, b: number): number {
+  if (a + b === 0) return 0;
+  return a / (a + b);
+}
+
+/**
+ * Topic/extract A-Factor from plain-text character length:
+ * `1.25 + (t * 0.75) / (t + 50.0)` where `t = 10000 / L` (`0x00cfee40`, ghidra:99501d7457d620e2).
+ *
+ * Short texts (`L -> 0`) approach `2.0`; long texts (`L -> inf`) approach `1.25`.
+ */
+export function computeTopicAFactorFromTextLength(textLen: number): number {
+  if (!Number.isFinite(textLen) || textLen <= 0) return 2.0;
+  const t = 10000.0 / textLen;
+  return 1.25 + (t * 0.75) / (t + 50.0);
+}
+
+/**
+ * Inherited extract A-Factor blending `parentAf` with `computeTopicAFactorFromTextLength(textLen)`
+ * (`0x00cfdb80`, ghidra:60dabd6fdb83cead).
+ */
+export function inheritExtractAFactor(parentAf: number, textLen: number): number {
+  const fLen = computeTopicAFactorFromTextLength(textLen);
+  const safeParent = Number.isFinite(parentAf) ? parentAf : 2.0;
+  const t = Math.max(safeParent - 1.01, 0.0);
+  const w = 0.9 - (t * 0.9) / (t + 0.29);
+  const blended = safeParent * w + fLen * (1.0 - w);
+  return Math.min(Math.max(blended, 1.2), 6.9);
+}
+
+/**
+ * Decay parent A-Factor by 5% toward 1.01 when an extract is created from it
+ * (`TElWind.FinishGeneratedExtractChild` at `0x00f4db80`, ghidra:d0990e968963b495).
+ */
+export function decayParentAFactorOnExtract(parentAf: number): number {
+  const safeParent = Number.isFinite(parentAf) ? parentAf : 2.0;
+  return Math.min(Math.max((safeParent - 1.01) * 0.95 + 1.01, 1.01), 6.9);
+}
+
+/**
+ * Compute both the child extract's inherited A-Factor and the decayed parent A-Factor
+ * (`0x00cfdb80` + `0x00f4db80`).
+ */
+export function computeExtractAFactorPair(
+  parentAf: number,
+  textLen: number,
+): { childAFactor: number; parentAFactorAfter: number } {
+  return {
+    childAFactor: inheritExtractAFactor(parentAf, textLen),
+    parentAFactorAfter: decayParentAFactorOnExtract(parentAf),
+  };
+}
+
+/**
+ * Adjust topic A-Factor in `[1.01, 6.0]` on repetition commit
+ * (`UpdateEaseForGradedRepetition` at `0x00cff250`, ghidra:14bab448bf063b97).
+ */
+export function adjustTopicAFactor(
+  af: number,
+  oldIv: number,
+  newIv: number,
+  hard = false,
+): number {
+  const safeAf = Number.isFinite(af) && af >= 1.01 ? af : 2.0;
+  const a = Math.max(1, Math.trunc(oldIv));
+  const b = Math.max(1, Math.trunc(newIv));
+  if (a === b) return Math.min(Math.max(safeAf, 1.01), 6.0);
+  const ratio = Math.max(a, b) / Math.min(a, b);
+  const halfPoint = hard ? 80.0 : 15.0;
+  const f = rationalSaturationZeroGuarded(ratio, halfPoint);
+  const delta = Math.max((safeAf - 1.01) * f, 0.001);
+  const updated = b > a ? safeAf + delta : safeAf - delta;
+  return Math.min(Math.max(updated, 1.01), 6.0);
+}
+
+/**
+ * Perturb scheduled interval `x` with log-uniform spread `d`
+ * (`PerturbScheduledIntervalWithRandomSpread` at `0x00d01870`, ghidra:7e2529bc5962e8f3).
+ *
+ * When `rng` is omitted or returns `0`, the perturbation is `0` (deterministic nominal interval).
+ */
+export function disperseScheduledInterval(
+  x: number,
+  d: number,
+  rng?: () => number,
+): number {
+  if (!rng) return Math.max(1.0, x);
+  let dClamped = Math.max(d, 4.0);
+  dClamped = Math.min(dClamped, x + 4.0);
+  dClamped = Math.min(Math.max(dClamped, 0.0), 100.0);
+  const r1 = Math.min(Math.max(rng(), 0.0), 0.999999);
+  let m = -10.857763300760043 * Math.log(1.0 - (r1 / 2.0) * 1.979793637145314);
+  const r2 = rng();
+  if (r2 > 0.5) m = -m;
+  return Math.max(1.0, x + (m / 50.0) * dClamped);
+}
+
+/**
+ * Compute next topic repetition interval in days
+ * (`ComputeNextRepetitionIntervalDays` at `0x00e38580`, ghidra:e511e6c68e42367e).
+ *
+ * On the first repetition (`oldIv <= 0`), base interval is `roundHalfToEven(a^3)`
+ * where `a = clamp(af, 1.01, 3.0)`. On subsequent repetitions, `roundHalfToEven(oldIv * a)`.
+ */
+export function computeTopicNextIntervalDays(
+  oldIv: number,
+  af: number,
+  rng?: () => number,
+): number {
+  const cleanOld = Math.max(0, Math.trunc(oldIv || 0));
+  const a = Math.min(Math.max(Number.isFinite(af) ? af : 2.0, 1.01), 3.0);
+  const base = cleanOld === 0 ? a * a * a : cleanOld * a;
+  const x = roundHalfToEven(Math.min(base, SM20_MAX_INTERVAL_DAYS));
+  const d = x - cleanOld;
+  const r = roundHalfToEven(disperseScheduledInterval(x, d, rng));
+  return Math.min(SM20_MAX_INTERVAL_DAYS, r <= cleanOld ? cleanOld + 1 : r);
+}
+
+/**
+ * Compute randomized priority for a new extract from parent priority and text length
+ * (`ComputeBoundedRandomizedPercentage` at `0x00ca1140`, ghidra:503731ad537c5b6c).
+ */
+export function spreadExtractPriority(
+  parentPriority: number,
+  textLen: number,
+  rng: () => number = Math.random,
+): number {
+  const p = Math.min(100.0, Math.max(0.0, Number.isFinite(parentPriority) ? parentPriority : 33.0));
+  const t = p > 0.0 ? Math.exp(1.7 * Math.pow(p, 0.2)) : 0.0;
+  let lo = p * 0.7;
+  let hi = t;
+  if (lo > t) {
+    lo = t;
+    hi = t * 1.3;
+  }
+  hi = Math.min(Math.max(hi, 0.0), 100.0);
+  const cleanLen = Math.max(0, textLen || 0);
+  const lenWeight = cleanLen > 0 ? cleanLen / (cleanLen + 100.0) : 0.0;
+  const u = Math.min(1.0, Math.max(0.0, rng()));
+  const res = lo + (hi - lo) * lenWeight * u;
+  return Math.min(Math.max(res, 0.0), 100.0);
+}
+
+/**
+ * Automatic positive-only priority delta for item grade (`GetPriorityDeltaForItemGrade`
+ * at `0x00ca1e30`, ghidra:2886b629665161c8; called by `AdjustElementPriorityForItemGrade`
+ * at `0x00d77d20`, ghidra:1c4a9076ce5cf690).
+ *
+ * Accepts either SM's 0..5 grade (3->0.05, 4->0.15, 5->0.30) or FSRS 1..4 / string labels
+ * (Again/1 -> 0, Hard/2 -> 0.05, Good/3 -> 0.15, Easy/4 -> 0.30).
+ */
+export function getPriorityDeltaForItemGrade(
+  grade: number | "again" | "hard" | "good" | "easy",
+  scale: "fsrs" | "sm" = "fsrs",
+): number {
+  if (typeof grade === "string") {
+    if (grade === "hard") return 0.05;
+    if (grade === "good") return 0.15;
+    if (grade === "easy") return 0.3;
+    return 0.0;
+  }
+  if (scale === "sm") {
+    if (grade === 3) return 0.05;
+    if (grade === 4) return 0.15;
+    if (grade === 5) return 0.3;
+    return 0.0;
+  }
+  // FSRS numeric grade: 1 = Again, 2 = Hard, 3 = Good, 4 = Easy
+  if (grade === 2) return 0.05;
+  if (grade === 3) return 0.15;
+  if (grade === 4) return 0.3;
+  return 0.0;
+}

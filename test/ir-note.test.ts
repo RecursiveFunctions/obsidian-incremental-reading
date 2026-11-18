@@ -242,6 +242,46 @@ test("createCloze keeps multi-line context", async () => {
 // tests defended (chrome present in the body, propagated to ancestors) is no
 // longer one the plugin promises.
 
+test("markAsTopic computes SM20 A-Factor from note body length when body is non-empty", async () => {
+  const app = new FakeApp();
+  const shortFile = app.seed("Short.md", {}, "Short body.");
+  const longFile = app.seed("Long.md", {}, "x".repeat(10_000));
+
+  await markAsTopic(app.asApp(), shortFile as any, SETTINGS);
+  await markAsTopic(app.asApp(), longFile as any, SETTINGS);
+
+  const shortAf = app.frontmatterOf("Short.md")![IR_KEYS.aFactor] as number;
+  const longAf = app.frontmatterOf("Long.md")![IR_KEYS.aFactor] as number;
+  assert.ok(shortAf > longAf);
+  assert.ok(longAf > 1.25 && longAf < 1.3);
+});
+
+test("createExtract blends child A-Factor, decays parent A-Factor by 0.95, and spreads priority when rng is provided", async () => {
+  const app = new FakeApp();
+  const src = app.seed(
+    "src/Topic.md",
+    {
+      [IR_KEYS.type]: "topic",
+      [IR_KEYS.priority]: 30,
+      [IR_KEYS.aFactor]: 2.0,
+    },
+    "A long parent body",
+  );
+
+  const r = await createExtract(app.asApp(), src as any, "Extracted child passage with enough characters", {
+    ...SETTINGS,
+    extractPriorityRng: () => 0.5,
+  });
+  assert.ok(r.file, r.error);
+  const childFm = app.frontmatterOf(r.file!.path)!;
+  const parentFm = app.frontmatterOf("src/Topic.md")!;
+  // Parent A-Factor decayed from 2.0 to (2.0 - 1.01) * 0.95 + 1.01 = 1.9505
+  assert.ok(Math.abs((parentFm[IR_KEYS.aFactor] as number) - 1.9505) < 1e-6);
+  assert.equal(typeof childFm[IR_KEYS.aFactor], "number");
+  assert.ok((childFm[IR_KEYS.aFactor] as number) >= 1.2 && (childFm[IR_KEYS.aFactor] as number) <= 2.0);
+  assert.notEqual(childFm[IR_KEYS.priority], 30);
+});
+
 test("dismiss is reversible and lossless; non-IR is refused", async () => {
   const app = new FakeApp();
   const t = app.seed("T.md", {

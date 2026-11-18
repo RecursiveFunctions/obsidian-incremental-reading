@@ -170,15 +170,31 @@ What we still keep separate:
 
 ## 4. Scheduler
 
-FSRS via `ts-fsrs` as the primary scheduler. The plugin **owns the IR queue**
-(priority, topics, items, postpone, interleaving), because nothing in the
-Obsidian ecosystem provides an IR queue and the queue is the core of the
-product.
+FSRS via `ts-fsrs` is the primary **item** scheduler, while **SuperMemo 20's
+decompiled reading and priority algorithms** (`src/sm18-ir-mechanics.ts` &
+`src/topic.ts`) govern topics, extracts, and priority drift. The plugin **owns
+the IR queue** (priority, topics, items, postpone, interleaving), because
+nothing in the Obsidian ecosystem provides an IR queue and the queue is the
+core of the product.
 
-Rationale: FSRS descends from SuperMemo's own DSR model (SM-17 lineage). It is
-the closest open analog that exists, not a rough substitute. The scheduler is
-the highest-parity part of the build, not the lowest.
+Rationale: FSRS descends from SuperMemo's own DSR model (SM-17 lineage). For
+ungraded reading elements (topics and extracts) and priority dynamics, we use
+the exact formulas recovered from SuperMemo 20 (`sm20.exe`):
 
+- **Length-based Topic A-Factor (`0x00cfee40`):** `1.25 + 150 / (L + 200)` from
+  character length `L` (`1.3` for image/crop extracts at `0x00bcb0a0`).
+- **Extract Inheritance & Parent Decay (`0x00cfdb80`, `0x00f4db80`):** Child
+  extract A-Factor blends the parent's A-Factor with its own length-based
+  A-Factor (`w = 0.9 - 0.9t / (t + 0.29)`), and decays the parent's A-Factor
+  by 5% toward `1.01` (`(af - 1.01) * 0.95 + 1.01`).
+- **Topic Commit (`0x00d85480`, `0x00e38580`, `0x00d01870`, `0x00cff250`):**
+  First repetition uses `a^3`, subsequent repetitions use `interval * a` (with
+  `a` clamped to `[1.01, 3.0]`), dispersed with log-uniform random spread, and
+  adjusts `aFactor` via rational saturation.
+- **Extract Priority Spreading (`0x00ca1140`) & Item Grade Drift (`0x00ca1e30`):**
+  New extracts spread around parent priority `P` within `[0.7*P, exp(1.7*P^0.2)]`
+  weighted by `L / (L + 100)`, and passing item grades (`Hard/Good/Easy`) nudge
+  item priority by `+0.05 / +0.15 / +0.30`.
 - Review log persisted **from day one**. Required for personal optimization and
   for the ensemble in section 5 to be meaningful.
 - Interop: **Anki export** for the item layer as an optional, one-directional
@@ -507,12 +523,12 @@ Reading-view behavior and limitations:
 ## Open items
 
 - RESOLVED: the SuperMemo chooser is an accuracy-weighted parallel ensemble
-  (SM-17 through SM-20 lineage; SM-20, 2026, runs ~5 algorithms in parallel,
-  each weighted by how well it predicts that user's recall). Section 5
-  deliberately ships a lighter divergence-*display* design instead of
-  accuracy-weighted blending, for IR throughput. Weighted blending / auto-pick
-  by per-scheduler hit rate is logged as a post-v1 option (the "always-armed"
-  variant section 5 anticipates), not v1.
+  (SM-17 through SM-20 lineage; SM-20's `sinc_model_v2/v4/v6`, `initial_sinc_prior`,
+  and 21-bin forgetting-curve blend `w = cases / (cases + 3.5)` are now fully
+  decompiled). Section 5 ships a 3-model divergence display (`FSRS-6`, `DSR`,
+  `SM-2`) for IR throughput, with SM-19/20 SInc surface available as an
+  optional shadow model.
 - Image occlusion: SHIPPED (see "Multi-selection, image regions, and
-  occlusion"). Incremental video and audio: still out of scope.
+  occlusion"). Incremental video and audio: planned in Phase 3 of
+  `docs/FUTURE-PLANS.md` (`{ resume, start, stop }` timestamp model).
 - Sleep/circadian and Plan/day-structure subsystems: deliberately not pursued.

@@ -147,11 +147,14 @@ function extractBody(text: string, titleHint?: string): string {
  * - ir-priority: input.defaultPriority (no clamping in this module)
  * - ir-due: input.now
  */
-function createFrontmatter(defaultPriority: number, now: number): Record<string, unknown> {
+import { computeTopicAFactorFromTextLength } from "../sm18-ir-mechanics";
+
+function createFrontmatter(defaultPriority: number, now: number, bodyLen: number): Record<string, unknown> {
   return {
     "ir-type": "topic",
     "ir-priority": defaultPriority,
-    "ir-due": now
+    "ir-due": now,
+    "ir-a-factor": computeTopicAFactorFromTextLength(bodyLen),
   };
 }
 
@@ -172,7 +175,7 @@ export function planBulkImport(input: BulkImportInput): BulkImportPlan {
   const body = extractBody(text, titleHint);
 
   // Create frontmatter
-  const frontmatter = createFrontmatter(defaultPriority, now);
+  const frontmatter = createFrontmatter(defaultPriority, now, body.length);
 
   return {
     title,

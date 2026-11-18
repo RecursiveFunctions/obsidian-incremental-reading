@@ -4,9 +4,15 @@ Single authoritative roadmap for **Incremental Reading for Obsidian**. For full 
 
 ---
 
-## 1. Shipped Baseline (Through `v0.13.0`)
+## 1. Shipped Baseline (Through `v0.13.0` + SM20 Core Mechanics)
 
 - **Core Domain & Vault Storage:** Append-only `.ir/` event ledger, block-anchored extracts (with one-key standalone note promotion), Markdown clozes with hints, text-layer PDF topics and extracts, Ctrl multi-span extracts, and PDF/image region crops with interactive image occlusion (`ir-occlusion`).
+- **Exact SM20 Topic, Extract & Priority Mechanics:**
+  - **Length-driven Topic A-Factor (`0x00cfee40`):** New topics and bulk imports compute initial `aFactor` from character length via `1.25 + 150 / (L + 200)` (`1.3` for image/crop extracts at `0x00bcb0a0`).
+  - **Extract Inheritance & Parent Decay (`0x00cfdb80`, `0x00f4db80`):** Child extracts blend parent A-Factor with extract text-length A-Factor via weight `w = 0.9 - 0.9t / (t + 0.29)`, while immediately decaying the parent's A-Factor by 5% toward `1.01` (`(af - 1.01) * 0.95 + 1.01`).
+  - **Extract Priority Spreading (`0x00ca1140`):** Child extract priority is randomized around parent priority $P$ within `[0.7*P, min(100, exp(1.7 * P^0.2))]` weighted by `L / (L + 100)`.
+  - **Topic Commit, Dispersion & Ease Adjustment (`0x00d85480`, `0x00e38580`, `0x00d01870`, `0x00cff250`):** First repetition uses `a^3`, subsequent repetitions use `interval * a` (with `a` clamped to `[1.01, 3.0]`), perturbed with log-uniform interval dispersion (`-10.85776 * ln(...)`), and updates `aFactor` via rational saturation.
+  - **Item Grade Auto-Priority Drift (`0x00d77d20` / `0x00ca1e30`):** Passing item grades automatically drift priority upward (`Hard: +0.05`, `Good: +0.15`, `Easy: +0.30`), reversible via Undo.
 - **5-Dimension Mercy & Postpone (`v0.13.0`):** Due overflow scored across five configurable dimensions (*Importance*, *Lateness*, *Easiness*, *Investment*, *Recency*) against a 400-point baseline interval-growth curve; interactive `Alt+M` preview modal with live sliders; separate `totalPostponeCount` and `recentPostponeCount` tracking (resetting `recentPostponeCount` upon review so older items are never permanently starved).
 - **Schedulers & 3-Model Divergence (`v0.13.0`):** FSRS-6 primary recall engine with local parameter optimizer; post-grade Divergence Picker comparing `FSRS-6`, power-law `DSR`, and `SM-2`; and priority-scaled first topic intervals (`[1, 44530]`-day clamp).
 - **Queue & Overload Controls:** Deterministic priority queue policies (`Strict`, `Balanced`, `Discovery`), item/reading jitter, daily ceiling, priority cutoff, startup auto-postpone, and full undo for grades, Mercy batches, Later today, and Dismiss.
@@ -16,12 +22,14 @@ Single authoritative roadmap for **Incremental Reading for Obsidian**. For full 
 
 ## 2. Phase 1 — Rich Collection Import & Duplicate Guards (Immediate Priority)
 
-Unblock full-fidelity desktop collection migration (solving the v0 plaintext/title-only limitations) and prevent duplicate topic creation during capture.
+Unblock full-fidelity desktop collection migration (SM18 & SM20 on-disk format parity) and prevent duplicate topic creation during capture.
 
 ### 2.1 Rich-Content Collection Import
-- **Component Stream Decoding (`compon` records):**
-  - Decode rich HTML (`Type 13` / `0x1c`-byte buffer at text slot `+0x11`) and attached image (`Type 2`) component records by resolving registry member paths and filespace slots into clean Markdown notes and vault attachments instead of falling back to plaintext registry titles.
+- **Component Stream Decoding (`compon` records, Types 0–7, 10–14, 16):**
+  - Decode rich HTML (`Type 13` / `Type 16`, `0x1c`-byte buffer at text slot `+0x11`) and attached image (`Type 2`) component records by resolving registry member paths and filespace slots into clean Markdown notes and vault attachments instead of falling back to plaintext registry titles.
   - Use byte-level resynchronization (`stride = 1`) when scanning component streams so records with under-reported `body_length` do not swallow subsequent valid records.
+- **SM20 `.mem` + `.ptr` + `.rtx` Registry Payload Join:**
+  - Resolve registry text payloads via `.ptr`-gated, `.mem`-offset-driven lookup rather than NUL-trailer scanning so SM20 collections (which reuse freed `.rtx` pool regions without zeroing stale NULs) import without corruption.
 - **Question / Answer & Cloze Synthesis (`DisplayAt` bitmask):**
   - Inspect the component `DisplayAt` bitmask (`+0x08`) on multi-component items (`[13, 13]` or `[0, 0]`): components with `0xff` render on Question + Answer, while components with `0xd7` / `0xdf` (clearing bit `0x20`) render on Answer only. Automatically synthesize `{{c1::...}}` clozes or Q&A splits.
 - **Extract vs. Topic Provenance & Lineage:**
@@ -54,15 +62,19 @@ Bring high-leverage session mechanics and visual calibration tools into the exis
 - **Duplicate / Sibling Item Workflow:**
   - Add a one-key command to duplicate an extract or item as a sibling under the same parent so users can formulate multiple clozes or variations from the same passage while preserving lineage and priority inheritance.
 
-### 3.2 Dynamic Neural Review (`Alt+N`)
-- **Incremental Spreading-Activation Expansion:**
-  - Upgrade Neural Review from a static upfront 3-layer BFS walk to dynamic spreading activation: re-seed activation from the element just reviewed/graded and expand deeper graph layers incrementally using bounded per-step budgets (`15` then `30` nodes) whenever the active neural queue drops below threshold.
+### 3.2 Dynamic Neural Review (`Alt+N` / `TNeuralQueue` Parity)
+- **Incremental Spreading-Activation Expansion (`0x00b5cce0`–`0x00b5e030`):**
+  - Upgrade Neural Review from a static upfront 3-layer BFS walk to dynamic `TNeuralQueue` spreading activation: trigger expansion when active queue drops below `< 50` (`NeedsExpanding` at `0x00b5cf00`) using bounded per-step budgets (`15` then `30` nodes) and select the next element via SM20's inverse-threshold stochastic scorer (`PickNext` at `0x00b5d220`: `1 / max(r, 0.0001)` vs `1 - r`).
   - Add an optional **Due-today filter** inside Neural sessions so users can restrict graph exploration to overdue/due material when desired.
 
-### 3.3 Queue Randomization Preview & Leech Manager
-- **Queue Randomization Curve Preview:**
+### 3.3 Queue Randomization Preview, Postpone Ceiling & Leech Manager
+- **Queue Randomization Curve Preview & SM20 Slider Curve (`0x00b2c950`):**
   - Add a compact visual probability-curve preview in Settings beside `itemJitter` / `readingJitter` (`Strict`, `Balanced`, `Discovery` presets) plotting the cumulative selection probability and `(position, 100 - priority)` stair-step curve.
-- **Multi-Criteria Leech Diagnostics & Triage (`Stats` view):**
+- **Priority-Interpolated Postpone Ceiling (`0x00b86810`):**
+  - Enforce `ComputePostponeIntervalCeilingForPriority` (`min_iv + round_even((max_iv - min_iv) * priority / 100)`) so high-priority elements have a tight SM20-calibrated maximum postpone ceiling.
+- **SM-19/20 SInc Surface Shadow Scheduler (`0x00a960f0` / `0x00ce6c80`):**
+  - Optional 4th shadow model in the Divergence Picker using the decompiled SM-19/20 `sinc_model_v2/v4/v6` + `initial_sinc_prior` (`0x00cdeb50`) and case-count retrievability blend `w = cases / (cases + 3.5)`.
+- **Multi-Criteria Leech Diagnostics & Triage (`Stats` view / `TDatabase.IsLeech` at `0x00d61150`):**
   - Expand `Stats` (`Alt+S`) with a dedicated **Leech & Lapses** panel filtering items by combined criteria (lapses vs. threshold, interval ceiling, forgetting index / retention rate, and difficulty/A-Factor), paired with one-click triage actions (**Dismiss**, **Reset / Forget**, **Rewrite / Split**, or **Duplicate as sibling item**).
   - Include the calendar review heatmap and rolling 30-day true retention trend.
 
