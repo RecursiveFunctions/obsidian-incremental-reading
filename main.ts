@@ -2275,10 +2275,6 @@ export default class IncrementalReadingPlugin extends Plugin {
     };
   }
 
-  /**
-   * Persist SM20 parent A-Factor decay (`(af - 1.01) * 0.95 + 1.01` at `0x00f4db80`)
-   * when an extract is created from a topic or parent extract.
-   */
   private async decayParentAFactorAfterExtract(
     parentId: ElementId,
     parentEl: IrElement | undefined,

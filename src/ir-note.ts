@@ -133,9 +133,7 @@ export async function markAsTopic(
     const raw = await app.vault.cachedRead(file);
     const stripped = stripFrontmatter(raw);
     if (stripped.length > 0) bodyLength = stripped.length;
-  } catch {
-    // Fall back to settings.topicAFactor if the body cannot be read.
-  }
+  } catch {}
 
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm[IR_KEYS.type] = "topic" satisfies IrType;
@@ -279,9 +277,6 @@ async function createChildNote(
     fm[IR_KEYS.type] = type satisfies IrType;
     fm[IR_KEYS.parent] = source.path;
     fm[IR_KEYS.priority] = childPriority;
-    // An extract is itself a reading element (a sub-topic), so it uses the
-    // topic schedule with SM20 inherited A-Factor. Only a cloze item is graded,
-    // so only it gets an FSRS card.
     if (type === "item") {
       writeCardToFrontmatter(fm, newCard());
     } else {

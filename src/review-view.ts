@@ -4509,7 +4509,6 @@ export class IrReviewView extends ItemView {
     return formatIntervalShort(advanced.dueMs - now, now);
   }
 
-  /** Render a grade-preview label above a button's own label. */
   private renderGradePreviewLabel(
     btn: HTMLButtonElement,
     label: string | null | undefined,

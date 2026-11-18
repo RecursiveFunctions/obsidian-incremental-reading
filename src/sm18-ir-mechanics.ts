@@ -162,45 +162,26 @@ export function makeClozeChild(
 // SM-20 verified binary algorithms (Ghidra-backed from sm20-re:smfmt/scheduler.py)
 // ---------------------------------------------------------------------------
 
-/** Maximum topic/item interval in days (`0x00e38580`, ghidra:e511e6c68e42367e). */
 export const SM20_MAX_INTERVAL_DAYS = 44_530;
-
-/** Fixed A-Factor assigned to picture/image extracts (`0x00bcb0a0`). */
 export const SM20_IMAGE_EXTRACT_AFACTOR = 1.3;
 
-/**
- * Delphi Round / x86_64 cvtsd2si round-half-to-even (`0x0040c5d0`, ghidra:3f09d90780b3e446).
- */
 export function roundHalfToEven(x: number): number {
   if (!Number.isFinite(x)) return 1;
   if (Math.abs(x % 1) === 0.5) return 2 * Math.round(x / 2);
   return Math.round(x);
 }
 
-/**
- * Zero-guarded rational saturation `a / (a + b)` (`0x00cf9f70`, ghidra:27cb530ca75071dd).
- */
 export function rationalSaturationZeroGuarded(a: number, b: number): number {
   if (a + b === 0) return 0;
   return a / (a + b);
 }
 
-/**
- * Topic/extract A-Factor from plain-text character length:
- * `1.25 + (t * 0.75) / (t + 50.0)` where `t = 10000 / L` (`0x00cfee40`, ghidra:99501d7457d620e2).
- *
- * Short texts (`L -> 0`) approach `2.0`; long texts (`L -> inf`) approach `1.25`.
- */
 export function computeTopicAFactorFromTextLength(textLen: number): number {
   if (!Number.isFinite(textLen) || textLen <= 0) return 2.0;
   const t = 10000.0 / textLen;
   return 1.25 + (t * 0.75) / (t + 50.0);
 }
 
-/**
- * Inherited extract A-Factor blending `parentAf` with `computeTopicAFactorFromTextLength(textLen)`
- * (`0x00cfdb80`, ghidra:60dabd6fdb83cead).
- */
 export function inheritExtractAFactor(parentAf: number, textLen: number): number {
   const fLen = computeTopicAFactorFromTextLength(textLen);
   const safeParent = Number.isFinite(parentAf) ? parentAf : 2.0;
@@ -210,19 +191,11 @@ export function inheritExtractAFactor(parentAf: number, textLen: number): number
   return Math.min(Math.max(blended, 1.2), 6.9);
 }
 
-/**
- * Decay parent A-Factor by 5% toward 1.01 when an extract is created from it
- * (`TElWind.FinishGeneratedExtractChild` at `0x00f4db80`, ghidra:d0990e968963b495).
- */
 export function decayParentAFactorOnExtract(parentAf: number): number {
   const safeParent = Number.isFinite(parentAf) ? parentAf : 2.0;
   return Math.min(Math.max((safeParent - 1.01) * 0.95 + 1.01, 1.01), 6.9);
 }
 
-/**
- * Compute both the child extract's inherited A-Factor and the decayed parent A-Factor
- * (`0x00cfdb80` + `0x00f4db80`).
- */
 export function computeExtractAFactorPair(
   parentAf: number,
   textLen: number,
@@ -233,10 +206,6 @@ export function computeExtractAFactorPair(
   };
 }
 
-/**
- * Adjust topic A-Factor in `[1.01, 6.0]` on repetition commit
- * (`UpdateEaseForGradedRepetition` at `0x00cff250`, ghidra:14bab448bf063b97).
- */
 export function adjustTopicAFactor(
   af: number,
   oldIv: number,
@@ -255,12 +224,6 @@ export function adjustTopicAFactor(
   return Math.min(Math.max(updated, 1.01), 6.0);
 }
 
-/**
- * Perturb scheduled interval `x` with log-uniform spread `d`
- * (`PerturbScheduledIntervalWithRandomSpread` at `0x00d01870`, ghidra:7e2529bc5962e8f3).
- *
- * When `rng` is omitted or returns `0`, the perturbation is `0` (deterministic nominal interval).
- */
 export function disperseScheduledInterval(
   x: number,
   d: number,
@@ -277,13 +240,6 @@ export function disperseScheduledInterval(
   return Math.max(1.0, x + (m / 50.0) * dClamped);
 }
 
-/**
- * Compute next topic repetition interval in days
- * (`ComputeNextRepetitionIntervalDays` at `0x00e38580`, ghidra:e511e6c68e42367e).
- *
- * On the first repetition (`oldIv <= 0`), base interval is `roundHalfToEven(a^3)`
- * where `a = clamp(af, 1.01, 3.0)`. On subsequent repetitions, `roundHalfToEven(oldIv * a)`.
- */
 export function computeTopicNextIntervalDays(
   oldIv: number,
   af: number,
@@ -298,10 +254,6 @@ export function computeTopicNextIntervalDays(
   return Math.min(SM20_MAX_INTERVAL_DAYS, r <= cleanOld ? cleanOld + 1 : r);
 }
 
-/**
- * Compute randomized priority for a new extract from parent priority and text length
- * (`ComputeBoundedRandomizedPercentage` at `0x00ca1140`, ghidra:503731ad537c5b6c).
- */
 export function spreadExtractPriority(
   parentPriority: number,
   textLen: number,
@@ -323,14 +275,6 @@ export function spreadExtractPriority(
   return Math.min(Math.max(res, 0.0), 100.0);
 }
 
-/**
- * Automatic positive-only priority delta for item grade (`GetPriorityDeltaForItemGrade`
- * at `0x00ca1e30`, ghidra:2886b629665161c8; called by `AdjustElementPriorityForItemGrade`
- * at `0x00d77d20`, ghidra:1c4a9076ce5cf690).
- *
- * Accepts either SM's 0..5 grade (3->0.05, 4->0.15, 5->0.30) or FSRS 1..4 / string labels
- * (Again/1 -> 0, Hard/2 -> 0.05, Good/3 -> 0.15, Easy/4 -> 0.30).
- */
 export function getPriorityDeltaForItemGrade(
   grade: number | "again" | "hard" | "good" | "easy",
   scale: "fsrs" | "sm" = "fsrs",
@@ -347,17 +291,12 @@ export function getPriorityDeltaForItemGrade(
     if (grade === 5) return 0.3;
     return 0.0;
   }
-  // FSRS numeric grade: 1 = Again, 2 = Hard, 3 = Good, 4 = Easy
   if (grade === 2) return 0.05;
   if (grade === 3) return 0.15;
   if (grade === 4) return 0.3;
   return 0.0;
 }
 
-/**
- * Convert a priority percentage (`0..100`) to a 1-based queue position across
- * `collectionSize` elements (`FUN_00ca0fc0` at `0x00ca0fc0`, ghidra:d95ed9953398234e).
- */
 export function priorityPercentageToQueuePos(
   priority: number,
   collectionSize: number,
@@ -369,10 +308,6 @@ export function priorityPercentageToQueuePos(
   return Math.min(total, Math.max(1, idx + 1));
 }
 
-/**
- * Convert a 1-based queue position (`1..collectionSize`) to a priority percentage
- * (`0..100`) (`FUN_00ca1dc0` at `0x00ca1dc0`, ghidra:aee594c6244ef222).
- */
 export function queuePosToPriorityPercentage(
   pos: number,
   collectionSize: number,
@@ -383,22 +318,6 @@ export function queuePosToPriorityPercentage(
   return ((clampedPos - 1) / (total - 1)) * 100.0;
 }
 
-/**
- * Adjust element priority percentage (`0..100`) when a topic repetition is
- * committed or its interval changes (`FUN_00ca1270` at `0x00ca1270`,
- * ghidra:203c95b817094efb, called from `TDatabase.CommitTopicRepetition` at
- * `0x00d85480`).
- *
- * Mirrors `FUN_00ca1270` exactly:
- * 1. Computes `dVar3 = min(oldIv, newIv) / max(oldIv, newIv)` (with `oldIv = max(1, oldIv)`).
- * 2. Computes `step = (1 - dVar3) * 80.0` (divided by `3.0` when `hard` is true).
- * 3. Scales `priority` by `(100 - step) / 100` (multiplying when `newIv < oldIv`,
- *    dividing when `newIv > oldIv`).
- * 4. If the 1-based queue slot (`FUN_00ca0fc0`) in `collectionSize` did not move
- *    (`newPos === oldPos`), forces `newPos = oldPos ± 1` (clamped to `1..collectionSize`)
- *    and projects back via `FUN_00ca1dc0` so the topic always shifts by at least
- *    one slot in the priority queue.
- */
 export function adjustTopicPriorityAfterCommit(
   priority: number,
   oldIv: number,

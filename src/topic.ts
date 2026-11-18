@@ -44,7 +44,6 @@ export interface TopicState {
   aFactor: number;
 }
 
-/** Lowest sane A-Factor: SuperMemo's minimum topic A-Factor is 1.01. */
 const MIN_A_FACTOR = 1.01;
 
 function clampAFactor(value: number, fallback: number): number {
@@ -56,13 +55,6 @@ function clampAFactor(value: number, fallback: number): number {
   return value;
 }
 
-/**
- * A fresh topic schedule: due now (so it enters the queue immediately, like a
- * new FSRS card), no interval yet. When `textLength` is provided, computes the
- * initial A-Factor from character length (`1.25 + 150 / (L + 200)` in SM20
- * `0x00cfee40`, or `1.3` when `textLength === 0` for image/crop topics).
- * Otherwise falls back to `settings.topicAFactor`.
- */
 export function newTopicState(
   settings: TopicScheduleSettings,
   now: Date = new Date(),
@@ -86,11 +78,6 @@ export function newTopicState(
 
 export const TOPIC_INTERVAL_MAX_CLAMP = SM20_MAX_INTERVAL_DAYS;
 
-/**
- * Priority-scaled first interval (in days) for a fresh topic at `priority` (0..100)
- * across a collection of `collectionSize` elements. Mirrors the `[floor, scale, exponent]`
- * curve `[2.0, 0.03036, 0.82]` keyed by 1-based priority position.
- */
 export function priorityScaledFirstInterval(
   priority: number,
   collectionSize = 1000,
@@ -103,24 +90,10 @@ export function priorityScaledFirstInterval(
 }
 
 export interface AdvanceTopicOptions {
-  /** Optional RNG for SM20 log-uniform interval dispersion (`0x00d01870`). */
   rng?: () => number;
-  /**
-   * When true, applies SM20's `ComputeNextRepetitionIntervalDays` (`a^3` on rep 1)
-   * and `UpdateEaseForGradedRepetition` (`0x00cff250`) to evolve `aFactor`.
-   */
   sm20Commit?: boolean;
 }
 
-/**
- * Advance a topic after a reading pass ("Next" in the review UI).
- *
- * Supports both the classic settings-driven first interval (`topicFirstInterval`
- * / `priorityScaledFirstInterval`) and SuperMemo 20's `CommitTopicRepetition`
- * (`a^3` first interval when `topicFirstInterval <= 0` or `opts.sm20Commit` is set,
- * optional log-uniform dispersion via `opts.rng`, and ease adjustment via
- * `adjustTopicAFactor`).
- */
 export function advanceTopic(
   state: TopicState,
   settings: TopicScheduleSettings,
