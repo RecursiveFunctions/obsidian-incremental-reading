@@ -88,6 +88,7 @@ import {
 } from "./ir/labels";
 import { buildExtractEvent, buildTextEditedEvent } from "./ir/extract";
 import {
+  adjustTopicPriorityAfterCommit,
   computeExtractAFactorPair,
   getPriorityDeltaForItemGrade,
   spreadExtractPriority,
@@ -4735,6 +4736,7 @@ export class IrReviewView extends ItemView {
       policy.readingHighAFactor,
       policy.readingLowAFactor,
     );
+    const collectionSize = Math.max(1, this.elementsById.size);
     const advanced = advanceTopic(
       cur,
       this.settings,
@@ -4742,13 +4744,36 @@ export class IrReviewView extends ItemView {
       effectiveAFactor,
       slot.element.priority,
       policy.enabled,
-      this.queue.length,
+      collectionSize,
       { sm20Commit: true, rng: Math.random },
     );
+    const nextPriority = clampPriority(
+      adjustTopicPriorityAfterCommit(
+        slot.element.priority,
+        cur.interval,
+        advanced.interval,
+        collectionSize,
+        false,
+      ),
+    );
+    const priorityChanged = nextPriority !== slot.element.priority;
+    const placement = priorityChanged
+      ? buildPriorityPlacement(
+          this.elementsById.values(),
+          slot.id,
+          nextPriority,
+        )
+      : undefined;
     await this.emit("topic-advanced", slot.id, {
       schedule: topicStateToSchedule(advanced),
       operation: "advance",
       prioritySnapshot: slot.element.priority,
+      ...(priorityChanged
+        ? {
+            newPriority: nextPriority,
+            placement,
+          }
+        : {}),
       baseAFactor: cur.aFactor,
       effectiveAFactor,
       schedulingPolicyVersion: PRIORITY_SCHEDULING_POLICY_VERSION,
@@ -4756,12 +4781,16 @@ export class IrReviewView extends ItemView {
     slot.element = {
       ...slot.element,
       schedule: topicStateToSchedule(advanced),
+      priority: nextPriority,
     };
     this.elementsById.set(slot.id, slot.element);
     if (slot.file) {
       await quietFrontmatterWrite(async () => {
         await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
           writeTopicToFrontmatter(f, advanced);
+          if (priorityChanged) {
+            f["ir-priority"] = nextPriority;
+          }
         });
       }, "topic-advanced");
     }

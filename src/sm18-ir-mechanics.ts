@@ -353,3 +353,83 @@ export function getPriorityDeltaForItemGrade(
   if (grade === 4) return 0.3;
   return 0.0;
 }
+
+/**
+ * Convert a priority percentage (`0..100`) to a 1-based queue position across
+ * `collectionSize` elements (`FUN_00ca0fc0` at `0x00ca0fc0`, ghidra:d95ed9953398234e).
+ */
+export function priorityPercentageToQueuePos(
+  priority: number,
+  collectionSize: number,
+): number {
+  const total = Math.max(1, Math.trunc(collectionSize));
+  if (total <= 1) return 1;
+  const clamped = Math.min(100.0, Math.max(0.0, Number.isFinite(priority) ? priority : 0.0));
+  const idx = roundHalfToEven((clamped / 100.0) * (total - 1));
+  return Math.min(total, Math.max(1, idx + 1));
+}
+
+/**
+ * Convert a 1-based queue position (`1..collectionSize`) to a priority percentage
+ * (`0..100`) (`FUN_00ca1dc0` at `0x00ca1dc0`, ghidra:aee594c6244ef222).
+ */
+export function queuePosToPriorityPercentage(
+  pos: number,
+  collectionSize: number,
+): number {
+  const total = Math.max(1, Math.trunc(collectionSize));
+  if (pos < 2 || total <= 1) return 0.0;
+  const clampedPos = Math.min(total, Math.max(1, Math.trunc(pos)));
+  return ((clampedPos - 1) / (total - 1)) * 100.0;
+}
+
+/**
+ * Adjust element priority percentage (`0..100`) when a topic repetition is
+ * committed or its interval changes (`FUN_00ca1270` at `0x00ca1270`,
+ * ghidra:203c95b817094efb, called from `TDatabase.CommitTopicRepetition` at
+ * `0x00d85480`).
+ *
+ * Mirrors `FUN_00ca1270` exactly:
+ * 1. Computes `dVar3 = min(oldIv, newIv) / max(oldIv, newIv)` (with `oldIv = max(1, oldIv)`).
+ * 2. Computes `step = (1 - dVar3) * 80.0` (divided by `3.0` when `hard` is true).
+ * 3. Scales `priority` by `(100 - step) / 100` (multiplying when `newIv < oldIv`,
+ *    dividing when `newIv > oldIv`).
+ * 4. If the 1-based queue slot (`FUN_00ca0fc0`) in `collectionSize` did not move
+ *    (`newPos === oldPos`), forces `newPos = oldPos ± 1` (clamped to `1..collectionSize`)
+ *    and projects back via `FUN_00ca1dc0` so the topic always shifts by at least
+ *    one slot in the priority queue.
+ */
+export function adjustTopicPriorityAfterCommit(
+  priority: number,
+  oldIv: number,
+  newIv: number,
+  collectionSize = 100,
+  hard = false,
+): number {
+  const total = Math.max(1, Math.trunc(collectionSize));
+  let p = Math.min(100.0, Math.max(0.0, Number.isFinite(priority) ? priority : 0.0));
+  const oldPos = priorityPercentageToQueuePos(p, total);
+  const a = Math.max(1, Math.trunc(oldIv || 0));
+  const b = Math.max(1, Math.trunc(newIv || 0));
+  if (a === b) return p;
+
+  const dVar3 = b < a ? b / a : a / b;
+  let step = (1.0 - dVar3) * 80.0;
+  if (hard) step /= 3.0;
+  const scale = (100.0 - step) / 100.0;
+  if (b < a) {
+    p = p * scale;
+  } else if (scale > 0) {
+    p = p / scale;
+  } else {
+    p = 100.0;
+  }
+  p = Math.min(100.0, Math.max(0.0, p));
+
+  let newPos = priorityPercentageToQueuePos(p, total);
+  if (newPos === oldPos && total > 1) {
+    newPos = b < a ? Math.max(1, newPos - 1) : Math.min(total, newPos + 1);
+    p = queuePosToPriorityPercentage(newPos, total);
+  }
+  return Math.min(100.0, Math.max(0.0, p));
+}

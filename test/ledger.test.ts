@@ -618,3 +618,56 @@ test("graded event applies SM20 auto-priority drift and grade-undone reverts it"
   assert.equal(state.elements.get(idA)?.priority, 0);
   assert.equal(state.elements.get(idB)?.priority, 100);
 });
+
+test("topic-advanced event applies SM20 topic priority drift and placement", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const idA = newElementId();
+  const idB = newElementId();
+  await ledger.appendEvent({
+    ...createEvent(idA, 1),
+    payload: {
+      element: {
+        ...newElement({ id: idA, type: "topic", priority: 20, now: 0 }),
+        schedule: { due: 1000, interval: 1, aFactor: 2.0 },
+      },
+    },
+  });
+  await ledger.appendEvent({
+    ...createEvent(idB, 2),
+    payload: {
+      element: {
+        ...newElement({ id: idB, type: "topic", priority: 30, now: 0 }),
+        schedule: { due: 1000, interval: 1, aFactor: 2.0 },
+      },
+    },
+  });
+
+  let state = await ledger.load();
+  assert.equal(state.elements.get(idA)?.priority, 0);
+  assert.equal(state.elements.get(idB)?.priority, 100);
+
+  // Advance topic A so its priority drifts past B (e.g. 20 -> 50)
+  await ledger.appendEvent({
+    id: newEventId(),
+    ts: 2000,
+    lamport: 3,
+    device: newDeviceId(),
+    kind: "topic-advanced",
+    target: idA,
+    payload: {
+      schedule: { due: 86400000, interval: 2, aFactor: 2.05 },
+      operation: "advance",
+      newPriority: 50,
+      placement: {
+        requestedPriority: 50,
+        afterId: idB,
+      },
+    },
+  });
+
+  state = await ledger.load();
+  assert.equal(state.elements.get(idB)?.priority, 0);
+  assert.equal(state.elements.get(idA)?.priority, 100);
+});

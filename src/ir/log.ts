@@ -207,6 +207,14 @@ export function foldFrom(
       case "topic-advanced": {
         if (element) {
           element.schedule = event.payload.schedule as ReadSchedule;
+          const placement = event.payload.placement as PriorityPlacement | undefined;
+          const newPriority = event.payload.newPriority as number | undefined;
+          if (typeof newPriority === "number" && Number.isFinite(newPriority)) {
+            element.priority = clampPriority(newPriority);
+          }
+          if (placement) {
+            base.placements.push({ target, placement });
+          }
         }
         break;
       }

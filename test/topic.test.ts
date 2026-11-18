@@ -165,3 +165,23 @@ test("advanceTopic sm20Commit uses a^3 first interval, log-uniform dispersion, a
   assert.ok(second.interval > first.interval);
   assert.ok(second.aFactor > first.aFactor);
 });
+
+test("adjustTopicPriorityAfterCommit matches FUN_00ca1270 ratio scaling and minimum ±1 rank step", async () => {
+  const mod = await import("../src/sm18-ir-mechanics");
+  // Interval grows from 1 -> 8: priority increases (moves toward 100)
+  const pIncreased = mod.adjustTopicPriorityAfterCommit(20, 1, 8, 100, false);
+  assert.ok(pIncreased > 20);
+  assert.ok(pIncreased <= 100);
+
+  // Even for a tiny interval change (e.g. 100 -> 101) where percentage scaling
+  // alone would round to the same slot, FUN_00ca1270 guarantees +1 slot shift.
+  const oldPos = mod.priorityPercentageToQueuePos(10, 11); // pos 2 (10%)
+  const nudged = mod.adjustTopicPriorityAfterCommit(10, 100, 101, 11, true);
+  const newPos = mod.priorityPercentageToQueuePos(nudged, 11);
+  assert.equal(newPos, oldPos + 1);
+  assert.equal(nudged, 20);
+
+  // Interval shrinks (manual override 10 -> 2): priority decreases (more urgent)
+  const pDecreased = mod.adjustTopicPriorityAfterCommit(50, 10, 2, 100, false);
+  assert.ok(pDecreased < 50);
+});
