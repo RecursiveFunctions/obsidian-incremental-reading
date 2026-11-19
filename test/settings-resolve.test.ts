@@ -75,3 +75,27 @@ test("resolveSettings syncs readingProportion from reviewsPerReading when readin
   const reloaded = resolveSettings(saved);
   assert.ok(Math.abs(reloaded.sortingPolicy.readingProportion - 1 / 11) < 1e-12);
 });
+
+test("resolveSettings defaults fresh installs to sm20 and grandfathers existing installs to fsrs with one-time offer pending", () => {
+  const fresh = resolveSettings(null);
+  assert.equal(fresh.primaryScheduler, "sm20");
+  assert.equal(fresh.notices.sm20SchedulerOffer, true);
+
+  const existingLegacy = resolveSettings({ reviewsPerReading: 3 });
+  assert.equal(existingLegacy.primaryScheduler, "fsrs");
+  assert.equal(existingLegacy.notices.sm20SchedulerOffer, false);
+
+  const existingDeclined = resolveSettings({
+    primaryScheduler: "fsrs",
+    notices: { sm20SchedulerOffer: true } as never,
+  });
+  assert.equal(existingDeclined.primaryScheduler, "fsrs");
+  assert.equal(existingDeclined.notices.sm20SchedulerOffer, true);
+
+  const existingSwitched = resolveSettings({
+    primaryScheduler: "sm20",
+    notices: { sm20SchedulerOffer: true } as never,
+  });
+  assert.equal(existingSwitched.primaryScheduler, "sm20");
+  assert.equal(existingSwitched.notices.sm20SchedulerOffer, true);
+});

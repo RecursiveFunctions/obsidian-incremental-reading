@@ -115,6 +115,12 @@ silently re-pointing anchors is the unrecoverable failure in DESIGN Q1.
 destructive to provenance: make-notes vs keep-without-notes vs undo must
 be an explicit choice, not a toast.
 
+**Documented exception (SM-20 migration offer):** Existing vaults upgrading
+from pre-SM-20 settings see a one-time `Sm20SchedulerOfferModal`
+(`src/sm20-offer-modal.ts`) offering **Switch to SM-20** vs **Keep current
+(FSRS)** while preserving `fsrs` until confirmed (`notices.sm20SchedulerOffer`).
+New installs default to `sm20` silently without opening the modal.
+
 ## 7. Session audit ("what did I touch")
 
 One command shows the user every item, extract, and source touched in the

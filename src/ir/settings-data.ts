@@ -8,7 +8,7 @@ export type { MercyWeights } from "./mercy";
 
 export interface IrSettings {
   schemaVersion: 2;
-  primaryScheduler?: "sm20" | "fsrs";
+  primaryScheduler: "sm20" | "fsrs";
   sortingPolicy: SortingPolicySettings;
   autoPostponePolicy: AutoPostponePolicy;
   prioritySchedulingPolicy: PrioritySchedulingPolicy;
@@ -152,6 +152,7 @@ export interface NoticeAcknowledgements {
   advancedPostponeRisk: boolean;
   randomReviewRisk: boolean;
   collectionRedesign: boolean;
+  sm20SchedulerOffer: boolean;
 }
 
 /** A fitted FSRS parameter set, as persisted in plugin data. */
@@ -171,6 +172,7 @@ export interface FittedParams {
 
 export const DEFAULT_SETTINGS: IrSettings = {
   schemaVersion: 2,
+  primaryScheduler: "sm20",
   sortingPolicy: {
     version: 1,
     preset: "balanced",
@@ -211,6 +213,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
     advancedPostponeRisk: false,
     randomReviewRisk: false,
     collectionRedesign: false,
+    sm20SchedulerOffer: true,
   },
   treeDisplayMode: "priority",
   defaultPriority: 33,

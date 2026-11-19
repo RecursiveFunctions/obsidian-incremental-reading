@@ -143,9 +143,12 @@ export class IrStatsView extends ItemView {
     const section = body.createDiv({ cls: "ir-stats-section" });
     section.createDiv({ cls: "ir-stats-section-title", text: "Scheduler" });
 
+    const activeSchedulerLabel =
+      s.primaryScheduler === "fsrs" ? "FSRS-6" : "SM-20 (analytical SInc)";
     const rows: Array<[string, string]> = [
+      ["Active scheduler", activeSchedulerLabel],
       [
-        "Parameters",
+        "FSRS-6 parameters",
         s.fsrsParams
           ? `optimized ${new Date(s.fsrsParams.fittedAt).toISOString().slice(0, 10)}`
           : "FSRS-6 defaults",
@@ -162,6 +165,12 @@ export class IrStatsView extends ItemView {
       ]);
     }
     this.table(section, rows);
+    if (s.primaryScheduler !== "fsrs") {
+      section.createEl("p", {
+        cls: "setting-item-description",
+        text: "SM-20 runs analytically; fitted FSRS-6 weights below apply when FSRS-6 is selected as your primary scheduler or chosen in the divergence picker.",
+      });
+    }
 
     // Desired retention: the one FSRS knob the user owns.
     const ret = section.createDiv({ cls: "ir-opt-retention" });

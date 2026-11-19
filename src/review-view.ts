@@ -4459,7 +4459,7 @@ export class IrReviewView extends ItemView {
    * there is nothing to show.
    */
   private activePrimaryScheduler(): PrimaryItemScheduler {
-    return this.settings.primaryScheduler === "sm20" ? "sm20" : "fsrs";
+    return this.settings.primaryScheduler === "fsrs" ? "fsrs" : "sm20";
   }
 
   private itemGradePreview(slot: ReviewSlot): Record<Grade, string> | null {

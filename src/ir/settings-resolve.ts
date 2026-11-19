@@ -53,6 +53,9 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
         saved.reviewsPerReading !== defaults.reviewsPerReading));
   const fromInterleaveFlag = saved.interleaveSimilarPriority === false ? 0 : undefined;
   result.schemaVersion = 2;
+  const hasSavedPrimary =
+    saved.primaryScheduler === "sm20" || saved.primaryScheduler === "fsrs";
+  result.primaryScheduler = hasSavedPrimary ? saved.primaryScheduler! : "fsrs";
   result.sortingPolicy = {
     version: 1,
     preset: sorting.preset === "strict" || sorting.preset === "discovery" ||
@@ -106,7 +109,14 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
     recency: Math.round(finite(mercy.recency, defaults.mercyWeights.recency, 0, 10)),
     mode: Math.round(finite(mercy.mode, defaults.mercyWeights.mode ?? 3, 0, 3)),
   };
-  result.notices = { ...defaults.notices, ...record(saved.notices) } as IrSettings["notices"];
+  const savedNotices = record(saved.notices);
+  result.notices = {
+    ...defaults.notices,
+    ...savedNotices,
+    sm20SchedulerOffer: hasSavedPrimary
+      ? savedNotices.sm20SchedulerOffer !== false
+      : savedNotices.sm20SchedulerOffer === true,
+  } as IrSettings["notices"];
   const rawMode = saved.treeDisplayMode as string | undefined;
   result.treeDisplayMode = rawMode === "sources" || rawMode === "hierarchy" ? "sources" : "priority";
   result.mobileCaptureFab = saved.mobileCaptureFab !== false;

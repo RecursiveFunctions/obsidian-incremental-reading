@@ -44,6 +44,24 @@ export class IrSettingTab extends PluginSettingTab {
     containerEl.createEl("h3", { text: "Review" });
 
     new Setting(containerEl)
+      .setName("Primary item scheduler")
+      .setDesc(
+        "SM-20 uses SuperMemo 20's analytical SInc surface. FSRS-6 uses ts-fsrs (with optional personalized weight fitting in IR stats). Switching requires no card migration.",
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("sm20", "SM-20 (analytical SInc)")
+          .addOption("fsrs", "FSRS-6")
+          .setValue(this.plugin.settings.primaryScheduler)
+          .onChange(async (value) => {
+            this.plugin.settings.primaryScheduler = value === "fsrs" ? "fsrs" : "sm20";
+            this.plugin.settings.notices.sm20SchedulerOffer = true;
+            await this.plugin.saveSettings();
+            this.plugin.refreshSchedulerViews();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Reviews per reading")
       .setDesc(
         "How many review items to show between each reading element in a " +
@@ -136,8 +154,8 @@ export class IrSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Show scheduler divergence picker")
       .setDesc(
-        "Off (default for new vaults): grades follow FSRS with no extra " +
-          "prompt. On: when FSRS-6, DSR and SM-2 disagree enough on the next " +
+        "Off (default for new vaults): grades follow your primary scheduler with no extra " +
+          "prompt. On: when SM-20, FSRS-6, DSR, and SM-2 disagree enough on the next " +
           "interval, an inline picker lets you choose. Existing installs " +
           "keep this on until you turn it off.",
       )

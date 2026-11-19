@@ -10,6 +10,8 @@ test("cloneDefaultSettings matches DEFAULT_SETTINGS without sharing the object",
   copy.extractFolder = "tweaked";
   copy.showDivergencePicker = true;
   copy.sortingPolicy.itemJitter = 1;
+  assert.equal(DEFAULT_SETTINGS.primaryScheduler, "sm20");
+  assert.equal(DEFAULT_SETTINGS.notices.sm20SchedulerOffer, true);
   assert.equal(DEFAULT_SETTINGS.reviewsPerReading, 3);
   assert.equal(DEFAULT_SETTINGS.extractFolder, "");
   assert.equal(DEFAULT_SETTINGS.showDivergencePicker, false);

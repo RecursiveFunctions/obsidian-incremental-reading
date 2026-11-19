@@ -13,6 +13,7 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
+import { Sm20SchedulerOfferModal } from "./src/sm20-offer-modal";
 import { resolveSettings, resolveShowDivergencePicker } from "./src/ir/settings-resolve";
 import { isSpaceAfterReveal } from "./src/ir/review-keys";
 import { buildTextQuoteAnchor } from "./src/ir/cloze-marks";
@@ -550,6 +551,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       // Wait for the vault index: before layout-ready, present files can
       // still read as missing and prompt for notes that exist.
       this.app.workspace.onLayoutReady(() => {
+        if (!this.settings.notices.sm20SchedulerOffer) {
+          new Sm20SchedulerOfferModal(this.app, async (choice) => {
+            this.settings.primaryScheduler = choice;
+            this.settings.notices.sm20SchedulerOffer = true;
+            await this.saveSettings();
+            this.refreshSchedulerViews();
+          }).open();
+        }
         void this.reconcileMissingSources().then(() => this.offerPendingRelinks());
       });
     });
@@ -1618,6 +1627,17 @@ export default class IncrementalReadingPlugin extends Plugin {
         () => void this.startReview(),
         (evt) => this.showStatusBarMenu(evt),
       );
+    }
+  }
+
+  public refreshSchedulerViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(IR_REVIEW_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof IrReviewView) view.refreshView();
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(IR_STATS_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof IrStatsView) void view.refresh();
     }
   }
 
