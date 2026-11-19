@@ -248,6 +248,8 @@ export function computeElementHistoryCounts(
       c.readingReps += 1;
       c.recentPostponeCount = 0;
     } else if (ev.kind === "mercy-postponed") {
+      const op = ev.payload.operation;
+      if (op === "manual-reschedule" || op === "forget-reset") continue;
       const batchId = typeof ev.payload.batchId === "string" ? ev.payload.batchId : undefined;
       if (batchId && undoneBatches.has(batchId)) continue;
       const c = ensure(ev.target);

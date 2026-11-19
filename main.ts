@@ -45,6 +45,7 @@ import {
   obsidianLinkIndex,
   policyReviewQueue,
   slotFromElement,
+  subsetReviewQueue,
   EMPTY_COLLECTION_COPY,
   EMPTY_NEURAL_COPY,
   type ReviewSlot,
@@ -117,8 +118,10 @@ import {
   SM20_IMAGE_EXTRACT_AFACTOR,
   spreadExtractPriority,
 } from "./src/sm18-ir-mechanics";
-import { topicStateToSchedule } from "./src/ir/queue-adapter";
+import { scheduleToTopicState, topicStateToSchedule } from "./src/ir/queue-adapter";
 import { buildCardResetCard } from "./src/ir/leech";
+import { parseJumpIntervalInput, planManualSchedule } from "./src/ir/manual-schedule";
+import { collectBranchIds } from "./src/ir/tree";
 import {
   addLocalDays,
   computeElementHistoryCounts,
@@ -687,6 +690,30 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
+    this.irCommand({
+      id: "jump-interval",
+      name: "Jump interval…",
+      icon: "calendar-plus",
+      checkCallback: (checking) => {
+        const view = this.getActiveReviewView();
+        if (!view || !view.getCurrentElementId()) return false;
+        if (!checking) view.openJumpIntervalBar();
+        return true;
+      },
+    });
+
+    this.irCommand({
+      id: "duplicate-sibling-element",
+      name: "Duplicate element as sibling",
+      icon: "copy-plus",
+      checkCallback: (checking) => {
+        const id = this.getActiveReviewView()?.getCurrentElementId();
+        if (!id) return false;
+        if (!checking) void this.duplicateSiblingElement(id);
+        return true;
+      },
+    });
+
     this.registerView(
       IR_TREE_VIEW_TYPE,
       (leaf: WorkspaceLeaf) => {
@@ -713,7 +740,15 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrReanchor(elementId, element),
           commitReset: (elementId, file) =>
             this.applyIrReset(elementId, file),
+          commitJumpInterval: (elementId, file, raw) =>
+            this.applyManualReschedule(elementId, file, raw),
           forkExtract: (elementId) => void this.forkStoreExtract(elementId),
+          duplicateSibling: (elementId) => void this.duplicateSiblingElement(elementId),
+          startBranchReview: (rootId, includeFuture) =>
+            void this.startBranchReview(rootId, includeFuture),
+          startSubsetReview: (ids, includeFuture) =>
+            void this.startSubsetReview(ids, includeFuture),
+          addToSession: (ids) => void this.addElementsToSession(ids),
           resumeReading: (elementId) => this.resumeReadingBookmark(elementId),
           startNeuralReview: (elementId) =>
             void this.startNeuralReview(elementId, null),
@@ -814,6 +849,9 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrPriorityChange(id, file, priority),
           commitPriorityPreview: (preview, file) =>
             this.applyIrPriorityPreview(preview, file),
+          commitJumpInterval: (id, file, raw) =>
+            this.applyManualReschedule(id, file, raw),
+          duplicateSibling: (id) => this.duplicateSiblingElement(id),
           onSessionState: (orderedIds, cursor, progress) =>
             void this.persistSessionCursor(orderedIds, cursor, progress),
           onNeuralExcite: (elementId, visitedPrefixIds) =>
@@ -3209,6 +3247,151 @@ export default class IncrementalReadingPlugin extends Plugin {
     return neuralSlotsFromQueueState(this.app, state, updated).filter(
       (slot) => !visitedPrefixIds.has(slot.id),
     );
+  }
+
+  public async startBranchReview(rootId: ElementId, includeFuture = false): Promise<void> {
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
+      return;
+    }
+    await this.ledgerInit;
+    const state = await this.ledger.load();
+    const branchIds = collectBranchIds([...state.elements.values()], rootId);
+    if (branchIds.length === 0) {
+      new Notice("Incremental Reading: branch not found.");
+      return;
+    }
+    await this.startSubsetReview(branchIds, includeFuture, "branch");
+  }
+
+  public async startSubsetReview(
+    ids: readonly ElementId[],
+    includeFuture = false,
+    phase: SessionBarPhase = "subset",
+  ): Promise<void> {
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
+      return;
+    }
+    await this.ledgerInit;
+    const state = await this.ledger.load();
+    const now = Date.now();
+    const queue = subsetReviewQueue(
+      this.app,
+      state,
+      ids,
+      this.queuePolicy("due", new Date(now).setHours(0, 0, 0, 0)),
+      includeFuture,
+      new Date(now),
+    );
+    if (queue.length === 0) {
+      new Notice(
+        includeFuture
+          ? "Incremental Reading: no reviewable elements in selection."
+          : "Incremental Reading: nothing due in that selection.",
+      );
+      return;
+    }
+    this.beginReviewSession();
+    await this.openReviewWithSession({
+      queue,
+      elementsById: state.elements,
+      isNeural: false,
+      phase,
+    });
+  }
+
+  public async addElementsToSession(ids: readonly ElementId[]): Promise<void> {
+    if (!this.ledger) return;
+    const view = this.getActiveReviewView();
+    if (!view) {
+      await this.startSubsetReview(ids, true, "subset");
+      return;
+    }
+    const state = await this.ledger.load();
+    const slots: ReviewSlot[] = [];
+    for (const id of ids) {
+      const el = state.elements.get(id);
+      if (!el || el.dismissed) continue;
+      const slot = slotFromElement(this.app, el);
+      if (slot) slots.push(slot);
+    }
+    const added = view.appendSlots(slots);
+    new Notice(
+      added > 0
+        ? `Incremental Reading: added ${added} element${added === 1 ? "" : "s"} to today's session.`
+        : "Incremental Reading: selected elements are already in the session.",
+    );
+  }
+
+  private async applyManualReschedule(
+    elementId: ElementId,
+    file: TFile | null,
+    rawInput: string,
+  ): Promise<boolean> {
+    if (!this.ledger) return false;
+    const now = Date.now();
+    const parsed = parseJumpIntervalInput(rawInput, now);
+    if (!parsed) {
+      new Notice("Incremental Reading: enter a positive day count (e.g. 14) or future date (YYYY-MM-DD).");
+      return false;
+    }
+    const state = await this.ledger.load();
+    const el = state.elements.get(elementId);
+    if (!el) return false;
+    const plan = planManualSchedule(el, parsed.dueMs, parsed.intervalDays, {
+      nowMs: now,
+      adjustAFactor: true,
+    });
+    if (!plan) {
+      new Notice("Incremental Reading: element has no schedule to jump.");
+      return false;
+    }
+    await this.commitLedgerEvents(
+      "jump-interval",
+      [
+        {
+          kind: "mercy-postponed",
+          target: elementId,
+          payload: {
+            newDue: plan.newDue,
+            previousDue: plan.previousDue,
+            operation: "manual-reschedule",
+            ...(plan.card ? { card: plan.card } : {}),
+            ...(plan.schedule ? { schedule: plan.schedule } : {}),
+          },
+        },
+      ],
+      {
+        now,
+        beforeReconcile: async () => {
+          const targetFile =
+            file ??
+            (el.notePath
+              ? (() => {
+                  const abs = this.app.vault.getAbstractFileByPath(el.notePath);
+                  return abs instanceof TFile ? abs : null;
+                })()
+              : null);
+          if (targetFile && targetFile.extension === "md") {
+            await quietFrontmatterWrite(async () => {
+              await this.app.fileManager.processFrontMatter(targetFile, (fm) => {
+                if (plan.card) writeCardToFrontmatter(fm, storedToCard(plan.card));
+                else if (plan.schedule) {
+                  const topicState = scheduleToTopicState(plan.schedule);
+                  if (topicState) writeTopicToFrontmatter(fm, topicState);
+                }
+              });
+            }, "jump-interval");
+          }
+        },
+        refreshReviewElements: true,
+        refreshTree: true,
+      },
+    );
+    this.getActiveReviewView()?.removePostponed(new Set([elementId]));
+    new Notice(`Incremental Reading: jumped interval to +${plan.newInterval}d.`);
+    return true;
   }
 
   public async startFinalDrill(): Promise<void> {
@@ -5609,14 +5792,19 @@ export default class IncrementalReadingPlugin extends Plugin {
    * Promoted extracts (vault note) are forked by copying the markdown file.
    */
   private async forkStoreExtract(elementId: ElementId): Promise<void> {
+    await this.duplicateSiblingElement(elementId);
+  }
+
+  /** Duplicate an extract or cloze item as a sibling under the same parent with fresh schedule. */
+  private async duplicateSiblingElement(elementId: ElementId): Promise<void> {
     if (!this.ledger) {
       new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
     const state = await this.ledger.load();
     const el = state.elements.get(elementId);
-    if (!el || el.type !== "extract") {
-      new Notice("Incremental Reading: fork only applies to IR extracts.");
+    if (!el || (el.type !== "extract" && el.type !== "item")) {
+      new Notice("Incremental Reading: sibling duplication applies to extracts and cloze items.");
       return;
     }
     const device = await this.ledger.getDeviceId();
@@ -5641,11 +5829,17 @@ export default class IncrementalReadingPlugin extends Plugin {
         new Notice("Incremental Reading: fork copy failed.");
         return;
       }
+      const sibPriority = spreadExtractPriority(el.priority, el.text?.length ?? 100);
       await this.app.fileManager.processFrontMatter(nf, (fm) => {
-        writeTopicToFrontmatter(fm, newTopicState(this.settings, new Date(now)));
+        fm["ir-priority"] = Math.round(sibPriority * 100) / 100;
+        if (el.type === "item") {
+          writeCardToFrontmatter(fm, newCard(new Date(now)));
+        } else {
+          writeTopicToFrontmatter(fm, newTopicState(this.settings, new Date(now)));
+        }
       });
       await this.recordElement(nf);
-      new Notice(`Incremental Reading: forked extract to "${nf.basename}".`);
+      new Notice(`Incremental Reading: duplicated ${el.type} to "${nf.basename}".`);
       void this.refreshStatusBar();
       if (this.ledger) {
         const state = await this.ledger.load();

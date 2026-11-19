@@ -253,6 +253,12 @@ export interface IrReviewViewHost {
     preview: PriorityPlacementPreview,
     file: TFile | null,
   ) => Promise<void>;
+  commitJumpInterval?: (
+    id: ElementId,
+    file: TFile | null,
+    rawInput: string,
+  ) => Promise<boolean>;
+  duplicateSibling?: (id: ElementId) => Promise<void>;
   onSessionState?: (
     orderedIds: ElementId[],
     cursor: number,
@@ -475,6 +481,12 @@ export class IrReviewView extends ItemView {
     preview: PriorityPlacementPreview,
     file: TFile | null,
   ) => Promise<void>;
+  private readonly commitJumpInterval?: (
+    id: ElementId,
+    file: TFile | null,
+    rawInput: string,
+  ) => Promise<boolean>;
+  private readonly duplicateSibling?: (id: ElementId) => Promise<void>;
   private readonly onSessionState?: (
     orderedIds: ElementId[],
     cursor: number,
@@ -518,6 +530,8 @@ export class IrReviewView extends ItemView {
     this.openHelpFromIdlePane = host.openHelpFromIdlePane;
     this.commitPriority = host.commitPriority;
     this.commitPriorityPreview = host.commitPriorityPreview;
+    this.commitJumpInterval = host.commitJumpInterval;
+    this.duplicateSibling = host.duplicateSibling;
     this.onSessionState = host.onSessionState;
     this.onNeuralExcite = host.onNeuralExcite;
   }
@@ -1362,6 +1376,12 @@ export class IrReviewView extends ItemView {
       label: this.labelWithHotkey("Later today", "L"),
       run: () => void this.later(),
     });
+    if (this.commitJumpInterval) {
+      items.push({
+        label: "Jump interval…",
+        run: () => this.openJumpIntervalBar(),
+      });
+    }
     items.push({
       label: this.labelWithHotkey("Dismiss", "D"),
       run: () => void this.dismiss(),
@@ -1422,6 +1442,12 @@ export class IrReviewView extends ItemView {
           });
         }
       }
+    }
+    if (this.commitJumpInterval) {
+      items.push({
+        label: "Jump interval…",
+        run: () => this.openJumpIntervalBar(),
+      });
     }
     items.push({
       label: this.labelWithHotkey("Dismiss", "D"),
@@ -2584,6 +2610,67 @@ export class IrReviewView extends ItemView {
   /** Re-paint after the host plugin mutates the session (bulk extract). */
   refreshView(): void {
     void this.renderCard();
+  }
+
+  /** Append slots not already in the session tail without synthetic reviews. */
+  appendSlots(slots: readonly ReviewSlot[]): number {
+    if (slots.length === 0) return 0;
+    const existingIds = new Set(this.queue.map((s) => s.id));
+    let added = 0;
+    for (const slot of slots) {
+      this.elementsById.set(slot.id, slot.element);
+      if (existingIds.has(slot.id)) continue;
+      existingIds.add(slot.id);
+      this.queue.push(slot);
+      added += 1;
+    }
+    if (added > 0) {
+      if (this.sessionComplete && this.index < this.queue.length) {
+        this.sessionComplete = false;
+        void this.renderCard();
+      } else {
+        this.paintSessionBar();
+      }
+      this.reportSessionState();
+    }
+    return added;
+  }
+
+  /** Non-modal inline bar for JumpInterval (days or YYYY-MM-DD). */
+  openJumpIntervalBar(): void {
+    const slot = this.current;
+    if (!slot || !this.commitJumpInterval) return;
+    this.contentEl.querySelector(".ir-jump-interval-bar")?.remove();
+    const dock = this.contentEl.querySelector(".ir-review-dock") ?? this.contentEl;
+    const bar = createDiv({ cls: "ir-jump-interval-bar" });
+    dock.prepend(bar);
+
+    bar.createSpan({ cls: "ir-jump-interval-label", text: "Jump interval:" });
+    const input = bar.createEl("input", {
+      cls: "ir-jump-interval-input",
+      type: "text",
+      placeholder: "Days (e.g. 14) or YYYY-MM-DD",
+    });
+    const submit = async () => {
+      const ok = await this.commitJumpInterval!(slot.id, slot.file, input.value);
+      if (ok) bar.remove();
+    };
+    bar
+      .createEl("button", { text: "Jump", cls: "mod-cta", type: "button" })
+      .addEventListener("click", () => void submit());
+    bar
+      .createEl("button", { text: "Cancel", type: "button" })
+      .addEventListener("click", () => bar.remove());
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void submit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        bar.remove();
+      }
+    });
+    input.focus();
   }
 
   /**

@@ -281,3 +281,17 @@ test("formatScheduleState uses concise plain-language labels", async (t) => {
   assert.equal(m.formatScheduleState(new Date(2026, 9, 9, 10).getTime(), false, now), "Tomorrow");
   assert.equal(m.formatScheduleState(now, true, now), "Dismissed");
 });
+
+test("collectBranchIds returns root and all descendants in deterministic order, cycle-safe", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/tree.ts not implemented yet");
+  const items = forest();
+  assert.deepEqual(m.collectBranchIds(items, "el_root1"), [
+    "el_root1",
+    "el_c2",
+    "el_c1",
+    "el_gc1",
+  ]);
+  assert.deepEqual(m.collectBranchIds(items, "el_x"), ["el_x", "el_y"]);
+  assert.deepEqual(m.collectBranchIds(items, "missing"), []);
+});

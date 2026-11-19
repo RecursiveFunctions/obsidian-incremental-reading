@@ -137,7 +137,8 @@ export function foldFrom(
   for (const event of sortedEvents) {
     if (
       DUE_CHANGE_KINDS.has(event.kind) &&
-      !(event.kind === "topic-advanced" && event.payload.operation === "extract-parent-decay")
+      !(event.kind === "topic-advanced" && event.payload.operation === "extract-parent-decay") &&
+      !(event.kind === "mercy-postponed" && (event.payload.operation === "manual-reschedule" || event.payload.operation === "forget-reset"))
     ) {
       const prev = base.dueChange.get(event.target);
       if (!prev ||

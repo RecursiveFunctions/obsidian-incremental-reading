@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { planManualSchedule } from "../src/ir/manual-schedule";
+import { parseJumpIntervalInput, planManualSchedule } from "../src/ir/manual-schedule";
 import { newElement } from "../src/ir/model";
 import type { ElementId } from "../src/ir/ids";
 
@@ -22,4 +22,33 @@ test("manual reading reschedule preserves base A-Factor", () => {
   assert.equal(plan.schedule?.aFactor, 2.4);
   assert.equal(plan.schedule?.interval, 16);
   assert.ok(plan.priorityAfter > plan.priorityBefore);
+});
+
+test("parseJumpIntervalInput parses day counts and YYYY-MM-DD dates", () => {
+  const now = new Date(2026, 10, 19, 10, 0, 0).getTime();
+  const byDays = parseJumpIntervalInput("14", now);
+  assert.equal(byDays?.intervalDays, 14);
+
+  const byDate = parseJumpIntervalInput("2026-11-29", now);
+  assert.equal(byDate?.intervalDays, 10);
+
+  assert.equal(parseJumpIntervalInput("0", now), null);
+  assert.equal(parseJumpIntervalInput("2026-11-18", now), null);
+  assert.equal(parseJumpIntervalInput("not-a-date", now), null);
+});
+
+test("JumpInterval adjusts topic A-Factor via adjustTopicAFactor and optionally disperses", () => {
+  const element = newElement({ id: "topic2" as ElementId, type: "topic", priority: 50, now: 0 });
+  element.schedule = { due: 1, interval: 4, aFactor: 2.0 };
+  const jumpedUp = planManualSchedule(element, 100 * 86_400_000, 100, {
+    nowMs: 0,
+    adjustAFactor: true,
+  })!;
+  assert.ok(jumpedUp.schedule!.aFactor > 2.0);
+
+  const dispersed = planManualSchedule(element, 100 * 86_400_000, 100, {
+    nowMs: 0,
+    disperseRng: () => 0.9,
+  })!;
+  assert.ok(dispersed.newInterval !== 100);
 });

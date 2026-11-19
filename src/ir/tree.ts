@@ -198,3 +198,36 @@ export function filterTreeByPredicate(
   };
   return roots.map(walk).filter((n): n is TreeNode => n !== null);
 }
+
+/** Collect `rootId` and all its descendants in deterministic tree order (cycle-safe). */
+export function collectBranchIds(
+  elements: readonly IrElement[],
+  rootId: ElementId,
+): ElementId[] {
+  const byId = new Map<ElementId, IrElement>();
+  const childrenByParent = new Map<ElementId, IrElement[]>();
+  for (const el of elements) {
+    byId.set(el.id, el);
+    if (el.parentId) {
+      const list = childrenByParent.get(el.parentId);
+      if (list) list.push(el);
+      else childrenByParent.set(el.parentId, [el]);
+    }
+  }
+  if (!byId.has(rootId)) return [];
+  for (const list of childrenByParent.values()) {
+    list.sort(compareByPriorityThenId);
+  }
+  const visited = new Set<ElementId>();
+  const out: ElementId[] = [];
+  const visit = (id: ElementId): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    out.push(id);
+    const kids = childrenByParent.get(id);
+    if (!kids) return;
+    for (const kid of kids) visit(kid.id);
+  };
+  visit(rootId);
+  return out;
+}

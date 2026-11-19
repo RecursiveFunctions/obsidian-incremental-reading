@@ -109,6 +109,44 @@ export function dueQueue(
     .filter((s): s is ReviewSlot => s !== undefined);
 }
 
+export function subsetReviewQueue(
+  app: App,
+  state: Pick<LogState, "elements">,
+  targetIds: ReadonlySet<ElementId> | readonly ElementId[],
+  policy: QueuePolicy,
+  includeFuture = false,
+  now: Date = new Date(),
+): ReviewSlot[] {
+  const idSet = targetIds instanceof Set ? targetIds : new Set(targetIds);
+  if (idSet.size === 0) return [];
+  const slots = new Map<string, ReviewSlot>();
+  const entries: QueueEntry[] = [];
+  for (const id of idSet) {
+    const element = state.elements.get(id);
+    if (!element) continue;
+    let file: TFile | null = null;
+    if (element.notePath) {
+      const candidate = app.vault.getAbstractFileByPath(element.notePath);
+      file = isVaultFile(candidate) ? candidate : null;
+    }
+    if (!file && !element.text) continue;
+    slots.set(element.id, { id: element.id, element, file });
+    entries.push({
+      id: element.id,
+      type: element.type,
+      priority: element.priority,
+      dueMs: dueMsOf(element),
+      dismissed: element.dismissed,
+    });
+  }
+  const effectivePolicy: QueuePolicy = includeFuture
+    ? { ...policy, scope: "random" }
+    : { ...policy, scope: "due" };
+  return policyQueue(entries, now.getTime(), effectivePolicy)
+    .map((id) => slots.get(id))
+    .filter((slot): slot is ReviewSlot => slot !== undefined);
+}
+
 export function policyReviewQueue(
   app: App,
   state: LogState,

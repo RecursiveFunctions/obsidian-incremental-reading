@@ -116,7 +116,16 @@ export interface IrTreeViewHost {
   commitPromote?: CommitIrPromoteFn;
   commitReanchor?: CommitIrReanchorFn;
   commitReset?: CommitIrResetFn;
+  commitJumpInterval?: (
+    elementId: ElementId,
+    file: TFile | null,
+    rawInput: string,
+  ) => Promise<boolean>;
   forkExtract?: CommitIrForkFn;
+  duplicateSibling?: CommitIrForkFn;
+  startBranchReview?: (rootId: ElementId, includeFuture: boolean) => void;
+  startSubsetReview?: (ids: readonly ElementId[], includeFuture: boolean) => void;
+  addToSession?: (ids: readonly ElementId[]) => void;
   /**
    * Open the review pane on the given (or most-recent-by-default)
    * reading bookmark. Wired in by the host plugin; absent in the tests
@@ -238,7 +247,12 @@ export class IrTreeView extends ItemView {
   private readonly commitPromote?: CommitIrPromoteFn;
   private readonly commitReanchor?: CommitIrReanchorFn;
   private readonly commitReset?: CommitIrResetFn;
+  private readonly commitJumpInterval?: IrTreeViewHost["commitJumpInterval"];
   private readonly forkExtract?: CommitIrForkFn;
+  private readonly duplicateSibling?: CommitIrForkFn;
+  private readonly startBranchReview?: IrTreeViewHost["startBranchReview"];
+  private readonly startSubsetReview?: IrTreeViewHost["startSubsetReview"];
+  private readonly addToSession?: IrTreeViewHost["addToSession"];
   private readonly resumeReading?: (id: ElementId) => Promise<boolean>;
   private readonly startNeuralReview?: (id: ElementId) => void;
   private readonly revealInReview?: (id: ElementId) => boolean;
@@ -260,7 +274,12 @@ export class IrTreeView extends ItemView {
     this.commitPromote = host.commitPromote;
     this.commitReanchor = host.commitReanchor;
     this.commitReset = host.commitReset;
+    this.commitJumpInterval = host.commitJumpInterval;
     this.forkExtract = host.forkExtract;
+    this.duplicateSibling = host.duplicateSibling;
+    this.startBranchReview = host.startBranchReview;
+    this.startSubsetReview = host.startSubsetReview;
+    this.addToSession = host.addToSession;
     this.resumeReading = host.resumeReading;
     this.startNeuralReview = host.startNeuralReview;
     this.revealInReview = host.revealInReview;
@@ -1481,6 +1500,20 @@ export class IrTreeView extends ItemView {
         menu.showAtMouseEvent(event);
       };
     }
+    if (this.startSubsetReview) {
+      const reviewSel = actions.createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: `Review (${ids.length})`,
+      });
+      reviewSel.onclick = () => this.startSubsetReview!(ids, false);
+    }
+    if (this.addToSession) {
+      const addBtn = actions.createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: "+ Session",
+      });
+      addBtn.onclick = () => this.addToSession!(ids);
+    }
     const more = actions.createEl("button", { cls: "ir-tree-selection-bar-btn", text: "…",
       attr: { "aria-label": "More selection actions" } });
     more.onclick = (event) => {
@@ -2284,6 +2317,28 @@ export class IrTreeView extends ItemView {
           .onClick(() => this.startNeuralReview!(elId))
       );
     }
+    if (this.startBranchReview) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Review branch (due)")
+          .setIcon("play-circle")
+          .onClick(() => this.startBranchReview!(elId, false)),
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle("Review branch (all)")
+          .setIcon("layers")
+          .onClick(() => this.startBranchReview!(elId, true)),
+      );
+    }
+    if (this.addToSession) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Add to today's session")
+          .setIcon("plus-circle")
+          .onClick(() => this.addToSession!([elId])),
+      );
+    }
 
 
     if (this.commitDismiss) {
@@ -2379,21 +2434,23 @@ export class IrTreeView extends ItemView {
       );
     }
 
-    if (
-      this.forkExtract &&
-      node.element.type === "extract"
-    ) {
+    const dupFn = this.duplicateSibling ?? (node.element.type === "extract" ? this.forkExtract : undefined);
+    if (dupFn && (node.element.type === "extract" || node.element.type === "item")) {
       menu.addItem((item) =>
         item
-          .setTitle("Fork extract (duplicate reading element)")
+          .setTitle(
+            node.element.type === "item"
+              ? "Duplicate item as sibling"
+              : "Fork extract (duplicate reading element)",
+          )
           .setIcon("git-branch")
           .onClick(() => {
             void (async () => {
               try {
-                await this.forkExtract!(elId);
+                await dupFn(elId);
               } catch (err) {
-                console.error("Incremental Reading: fork extract failed", err);
-                new Notice("Incremental Reading: could not fork extract.");
+                console.error("Incremental Reading: sibling duplication failed", err);
+                new Notice("Incremental Reading: could not duplicate element.");
               }
               void this.render();
             })();
@@ -2416,6 +2473,38 @@ export class IrTreeView extends ItemView {
             }),
         );
       }
+    }
+
+    if (this.commitJumpInterval) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Jump interval…")
+          .setIcon("calendar-plus")
+          .onClick(() => {
+            const { surface, close } = this.createAdaptiveSurface(li, "Jump interval");
+            const input = surface.createEl("input", {
+              type: "text",
+              placeholder: "Days (e.g. 14) or YYYY-MM-DD",
+            });
+            const row = surface.createDiv({ cls: "ir-bulk-preview-actions" });
+            const submit = async () => {
+              const ok = await this.commitJumpInterval!(elId, file, input.value);
+              if (ok) {
+                close();
+                void this.render();
+              }
+            };
+            row.createEl("button", { text: "Jump", cls: "mod-cta", type: "button" })
+              .addEventListener("click", () => void submit());
+            row.createEl("button", { text: "Cancel", type: "button" })
+              .addEventListener("click", close);
+            input.addEventListener("keydown", (ev) => {
+              if (ev.key === "Enter") { ev.preventDefault(); void submit(); }
+              else if (ev.key === "Escape") { ev.preventDefault(); close(); }
+            });
+            input.focus();
+          }),
+      );
     }
 
     if (this.commitReset) {
