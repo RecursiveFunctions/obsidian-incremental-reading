@@ -8,10 +8,13 @@
 
 import type { LogState } from "./log";
 import type { ElementId } from "./ids";
+import type { IrElement } from "./model";
 
 export const WIKILINK_DEGREE_CAP = 12;
 export const NEURAL_MAX_QUEUE = 200;
 export const NEURAL_MAX_LAYERS = 3;
+export const NEURAL_STATE_VERSION = 1;
+export const NEURAL_COOLDOWN_MS = 4 * 3_600_000;
 
 /** Published SuperMemo groupP values. Lower = stronger association. */
 export const GROUP_P = {
@@ -243,3 +246,263 @@ export function weightedShuffle<T>(
     arr[k] = tmp;
   }
 }
+
+export interface NeuralFrontierEntry {
+  id: ElementId;
+  score: number;
+  via?: NeuralProvenance;
+}
+
+export interface NeuralQueueState {
+  schemaVersion: 1;
+  seedId: ElementId | null;
+  entries: NeuralFrontierEntry[];
+  visitedAt: Record<string, number>;
+  updatedAt: number;
+}
+
+export function createNeuralQueueState(
+  seedId: ElementId | null = null,
+  nowMs = 0,
+): NeuralQueueState {
+  return {
+    schemaVersion: NEURAL_STATE_VERSION,
+    seedId,
+    entries: [],
+    visitedAt: {},
+    updatedAt: nowMs,
+  };
+}
+
+export function parseNeuralQueueState(value: unknown): NeuralQueueState | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const rec = value as Record<string, unknown>;
+  if (rec.schemaVersion !== NEURAL_STATE_VERSION) return null;
+  if (rec.seedId !== null && typeof rec.seedId !== "string") return null;
+  if (!Array.isArray(rec.entries)) return null;
+  if (rec.visitedAt === null || typeof rec.visitedAt !== "object" || Array.isArray(rec.visitedAt)) {
+    return null;
+  }
+  if (typeof rec.updatedAt !== "number" || !Number.isFinite(rec.updatedAt)) return null;
+
+  const entries: NeuralFrontierEntry[] = [];
+  const seen = new Set<string>();
+  for (const raw of rec.entries) {
+    if (raw === null || typeof raw !== "object") return null;
+    const entry = raw as Record<string, unknown>;
+    if (typeof entry.id !== "string" || entry.id.length === 0) return null;
+    if (typeof entry.score !== "number" || !Number.isFinite(entry.score)) return null;
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    let via: NeuralProvenance | undefined;
+    if (entry.via && typeof entry.via === "object") {
+      const v = entry.via as Record<string, unknown>;
+      if (typeof v.fromId === "string" && typeof v.kind === "string") {
+        via = {
+          fromId: v.fromId,
+          kind: v.kind as NeuralEdgeKind,
+          ...(typeof v.tag === "string" ? { tag: v.tag } : {}),
+        };
+      }
+    }
+    entries.push({
+      id: entry.id as ElementId,
+      score: entry.score,
+      ...(via ? { via } : {}),
+    });
+  }
+
+  const visitedAt: Record<string, number> = {};
+  for (const [k, v] of Object.entries(rec.visitedAt as Record<string, unknown>)) {
+    if (typeof v === "number" && Number.isFinite(v)) {
+      visitedAt[k] = v;
+    }
+  }
+
+  return {
+    schemaVersion: NEURAL_STATE_VERSION,
+    seedId: rec.seedId as ElementId | null,
+    entries,
+    visitedAt,
+    updatedAt: rec.updatedAt,
+  };
+}
+
+/** Prune deleted (`TDatabase.IsDeleted`) and dismissed elements, keeping bounded sorted capacity. */
+export function normalizeNeuralQueueState(
+  state: NeuralQueueState | null | undefined,
+  elements?: ReadonlyMap<ElementId, IrElement>,
+  capacity = NEURAL_MAX_QUEUE,
+): NeuralQueueState {
+  if (!state) return createNeuralQueueState();
+  const seen = new Set<ElementId>();
+  const filtered: NeuralFrontierEntry[] = [];
+  for (const entry of state.entries) {
+    if (seen.has(entry.id)) continue;
+    if (elements) {
+      const el = elements.get(entry.id);
+      if (!el) continue;
+      if (entry.id !== state.seedId && el.dismissed) continue;
+    }
+    seen.add(entry.id);
+    filtered.push(entry);
+  }
+  filtered.sort((a, b) => a.score - b.score || a.id.localeCompare(b.id));
+  const seedValid =
+    state.seedId !== null && (!elements || elements.has(state.seedId))
+      ? state.seedId
+      : null;
+  return {
+    schemaVersion: NEURAL_STATE_VERSION,
+    seedId: seedValid,
+    entries: filtered.slice(0, Math.max(1, capacity)),
+    visitedAt: { ...state.visitedAt },
+    updatedAt: state.updatedAt,
+  };
+}
+
+export interface NeuralExciteOptions {
+  elementId: ElementId;
+  priorityOf: (id: ElementId) => number;
+  neighbors: (id: ElementId) => readonly NeuralNeighbor[];
+  dismissed?: (id: ElementId) => boolean;
+  nowMs?: number;
+  cooldownMs?: number;
+  capacity?: number;
+}
+
+/** `TNeuralQueue.Add` + `Excite` (`0x00fa9b50`..`0x00faddb0`): excite neighbors with recency cooldown and cap eviction. */
+export function exciteNeuralElement(
+  state: NeuralQueueState,
+  opts: NeuralExciteOptions,
+): NeuralQueueState {
+  const nowMs = opts.nowMs ?? state.updatedAt;
+  const cooldownMs = Math.max(1, opts.cooldownMs ?? NEURAL_COOLDOWN_MS);
+  const capacity = Math.max(1, opts.capacity ?? NEURAL_MAX_QUEUE);
+  const isDismissed = opts.dismissed ?? (() => false);
+
+  const visitedAt: Record<string, number> = {
+    ...state.visitedAt,
+    [opts.elementId]: nowMs,
+  };
+
+  const byId = new Map<ElementId, NeuralFrontierEntry>();
+  for (const existing of state.entries) {
+    if (existing.id === opts.elementId) continue;
+    if (isDismissed(existing.id)) continue;
+    byId.set(existing.id, { ...existing });
+  }
+
+  for (const neighbor of opts.neighbors(opts.elementId)) {
+    const nId = neighbor.id as ElementId;
+    if (nId === opts.elementId || isDismissed(nId)) continue;
+    const baseScore = combinePriority(
+      toUnitPriority(opts.priorityOf(nId)),
+      neighbor.groupP,
+    );
+    const lastVisited = visitedAt[nId];
+    let score = baseScore;
+    if (lastVisited !== undefined && nowMs >= lastVisited && nowMs - lastVisited < cooldownMs) {
+      const recencyFrac = 1 - (nowMs - lastVisited) / cooldownMs;
+      score = combinePriority(baseScore, 0.85 * recencyFrac);
+    }
+    const via: NeuralProvenance = {
+      fromId: opts.elementId,
+      kind: neighbor.kind,
+      ...(neighbor.tag ? { tag: neighbor.tag } : {}),
+    };
+    const prev = byId.get(nId);
+    if (!prev || score < prev.score) {
+      byId.set(nId, { id: nId, score, via });
+    }
+  }
+
+  const entries = [...byId.values()]
+    .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+    .slice(0, capacity);
+
+  return {
+    schemaVersion: NEURAL_STATE_VERSION,
+    seedId: state.seedId ?? opts.elementId,
+    entries,
+    visitedAt,
+    updatedAt: nowMs,
+  };
+}
+
+export interface SeedNeuralQueueOptions {
+  seedId: ElementId;
+  baseState?: NeuralQueueState | null;
+  priorityOf: (id: ElementId) => number;
+  neighbors: (id: ElementId) => readonly NeuralNeighbor[];
+  dismissed?: (id: ElementId) => boolean;
+  nowMs?: number;
+  cooldownMs?: number;
+  capacity?: number;
+  random?: () => number;
+}
+
+export function seedNeuralQueueState(opts: SeedNeuralQueueOptions): NeuralQueueState {
+  const nowMs = opts.nowMs ?? 0;
+  const capacity = Math.max(1, opts.capacity ?? NEURAL_MAX_QUEUE);
+  const walked = neuralWalkDetailed({
+    seed: opts.seedId,
+    priorityOf: (id) => opts.priorityOf(id as ElementId),
+    neighbors: (id) => opts.neighbors(id as ElementId),
+    dismissed: opts.dismissed ? (id) => opts.dismissed!(id as ElementId) : undefined,
+    maxQueue: capacity,
+    random: opts.random,
+  });
+
+  const visitedAt = { ...(opts.baseState?.visitedAt ?? {}) };
+  const cooldownMs = Math.max(1, opts.cooldownMs ?? NEURAL_COOLDOWN_MS);
+  const entries: NeuralFrontierEntry[] = [];
+
+  for (let idx = 0; idx < walked.sequence.length; idx += 1) {
+    const id = walked.sequence[idx]! as ElementId;
+    if (idx === 0) {
+      entries.push({ id, score: -1 });
+      continue;
+    }
+    const via = walked.provenance.get(id);
+    const baseScore = Math.min(0.999, idx / capacity);
+    const lastVisited = visitedAt[id];
+    const score =
+      lastVisited !== undefined && nowMs >= lastVisited && nowMs - lastVisited < cooldownMs
+        ? combinePriority(baseScore, 0.5 * (1 - (nowMs - lastVisited) / cooldownMs))
+        : baseScore;
+    entries.push({ id, score, ...(via ? { via } : {}) });
+  }
+
+  entries.sort((a, b) => a.score - b.score || a.id.localeCompare(b.id));
+  return {
+    schemaVersion: NEURAL_STATE_VERSION,
+    seedId: opts.seedId,
+    entries: entries.slice(0, capacity),
+    visitedAt,
+    updatedAt: nowMs,
+  };
+}
+
+export function popNextNeuralElement(
+  state: NeuralQueueState,
+  opts?: {
+    excludeIds?: ReadonlySet<ElementId>;
+    elements?: ReadonlyMap<ElementId, IrElement>;
+  },
+): { next: NeuralFrontierEntry | null; state: NeuralQueueState } {
+  const normalized = normalizeNeuralQueueState(state, opts?.elements);
+  const exclude = opts?.excludeIds;
+  const idx = normalized.entries.findIndex((entry) => !exclude?.has(entry.id));
+  if (idx < 0) return { next: null, state: normalized };
+  const picked = normalized.entries[idx]!;
+  const rest = normalized.entries.slice(0, idx).concat(normalized.entries.slice(idx + 1));
+  return {
+    next: picked,
+    state: {
+      ...normalized,
+      entries: rest,
+    },
+  };
+}
+

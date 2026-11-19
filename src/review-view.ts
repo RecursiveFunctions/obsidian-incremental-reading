@@ -262,6 +262,10 @@ export interface IrReviewViewHost {
       remainingIds: ElementId[];
     },
   ) => void;
+  onNeuralExcite?: (
+    elementId: ElementId,
+    visitedPrefixIds: ReadonlySet<ElementId>,
+  ) => Promise<ReviewSlot[]>;
 }
 
 export class IrReviewView extends ItemView {
@@ -480,6 +484,10 @@ export class IrReviewView extends ItemView {
       remainingIds: ElementId[];
     },
   ) => void;
+  private readonly onNeuralExcite?: (
+    elementId: ElementId,
+    visitedPrefixIds: ReadonlySet<ElementId>,
+  ) => Promise<ReviewSlot[]>;
 
   constructor(leaf: WorkspaceLeaf, host: IrReviewViewHost) {
     super(leaf);
@@ -511,6 +519,7 @@ export class IrReviewView extends ItemView {
     this.commitPriority = host.commitPriority;
     this.commitPriorityPreview = host.commitPriorityPreview;
     this.onSessionState = host.onSessionState;
+    this.onNeuralExcite = host.onNeuralExcite;
   }
 
   /** Whether the review dock is on screen (FAB sits above it). */
@@ -1995,6 +2004,7 @@ export class IrReviewView extends ItemView {
         await this.liveEditor.save();
         this.rawOnDisk = this.currentRaw;
         this.editSaveError = null;
+        await this.exciteIfNeural(slot.id);
       } catch (e) {
         console.error("Incremental Reading: saving edits failed", e);
         this.editSaveError = "Could not save your edits. Retry or discard the unsaved changes.";
@@ -2029,6 +2039,7 @@ export class IrReviewView extends ItemView {
       }
       this.rawOnDisk = this.currentRaw;
       this.editSaveError = null;
+      await this.exciteIfNeural(slot.id);
       return true;
     } catch (e) {
       console.error("Incremental Reading: saving edits failed", e);
@@ -4475,7 +4486,28 @@ export class IrReviewView extends ItemView {
     } catch (e) {
       console.error("Incremental Reading: recording child element failed", e);
     }
+    if (created) {
+      await this.exciteIfNeural(created.id);
+    }
     return created;
+  }
+
+  private async exciteIfNeural(elementId: ElementId): Promise<void> {
+    if (!this.isNeural || !this.onNeuralExcite) return;
+    try {
+      const prefix = this.queue.slice(0, this.index + 1);
+      const prefixIds = new Set(prefix.map((s) => s.id));
+      const frontierSlots = await this.onNeuralExcite(elementId, prefixIds);
+      if (frontierSlots.length === 0) return;
+      for (const s of frontierSlots) {
+        this.elementsById.set(s.id, s.element);
+      }
+      const maxTotal = 200;
+      const tail = frontierSlots.filter((s) => !prefixIds.has(s.id));
+      this.queue = prefix.concat(tail).slice(0, maxTotal);
+    } catch (e) {
+      console.warn("Incremental Reading: dynamic neural excitation failed", e);
+    }
   }
 
   private advance() {
@@ -4745,6 +4777,7 @@ export class IrReviewView extends ItemView {
         });
       }, "grade");
     }
+    await this.exciteIfNeural(slot.id);
     this.onChange?.();
     this.advance();
   }
@@ -5008,6 +5041,7 @@ export class IrReviewView extends ItemView {
     }
     this.processedSlotIds.add(slot.id);
     this.skippedSlotIds.delete(slot.id);
+    await this.exciteIfNeural(slot.id);
     this.onChange?.();
     this.advance();
   }

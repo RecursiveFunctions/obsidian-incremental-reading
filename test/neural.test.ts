@@ -11,13 +11,19 @@ import type { App } from "obsidian";
 import {
   capWikilinkNeighbors,
   combinePriority,
+  createNeuralQueueState,
   elementIdForNotePath,
+  exciteNeuralElement,
   makeLcg,
   neuralViaLabel,
   neuralWalk,
   neuralWalkDetailed,
+  normalizeNeuralQueueState,
+  popNextNeuralElement,
+  seedNeuralQueueState,
   WIKILINK_DEGREE_CAP,
 } from "../src/ir/neural";
+import { IrLedger, META, type VaultFs } from "../src/ir/ledger";
 import {
   buildNeuralAdjacency,
   emptyLinkIndex,
@@ -603,4 +609,100 @@ test("neuralQueue stamps neuralVia on non-seed cards", () => {
   assert.equal(q[0]!.neuralVia, undefined);
   assert.equal(q[1]!.neuralVia?.kind, "child");
   assert.equal(q[1]!.neuralVia?.fromId, "seed");
+});
+
+test("exciteNeuralElement dynamically excites neighbors, enforces recency cooldown, and evicts weakest beyond capacity", () => {
+  const a = el("a", { type: "topic", notePath: "A.md", text: "a", priority: 20 });
+  const b = el("b", { type: "extract", parentId: eid("a"), text: "b", priority: 20 });
+  const c = el("c", { type: "extract", parentId: eid("b"), text: "c", priority: 20 });
+  const d = el("d", { type: "extract", parentId: eid("b"), text: "d", priority: 95 });
+  const s = state([a, b, c, d]);
+  const adj = buildNeuralAdjacency(s, emptyLinkIndex());
+
+  let q = createNeuralQueueState(eid("a"), 1_000);
+  q = exciteNeuralElement(q, {
+    elementId: eid("a"),
+    priorityOf: (id) => s.elements.get(id)?.priority ?? 50,
+    neighbors: (id) => neighborsForWalk(adj, id),
+    nowMs: 1_000,
+    cooldownMs: 10_000,
+    capacity: 2,
+  });
+  assert.equal(q.entries[0]?.id, eid("b"));
+  assert.equal(q.entries[0]?.via?.fromId, "a");
+
+  q = exciteNeuralElement(q, {
+    elementId: eid("b"),
+    priorityOf: (id) => s.elements.get(id)?.priority ?? 50,
+    neighbors: (id) => neighborsForWalk(adj, id),
+    nowMs: 2_000,
+    cooldownMs: 10_000,
+    capacity: 2,
+  });
+  // Unvisited child c outranks recently visited parent a thanks to recency cooldown, and capacity=2 evicts weakest d
+  assert.equal(q.entries.length, 2);
+  assert.equal(q.entries[0]?.id, eid("c"));
+  assert.equal(q.entries.some((e) => e.id === eid("d")), false);
+
+  const popped = popNextNeuralElement(q, { elements: s.elements });
+  assert.equal(popped.next?.id, eid("c"));
+});
+
+test("IrLedger.readNeural and writeNeural persist generation-scoped neural.json and prune deleted elements", async () => {
+  const files = new Map<string, string>();
+  const fs: VaultFs = {
+    exists: async (p) => files.has(p),
+    read: async (p) => {
+      const v = files.get(p);
+      if (v === undefined) throw new Error(`ENOENT ${p}`);
+      return v;
+    },
+    write: async (p, d) => {
+      files.set(p, d);
+    },
+    append: async (p, d) => {
+      files.set(p, (files.get(p) ?? "") + d);
+    },
+    list: async (dir) => {
+      const pre = dir.endsWith("/") ? dir : `${dir}/`;
+      return [...files.keys()].filter(
+        (k) => k.startsWith(pre) && !k.slice(pre.length).includes("/"),
+      );
+    },
+  };
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+
+  const live = el("live", { type: "topic", notePath: "L.md", text: "live", priority: 25 });
+  const child = el("child", { type: "extract", parentId: eid("live"), text: "c", priority: 30 });
+  const s = state([live, child]);
+  const adj = buildNeuralAdjacency(s, emptyLinkIndex());
+
+  const seeded = seedNeuralQueueState({
+    seedId: eid("live"),
+    priorityOf: (id) => s.elements.get(id)?.priority ?? 50,
+    neighbors: (id) => neighborsForWalk(adj, id),
+    nowMs: 5_000,
+  });
+  await ledger.writeNeural(seeded);
+
+  // Simulate child deleted from ledger state
+  const pruned = await ledger.readNeural(new Map([[live.id, live]]));
+  assert.deepEqual(
+    pruned.entries.map((e) => e.id),
+    [eid("live")],
+  );
+  assert.deepEqual(
+    normalizeNeuralQueueState(seeded, new Map([[live.id, live]])).entries.map((e) => e.id),
+    [eid("live")],
+  );
+
+  // Generation bump isolates neural.json
+  await fs.write(
+    META,
+    JSON.stringify({ schemaVersion: 1, migration: "complete", generation: "gen_2" }),
+  );
+  const nextLedger = new IrLedger(fs);
+  await nextLedger.init();
+  assert.deepEqual((await nextLedger.readNeural()).entries, []);
 });

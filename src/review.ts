@@ -36,7 +36,13 @@ import type { LogState } from "./ir/log";
 import type { IrElement } from "./ir/model";
 import type { ElementId } from "./ir/ids";
 import { dueMsOf } from "./ir/queue-adapter";
-import { elementIdForNotePath, neuralWalkDetailed, NEURAL_MAX_QUEUE, type NeuralProvenance } from "./ir/neural";
+import {
+  elementIdForNotePath,
+  neuralWalkDetailed,
+  NEURAL_MAX_QUEUE,
+  type NeuralProvenance,
+  type NeuralQueueState,
+} from "./ir/neural";
 import {
   buildNeuralAdjacency,
   neighborsForWalk,
@@ -178,7 +184,25 @@ export function neuralQueue(
   return slots;
 }
 
-function obsidianLinkIndex(app: App): NoteLinkIndex {
+export function neuralSlotsFromQueueState(
+  app: App,
+  state: Pick<LogState, "elements">,
+  neural: NeuralQueueState,
+): ReviewSlot[] {
+  const slots: ReviewSlot[] = [];
+  for (const entry of neural.entries) {
+    const el = state.elements.get(entry.id);
+    if (!el) continue;
+    if (entry.id !== neural.seedId && el.dismissed) continue;
+    const slot = slotFromElement(app, el);
+    if (!slot) continue;
+    slots.push(entry.via ? { ...slot, neuralVia: entry.via } : slot);
+    if (slots.length >= NEURAL_MAX_QUEUE) break;
+  }
+  return slots;
+}
+
+export function obsidianLinkIndex(app: App): NoteLinkIndex {
   const resolved = app.metadataCache.resolvedLinks ?? {};
   const incoming = new Map<string, string[]>();
   for (const src of Object.keys(resolved)) {

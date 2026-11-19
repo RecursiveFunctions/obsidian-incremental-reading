@@ -33,6 +33,12 @@ import {
   parseDrillState,
   type DrillState,
 } from "./drill";
+import {
+  createNeuralQueueState,
+  normalizeNeuralQueueState,
+  parseNeuralQueueState,
+  type NeuralQueueState,
+} from "./neural";
 
 // Fixed paths (constants in the module)
 export const META = ".ir/meta.json";
@@ -68,6 +74,7 @@ interface LedgerPaths {
   checkpointDir: string;
   bookmarks: string;
   drill: string;
+  neural: string;
 }
 
 /**
@@ -452,6 +459,7 @@ export class IrLedger {
       checkpointDir: `${base}/checkpoint`,
       bookmarks: `${base}/bookmarks.json`,
       drill: `${base}/drill.json`,
+      neural: `${base}/neural.json`,
     };
   }
 
@@ -1225,6 +1233,27 @@ export class IrLedger {
     if (!validated) throw new Error("IrLedger.writeDrill: invalid drill state");
     const { drill } = await this.paths();
     await this.fs.write(drill, deterministicJsonStringify(validated));
+  }
+
+  async readNeural(
+    elements?: ReadonlyMap<ElementId, IrElement>,
+  ): Promise<NeuralQueueState> {
+    const { neural } = await this.paths();
+    if (!(await this.fs.exists(neural))) return createNeuralQueueState();
+    try {
+      const parsed = parseNeuralQueueState(JSON.parse(await this.fs.read(neural)));
+      return normalizeNeuralQueueState(parsed, elements);
+    } catch {
+      return createNeuralQueueState();
+    }
+  }
+
+  async writeNeural(state: NeuralQueueState): Promise<void> {
+    await this.awaitReady();
+    const validated = parseNeuralQueueState(state);
+    if (!validated) throw new Error("IrLedger.writeNeural: invalid neural state");
+    const { neural } = await this.paths();
+    await this.fs.write(neural, deterministicJsonStringify(validated));
   }
 
   async loadSessionSnapshot(): Promise<SessionSnapshot | null> {

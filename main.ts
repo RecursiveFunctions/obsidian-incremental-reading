@@ -41,6 +41,8 @@ import {
   drillReviewQueue,
   dueQueue,
   neuralQueue,
+  neuralSlotsFromQueueState,
+  obsidianLinkIndex,
   policyReviewQueue,
   slotFromElement,
   EMPTY_COLLECTION_COPY,
@@ -49,7 +51,14 @@ import {
   type SessionBarPhase,
 } from "./src/review";
 import type { QueuePolicy } from "./src/queue";
-import { makeLcg } from "./src/ir/neural";
+import {
+  elementIdForNotePath,
+  exciteNeuralElement,
+  makeLcg,
+  NEURAL_MAX_QUEUE,
+  seedNeuralQueueState,
+} from "./src/ir/neural";
+import { buildNeuralAdjacency, neighborsForWalk } from "./src/ir/neural-graph";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
 import { openPriorityPrompt } from "./src/priority-prompt";
 import { IrLedger, META } from "./src/ir/ledger";
@@ -646,6 +655,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     });
 
     this.irCommand({
+      id: "resume-neural-queue",
+      name: "Resume Neural Queue",
+      icon: "network",
+      callback: () => void this.resumeNeuralReview(),
+    });
+
+    this.irCommand({
       id: "start-review",
       name: "Start IR review",
       icon: "play-circle",
@@ -797,6 +813,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrPriorityPreview(preview, file),
           onSessionState: (orderedIds, cursor, progress) =>
             void this.persistSessionCursor(orderedIds, cursor, progress),
+          onNeuralExcite: (elementId, visitedPrefixIds) =>
+            this.exciteActiveNeuralSession(elementId, visitedPrefixIds),
         });
         view.multiSelect = this.multiSelect;
         return view;
@@ -3090,8 +3108,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: ledger is not ready.");
       return;
     }
+    await this.ledgerInit;
     const state = await this.ledger.load();
     const sessionSeed = Date.now() ^ 0x9e3779b9;
+    const resolvedSeed =
+      seedElementId ?? (seedNotePath ? elementIdForNotePath(state, seedNotePath) : null);
     const queue = neuralQueue(
       this.app,
       state,
@@ -3105,6 +3126,29 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
+    if (resolvedSeed) {
+      try {
+        const baseNeural = await this.ledger.readNeural(state.elements);
+        const adj = buildNeuralAdjacency(state, obsidianLinkIndex(this.app), {
+          useTags: true,
+          tagDegreeCap: 40,
+        });
+        const seeded = seedNeuralQueueState({
+          seedId: resolvedSeed,
+          baseState: baseNeural,
+          priorityOf: (id) => state.elements.get(id)?.priority ?? 50,
+          neighbors: (id) => neighborsForWalk(adj, id),
+          dismissed: (id) => state.elements.get(id)?.dismissed === true,
+          nowMs: Date.now(),
+          capacity: NEURAL_MAX_QUEUE,
+          random: makeLcg(sessionSeed),
+        });
+        await this.ledger.writeNeural(seeded);
+      } catch (e) {
+        console.warn("Incremental Reading: could not persist seeded neural queue", e);
+      }
+    }
+
     this.beginReviewSession();
     await this.saveNewSessionSnapshot("neural", queue, sessionSeed);
     await this.openReviewWithSession({
@@ -3113,6 +3157,55 @@ export default class IncrementalReadingPlugin extends Plugin {
       isNeural: true,
       phase: "neural",
     });
+  }
+
+  public async resumeNeuralReview(): Promise<void> {
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
+      return;
+    }
+    await this.ledgerInit;
+    const state = await this.ledger.load();
+    const neural = await this.ledger.readNeural(state.elements);
+    const queue = neuralSlotsFromQueueState(this.app, state, neural);
+    if (queue.length === 0) {
+      new Notice("Incremental Reading: no saved Neural Queue frontier yet. Run Go neural on a note first.");
+      return;
+    }
+    const sessionSeed = Date.now() | 0;
+    this.beginReviewSession();
+    await this.saveNewSessionSnapshot("neural", queue, sessionSeed);
+    await this.openReviewWithSession({
+      queue,
+      elementsById: state.elements,
+      isNeural: true,
+      phase: "neural",
+    });
+  }
+
+  private async exciteActiveNeuralSession(
+    elementId: ElementId,
+    visitedPrefixIds: ReadonlySet<ElementId>,
+  ): Promise<ReviewSlot[]> {
+    if (!this.ledger) return [];
+    const state = await this.ledger.load();
+    const curNeural = await this.ledger.readNeural(state.elements);
+    const adj = buildNeuralAdjacency(state, obsidianLinkIndex(this.app), {
+      useTags: true,
+      tagDegreeCap: 40,
+    });
+    const updated = exciteNeuralElement(curNeural, {
+      elementId,
+      priorityOf: (id) => state.elements.get(id)?.priority ?? 50,
+      neighbors: (id) => neighborsForWalk(adj, id),
+      dismissed: (id) => state.elements.get(id)?.dismissed === true,
+      nowMs: Date.now(),
+      capacity: NEURAL_MAX_QUEUE,
+    });
+    await this.ledger.writeNeural(updated);
+    return neuralSlotsFromQueueState(this.app, state, updated).filter(
+      (slot) => !visitedPrefixIds.has(slot.id),
+    );
   }
 
   public async startFinalDrill(): Promise<void> {
