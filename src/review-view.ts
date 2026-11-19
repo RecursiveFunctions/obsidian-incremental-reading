@@ -46,12 +46,11 @@ import {
 } from "./cloze";
 import {
   Grade,
-  cardToStored,
   gradeNumber,
-  schedule,
   storedToCard,
   writeCardToFrontmatter,
 } from "./fsrs";
+import { scheduleItem, type PrimaryItemScheduler } from "./ir/item-scheduler";
 import {
   advanceTopic,
   laterToday,
@@ -4459,6 +4458,10 @@ export class IrReviewView extends ItemView {
    * uses, so a button's label is what pressing it will do. Returns null when
    * there is nothing to show.
    */
+  private activePrimaryScheduler(): PrimaryItemScheduler {
+    return this.settings.primaryScheduler === "sm20" ? "sm20" : "fsrs";
+  }
+
   private itemGradePreview(slot: ReviewSlot): Record<Grade, string> | null {
     const now = Date.now();
     const policy = this.settings.prioritySchedulingPolicy;
@@ -4469,7 +4472,12 @@ export class IrReviewView extends ItemView {
       policy.itemHighRetention,
       policy.itemLowRetention,
     );
-    const delays = previewGradeDelays(storedToCard(slot.element.card), now, retention);
+    const delays = previewGradeDelays(
+      slot.element.card,
+      now,
+      retention,
+      this.activePrimaryScheduler(),
+    );
     const out = {} as Record<Grade, string>;
     for (const grade of PREVIEW_GRADES) {
       out[grade] = formatIntervalShort(delays[grade], now);
@@ -4533,6 +4541,8 @@ export class IrReviewView extends ItemView {
     // logged `grade-undone` path owns undo from here.
     this.lastReversible = null;
 
+    const nowMs = Date.now();
+    const primaryScheduler = this.activePrimaryScheduler();
     const policy = this.settings.prioritySchedulingPolicy;
     const effectiveRetention = effectiveItemRetention(
       slot.element.priority,
@@ -4541,12 +4551,25 @@ export class IrReviewView extends ItemView {
       policy.itemHighRetention,
       policy.itemLowRetention,
     );
-    const next = schedule(storedToCard(slot.element.card), g, new Date(), effectiveRetention);
-    const stored = cardToStored(next);
+    const scheduled = scheduleItem(slot.element.card, g, nowMs, {
+      primaryScheduler,
+      requestRetention: effectiveRetention,
+    });
+    const next = scheduled.card;
+    const stored = scheduled.stored;
 
     const div =
       this.settings.showDivergencePicker && slot.element.card
-        ? checkGradeDivergence(slot.element.card, stored, g, Date.now(), undefined, undefined, slot.element.priority)
+        ? checkGradeDivergence(
+            slot.element.card,
+            stored,
+            g,
+            nowMs,
+            undefined,
+            undefined,
+            slot.element.priority,
+            { primaryScheduler, effectiveRetention },
+          )
         : null;
 
     if (div) {
@@ -4554,7 +4577,7 @@ export class IrReviewView extends ItemView {
       return;
     }
 
-    await this.applyGrade(slot, next, stored, g, false, effectiveRetention);
+    await this.applyGrade(slot, next, stored, g, false, effectiveRetention, primaryScheduler);
   }
 
   private async applyGrade(
@@ -4564,10 +4587,8 @@ export class IrReviewView extends ItemView {
     g: Grade,
     intervalOverridden = false,
     effectiveRetention = this.settings.desiredRetention,
+    scheduler: PrimaryItemScheduler = this.activePrimaryScheduler(),
   ) {
-    // `grade` is the revlog: stats and the parameter optimizer need the
-    // rating itself, not just the resulting card. `overridden` marks a
-    // divergence-picker interval override so the optimizer can report it.
     const priorityDelta = getPriorityDeltaForItemGrade(g, "fsrs");
     const nextPriority =
       priorityDelta > 0
@@ -4576,6 +4597,7 @@ export class IrReviewView extends ItemView {
     const payload: Record<string, unknown> = {
       card: stored,
       grade: gradeNumber(g),
+      scheduler,
       prioritySnapshot: slot.element.priority,
       effectiveRetention,
       schedulingPolicyVersion: PRIORITY_SCHEDULING_POLICY_VERSION,
@@ -4608,15 +4630,11 @@ export class IrReviewView extends ItemView {
     this.advance();
   }
 
-  /**
-   * Inline divergence picker (DESIGN.md Section 5, UI commitment #6).
-   * Shown when FSRS and SM-2 predict significantly different intervals.
-   */
   private showDivergencePicker(
     slot: ReviewSlot,
     g: Grade,
-    fsrsCard: import("ts-fsrs").Card,
-    fsrsStored: import("./ir/model").StoredCard,
+    primaryCard: import("ts-fsrs").Card,
+    primaryStored: import("./ir/model").StoredCard,
     div: DivergenceCheck,
     effectiveRetention: number,
   ) {
@@ -4625,7 +4643,15 @@ export class IrReviewView extends ItemView {
 
     const dock = this.contentEl.querySelector(".ir-review-dock");
     if (!dock) {
-      void this.applyGrade(slot, fsrsCard, fsrsStored, g, false, effectiveRetention);
+      void this.applyGrade(
+        slot,
+        primaryCard,
+        primaryStored,
+        g,
+        false,
+        effectiveRetention,
+        div.primaryScheduler,
+      );
       return;
     }
 
@@ -4635,21 +4661,50 @@ export class IrReviewView extends ItemView {
     const choose = (id: string) => {
       cleanupKeys();
       bar.remove();
-      if (id === "FSRS") {
+      if (id === div.config.primaryId) {
         void this.runAction(() =>
-          this.applyGrade(slot, fsrsCard, fsrsStored, g, false, effectiveRetention),
+          this.applyGrade(
+            slot,
+            primaryCard,
+            primaryStored,
+            g,
+            false,
+            effectiveRetention,
+            div.primaryScheduler,
+          ),
         );
         return;
       }
-      const chosenDue = id === "DSR" ? div.dsrDue : div.sm2Due;
-      const chosenDays = id === "DSR" ? div.dsrIntervalDays : div.sm2IntervalDays;
-      const overridden = {
-        ...fsrsStored,
-        due: chosenDue,
-        scheduledDays: chosenDays,
-      };
+      let overridden: import("./ir/model").StoredCard;
+      if (id === "SM-20") {
+        overridden = div.sm20Card;
+      } else if (id === "FSRS") {
+        overridden = div.fsrsCard;
+      } else if (id === "DSR") {
+        overridden = {
+          ...primaryStored,
+          due: div.dsrDue,
+          scheduledDays: div.dsrIntervalDays,
+          stability: div.dsrStability,
+          difficulty: div.dsrDifficulty,
+        };
+      } else {
+        overridden = {
+          ...primaryStored,
+          due: div.sm2Due,
+          scheduledDays: div.sm2IntervalDays,
+        };
+      }
       void this.runAction(() =>
-        this.applyGrade(slot, storedToCard(overridden), overridden, g, true, effectiveRetention),
+        this.applyGrade(
+          slot,
+          storedToCard(overridden),
+          overridden,
+          g,
+          true,
+          effectiveRetention,
+          div.primaryScheduler,
+        ),
       );
     };
 

@@ -8,6 +8,7 @@ export type { MercyWeights } from "./mercy";
 
 export interface IrSettings {
   schemaVersion: 2;
+  primaryScheduler?: "sm20" | "fsrs";
   sortingPolicy: SortingPolicySettings;
   autoPostponePolicy: AutoPostponePolicy;
   prioritySchedulingPolicy: PrioritySchedulingPolicy;

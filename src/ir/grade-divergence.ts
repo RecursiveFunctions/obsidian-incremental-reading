@@ -1,21 +1,10 @@
-/**
- * Divergence check at grading time (DESIGN.md Section 5).
- *
- * After the user grades an item, both FSRS and SM-2 produce predicted next
- * intervals. When the two diverge (spread > threshold), the review view
- * shows an inline picker so the user can choose which interval to use.
- *
- * SM-2 state is approximated from the FSRS card since we don't maintain a
- * separate SM-2 shadow. The approximation is good enough to detect
- * meaningful divergence; the exact interval the user picks is what gets
- * applied regardless.
- */
-
 import type { StoredCard } from "./model";
-import type { Grade } from "../fsrs";
+import { cardToStored, schedule, storedToCard, type Grade } from "../fsrs";
 import { sm2, type Sm2State } from "../scheduler";
-import { predict as predictDsr, type SchedulerStatePrimitive } from "../dsr-scheduler";
+import { predict as predictDsr, type SchedulerStatePrimitive } from "../sm18-scheduler";
 import { buildDivergenceModal, type DivergenceModalConfig } from "./divergence-modal";
+import { scheduleSm20Item } from "./sm20-scheduler";
+import type { PrimaryItemScheduler } from "./item-scheduler";
 
 const MS_PER_DAY = 86_400_000;
 const DEFAULT_THRESHOLD = 1.5;
@@ -23,19 +12,26 @@ const DEFAULT_FLOOR_DAYS = 7;
 
 export interface DivergenceCheck {
   config: DivergenceModalConfig;
+  primaryScheduler: PrimaryItemScheduler;
+  sm20Card: StoredCard;
+  sm20IntervalDays: number;
+  sm20Due: number;
+  fsrsCard: StoredCard;
   fsrsIntervalDays: number;
   fsrsDue: number;
   sm2IntervalDays: number;
   sm2Due: number;
   dsrIntervalDays: number;
   dsrDue: number;
+  dsrStability: number;
+  dsrDifficulty: number;
 }
 
-/**
- * Approximate an SM-2 state from the current FSRS card. The mapping is
- * intentionally loose — both schedulers model different things. We just need
- * a plausible SM-2 trajectory so divergence detection is meaningful.
- */
+export interface DivergenceOptions {
+  primaryScheduler?: PrimaryItemScheduler;
+  effectiveRetention?: number;
+}
+
 function approximateSm2State(card: StoredCard): Sm2State {
   const easeFactor = Math.max(1.3, 2.5 - (card.difficulty - 5) * 0.15);
   return {
@@ -58,9 +54,6 @@ function gradeToSmGrade(grade: Grade): number {
   }
 }
 
-/**
- * Predict next interval and state using the power-law DSR model (`src/dsr-scheduler.ts`).
- */
 export function predictPowerLawDsr(
   card: StoredCard,
   grade: Grade,
@@ -87,9 +80,8 @@ export function predictPowerLawDsr(
     kind: 1,
     postpones: 0,
   };
-  const next = predictDsr(state, gradeToSmGrade(grade));
-  // Apply the grade-4 / grade-5 bonus on first and later pass intervals
   const smGrade = gradeToSmGrade(grade);
+  const next = predictDsr(state, smGrade);
   const gradeBonus = smGrade >= 3 ? 1 + 0.08 * (smGrade - 3) : 1;
   const intervalDays = Math.max(1, Math.round(next.next_interval * gradeBonus));
   return {
@@ -100,22 +92,33 @@ export function predictPowerLawDsr(
   };
 }
 
-/**
- * After grading, check whether FSRS, DSR, and SM-2 diverge on the next interval.
- * Returns null when they agree (or data is insufficient), or a
- * DivergenceCheck with the config for the inline picker.
- */
 export function checkGradeDivergence(
   card: StoredCard,
-  fsrsNextCard: StoredCard,
+  primaryNextCard: StoredCard,
   grade: Grade,
   now: number,
   threshold = DEFAULT_THRESHOLD,
   floorDays = DEFAULT_FLOOR_DAYS,
   priority = 33,
+  options: DivergenceOptions = {},
 ): DivergenceCheck | null {
-  const fsrsIntervalDays = fsrsNextCard.scheduledDays;
-  const fsrsDue = fsrsNextCard.due;
+  const primaryScheduler = options.primaryScheduler ?? "fsrs";
+  const effectiveRetention = options.effectiveRetention ?? 0.9;
+  const primaryId = primaryScheduler === "sm20" ? "SM-20" : "FSRS";
+
+  const sm20Card =
+    primaryScheduler === "sm20"
+      ? primaryNextCard
+      : scheduleSm20Item(card, grade, now, effectiveRetention);
+  const sm20IntervalDays = sm20Card.scheduledDays;
+  const sm20Due = sm20Card.due;
+
+  const fsrsCard =
+    primaryScheduler === "fsrs"
+      ? primaryNextCard
+      : cardToStored(schedule(storedToCard(card), grade, new Date(now), effectiveRetention));
+  const fsrsIntervalDays = fsrsCard.scheduledDays;
+  const fsrsDue = fsrsCard.due;
 
   const sm2State = approximateSm2State(card);
   const sm2Prediction = sm2.predict(sm2State, grade, now);
@@ -128,11 +131,12 @@ export function checkGradeDivergence(
 
   const config = buildDivergenceModal({
     members: [
+      { id: "SM-20", intervalDays: sm20IntervalDays, due: sm20Due },
       { id: "FSRS", intervalDays: fsrsIntervalDays, due: fsrsDue },
       { id: "DSR", intervalDays: dsrIntervalDays, due: dsrDue },
       { id: "SM-2", intervalDays: sm2IntervalDays, due: sm2Due },
     ],
-    primaryId: "FSRS",
+    primaryId,
     threshold,
     floorDays,
   });
@@ -140,11 +144,18 @@ export function checkGradeDivergence(
   if (!config) return null;
   return {
     config,
+    primaryScheduler,
+    sm20Card,
+    sm20IntervalDays,
+    sm20Due,
+    fsrsCard,
     fsrsIntervalDays,
     fsrsDue,
     sm2IntervalDays,
     sm2Due,
     dsrIntervalDays,
     dsrDue,
+    dsrStability: dsrPrediction.stability,
+    dsrDifficulty: dsrPrediction.difficulty,
   };
 }

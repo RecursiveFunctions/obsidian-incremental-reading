@@ -14,6 +14,7 @@ import {
   previewGradeDelays,
 } from "../src/ir/grade-preview";
 import { schedule, storedToCard } from "../src/fsrs";
+import { scheduleSm20Item } from "../src/ir/sm20-scheduler";
 
 const NOW = 1_760_000_000_000;
 const MIN = 60_000;
@@ -73,4 +74,12 @@ test("previewGradeDelays: a fresh card's Easy extends further than its Again", (
     delays.easy > delays.again,
     `easy (${delays.easy}) should exceed again (${delays.again})`,
   );
+});
+
+test("previewGradeDelays: matches SM-20 delays when primaryScheduler === 'sm20'", () => {
+  const delays = previewGradeDelays(undefined, NOW, 0.9, "sm20");
+  for (const grade of PREVIEW_GRADES) {
+    const expected = scheduleSm20Item(undefined, grade, NOW, 0.9).due - NOW;
+    assert.equal(delays[grade], expected, `SM-20 grade ${grade}`);
+  }
 });
