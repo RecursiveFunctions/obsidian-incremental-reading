@@ -56,6 +56,11 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
   const hasSavedPrimary =
     saved.primaryScheduler === "sm20" || saved.primaryScheduler === "fsrs";
   result.primaryScheduler = hasSavedPrimary ? saved.primaryScheduler! : "fsrs";
+  result.finalDrillMode =
+    saved.finalDrillMode === "again" || saved.finalDrillMode === "off"
+      ? saved.finalDrillMode
+      : "again-and-hard";
+  result.randomizeDrill = saved.randomizeDrill === true;
   result.sortingPolicy = {
     version: 1,
     preset: sorting.preset === "strict" || sorting.preset === "discovery" ||

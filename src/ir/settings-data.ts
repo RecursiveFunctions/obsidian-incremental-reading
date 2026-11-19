@@ -4,11 +4,15 @@
  */
 
 import { DEFAULT_MERCY_WEIGHTS, type MercyWeights } from "./mercy";
+import type { FinalDrillMode } from "./drill";
 export type { MercyWeights } from "./mercy";
+export type { FinalDrillMode } from "./drill";
 
 export interface IrSettings {
   schemaVersion: 2;
   primaryScheduler: "sm20" | "fsrs";
+  finalDrillMode: FinalDrillMode;
+  randomizeDrill: boolean;
   sortingPolicy: SortingPolicySettings;
   autoPostponePolicy: AutoPostponePolicy;
   prioritySchedulingPolicy: PrioritySchedulingPolicy;
@@ -173,6 +177,8 @@ export interface FittedParams {
 export const DEFAULT_SETTINGS: IrSettings = {
   schemaVersion: 2,
   primaryScheduler: "sm20",
+  finalDrillMode: "again-and-hard",
+  randomizeDrill: false,
   sortingPolicy: {
     version: 1,
     preset: "balanced",

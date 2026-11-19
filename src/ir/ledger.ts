@@ -23,10 +23,16 @@ import {
   type SerializedFoldIntermediate,
 } from "./log";
 import { newDeviceId, type DeviceId, type ElementId } from "./ids";
-import { validateIrEvent, type IrEvent } from "./model";
+import { validateIrEvent, type IrElement, type IrEvent } from "./model";
 import type { BookmarkMap } from "./bookmark";
 import { parseSessionSnapshot, type SessionSnapshot } from "./session-snapshot";
 import { parseDailyPriorityAnalytics, type DailyPriorityAnalytics } from "./priority-analytics";
+import {
+  emptyDrillState,
+  normalizeDrillState,
+  parseDrillState,
+  type DrillState,
+} from "./drill";
 
 // Fixed paths (constants in the module)
 export const META = ".ir/meta.json";
@@ -61,6 +67,7 @@ interface LedgerPaths {
   compactionDir: string;
   checkpointDir: string;
   bookmarks: string;
+  drill: string;
 }
 
 /**
@@ -444,6 +451,7 @@ export class IrLedger {
       compactionDir: `${base}/compaction`,
       checkpointDir: `${base}/checkpoint`,
       bookmarks: `${base}/bookmarks.json`,
+      drill: `${base}/drill.json`,
     };
   }
 
@@ -1195,6 +1203,28 @@ export class IrLedger {
     const data = deterministicJsonStringify(bm);
     const { bookmarks } = await this.paths();
     await this.fs.write(bookmarks, data);
+  }
+
+  async readDrill(
+    currentDayKey: string,
+    elements?: ReadonlyMap<ElementId, IrElement>,
+  ): Promise<DrillState> {
+    const { drill } = await this.paths();
+    if (!(await this.fs.exists(drill))) return emptyDrillState(currentDayKey);
+    try {
+      const parsed = parseDrillState(JSON.parse(await this.fs.read(drill)));
+      return normalizeDrillState(parsed, currentDayKey, elements);
+    } catch {
+      return emptyDrillState(currentDayKey);
+    }
+  }
+
+  async writeDrill(state: DrillState): Promise<void> {
+    await this.awaitReady();
+    const validated = parseDrillState(state);
+    if (!validated) throw new Error("IrLedger.writeDrill: invalid drill state");
+    const { drill } = await this.paths();
+    await this.fs.write(drill, deterministicJsonStringify(validated));
   }
 
   async loadSessionSnapshot(): Promise<SessionSnapshot | null> {

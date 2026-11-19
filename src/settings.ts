@@ -64,6 +64,36 @@ export class IrSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Final Drill")
+      .setDesc(
+        "Re-test weak recall items at the end of today's session without creating new ledger grades or altering long-term intervals.",
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("again-and-hard", "Again & Hard (< Good, SM-20 default)")
+          .addOption("again", "Again only")
+          .addOption("off", "Off")
+          .setValue(this.plugin.settings.finalDrillMode)
+          .onChange(async (value) => {
+            this.plugin.settings.finalDrillMode =
+              value === "again" || value === "off" ? value : "again-and-hard";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Randomize Final Drill")
+      .setDesc("Shuffle items when entering Final Drill instead of keeping first-seen order.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.randomizeDrill)
+          .onChange(async (value) => {
+            this.plugin.settings.randomizeDrill = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Reviews per reading")
       .setDesc(
         "How many review items to show between each reading element in a " +

@@ -95,14 +95,23 @@ import {
 import { newElementId, newEventId, type ElementId } from "./ir/ids";
 import { neuralViaLabel } from "./ir/neural";
 import { shouldShowReanchorBanner } from "./ir/tree-nav";
-import type { ReviewSlot } from "./review";
+import type { ReviewSlot, SessionBarPhase } from "./review";
 import {
   contextSourceParentId,
+  drillReviewQueue,
   EMPTY_COLLECTION_COPY,
   sessionBarLabel,
   slotFromElement,
   refreshQueuedSlot,
 } from "./review";
+import {
+  applyDrillGrade,
+  enqueueDrillElement,
+  gradePassesDrill,
+  removeDrillElement,
+  shouldEnqueueForDrill,
+} from "./ir/drill";
+import { repetitionDayKey } from "./ir/session-snapshot";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import {
   applyScrollProgress,
@@ -200,6 +209,7 @@ export interface IrReviewViewHost {
   queue: ReviewSlot[];
   elementsById: Map<ElementId, IrElement>;
   isNeural?: boolean;
+  phase?: SessionBarPhase;
   onChange?: () => void;
   openIrHub?: () => void;
   onSlotChange?: (id: ElementId | null) => void;
@@ -384,6 +394,8 @@ export class IrReviewView extends ItemView {
   private gradedSlotIds = new Set<ElementId>();
   private processedSlotIds = new Set<ElementId>();
   private skippedSlotIds = new Set<ElementId>();
+  private drillEnqueuedByGrade = new Set<ElementId>();
+  private sessionPhase: SessionBarPhase = "due";
 
   /** Thin session chrome; sibling of cardHost so it survives card re-renders. */
   private sessionBarEl?: HTMLElement;
@@ -477,6 +489,7 @@ export class IrReviewView extends ItemView {
     this.queue = host.queue;
     this.elementsById = host.elementsById;
     this.isNeural = host.isNeural ?? false;
+    this.sessionPhase = host.phase ?? (this.isNeural ? "neural" : "due");
     this.onChange = host.onChange;
     this.openIrHub = host.openIrHub;
     this.onSlotChange = host.onSlotChange;
@@ -2420,7 +2433,7 @@ export class IrReviewView extends ItemView {
         const btn = bar.createEl("button", {
           cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
         });
-        if (!canGradeInSession(slot.id, this.gradedSlotIds)) {
+        if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
           btn.disabled = true;
           btn.title = "Already graded in this session — use Undo to re-grade";
         }
@@ -2449,7 +2462,7 @@ export class IrReviewView extends ItemView {
         const btn = bar.createEl("button", {
           cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
         });
-        if (!canGradeInSession(slot.id, this.gradedSlotIds)) {
+        if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
           btn.disabled = true;
           btn.title = "Already graded in this session — use Undo to re-grade";
         }
@@ -2570,6 +2583,7 @@ export class IrReviewView extends ItemView {
     queue: ReviewSlot[];
     elementsById: Map<ElementId, IrElement>;
     isNeural?: boolean;
+    phase?: SessionBarPhase;
     emptyVault?: boolean;
     nothingDue?: UpcomingLoad;
   }): Promise<void> {
@@ -2584,6 +2598,7 @@ export class IrReviewView extends ItemView {
     this.queue = session.queue;
     this.elementsById = session.elementsById;
     this.isNeural = session.isNeural ?? false;
+    this.sessionPhase = session.phase ?? (this.isNeural ? "neural" : "due");
     this.emptyVault = session.emptyVault ?? false;
     this.nothingDue = session.nothingDue ?? null;
     this.emptyCollectionRestore = false;
@@ -2598,6 +2613,7 @@ export class IrReviewView extends ItemView {
     this.gradedSlotIds.clear();
     this.processedSlotIds.clear();
     this.skippedSlotIds.clear();
+    this.drillEnqueuedByGrade.clear();
     this.resumeFromTop.clear();
     this.pendingEditSelection = null;
     this.clickToEditCaret = null;
@@ -2662,13 +2678,21 @@ export class IrReviewView extends ItemView {
         : null;
 
     const row = bar.createDiv({ cls: "ir-review-session-row" });
+    const modeText =
+      this.sessionPhase === "drill"
+        ? "Drill"
+        : this.sessionPhase === "branch"
+          ? "Branch"
+          : this.sessionPhase === "subset"
+            ? "Subset"
+            : this.isNeural
+              ? "Neural"
+              : "Due";
     const chip = row.createSpan({
       cls: this.isNeural
         ? "ir-review-mode-chip ir-review-mode-chip--neural"
         : "ir-review-mode-chip ir-review-mode-chip--due",
-      text:
-        idleChip ??
-        (this.sessionComplete ? "Done" : this.isNeural ? "Neural" : "Due"),
+      text: idleChip ?? (this.sessionComplete ? "Done" : modeText),
     });
     chip.setAttr("aria-hidden", "true");
     row.createSpan({
@@ -2679,10 +2703,8 @@ export class IrReviewView extends ItemView {
           ? this.neuralEndedEarly
             ? "Neural session ended"
             : "Session complete"
-          : this.isNeural
-            ? this.sessionSeedLabel
-              ? `${remaining} left · ${this.sessionSeedLabel}`
-              : `${remaining} left`
+          : (this.isNeural || this.sessionPhase === "branch") && this.sessionSeedLabel
+            ? `${remaining} left · ${this.sessionSeedLabel}`
             : `${remaining} left`),
     });
     bar.setAttr(
@@ -2692,7 +2714,11 @@ export class IrReviewView extends ItemView {
             done: this.sessionComplete,
             isNeural: this.isNeural,
             remaining,
-            seedLabel: this.isNeural ? this.sessionSeedLabel : undefined,
+            seedLabel:
+              this.isNeural || this.sessionPhase === "branch"
+                ? this.sessionSeedLabel
+                : undefined,
+            phase: this.sessionPhase,
           }),
     );
     if (
@@ -3073,6 +3099,15 @@ export class IrReviewView extends ItemView {
     }
     this.gradedSlotIds.delete(result.targetId);
     this.processedSlotIds.delete(result.targetId);
+    if (this.drillEnqueuedByGrade.delete(result.targetId)) {
+      try {
+        const dayKey = repetitionDayKey();
+        const curDrill = await this.ledger.readDrill(dayKey, this.elementsById);
+        await this.ledger.writeDrill(removeDrillElement(curDrill, result.targetId));
+      } catch (e) {
+        console.warn("Incremental Reading: could not prune drill on undo", e);
+      }
+    }
     this.flash(`Undid grade for "${result.targetLabel}"`);
     try {
       const state = await this.ledger.load();
@@ -4451,11 +4486,39 @@ export class IrReviewView extends ItemView {
     this.editing = false;
     this.loadedSlotId = null;
     if (!this.current) {
-      this.sessionComplete = true;
-      void this.renderCard();
+      void this.transitionToDrillOrComplete();
       return;
     }
     void this.renderCard();
+  }
+
+  private async transitionToDrillOrComplete(): Promise<void> {
+    if (this.sessionPhase !== "drill" && this.settings.finalDrillMode !== "off") {
+      try {
+        const dayKey = repetitionDayKey();
+        const drill = await this.ledger.readDrill(dayKey, this.elementsById);
+        const drillSlots = drillReviewQueue(
+          this.app,
+          { elements: this.elementsById },
+          drill,
+          this.settings.randomizeDrill,
+        );
+        if (drillSlots.length > 0) {
+          this.sessionPhase = "drill";
+          this.isNeural = false;
+          this.queue = drillSlots;
+          this.index = 0;
+          this.sessionComplete = false;
+          this.flash(`Final Drill · ${drillSlots.length} left`);
+          await this.renderCard();
+          return;
+        }
+      } catch (e) {
+        console.warn("Incremental Reading: could not transition to Final Drill", e);
+      }
+    }
+    this.sessionComplete = true;
+    await this.renderCard();
   }
 
   /**
@@ -4492,6 +4555,15 @@ export class IrReviewView extends ItemView {
   }
 
   private itemGradePreview(slot: ReviewSlot): Record<Grade, string> | null {
+    if (this.sessionPhase === "drill") {
+      const mode = this.settings.finalDrillMode;
+      return {
+        again: "repeat",
+        hard: gradePassesDrill("hard", mode) ? "pass" : "repeat",
+        good: "pass",
+        easy: "pass",
+      };
+    }
     const now = Date.now();
     const policy = this.settings.prioritySchedulingPolicy;
     const retention = effectiveItemRetention(
@@ -4561,6 +4633,11 @@ export class IrReviewView extends ItemView {
   private async gradeNow(g: Grade) {
     const slot = this.current;
     if (!slot) return;
+    if (this.sessionPhase === "drill") {
+      if (!(await this.flushEdits())) return;
+      await this.applyDrillExposure(slot, g);
+      return;
+    }
     if (!canGradeInSession(slot.id, this.gradedSlotIds)) {
       new Notice("Incremental Reading: already graded in this session — use Undo to re-grade.");
       return;
@@ -4641,6 +4718,17 @@ export class IrReviewView extends ItemView {
     this.gradedSlotIds.add(slot.id);
     this.processedSlotIds.add(slot.id);
     this.skippedSlotIds.delete(slot.id);
+    if (shouldEnqueueForDrill(g, this.settings.finalDrillMode)) {
+      try {
+        const dayKey = repetitionDayKey();
+        const curDrill = await this.ledger.readDrill(dayKey, this.elementsById);
+        const enqueued = enqueueDrillElement(curDrill, slot.id);
+        if (enqueued.added) this.drillEnqueuedByGrade.add(slot.id);
+        await this.ledger.writeDrill(enqueued.state);
+      } catch (e) {
+        console.warn("Incremental Reading: could not enqueue item for Final Drill", e);
+      }
+    }
     slot.element = {
       ...slot.element,
       card: stored,
@@ -4659,6 +4747,45 @@ export class IrReviewView extends ItemView {
     }
     this.onChange?.();
     this.advance();
+  }
+
+  private async applyDrillExposure(slot: ReviewSlot, g: Grade): Promise<void> {
+    const dayKey = repetitionDayKey();
+    const curDrill = await this.ledger.readDrill(dayKey, this.elementsById);
+    const { state: nextDrill, passed } = applyDrillGrade(
+      curDrill,
+      slot.id,
+      g,
+      this.settings.finalDrillMode,
+    );
+    await this.ledger.writeDrill(nextDrill);
+
+    const nextQueue = this.queue.slice();
+    nextQueue.splice(this.index, 1);
+    if (!passed) {
+      nextQueue.push(slot);
+    }
+    this.queue = nextQueue;
+    this.revealed = false;
+    this.editing = false;
+    this.loadedSlotId = null;
+
+    if (this.queue.length === 0) {
+      this.index = 0;
+      this.sessionComplete = true;
+      this.flash("Final Drill complete");
+      await this.renderCard();
+      return;
+    }
+    if (this.index >= this.queue.length) {
+      this.index = 0;
+    }
+    this.flash(
+      passed
+        ? `Drill pass · ${this.queue.length} left`
+        : `Drill repeat · ${this.queue.length} left`,
+    );
+    await this.renderCard();
   }
 
   private showDivergencePicker(
@@ -4943,6 +5070,13 @@ export class IrReviewView extends ItemView {
         () => setDismissed(this.app, slot.file!, true).then(() => undefined),
         "dismiss",
       );
+    }
+    try {
+      const dayKey = repetitionDayKey();
+      const curDrill = await this.ledger.readDrill(dayKey, this.elementsById);
+      await this.ledger.writeDrill(removeDrillElement(curDrill, slot.id));
+    } catch {
+      // Ignore drill cleanup errors on dismiss.
     }
     this.processedSlotIds.add(slot.id);
     this.skippedSlotIds.delete(slot.id);

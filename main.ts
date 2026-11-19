@@ -37,7 +37,17 @@ import {
   setPriority,
   uniqueMarkdownNotePath,
 } from "./src/ir-note";
-import { dueQueue, neuralQueue, policyReviewQueue, slotFromElement, EMPTY_COLLECTION_COPY, EMPTY_NEURAL_COPY, type ReviewSlot } from "./src/review";
+import {
+  drillReviewQueue,
+  dueQueue,
+  neuralQueue,
+  policyReviewQueue,
+  slotFromElement,
+  EMPTY_COLLECTION_COPY,
+  EMPTY_NEURAL_COPY,
+  type ReviewSlot,
+  type SessionBarPhase,
+} from "./src/review";
 import type { QueuePolicy } from "./src/queue";
 import { makeLcg } from "./src/ir/neural";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
@@ -332,7 +342,16 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private readonly irCommands: Command[] = [];
 
-  private irReviewSession: { queue: ReviewSlot[]; elementsById: Map<ElementId, IrElement>; isNeural?: boolean; mode?: SessionMode; cursor?: number; emptyVault?: boolean; nothingDue?: UpcomingLoad; } | null = null;
+  private irReviewSession: {
+    queue: ReviewSlot[];
+    elementsById: Map<ElementId, IrElement>;
+    isNeural?: boolean;
+    phase?: SessionBarPhase;
+    mode?: SessionMode;
+    cursor?: number;
+    emptyVault?: boolean;
+    nothingDue?: UpcomingLoad;
+  } | null = null;
 
   /**
    * The ledger, constructed once the layout exists (after a migration, or
@@ -737,6 +756,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
         const session = this.irReviewSession;
         const isNeural = session?.isNeural ?? false;
+        const phase = session?.phase;
         const emptyVault = session?.emptyVault ?? false;
         const nothingDue = session?.nothingDue ?? null;
         this.irReviewSession = null;
@@ -749,6 +769,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           queue,
           elementsById,
           isNeural,
+          phase,
           onChange: () => void this.refreshStatusBar(),
           openIrHub: () => void this.openIrActionsHub(),
           onSlotChange: (id) => {
@@ -796,6 +817,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "history",
       hotkeys: [{ modifiers: ["Alt"], key: "l" }],
       callback: () => void this.openSessionView(),
+    });
+
+    this.irCommand({
+      id: "start-final-drill",
+      name: "Start Final Drill",
+      icon: "repeat",
+      callback: () => void this.startFinalDrill(),
     });
 
     this.irCommand({
@@ -3083,6 +3111,35 @@ export default class IncrementalReadingPlugin extends Plugin {
       queue,
       elementsById: state.elements,
       isNeural: true,
+      phase: "neural",
+    });
+  }
+
+  public async startFinalDrill(): Promise<void> {
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
+      return;
+    }
+    await this.ledgerInit;
+    const state = await this.ledger.load();
+    const dayKey = repetitionDayKey();
+    const drill = await this.ledger.readDrill(dayKey, state.elements);
+    const queue = drillReviewQueue(
+      this.app,
+      state,
+      drill,
+      this.settings.randomizeDrill,
+    );
+    if (queue.length === 0) {
+      new Notice("Incremental Reading: Final Drill queue is empty for today.");
+      return;
+    }
+    this.beginReviewSession();
+    await this.openReviewWithSession({
+      queue,
+      elementsById: state.elements,
+      isNeural: false,
+      phase: "drill",
     });
   }
 
@@ -3091,6 +3148,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       queue: ReviewSlot[];
       elementsById: Map<ElementId, IrElement>;
       isNeural?: boolean;
+      phase?: SessionBarPhase;
       mode?: SessionMode;
       cursor?: number;
       emptyVault?: boolean;

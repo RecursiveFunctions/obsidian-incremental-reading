@@ -43,6 +43,7 @@ import {
   type NoteLinkIndex,
 } from "./ir/neural-graph";
 import { isVaultFile } from "./ir/vault-file";
+import { normalizeDrillState, orderDrillIds, type DrillState } from "./ir/drill";
 
 /**
  * One element scheduled into the session: its current ledger state plus the
@@ -271,17 +272,49 @@ export const EMPTY_NEURAL_COPY =
 export const EMPTY_COLLECTION_COPY =
   "Mark a note as a topic (Alt+T), then start review (Alt+R).";
 
+export type SessionBarPhase = "due" | "neural" | "drill" | "branch" | "subset";
+
+export function drillReviewQueue(
+  app: App,
+  state: Pick<LogState, "elements">,
+  drill: DrillState,
+  randomize = false,
+  rng?: () => number,
+): ReviewSlot[] {
+  const normalized = normalizeDrillState(drill, drill.dayKey, state.elements);
+  const orderedIds = orderDrillIds(normalized.elementIds, randomize, rng);
+  const slots: ReviewSlot[] = [];
+  for (const id of orderedIds) {
+    const el = state.elements.get(id);
+    if (!el || el.dismissed || el.type !== "item") continue;
+    const slot = slotFromElement(app, el);
+    if (slot) slots.push(slot);
+  }
+  return slots;
+}
+
 /**
  * Session chrome (distinct from the per-card title). `remaining` includes
- * the current card. Neural vs Due is a mode, not a `Neuro=` prefix.
+ * the current card. Neural vs Due vs Drill is a mode, not a `Neuro=` prefix.
  */
 export function sessionBarLabel(opts: {
   done: boolean;
   isNeural: boolean;
   remaining: number;
   seedLabel?: string;
+  phase?: SessionBarPhase;
 }): string {
   if (opts.done) return "Session complete";
+  if (opts.phase === "drill") {
+    return `Drill · ${opts.remaining} left`;
+  }
+  if (opts.phase === "branch") {
+    const rest = `${opts.remaining} left`;
+    return opts.seedLabel ? `Branch · ${rest} · ${opts.seedLabel}` : `Branch · ${rest}`;
+  }
+  if (opts.phase === "subset") {
+    return `Subset · ${opts.remaining} left`;
+  }
   if (opts.isNeural) {
     const rest = `${opts.remaining} left`;
     return opts.seedLabel ? `Neural · ${rest} · ${opts.seedLabel}` : `Neural · ${rest}`;

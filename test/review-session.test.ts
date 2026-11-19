@@ -70,6 +70,24 @@ test("sessionBarLabel: due, neural, and complete", () => {
     sessionBarLabel({ done: true, isNeural: false, remaining: 0 }),
     "Session complete",
   );
+  assert.equal(
+    sessionBarLabel({ done: false, isNeural: false, remaining: 4, phase: "drill" }),
+    "Drill · 4 left",
+  );
+  assert.equal(
+    sessionBarLabel({
+      done: false,
+      isNeural: false,
+      remaining: 5,
+      seedLabel: "Networking",
+      phase: "branch",
+    }),
+    "Branch · 5 left · Networking",
+  );
+  assert.equal(
+    sessionBarLabel({ done: false, isNeural: false, remaining: 3, phase: "subset" }),
+    "Subset · 3 left",
+  );
 });
 
 test("EMPTY_NEURAL_COPY tells the user what to do", () => {
