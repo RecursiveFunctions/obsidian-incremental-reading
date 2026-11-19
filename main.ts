@@ -2,6 +2,7 @@ import {
   type Command,
   Editor,
   type EditorSelectionOrCaret,
+  FuzzySuggestModal,
   MarkdownView,
   Menu,
   Modal,
@@ -93,7 +94,7 @@ import {
   extractRevlog,
   formatDataReport,
 } from "./src/ir/optimizer/revlog";
-import { mostRecentBookmark } from "./src/ir/bookmark";
+import { mostRecentBookmark, setBookmark } from "./src/ir/bookmark";
 import {
   cardToStored,
   configureEngine,
@@ -148,7 +149,12 @@ import {
 } from "./src/nuke-confirm-modal";
 import { promptSourceRelink } from "./src/relink-confirm-modal";
 import { promptSourceGone, type SourceGoneChoice } from "./src/source-gone-modal";
-import { planBulkImport } from "./src/ir/bulk-import";
+import {
+  contentFingerprint,
+  normalizeUrlForDedupe,
+  planBulkImport,
+} from "./src/ir/bulk-import";
+import { planSmCollectionImport, type SmSourceFs } from "./src/ir/sm-collection-import";
 import { folderTopicCandidates } from "./src/ir/folder-topics";
 import { buildExtractEvent, buildPdfExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import {
@@ -1293,6 +1299,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "clipboard-paste",
       hotkeys: [{ modifiers: ["Alt"], key: "b" }],
       callback: () => void this.bulkImport(),
+    });
+
+    this.irCommand({
+      id: "import-sm-collection",
+      name: "Import SuperMemo collection (SM18 / SM20)",
+      icon: "folder-input",
+      callback: () => void this.importSmCollection(),
     });
 
     this.irCommand({
@@ -4435,6 +4448,27 @@ export default class IncrementalReadingPlugin extends Plugin {
       now: Date.now(),
     });
 
+    if (this.ledger) {
+      const state = await this.ledger.load();
+      const fp = contentFingerprint(plan.body);
+      const normUrl = normalizeUrlForDedupe(text.trim());
+      for (const el of state.elements.values()) {
+        const anchorUrl = (el.anchor as unknown as { url?: unknown } | undefined)?.url;
+        const matchesUrl = typeof anchorUrl === "string" && normUrl.length > 0 && normalizeUrlForDedupe(anchorUrl) === normUrl;
+        const matchesText = Boolean(el.text) && contentFingerprint(el.text) === fp;
+        if (matchesUrl || matchesText) {
+          new Notice("Incremental Reading: duplicate content already exists in your collection.");
+          if (el.notePath) {
+            const existingFile = this.app.vault.getAbstractFileByPath(el.notePath);
+            if (existingFile instanceof TFile) {
+              await this.app.workspace.getLeaf(true).openFile(existingFile);
+            }
+          }
+          return;
+        }
+      }
+    }
+
     const folder = this.settings.extractFolder.trim().replace(/^\/+|\/+$/g, "");
     const stem = plan.title.replace(/[\\/:*?"<>|#^[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "IR import";
     const dir = folder ? `${folder}/` : "";
@@ -4462,6 +4496,191 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.recordElement(file);
     new Notice(`Imported "${plan.title}" as an IR topic.`);
     await this.app.workspace.getLeaf(true).openFile(file);
+  }
+
+  private async pickSmCollectionSource(): Promise<SmSourceFs | null> {
+    if (Platform.isDesktopApp) {
+      const req = (window as unknown as { require?: (id: string) => unknown }).require;
+      if (typeof req === "function") {
+        try {
+          const electron = req("electron") as {
+            remote?: { dialog?: { showOpenDialog?: (opts: unknown) => Promise<{ canceled: boolean; filePaths: string[] }> } };
+            dialog?: { showOpenDialog?: (opts: unknown) => Promise<{ canceled: boolean; filePaths: string[] }> };
+          };
+          const dialog = electron?.remote?.dialog ?? electron?.dialog;
+          if (dialog?.showOpenDialog) {
+            const picked = await dialog.showOpenDialog({
+              title: "Select SuperMemo (SM18 / SM20) collection folder",
+              properties: ["openDirectory"],
+            });
+            if (picked.canceled || picked.filePaths.length === 0) return null;
+            const rootDir = picked.filePaths[0]!;
+            const fsPromises = req("fs/promises") as {
+              readdir: (p: string) => Promise<string[]>;
+              readFile: (p: string) => Promise<Uint8Array>;
+            };
+            const pathMod = req("path") as { join: (...parts: string[]) => string };
+            return {
+              async listDir(relDir: string): Promise<string[]> {
+                try {
+                  const full = relDir ? pathMod.join(rootDir, relDir) : rootDir;
+                  const entries = await fsPromises.readdir(full);
+                  return entries.map((name) => (relDir ? `${relDir}/${name}` : name));
+                } catch {
+                  return [];
+                }
+              },
+              async readBinary(relPath: string): Promise<Uint8Array | null> {
+                try {
+                  const buf = await fsPromises.readFile(pathMod.join(rootDir, relPath));
+                  return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+                } catch {
+                  return null;
+                }
+              },
+            };
+          }
+        } catch {
+          // Fall through to in-vault folder picker
+        }
+      }
+    }
+
+    const folders = this.app.vault
+      .getAllLoadedFiles()
+      .filter((f): f is TFolder => f instanceof TFolder)
+      .map((f) => f.path)
+      .sort();
+    const pickedFolder = await new Promise<string | null>((resolve) => {
+      class SmFolderSuggest extends FuzzySuggestModal<string> {
+        private settled = false;
+        getItems(): string[] { return folders; }
+        getItemText(item: string): string { return item || "/"; }
+        onChooseItem(item: string): void {
+          this.settled = true;
+          resolve(item);
+        }
+        onClose(): void {
+          if (!this.settled) resolve(null);
+          super.onClose();
+        }
+      }
+      new SmFolderSuggest(this.app).open();
+    });
+    if (pickedFolder === null) return null;
+    const base = pickedFolder.replace(/^\/+|\/+$/g, "");
+    const adapter = this.app.vault.adapter;
+    return {
+      async listDir(relDir: string): Promise<string[]> {
+        const target = [base, relDir].filter(Boolean).join("/");
+        try {
+          const listed = await adapter.list(target);
+          return listed.files.map((f) => (base && f.startsWith(`${base}/`) ? f.slice(base.length + 1) : f));
+        } catch {
+          return [];
+        }
+      },
+      async readBinary(relPath: string): Promise<Uint8Array | null> {
+        const target = [base, relPath].filter(Boolean).join("/");
+        try {
+          if (!(await adapter.exists(target))) return null;
+          const buf = await adapter.readBinary(target);
+          return new Uint8Array(buf);
+        } catch {
+          return null;
+        }
+      },
+    };
+  }
+
+  private async importSmCollection(): Promise<void> {
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
+      return;
+    }
+    await this.ledgerInit;
+    const fs = await this.pickSmCollectionSource();
+    if (!fs) return;
+
+    const nowMs = Date.now();
+    const state = await this.ledger.load();
+    const deviceId = await this.ledger.getDeviceId();
+    const baseFolder = this.settings.extractFolder.trim().replace(/^\/+|\/+$/g, "") || "SM Import";
+    const targetFolder = `${baseFolder}/SM Collection`;
+    const attachmentFolder = `${targetFolder}/attachments`;
+
+    let plan;
+    try {
+      plan = await planSmCollectionImport({
+        fs,
+        nowMs,
+        deviceId,
+        targetFolder,
+        attachmentFolder,
+        existingElements: state.elements,
+      });
+    } catch (e) {
+      console.error("Incremental Reading: SuperMemo collection import failed", e);
+      new Notice("Incremental Reading: could not parse SuperMemo collection (missing or invalid info/ElementInfo.dat).");
+      return;
+    }
+
+    const ensureFolder = async (dirPath: string) => {
+      const parts = dirPath.split("/").filter(Boolean);
+      let acc = "";
+      for (const part of parts) {
+        acc = acc ? `${acc}/${part}` : part;
+        if (!this.app.vault.getAbstractFileByPath(acc)) {
+          await this.app.vault.createFolder(acc).catch(() => undefined);
+        }
+      }
+    };
+
+    if (plan.attachments.length > 0) {
+      await ensureFolder(attachmentFolder);
+      for (const att of plan.attachments) {
+        const attPath = `${attachmentFolder}/${att.targetFileName}`;
+        if (!this.app.vault.getAbstractFileByPath(attPath)) {
+          await this.app.vault.createBinary(attPath, att.bytes.buffer.slice(att.bytes.byteOffset, att.bytes.byteOffset + att.bytes.byteLength) as ArrayBuffer);
+        }
+      }
+    }
+
+    if (plan.notes.length > 0) {
+      await ensureFolder(targetFolder);
+      for (const note of plan.notes) {
+        if (this.app.vault.getAbstractFileByPath(note.relPath)) continue;
+        const file = await this.app.vault.create(note.relPath, note.markdown + "\n");
+        await quietFrontmatterWrite(async () => {
+          await this.app.fileManager.processFrontMatter(file, (fm) => {
+            for (const [k, v] of Object.entries(note.frontmatter)) fm[k] = v;
+          });
+        }, "sm-import");
+      }
+    }
+
+    if (plan.events.length > 0) {
+      let lamport = Math.max(nowMs, await this.ledger.nextLamport());
+      const stampedEvents = plan.events.map((ev) => ({ ...ev, lamport: lamport++ }));
+      await this.ledger.appendEvents(stampedEvents);
+      await this.ledger.reconcile();
+    }
+
+    if (plan.bookmarks.length > 0) {
+      let bm = await this.ledger.loadBookmarks();
+      for (const b of plan.bookmarks) {
+        bm = setBookmark(bm, b);
+      }
+      await this.ledger.saveBookmarks(bm);
+    }
+
+    await this.getTreeView()?.refresh();
+    void this.refreshStatusBar();
+    const s = plan.stats;
+    const summary = `Imported SM collection: ${s.topics} topics, ${s.ledgerExtracts + s.noteExtracts} extracts, ${s.items} items, ${s.attachments} attachments, ${s.bookmarks} bookmarks` +
+      (s.skippedDuplicates > 0 ? ` (${s.skippedDuplicates} duplicates skipped)` : "");
+    console.info(`Incremental Reading: ${summary}`);
+    new Notice(`Incremental Reading: ${summary}`);
   }
 
   /**

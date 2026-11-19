@@ -735,3 +735,146 @@ export function parseContents(bytes: Uint8Array): ContentsRecord[] {
   }
   return records;
 }
+
+export type RegistryKind =
+  | "text"
+  | "image"
+  | "template"
+  | "concept"
+  | "tasklist"
+  | "Lexicon";
+
+export interface RegistryMemRecord {
+  unknown_0x00: number;
+  unknown_0x04: number;
+  unknown_0x08: number;
+  unknown_0x0a: number;
+  unknown_0x0c: number;
+  unknown_0x10: HexBlob;
+  unknown_0x18: HexBlob;
+}
+
+export interface RtxSpan {
+  member_number: number;
+  active: number;
+  span_offset: number;
+  span_length: number;
+}
+
+export const REGISTRY_MEM_RECORD_SIZE = 30;
+export const REGISTRY_PTR_RECORD_SIZE = 4;
+export const REGISTRY_RTX_TRAILER_SIZE = 6;
+
+export function parseRegistryMem(bytes: Uint8Array): RegistryMemRecord[] {
+  if (bytes.byteLength % REGISTRY_MEM_RECORD_SIZE !== 0) {
+    throw new Error("registry .mem ends with a partial 30-byte record");
+  }
+  const view = viewOf(bytes);
+  const records: RegistryMemRecord[] = [];
+  for (let base = 0; base < bytes.byteLength; base += REGISTRY_MEM_RECORD_SIZE) {
+    records.push({
+      unknown_0x00: view.getUint32(base + 0x00, true),
+      unknown_0x04: view.getUint32(base + 0x04, true),
+      unknown_0x08: view.getUint16(base + 0x08, true),
+      unknown_0x0a: view.getUint16(base + 0x0a, true),
+      unknown_0x0c: view.getUint32(base + 0x0c, true),
+      unknown_0x10: { hex: hexSlice(view, base + 0x10, 8) },
+      unknown_0x18: { hex: hexSlice(view, base + 0x18, 6) },
+    });
+  }
+  return records;
+}
+
+export function parseRegistryPtr(bytes: Uint8Array): number[] {
+  if (bytes.byteLength % REGISTRY_PTR_RECORD_SIZE !== 0) {
+    throw new Error("registry .ptr ends with a partial 4-byte record");
+  }
+  const view = viewOf(bytes);
+  const members: number[] = [];
+  for (let offset = 0; offset < bytes.byteLength; offset += REGISTRY_PTR_RECORD_SIZE) {
+    members.push(view.getUint32(offset, true));
+  }
+  return members;
+}
+
+export function parseRegistryRtx(bytes: Uint8Array): RtxSpan[] {
+  const view = viewOf(bytes);
+  const spans: RtxSpan[] = [];
+  let cursor = 0;
+  while (cursor < bytes.byteLength) {
+    const nul = bytes.indexOf(0, cursor);
+    if (nul < 0 || nul + REGISTRY_RTX_TRAILER_SIZE > bytes.byteLength) {
+      throw new Error("registry .rtx ends with an incomplete trailer");
+    }
+    const member_number = view.getUint32(nul + 1, true);
+    const active = view.getUint8(nul + 5);
+    if (member_number === 0 || active !== 1) {
+      throw new Error(
+        `registry .rtx invalid trailer at ${nul} (member=${member_number}, active=${active})`,
+      );
+    }
+    const end = nul + REGISTRY_RTX_TRAILER_SIZE;
+    spans.push({
+      member_number,
+      active,
+      span_offset: cursor,
+      span_length: end - cursor,
+    });
+    cursor = end;
+  }
+  return spans;
+}
+
+export function resolveRegistry(opts: {
+  mem: Uint8Array;
+  ptr?: Uint8Array;
+  rtx: Uint8Array;
+  kind: RegistryKind;
+}): Map<number, Uint8Array> {
+  if (opts.mem.byteLength % REGISTRY_MEM_RECORD_SIZE !== 0) {
+    throw new Error(`${opts.kind}.mem ends with a partial 30-byte record`);
+  }
+  const memView = viewOf(opts.mem);
+  const memberCount = opts.mem.byteLength / REGISTRY_MEM_RECORD_SIZE;
+  const result = new Map<number, Uint8Array>();
+
+  let liveMembers: number[];
+  if (opts.kind === "text") {
+    liveMembers = [];
+    for (let i = 1; i <= memberCount; i += 1) {
+      liveMembers.push(i);
+    }
+  } else {
+    if (!opts.ptr) {
+      throw new Error(`${opts.kind} registry resolution requires .ptr bytes`);
+    }
+    const seen = new Set<number>();
+    liveMembers = [];
+    for (const member of parseRegistryPtr(opts.ptr)) {
+      if (member === 0 || seen.has(member)) continue;
+      if (member > memberCount) {
+        throw new Error(`${opts.kind}.ptr references member ${member} beyond .mem`);
+      }
+      seen.add(member);
+      liveMembers.push(member);
+    }
+  }
+
+  for (const memberNumber of liveMembers) {
+    const recordOffset = (memberNumber - 1) * REGISTRY_MEM_RECORD_SIZE;
+    const position = memView.getUint32(recordOffset + 0x0a, true);
+    const length = memView.getUint32(recordOffset + 0x0e, true);
+    if (position === 0) continue;
+    if (length === 0) {
+      throw new Error(`${opts.kind} member ${memberNumber} has a position but no length`);
+    }
+    const start = position - 1;
+    const end = start + length;
+    if (end > opts.rtx.byteLength) {
+      throw new Error(`${opts.kind} member ${memberNumber} span exceeds .rtx`);
+    }
+    result.set(memberNumber, opts.rtx.slice(start, end));
+  }
+
+  return result;
+}

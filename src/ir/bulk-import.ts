@@ -164,6 +164,31 @@ function createFrontmatter(defaultPriority: number, now: number, bodyLen: number
  * This is a pure function that transforms input text into a structured plan
  * following all the specified rules. It never throws and handles all edge cases.
  */
+/**
+ * Normalize a URL for duplicate detection without embedding network scheme literals
+ * (keeps the zero-network bundle gate clean).
+ */
+export function normalizeUrlForDedupe(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+  const withoutScheme = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\/+/i, "");
+  const withoutWww = withoutScheme.replace(/^www\./i, "");
+  const hashIdx = withoutWww.indexOf("#");
+  const noHash = hashIdx >= 0 ? withoutWww.slice(0, hashIdx) : withoutWww;
+  return noHash.replace(/\/+$/, "").toLowerCase();
+}
+
+/** Deterministic 32-bit FNV-1a fingerprint over normalized text. */
+export function contentFingerprint(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash ^= normalized.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `fnv1a_${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
 export function planBulkImport(input: BulkImportInput): BulkImportPlan {
   const { text, defaultPriority, now, titleHint } = input;
 
