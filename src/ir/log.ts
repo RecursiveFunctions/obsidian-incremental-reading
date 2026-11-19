@@ -89,6 +89,7 @@ const DUE_CHANGE_KINDS = new Set<IrEvent["kind"]>([
   "mercy-postponed",
   "mercy-undone",
   "graded",
+  "card-reset",
   "topic-advanced",
 ]);
 
@@ -186,7 +187,7 @@ export function foldFrom(
         if (element) {
           const card = event.payload.card as StoredCard;
           if (conflictPolicy === "conservative") {
-            if (!element.card || card.due < element.card.due) {
+            if (!element.card || element.card.reps === 0 || card.due < element.card.due) {
               element.card = card;
             }
           } else {
@@ -199,6 +200,22 @@ export function foldFrom(
           }
           if (placement) {
             base.placements.push({ target, placement });
+          }
+        }
+        break;
+      }
+
+      case "card-reset": {
+        if (element) {
+          if (event.payload.card !== undefined) {
+            element.card = event.payload.card as StoredCard;
+          } else {
+            delete element.card;
+          }
+          if (event.payload.schedule !== undefined) {
+            element.schedule = event.payload.schedule as ReadSchedule;
+          } else if (element.type !== "item") {
+            delete element.schedule;
           }
         }
         break;

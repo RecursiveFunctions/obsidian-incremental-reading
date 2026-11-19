@@ -118,6 +118,7 @@ import {
   spreadExtractPriority,
 } from "./src/sm18-ir-mechanics";
 import { topicStateToSchedule } from "./src/ir/queue-adapter";
+import { buildCardResetCard } from "./src/ir/leech";
 import {
   addLocalDays,
   computeElementHistoryCounts,
@@ -710,6 +711,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrPromote(elementId, element),
           commitReanchor: (elementId, element) =>
             this.applyIrReanchor(elementId, element),
+          commitReset: (elementId, file) =>
+            this.applyIrReset(elementId, file),
           forkExtract: (elementId) => void this.forkStoreExtract(elementId),
           resumeReading: (elementId) => this.resumeReadingBookmark(elementId),
           startNeuralReview: (elementId) =>
@@ -3706,6 +3709,61 @@ export default class IncrementalReadingPlugin extends Plugin {
             );
           }
         },
+      },
+    );
+  }
+
+  /** Reset an element's review/read schedule without deleting or reparenting it. */
+  private async applyIrReset(
+    elementId: ElementId,
+    file: TFile | null,
+  ): Promise<void> {
+    if (!this.ledger) return;
+    const now = Date.now();
+    const state = await this.ledger.load();
+    const el = state.elements.get(elementId);
+    if (!el) return;
+
+    const payload: Record<string, unknown> = {};
+    let resetCard: ReturnType<typeof buildCardResetCard> | null = null;
+    let resetTopic: ReturnType<typeof newTopicState> | null = null;
+
+    if (el.type === "item") {
+      resetCard = buildCardResetCard(now);
+      payload.card = resetCard;
+    } else {
+      resetTopic = newTopicState(this.settings, new Date(now));
+      payload.schedule = topicStateToSchedule(resetTopic);
+    }
+
+    await this.commitLedgerEvents(
+      "reset",
+      [{ kind: "card-reset", target: elementId, payload }],
+      {
+        now,
+        beforeReconcile: async () => {
+          const targetFile =
+            file ??
+            (el.notePath
+              ? (() => {
+                  const abs = this.app.vault.getAbstractFileByPath(el.notePath);
+                  return abs instanceof TFile ? abs : null;
+                })()
+              : null);
+          if (targetFile && targetFile.extension === "md") {
+            await quietFrontmatterWrite(async () => {
+              await this.app.fileManager.processFrontMatter(targetFile, (fm) => {
+                if (resetCard) {
+                  writeCardToFrontmatter(fm, storedToCard(resetCard));
+                } else if (resetTopic) {
+                  writeTopicToFrontmatter(fm, resetTopic);
+                }
+              });
+            }, "reset");
+          }
+        },
+        refreshReviewElements: true,
+        refreshTree: true,
       },
     );
   }

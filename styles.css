@@ -1766,6 +1766,16 @@ img.ir-source-image.ir-cloze-source {
     inset 6px 0 0 var(--text-accent);
 }
 
+.ir-tree-leech-badge {
+  font-size: var(--font-ui-smaller);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(var(--color-orange-rgb, 217, 119, 6), 0.16);
+  color: var(--text-warning, #d97706);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
 .ir-tree-selection-bar {
   position: sticky;
   top: 0;

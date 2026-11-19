@@ -37,6 +37,7 @@ export const EXCLUSION_LABELS = {
   undone: "Review undone",
   missingElement: "Element deleted",
   duplicate: "Duplicate event",
+  cardReset: "Reviews before card reset",
   shortCard: "Items with under 2 reviews",
 } as const;
 
@@ -66,6 +67,7 @@ const REASON_ORDER: ExclusionReason[] = [
   "undone",
   "missingElement",
   "duplicate",
+  "cardReset",
   "shortCard",
 ];
 
@@ -75,6 +77,7 @@ export function extractRevlog(events: IrEvent[], state: LogState): Revlog {
     undone: 0,
     missingElement: 0,
     duplicate: 0,
+    cardReset: 0,
     shortCard: 0,
   };
   const undone = undoneEventIds(events);
@@ -91,6 +94,18 @@ export function extractRevlog(events: IrEvent[], state: LogState): Revlog {
   let overriddenIncluded = 0;
 
   for (const ev of sorted) {
+    if (ev.kind === "card-reset") {
+      if (!seen.has(ev.id) && state.elements.has(ev.target)) {
+        seen.add(ev.id);
+        const prior = byCard.get(ev.target);
+        if (prior && prior.length > 0) {
+          counts.cardReset += prior.length;
+          overriddenIncluded -= prior.filter((r) => r.overridden).length;
+          byCard.delete(ev.target);
+        }
+      }
+      continue;
+    }
     if (ev.kind !== "graded") continue;
 
     const g = (ev.payload as { grade?: unknown }).grade;

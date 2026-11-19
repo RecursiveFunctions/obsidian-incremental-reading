@@ -193,6 +193,7 @@ export type IrEventKind =
   | "dismiss-set"
   | "graded"
   | "grade-undone"
+  | "card-reset"
   | "topic-advanced"
   | "mercy-postponed"
   | "mercy-undone"
@@ -222,7 +223,7 @@ export interface IrEvent {
 }
 
 const IR_EVENT_KINDS = new Set<IrEventKind>([
-  "element-created", "priority-set", "dismiss-set", "graded", "grade-undone",
+  "element-created", "priority-set", "dismiss-set", "graded", "grade-undone", "card-reset",
   "topic-advanced", "mercy-postponed", "mercy-undone", "anchor-repaired", "anchor-detached",
   "promoted", "demoted", "reparented", "source-tombstoned", "source-restored",
   "source-renamed", "element-deleted", "text-edited",
@@ -363,6 +364,10 @@ export function validateIrEvent(value: unknown): string | null {
     case "dismiss-set": return typeof payload.dismissed === "boolean" ? null : "dismissed must be boolean";
     case "graded": return validCard(payload.card) ? null : "card is invalid";
     case "grade-undone": return typeof payload.eventId === "string" && payload.eventId ? null : "eventId is required";
+    case "card-reset":
+      return (payload.card === undefined || validCard(payload.card)) &&
+        (payload.schedule === undefined || validSchedule(payload.schedule))
+        ? null : "card-reset payload is invalid";
     case "topic-advanced": return validSchedule(payload.schedule) ? null : "schedule is invalid";
     case "mercy-postponed": return finite(payload.newDue) &&
       (payload.card === undefined || validCard(payload.card)) &&
@@ -395,7 +400,10 @@ export function isReviewEvent(kind: IrEventKind): boolean {
   // just doesn't find it). If we keep the graded but drop the undone, we'd
   // resurrect a graded the user explicitly retracted — so keep both.
   return (
-    kind === "graded" || kind === "grade-undone" || kind === "topic-advanced"
+    kind === "graded" ||
+    kind === "grade-undone" ||
+    kind === "card-reset" ||
+    kind === "topic-advanced"
   );
 }
 

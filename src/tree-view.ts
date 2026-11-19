@@ -45,6 +45,7 @@ import { dueMsOf } from "./ir/queue-adapter";
 import { findExtractEditorPosition } from "./ir/extract-range";
 import { saveBody, stripFrontmatter } from "./ir/frontmatter-body";
 import { hasCloze, listClozeGroups, setClozeHint } from "./cloze";
+import { findLeeches, type LeechDiagnosis } from "./ir/leech";
 
 export const IR_TREE_VIEW_TYPE = "ir-tree-view";
 
@@ -99,6 +100,12 @@ export type CommitIrReanchorFn = (
 /** Fork a ledger extract (second reading element). */
 export type CommitIrForkFn = (elementId: ElementId) => void | Promise<void>;
 
+/** Reset an element's schedule (isolated Forget / Reset). */
+export type CommitIrResetFn = (
+  elementId: ElementId,
+  file: TFile | null,
+) => Promise<void>;
+
 export interface IrTreeViewHost {
   ledger: IrLedger;
   commitPriority?: CommitIrPriorityFn;
@@ -108,6 +115,7 @@ export interface IrTreeViewHost {
   commitDelete?: CommitIrDeleteFn;
   commitPromote?: CommitIrPromoteFn;
   commitReanchor?: CommitIrReanchorFn;
+  commitReset?: CommitIrResetFn;
   forkExtract?: CommitIrForkFn;
   /**
    * Open the review pane on the given (or most-recent-by-default)
@@ -150,6 +158,10 @@ export class IrTreeView extends ItemView {
 
   /** When true, dismissed elements are visible with a restore action. */
   private showDismissed = false;
+  /** When true, filter the collection to detected leeches only. */
+  private leechesOnly = false;
+  /** Latest multi-criteria leech diagnoses keyed by element id. */
+  private leechesById = new Map<string, LeechDiagnosis>();
 
   /** Current search/filter text (case-insensitive substring match). */
   private filterText = "";
@@ -225,6 +237,7 @@ export class IrTreeView extends ItemView {
   private readonly commitDelete?: CommitIrDeleteFn;
   private readonly commitPromote?: CommitIrPromoteFn;
   private readonly commitReanchor?: CommitIrReanchorFn;
+  private readonly commitReset?: CommitIrResetFn;
   private readonly forkExtract?: CommitIrForkFn;
   private readonly resumeReading?: (id: ElementId) => Promise<boolean>;
   private readonly startNeuralReview?: (id: ElementId) => void;
@@ -246,6 +259,7 @@ export class IrTreeView extends ItemView {
     this.commitDelete = host.commitDelete;
     this.commitPromote = host.commitPromote;
     this.commitReanchor = host.commitReanchor;
+    this.commitReset = host.commitReset;
     this.forkExtract = host.forkExtract;
     this.resumeReading = host.resumeReading;
     this.startNeuralReview = host.startNeuralReview;
@@ -449,7 +463,8 @@ export class IrTreeView extends ItemView {
 
     const actions = controls.createDiv({ cls: "ir-collection-actions" });
     const activeFilterCount = (3 - this.visibleTypes.size) +
-      (3 - this.visibleStates.size) + (this.showDismissed ? 1 : 0);
+      (3 - this.visibleStates.size) + (this.showDismissed ? 1 : 0) +
+      (this.leechesOnly ? 1 : 0);
     const filters = actions.createEl("button", {
       cls: "ir-collection-filter-button",
       text: activeFilterCount > 0 ? `Filters ${activeFilterCount}` : "Filters",
@@ -515,13 +530,18 @@ export class IrTreeView extends ItemView {
         if (!this.visibleStates.has(state)) addChip(`No ${state}`, () => this.visibleStates.add(state));
       }
       if (this.showDismissed) addChip("Dismissed", () => { this.showDismissed = false; });
+      if (this.leechesOnly) addChip("Leeches only", () => { this.leechesOnly = false; });
     }
 
     const body = container.createDiv({ cls: "ir-tree-body" });
 
     let state;
+    let events: Awaited<ReturnType<IrLedger["loadEvents"]>> = [];
     try {
-      state = await this.ledger.load();
+      [state, events] = await Promise.all([
+        this.ledger.load(),
+        this.ledger.loadEvents(),
+      ]);
     } catch (e) {
       if (token !== this.renderToken) return;
       console.error("Incremental Reading: tree view load failed", e);
@@ -542,6 +562,11 @@ export class IrTreeView extends ItemView {
     }
 
     this.elementsById = new Map(state.elements);
+    this.leechesById = new Map(
+      findLeeches(state, events, { includeDismissed: this.showDismissed }).map(
+        (diag) => [diag.elementId, diag],
+      ),
+    );
     const allElements = Array.from(state.elements.values());
     const sortedIds = collectionSortOrder(allElements);
     this.rankById = new Map(sortedIds.map((id, idx) => [id, idx + 1]));
@@ -589,10 +614,11 @@ export class IrTreeView extends ItemView {
     const hasTextFilter = queryRaw.length > 0;
     const hasTypeFilter = this.visibleTypes.size < 3;
     const hasStateFilter = this.visibleStates.size < 3 || !this.showDismissed;
-    if (hasTextFilter || hasTypeFilter || hasStateFilter) {
+    if (hasTextFilter || hasTypeFilter || hasStateFilter || this.leechesOnly) {
       roots = filterTreeByPredicate(roots, (node) => {
         if (!this.visibleTypes.has(node.type)) return false;
         if (node.element.dismissed) return this.showDismissed;
+        if (this.leechesOnly && !this.leechesById.has(node.id)) return false;
         const due = dueMsOf(node.element);
         const state = !Number.isFinite(due) ? "unscheduled" : due <= Date.now() ? "due" : "future";
         if (!this.visibleStates.has(state)) return false;
@@ -905,11 +931,14 @@ export class IrTreeView extends ItemView {
     }
     menu.addItem((item) => item.setTitle("Dismissed").setChecked(this.showDismissed)
       .onClick(() => { this.showDismissed = !this.showDismissed; void this.render(); }));
+    menu.addItem((item) => item.setTitle("Leeches only").setChecked(this.leechesOnly)
+      .onClick(() => { this.leechesOnly = !this.leechesOnly; void this.render(); }));
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Reset filters").setIcon("rotate-ccw").onClick(() => {
       this.visibleTypes = new Set(["topic", "extract", "item"]);
       this.visibleStates = new Set(["due", "future", "unscheduled"]);
       this.showDismissed = false;
+      this.leechesOnly = false;
       void this.render();
     }));
     menu.showAtMouseEvent(event);
@@ -985,6 +1014,7 @@ export class IrTreeView extends ItemView {
       });
     }
     addToggle("Dismissed", this.showDismissed, () => { this.showDismissed = !this.showDismissed; });
+    addToggle("Leeches only", this.leechesOnly, () => { this.leechesOnly = !this.leechesOnly; });
   }
 
   private async showBookmarksSheet(trigger: HTMLElement | null): Promise<void> {
@@ -1025,7 +1055,8 @@ export class IrTreeView extends ItemView {
     return (
       this.filterText.trim().length > 0 ||
       this.visibleTypes.size < 3 ||
-      this.visibleStates.size < 3
+      this.visibleStates.size < 3 ||
+      this.leechesOnly
     );
   }
 
@@ -1474,6 +1505,10 @@ export class IrTreeView extends ItemView {
           .setTitle(`Postpone ${days} day${days === 1 ? "" : "s"}`).setIcon("clock")
           .onClick(() => void this.bulkPostpone(days, ids)));
       }
+      if (this.commitReset) {
+        menu.addItem((item) => item.setTitle("Forget / Reset schedule").setIcon("rotate-ccw")
+          .onClick(() => void this.bulkReset(ids)));
+      }
       if (this.commitDelete) {
         menu.addSeparator();
         menu.addItem((item) => item.setTitle("Delete selected…").setIcon("trash-2")
@@ -1619,6 +1654,20 @@ export class IrTreeView extends ItemView {
       async (state, el) => {
         if (el.dismissed) return false;
         await commitPostpone(el.id, this.fileForElement(state, el.id), days);
+        return true;
+      },
+    );
+  }
+
+  private async bulkReset(ids: ElementId[]): Promise<void> {
+    const commitReset = this.commitReset;
+    if (!commitReset || ids.length === 0) return;
+    await this.runBulkSelectionAction(
+      ids,
+      "Reset",
+      "bulk reset",
+      async (state, el) => {
+        await commitReset(el.id, this.fileForElement(state, el.id));
         return true;
       },
     );
@@ -2032,6 +2081,15 @@ export class IrTreeView extends ItemView {
       row.createSpan({ cls: "ir-tree-type", text: node.type });
     }
 
+    const leech = this.leechesById.get(node.id);
+    if (leech) {
+      const badge = row.createSpan({ cls: "ir-tree-leech-badge", text: "leech" });
+      badge.setAttribute(
+        "title",
+        `Leech (${leech.reasons.join(", ")}): ${leech.lapses} lapses, ${leech.postponeCount} postpones`,
+      );
+    }
+
     if (node.element.anchorState === "needs-reanchor") {
       const badge = row.createSpan({ cls: "ir-tree-anchor-badge ir-tree-anchor-badge--warn" });
       setIcon(badge, "alert-triangle");
@@ -2358,6 +2416,25 @@ export class IrTreeView extends ItemView {
             }),
         );
       }
+    }
+
+    if (this.commitReset) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Forget / Reset schedule")
+          .setIcon("rotate-ccw")
+          .onClick(() => {
+            void (async () => {
+              try {
+                await this.commitReset!(elId, file);
+              } catch (err) {
+                console.error("Incremental Reading: reset failed", err);
+                new Notice("Incremental Reading: could not reset schedule.");
+              }
+              void this.render();
+            })();
+          }),
+      );
     }
 
     if (this.commitDelete) {
