@@ -4,6 +4,8 @@
  * records and feeds them here.
  */
 
+import { sliderToRepSortFactor } from "./sm18-ir-mechanics";
+
 export interface QueueEntry {
   /** Stable element id from the ledger (no longer a note path; see Option 1). */
   id: string;
@@ -134,11 +136,34 @@ export function rebuildQueueTail(
   return [...prefix, ...tail];
 }
 
+export interface RepSortDispersionPoint {
+  strength: number;
+  factor: number;
+  normalizedSpread: number;
+}
+
+export function buildRepSortDispersionCurve(steps = 20): RepSortDispersionPoint[] {
+  const count = Math.max(2, Math.trunc(steps));
+  const points: RepSortDispersionPoint[] = [];
+  for (let i = 0; i <= count; i += 1) {
+    const strength = i / count;
+    const factor = strength <= 0 ? 0 : sliderToRepSortFactor(strength * 100);
+    const normalizedSpread =
+      strength <= 0 ? 0 : Math.min(1, Math.log1p(factor) / Math.log1p(20));
+    points.push({ strength, factor, normalizedSpread });
+  }
+  return points;
+}
+
 function ranked(entries: readonly QueueEntry[], strength: number, seed: number): QueueEntry[] {
   const ordered = [...entries].sort((a, b) =>
     a.priority - b.priority || a.dueMs - b.dueMs || a.id.localeCompare(b.id));
   if (strength <= 0 || ordered.length <= 1) return ordered;
-  const maxDisplacement = Math.max(1, Math.ceil(strength * Math.sqrt(ordered.length)));
+  const factor = sliderToRepSortFactor(Math.min(100, Math.max(0, strength * 100)));
+  const maxDisplacement = Math.min(
+    ordered.length,
+    Math.max(1, Math.ceil((factor / 20) * Math.sqrt(ordered.length))),
+  );
   return ordered
     .map((entry, index) => ({
       entry,

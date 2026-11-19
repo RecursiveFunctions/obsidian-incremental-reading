@@ -70,7 +70,8 @@ export function mergeAnalyticsSessions(
     }
     prior.processedIds = [...new Set([...prior.processedIds, ...session.processedIds])];
     prior.skippedIds = [...new Set([...prior.skippedIds, ...session.skippedIds])];
-    prior.remainingIds = [...new Set([...prior.remainingIds, ...session.remainingIds])];
+    const done = new Set(prior.processedIds);
+    prior.remainingIds = [...new Set(session.remainingIds)].filter((id) => !done.has(id));
   }
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
 }

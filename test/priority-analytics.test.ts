@@ -42,6 +42,23 @@ test("analytics sessions merge idempotently by session and element IDs", () => {
   ]);
   assert.deepEqual(merged[0]?.processedIds, [id("a"), id("b")]);
   assert.deepEqual(merged[0]?.skippedIds, [id("c")]);
+  assert.deepEqual(merged[0]?.remainingIds, []);
+});
+
+test("forgettingIndexByPriority with bucketSize=5 produces 20-category SM20 priority breakdown", () => {
+  const buckets = forgettingIndexByPriority(
+    [
+      { grade: 1, priority: 2 },
+      { grade: 3, priority: 4 },
+      { grade: 1, priority: 97 },
+      { grade: 4, priority: 99 },
+    ],
+    5,
+  );
+  assert.deepEqual(buckets, [
+    { start: 0, end: 5, failures: 1, samples: 2, rate: 0.5 },
+    { start: 95, end: 100, failures: 1, samples: 2, rate: 0.5 },
+  ]);
 });
 
 test("forgetting index buckets exact priority snapshots and treats Again as failure", () => {

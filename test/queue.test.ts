@@ -1,12 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildRepSortDispersionCurve,
   interleavedQueue,
   policyQueue,
   queuePreset,
   rebuildQueueTail,
   type QueueEntry,
 } from "../src/queue";
+import { priorityToBucket20, sliderToRepSortFactor } from "../src/sm18-ir-mechanics";
 
 const NOW = 1_000_000;
 
@@ -240,4 +242,20 @@ test("Sort now keeps prefix and current while deduplicating rebuilt tail", () =>
     1,
     ["new", "current", "new", "done", "remaining"],
   ), ["done", "current", "new", "remaining"]);
+});
+
+test("sliderToRepSortFactor matches sm20.exe 0x00b2c950 curve and priorityToBucket20 matches 0x00ca0ac0", () => {
+  assert.equal(sliderToRepSortFactor(0), 0.001);
+  assert.equal(sliderToRepSortFactor(25), 1.0);
+  assert.ok(sliderToRepSortFactor(50) > 8 && sliderToRepSortFactor(50) < 9);
+  assert.equal(sliderToRepSortFactor(100), 1000.0);
+
+  const curve = buildRepSortDispersionCurve(10);
+  assert.equal(curve.length, 11);
+  assert.equal(curve[0]?.normalizedSpread, 0);
+  assert.equal(curve[10]?.normalizedSpread, 1);
+
+  assert.equal(priorityToBucket20(0), 1);
+  assert.equal(priorityToBucket20(100), 20);
+  assert.ok(priorityToBucket20(5) < priorityToBucket20(50));
 });

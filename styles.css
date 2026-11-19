@@ -2109,6 +2109,84 @@ img.ir-source-image.ir-cloze-source {
   background: var(--background-modifier-border);
 }
 
+.ir-stats-priority-fi {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  margin-top: 0.4em;
+}
+
+.ir-stats-priority-fi-row {
+  display: grid;
+  grid-template-columns: 4.5em 1fr auto;
+  align-items: center;
+  gap: 0.5em;
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-stats-priority-fi-label {
+  color: var(--text-muted);
+}
+
+.ir-stats-priority-fi-track {
+  height: 0.55em;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ir-stats-priority-fi-fill {
+  height: 100%;
+  background: var(--interactive-accent);
+  border-radius: 2px;
+}
+
+.ir-stats-priority-fi-value {
+  color: var(--text-normal);
+  text-align: right;
+  min-width: 5.5em;
+}
+
+.ir-repsort-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  margin-right: 0.5em;
+}
+
+.ir-repsort-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 1.4em;
+  width: 3.4em;
+}
+
+.ir-repsort-bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  background: var(--background-modifier-border);
+  border-radius: 1px 1px 0 0;
+}
+
+.ir-repsort-bar.is-active {
+  background: var(--interactive-accent);
+  opacity: 0.55;
+}
+
+.ir-repsort-bar.is-current {
+  background: var(--interactive-accent);
+  opacity: 1;
+}
+
+.ir-repsort-readout {
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 3.6em;
+}
+
 /* Status bar queue-load indicator (UI commitment #4). Sits in Obsidian's
  * native status bar element, so colors come from theme variables and the
  * font size already matches the rest of the bar. The .has-due class is set

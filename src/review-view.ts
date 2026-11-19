@@ -243,7 +243,15 @@ export interface IrReviewViewHost {
     preview: PriorityPlacementPreview,
     file: TFile | null,
   ) => Promise<void>;
-  onSessionState?: (orderedIds: ElementId[], cursor: number) => void;
+  onSessionState?: (
+    orderedIds: ElementId[],
+    cursor: number,
+    progress?: {
+      processedIds: ElementId[];
+      skippedIds: ElementId[];
+      remainingIds: ElementId[];
+    },
+  ) => void;
 }
 
 export class IrReviewView extends ItemView {
@@ -374,6 +382,8 @@ export class IrReviewView extends ItemView {
   } | null = null;
   /** Slots already graded in this session; prevents duplicate grading after Previous (#33). */
   private gradedSlotIds = new Set<ElementId>();
+  private processedSlotIds = new Set<ElementId>();
+  private skippedSlotIds = new Set<ElementId>();
 
   /** Thin session chrome; sibling of cardHost so it survives card re-renders. */
   private sessionBarEl?: HTMLElement;
@@ -452,6 +462,11 @@ export class IrReviewView extends ItemView {
   private readonly onSessionState?: (
     orderedIds: ElementId[],
     cursor: number,
+    progress?: {
+      processedIds: ElementId[];
+      skippedIds: ElementId[];
+      remainingIds: ElementId[];
+    },
   ) => void;
 
   constructor(leaf: WorkspaceLeaf, host: IrReviewViewHost) {
@@ -728,8 +743,17 @@ export class IrReviewView extends ItemView {
     await this.renderCard();
   }
 
+  private reportSessionState(): void {
+    const orderedIds = this.queue.map((slot) => slot.id);
+    this.onSessionState?.(orderedIds, this.index, {
+      processedIds: [...this.processedSlotIds],
+      skippedIds: [...this.skippedSlotIds],
+      remainingIds: orderedIds.slice(Math.max(0, this.index)),
+    });
+  }
+
   async onClose(): Promise<void> {
-    this.onSessionState?.(this.queue.map((slot) => slot.id), this.index);
+    this.reportSessionState();
     if (this.flashClearTimer != null) {
       window.clearTimeout(this.flashClearTimer);
       this.flashClearTimer = null;
@@ -2505,7 +2529,7 @@ export class IrReviewView extends ItemView {
       fresh.map((slot) => slot.id),
     );
     this.queue = ids.map((id) => byId.get(id as ElementId)).filter((slot): slot is ReviewSlot => slot !== undefined);
-    this.onSessionState?.(this.queue.map((slot) => slot.id), this.index);
+    this.reportSessionState();
     await this.renderCard();
   }
 
@@ -2572,6 +2596,8 @@ export class IrReviewView extends ItemView {
     this.neuralEndedEarly = false;
     this.lastReversible = null;
     this.gradedSlotIds.clear();
+    this.processedSlotIds.clear();
+    this.skippedSlotIds.clear();
     this.resumeFromTop.clear();
     this.pendingEditSelection = null;
     this.clickToEditCaret = null;
@@ -3046,6 +3072,7 @@ export class IrReviewView extends ItemView {
       return;
     }
     this.gradedSlotIds.delete(result.targetId);
+    this.processedSlotIds.delete(result.targetId);
     this.flash(`Undid grade for "${result.targetLabel}"`);
     try {
       const state = await this.ledger.load();
@@ -3203,7 +3230,9 @@ export class IrReviewView extends ItemView {
     } else {
       this.index = undo.index;
     }
-    this.onSessionState?.(this.queue.map((s) => s.id), this.index);
+    this.processedSlotIds.delete(undo.slotId);
+    this.skippedSlotIds.delete(undo.slotId);
+    this.reportSessionState();
     this.onChange?.();
     this.flash(
       undo.kind === "later"
@@ -4417,7 +4446,7 @@ export class IrReviewView extends ItemView {
   private advance() {
     void this.persistBookmarks();
     this.index += 1;
-    this.onSessionState?.(this.queue.map((slot) => slot.id), this.index);
+    this.reportSessionState();
     this.revealed = false;
     this.editing = false;
     this.loadedSlotId = null;
@@ -4443,7 +4472,7 @@ export class IrReviewView extends ItemView {
     if (!(await this.flushEdits())) return;
     void this.persistBookmarks();
     this.index -= 1;
-    this.onSessionState?.(this.queue.map((slot) => slot.id), this.index);
+    this.reportSessionState();
     this.revealed = false;
     this.editing = false;
     this.loadedSlotId = null;
@@ -4610,6 +4639,8 @@ export class IrReviewView extends ItemView {
     if (intervalOverridden) payload.overridden = true;
     await this.emit("graded", slot.id, payload);
     this.gradedSlotIds.add(slot.id);
+    this.processedSlotIds.add(slot.id);
+    this.skippedSlotIds.delete(slot.id);
     slot.element = {
       ...slot.element,
       card: stored,
@@ -4848,6 +4879,8 @@ export class IrReviewView extends ItemView {
         });
       }, "topic-advanced");
     }
+    this.processedSlotIds.add(slot.id);
+    this.skippedSlotIds.delete(slot.id);
     this.onChange?.();
     this.advance();
   }
@@ -4886,6 +4919,7 @@ export class IrReviewView extends ItemView {
         });
       }, "later");
     }
+    this.skippedSlotIds.add(slot.id);
     this.rememberReversible("later", slot, prevElement);
     this.flash(`Later today · ${this.remainingAfterCurrent()} left`);
     this.onChange?.();
@@ -4910,6 +4944,8 @@ export class IrReviewView extends ItemView {
         "dismiss",
       );
     }
+    this.processedSlotIds.add(slot.id);
+    this.skippedSlotIds.delete(slot.id);
     this.rememberReversible("dismiss", slot, prevElement);
     // Unconditional: on the last card `advance()` swaps in the session-complete
     // screen, which renders the pending flash itself, so the confirmation is

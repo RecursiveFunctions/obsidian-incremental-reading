@@ -238,7 +238,7 @@ test("planAutoPostpone bounds overflow spread within maxHorizonDays (#30)", () =
 
   const backlog = Array.from({ length: 734 }, (_, i) => ({
     id: `el_${i}`,
-    priority: 20 + (i % 70),
+    priority: 20 + (i % 81),
     dueMs: yesterday - i * 1000,
   }));
 
@@ -398,4 +398,43 @@ test("computeElementHistoryCounts ignores extract-parent-decay topic-advanced ev
   assert.equal(entry.readingReps, 0);
   assert.equal(entry.totalPostponeCount, 1);
   assert.equal(entry.recentPostponeCount, 1);
+});
+
+test("postponeCeilingForPriority (0x00b86810) caps high-priority postpone horizons tightly across planners", () => {
+  const now = new Date(2026, 0, 10, 12).getTime();
+  const yesterday = new Date(2026, 0, 9, 9).getTime();
+
+  const adv = planAdvancedPostpone(
+    [
+      { id: "high", type: "item", priority: 5, dueMs: yesterday, interval: 100 },
+      { id: "low", type: "item", priority: 95, dueMs: yesterday, interval: 100 },
+    ],
+    now,
+    {
+      operation: "postpone",
+      includeItems: true,
+      includeReading: true,
+      itemDelayFactor: 1,
+      readingDelayFactor: 1,
+      minDelayDays: 2,
+      maxDelayDays: 30,
+    },
+  );
+  const highDue = adv.assignments.find((a) => a.id === "high")!;
+  const lowDue = adv.assignments.find((a) => a.id === "low")!;
+  assert.equal(highDue.targetLocalDate, "2026-01-13");
+  assert.equal(lowDue.targetLocalDate, "2026-02-08");
+
+  const autoPlan = planAutoPostpone(
+    Array.from({ length: 10 }, (_, idx) => ({
+      id: `p5_${idx}`,
+      priority: 5,
+      dueMs: yesterday - idx * 1000,
+    })),
+    now,
+    { keepOverdue: 0, priorityCutoff: 0, maxHorizonDays: 30 },
+  );
+  for (const a of autoPlan.assignments) {
+    assert.ok(a.targetLocalDate === "2026-01-11" || a.targetLocalDate === "2026-01-12");
+  }
 });

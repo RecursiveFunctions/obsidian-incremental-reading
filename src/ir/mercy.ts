@@ -1,3 +1,5 @@
+import { postponeCeilingForPriority } from "../sm18-ir-mechanics";
+
 const REP_CAP = 20;
 const TYPICAL_INTERVAL_PAGE_ROW = 1;
 const MS_PER_DAY = 86_400_000;
@@ -266,6 +268,8 @@ export interface MercyOptions {
    * mercy ordinal (lowest postpone-desirability kept today; highest postponed first).
    */
   weights?: MercyWeights;
+  /** Maximum future spread horizon in days (default: 30). */
+  maxHorizonDays?: number;
 }
 
 export interface MercyAssignment {
@@ -433,10 +437,23 @@ export function planMercy(
     const day = localDateKey(entry.dueMs);
     counts.set(day, (counts.get(day) ?? 0) + 1);
   }
+  const maxHorizon = Math.max(1, Math.floor(opts.maxHorizonDays ?? 30));
   const assignments: MercyAssignment[] = [];
   for (const entry of overflow) {
-    let dayMs = addLocalDays(actionMs, 1);
-    while ((counts.get(localDateKey(dayMs)) ?? 0) >= ceiling && ceiling > 0) dayMs = addLocalDays(dayMs, 1);
+    const elementCeiling = Math.max(
+      1,
+      postponeCeilingForPriority(entry.priority, 1, maxHorizon),
+    );
+    let offset = 1;
+    let dayMs = addLocalDays(actionMs, offset);
+    while (
+      (counts.get(localDateKey(dayMs)) ?? 0) >= ceiling &&
+      ceiling > 0 &&
+      offset < elementCeiling
+    ) {
+      offset += 1;
+      dayMs = addLocalDays(actionMs, offset);
+    }
     const date = localDateKey(dayMs);
     const newDue = combineLocalDate(dayMs, entry.dueMs, actionMs);
     counts.set(date, (counts.get(date) ?? 0) + 1);
@@ -484,7 +501,11 @@ export function planAutoPostpone(
   const horizon = Math.max(1, Math.floor(opts.maxHorizonDays ?? 30));
   const counts = new Map<string, number>();
   const assignments = overflow.map((entry, index) => {
-    const dayOffset = (index % horizon) + 1;
+    const elementHorizon = Math.max(
+      1,
+      postponeCeilingForPriority(entry.priority, 1, horizon),
+    );
+    const dayOffset = (index % elementHorizon) + 1;
     const dayMs = addLocalDays(cutoff, dayOffset);
     const targetLocalDate = localDateKey(dayMs);
     counts.set(targetLocalDate, (counts.get(targetLocalDate) ?? 0) + 1);
@@ -541,7 +562,12 @@ export function planAdvancedPostpone(
     if (policy.scaleByRetention && entry.requestedRetention !== undefined) factor *= 1.5 - entry.requestedRetention;
     if (policy.scaleByAFactor && entry.aFactor !== undefined) factor *= entry.aFactor / 2;
     const base = Math.max(1, entry.interval ?? 1);
-    const delay = Math.min(maxDelay, Math.max(minDelay, Math.round(base * factor)));
+    const elementMaxDelay = postponeCeilingForPriority(
+      entry.priority,
+      minDelay,
+      maxDelay,
+    );
+    const delay = Math.min(elementMaxDelay, Math.max(minDelay, Math.round(base * factor)));
     const signedDelay = policy.operation === "advance" ? -delay : delay;
     const newDue = combineLocalDate(addLocalDays(actionMs, signedDelay), entry.dueMs, actionMs);
     assignments.push({ id: entry.id, previousDue: entry.dueMs, newDue,

@@ -352,3 +352,31 @@ export function adjustTopicPriorityAfterCommit(
   }
   return Math.min(100.0, Math.max(0.0, p));
 }
+
+/** `FUN_00b2c950` (`0x00b2c950`). */
+export function sliderToRepSortFactor(pos0To100: number): number {
+  const pos = Math.min(100.0, Math.max(0.0, Number.isFinite(pos0To100) ? pos0To100 : 0.0));
+  if (pos >= 100.0) return 1000.0;
+  if (pos <= 0.0) return 0.001;
+  const x = Math.sqrt(pos / 100.0);
+  return x <= 0.5 ? x + 0.5 : (x - 0.5) * 38.0 + 1.0;
+}
+
+/** `FUN_00ca0ac0` (`0x00ca0ac0`). */
+export function priorityToBucket20(priority: number): number {
+  const p = Math.min(100.0, Math.max(0.0, Number.isFinite(priority) ? priority : 0.0));
+  if (p < 0.0001) return 1;
+  return Math.min(20, Math.max(1, roundHalfToEven(20.0 * Math.pow(p / 100.0, 0.25))));
+}
+
+/** `FUN_00b86810` (`0x00b86810`). */
+export function postponeCeilingForPriority(
+  priority: number,
+  minIv: number,
+  maxIv: number,
+): number {
+  const lo = Math.max(0, Math.trunc(Number.isFinite(minIv) ? minIv : 0));
+  const hi = Math.max(lo, Math.trunc(Number.isFinite(maxIv) ? maxIv : lo));
+  const p = Math.min(100.0, Math.max(0.0, Number.isFinite(priority) ? priority : 50.0));
+  return lo + roundHalfToEven(((hi - lo) * p) / 100.0);
+}

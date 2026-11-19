@@ -110,7 +110,7 @@ import {
 } from "./src/ir/mercy";
 import { repetitionDayKey, restoreSessionSnapshot, type SessionMode, type SessionSnapshot } from "./src/ir/session-snapshot";
 import type { DailyPriorityAnalytics } from "./src/ir/priority-analytics";
-import { priorityProtection } from "./src/ir/priority-analytics";
+import { mergeAnalyticsSessions, priorityProtection } from "./src/ir/priority-analytics";
 import { previewMercy } from "./src/ir/mercy-modal";
 import {
   bodyWithSingleClozeGroup,
@@ -774,8 +774,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrPriorityChange(id, file, priority),
           commitPriorityPreview: (preview, file) =>
             this.applyIrPriorityPreview(preview, file),
-          onSessionState: (orderedIds, cursor) =>
-            void this.persistSessionCursor(orderedIds, cursor),
+          onSessionState: (orderedIds, cursor, progress) =>
+            void this.persistSessionCursor(orderedIds, cursor, progress),
         });
         view.multiSelect = this.multiSelect;
         return view;
@@ -1809,16 +1809,64 @@ export default class IncrementalReadingPlugin extends Plugin {
       console.warn("Incremental Reading: could not save review session snapshot", error));
   }
 
-  private async persistSessionCursor(orderedIds: ElementId[], cursor: number): Promise<void> {
+  private async persistSessionCursor(
+    orderedIds: ElementId[],
+    cursor: number,
+    progress?: {
+      processedIds: ElementId[];
+      skippedIds: ElementId[];
+      remainingIds: ElementId[];
+    },
+  ): Promise<void> {
     if (!this.ledger) return;
     const snapshot = await this.ledger.loadSessionSnapshot();
     if (!snapshot) return;
+    if (progress) {
+      await this.recordAnalyticsSessionProgress(snapshot, progress);
+    }
     if (cursor >= orderedIds.length) {
       await this.ledger.clearSessionSnapshot().catch(() => undefined);
       return;
     }
     await this.ledger.saveSessionSnapshot({ ...snapshot, orderedIds, cursor })
       .catch((error) => console.warn("Incremental Reading: could not update session snapshot", error));
+  }
+
+  private async recordAnalyticsSessionProgress(
+    snapshot: SessionSnapshot,
+    progress: {
+      processedIds: ElementId[];
+      skippedIds: ElementId[];
+      remainingIds: ElementId[];
+    },
+  ): Promise<void> {
+    if (!this.ledger) return;
+    try {
+      const now = Date.now();
+      const deviceId = await this.ledger.getDeviceId();
+      const dayKey = repetitionDayKey(new Date(now));
+      let day = await this.ledger.loadDailyAnalytics(deviceId, dayKey);
+      if (!day) {
+        const state = await this.ledger.load();
+        await this.ensureDailyAnalytics(state, now);
+        day = await this.ledger.loadDailyAnalytics(deviceId, dayKey);
+      }
+      if (!day) return;
+      const sessions = mergeAnalyticsSessions([
+        ...day.sessions,
+        {
+          id: String(snapshot.createdAt),
+          mode: snapshot.mode,
+          processedIds: progress.processedIds,
+          skippedIds: progress.skippedIds,
+          remainingIds: progress.remainingIds,
+        },
+      ]);
+      await this.ledger.saveDailyAnalytics({ ...day, sessions });
+      void this.refreshStatusBar(false);
+    } catch (error) {
+      console.warn("Incremental Reading: could not update daily priority analytics", error);
+    }
   }
 
   private async ensureDailyAnalytics(state: Awaited<ReturnType<IrLedger["load"]>>, now: number): Promise<void> {

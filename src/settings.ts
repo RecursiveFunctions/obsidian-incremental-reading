@@ -8,6 +8,8 @@ import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type IncrementalReadingPlugin from "../main";
 import { PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
 import { cloneDefaultSettings } from "./ir/settings-data";
+import { buildRepSortDispersionCurve } from "./queue";
+import { sliderToRepSortFactor } from "./sm18-ir-mechanics";
 import {
   isSpaceAfterReveal,
   SPACE_AFTER_REVEAL_OPTIONS,
@@ -133,10 +135,16 @@ export class IrSettingTab extends PluginSettingTab {
 
     for (const [key, name, description] of [
       ["readingProportion", "Reading proportion", "Share of mixed sessions reserved for topics and extracts."],
-      ["itemJitter", "Item randomization", "Bounded deterministic rank jitter for recall items."],
-      ["readingJitter", "Reading randomization", "Bounded deterministic rank jitter for topics and extracts."],
+      ["itemJitter", "Item randomization", "Bounded deterministic SM-20 rank dispersion for recall items."],
+      ["readingJitter", "Reading randomization", "Bounded deterministic SM-20 rank dispersion for topics and extracts."],
     ] as const) {
-      new Setting(containerEl).setName(name).setDesc(description).addSlider((slider) => slider
+      let previewHost: HTMLElement | null = null;
+      const setting = new Setting(containerEl).setName(name).setDesc(description);
+      if (key === "itemJitter" || key === "readingJitter") {
+        previewHost = setting.controlEl.createDiv({ cls: "ir-repsort-preview" });
+        this.renderRepSortCurvePreview(previewHost, this.plugin.settings.sortingPolicy[key]);
+      }
+      setting.addSlider((slider) => slider
         .setLimits(0, 1, 0.05)
         .setValue(this.plugin.settings.sortingPolicy[key])
         .setDynamicTooltip()
@@ -145,6 +153,9 @@ export class IrSettingTab extends PluginSettingTab {
           if (key === "readingProportion") {
             this.plugin.settings.reviewsPerReading =
               value <= 0 ? 0 : Math.min(10, Math.max(0, Math.round((1 - value) / value)));
+          }
+          if (previewHost) {
+            this.renderRepSortCurvePreview(previewHost, value);
           }
           this.plugin.settings.sortingPolicy.preset = "custom";
           await this.plugin.saveSettings();
@@ -617,6 +628,32 @@ export class IrSettingTab extends PluginSettingTab {
           .setWarning()
           .onClick(() => void this.plugin.runNuke()),
       );
+  }
+
+  private renderRepSortCurvePreview(host: HTMLElement, activeStrength: number): void {
+    host.empty();
+    const clamped = Math.min(1, Math.max(0, Number.isFinite(activeStrength) ? activeStrength : 0));
+    const factor = clamped <= 0 ? 0 : sliderToRepSortFactor(clamped * 100);
+    const factorLabel =
+      clamped <= 0 ? "strict" : factor >= 100 ? "×1000" : `×${factor.toFixed(2)}`;
+    const chart = host.createDiv({
+      cls: "ir-repsort-bars",
+      attr: {
+        role: "img",
+        "aria-label": `Repetition sort dispersion factor ${factorLabel}`,
+        title: `SM-20 dispersion factor: ${factorLabel}`,
+      },
+    });
+    const curve = buildRepSortDispersionCurve(10);
+    const activeIndex = Math.round(clamped * (curve.length - 1));
+    for (let i = 0; i < curve.length; i += 1) {
+      const point = curve[i]!;
+      const col = chart.createDiv({
+        cls: `ir-repsort-bar${i <= activeIndex && clamped > 0 ? " is-active" : ""}${i === activeIndex ? " is-current" : ""}`,
+      });
+      col.style.setProperty("height", `${Math.max(12, Math.round(point.normalizedSpread * 100))}%`);
+    }
+    host.createSpan({ cls: "ir-repsort-readout", text: factorLabel });
   }
 
   private async restoreDefaults(): Promise<void> {

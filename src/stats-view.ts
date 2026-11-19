@@ -20,6 +20,7 @@ import {
   startOfLocalDayMs,
   type GradeEvent,
 } from "./ir/stats";
+import { forgettingIndexByPriority, type PriorityGrade } from "./ir/priority-analytics";
 
 export const IR_STATS_VIEW_TYPE = "ir-stats-view";
 
@@ -106,11 +107,21 @@ export class IrStatsView extends ItemView {
       }
     }
     const grades: GradeEvent[] = [];
+    const priorityGrades: PriorityGrade[] = [];
     for (const ev of events) {
       if (ev.kind !== "graded") continue;
       if (undoneEventIds.has(ev.id)) continue;
       const g = (ev.payload as { grade?: unknown }).grade;
-      if (typeof g === "number") grades.push({ ts: ev.ts, grade: g });
+      if (typeof g === "number") {
+        grades.push({ ts: ev.ts, grade: g });
+        const snap = (ev.payload as { prioritySnapshot?: unknown }).prioritySnapshot;
+        const fallbackPriority = state.elements.get(ev.target)?.priority;
+        const priority =
+          typeof snap === "number" && Number.isFinite(snap) ? snap : fallbackPriority;
+        if (typeof priority === "number" && Number.isFinite(priority)) {
+          priorityGrades.push({ grade: g, priority });
+        }
+      }
     }
 
     const elements = Array.from(state.elements.values());
@@ -129,6 +140,7 @@ export class IrStatsView extends ItemView {
     this.renderCounts(body, elements, stats, now);
     this.renderForecast(body, elements, now);
     this.renderReviewHistory(body, grades, stats, windowStart, now);
+    this.renderPriorityForgettingIndex(body, priorityGrades);
     this.renderScheduler(body, events, state);
   }
 
@@ -534,6 +546,37 @@ export class IrStatsView extends ItemView {
     const oldest = new Date(firstDay);
     axis.createSpan({ text: `${WEEKDAYS[oldest.getDay()]} ${oldest.getDate()}` });
     axis.createSpan({ text: "today" });
+  }
+
+  private renderPriorityForgettingIndex(
+    body: HTMLElement,
+    priorityGrades: readonly PriorityGrade[],
+  ): void {
+    const buckets = forgettingIndexByPriority(priorityGrades, 5);
+    if (buckets.length === 0) return;
+
+    const section = body.createDiv({ cls: "ir-stats-section" });
+    section.createDiv({
+      cls: "ir-stats-section-title",
+      text: "Forgetting index by priority · 20 categories",
+    });
+
+    const list = section.createDiv({ cls: "ir-stats-priority-fi" });
+    for (const bucket of buckets) {
+      const pct = bucket.rate * 100;
+      const row = list.createDiv({ cls: "ir-stats-priority-fi-row" });
+      row.createSpan({
+        cls: "ir-stats-priority-fi-label",
+        text: `${bucket.start}–${bucket.end}%`,
+      });
+      const track = row.createDiv({ cls: "ir-stats-priority-fi-track" });
+      const fill = track.createDiv({ cls: "ir-stats-priority-fi-fill" });
+      fill.style.setProperty("width", `${Math.min(100, pct)}%`);
+      row.createSpan({
+        cls: "ir-stats-priority-fi-value",
+        text: `${pct.toFixed(0)}% (${bucket.failures}/${bucket.samples})`,
+      });
+    }
   }
 
   private table(parent: HTMLElement, rows: Array<[string, string]>): void {
