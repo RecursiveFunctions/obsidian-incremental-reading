@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-11-19
+
+### Added
+
+- **Pure analytical SM-20 item scheduler & unified dispatcher** (`src/ir/sm20-scheduler.ts`, `src/ir/item-scheduler.ts`, `src/ir/grade-divergence.ts`, `src/ir/grade-preview.ts`, `src/review-view.ts`): Added SuperMemo 20's analytical stability-increase (`SInc`) item scheduler with bankers-rounded 1..20 difficulty/stability/repetition axis transforms, minimum interval growth floor, and lossless switching between `sm20` and `fsrs`. Upgraded the post-grade Divergence Picker to compare all four schedulers (`SM-20`, `FSRS`, `DSR`, `SM-2`).
+- **SM-20 new-vault default & one-time upgrade offer** (`src/ir/settings-data.ts`, `src/ir/settings-resolve.ts`, `src/sm20-offer-modal.ts`, `src/settings.ts`, `src/stats-view.ts`, `main.ts`): New installs default to `SM-20` while existing vaults grandfather to `FSRS-6` and display a one-time modal offering to switch or keep current settings.
+- **SM-20 queue randomization curve, priority postpone ceiling & 20-category forgetting index** (`src/sm18-ir-mechanics.ts`, `src/queue.ts`, `src/ir/mercy.ts`, `src/ir/priority-analytics.ts`, `src/settings.ts`, `src/stats-view.ts`): Wired `sliderToRepSortFactor` with a live dispersion preview bar in Settings, capped per-element postpone horizons by priority (`postponeCeilingForPriority`), and added a 20-category forgetting-index breakdown by priority in Stats.
+- **Persisted same-day Final Drill** (`src/ir/drill.ts`, `src/ir/ledger.ts`, `src/review.ts`, `src/review-view.ts`, `main.ts`): Recall items graded Again or Hard (`< Good`) automatically enter a generation-scoped daily `drill.json` queue and re-test at the end of the session (or via `Start Final Drill`) until passed without altering long-term intervals or adding duplicate ledger grades.
+- **Dynamic spreading-activation Neural Queue** (`src/ir/neural.ts`, `src/ir/ledger.ts`, `src/review.ts`, `src/review-view.ts`, `main.ts`): Persisted the active neural frontier in `neural.json`, dynamically exciting neighbors on review/extract/cloze/edit actions with recency cooldown and capacity eviction, plus a `Resume Neural Queue` command.
+- **Multi-criteria leech diagnostics & isolated schedule reset** (`src/ir/leech.ts`, `src/ir/model.ts`, `src/ir/log.ts`, `src/ir/optimizer/revlog.ts`, `src/tree-view.ts`, `main.ts`): Added leech detection across lapses, high-difficulty short-interval items, and chronic postpones; added a `Leeches only` filter and row badge in Collection; and added `Forget / Reset schedule` (`card-reset`) to reset an element's schedule while excluding pre-reset reviews from optimizer fitting.
+- **JumpInterval rescheduling, branch/subset review & sibling duplication** (`src/ir/manual-schedule.ts`, `src/ir/tree.ts`, `src/review.ts`, `src/review-view.ts`, `src/tree-view.ts`, `main.ts`): Added inline `Jump interval…` rescheduling (by day count or `YYYY-MM-DD` date with topic A-Factor scaling), `Review branch (due / all)`, multi-select `Review (N)` and `+ Session` in Collection, and sibling duplication for extracts and cloze items.
+- **SM18 / SM20 rich collection importer & duplicate guard** (`src/sm18-format-read.ts`, `src/ir/sm-collection-import.ts`, `src/ir/bulk-import.ts`, `main.ts`): Completed binary registry parsing (`.mem`, `.ptr`, `.rtx`), added `Import SuperMemo collection (SM18 / SM20)` supporting stride-1 `compon.dat` resynchronization, 9-kind registry joins, `DisplayAt` Q&A cloze synthesis, `RepetitionHistory.dat` migration, and reading bookmarks, plus URL/content-fingerprint duplicate guards.
+
+### Removed
+
+- **Duplicate DSR shadow scheduler & unused tree-actions helper** (`src/dsr-scheduler.ts`, `src/ir/tree-actions.ts`): Consolidated DSR shadow predictions onto `src/sm18-scheduler.ts`.
+
 ## [0.13.3] — 2026-11-17
 
 ### Fixed

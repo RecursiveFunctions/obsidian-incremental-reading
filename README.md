@@ -22,7 +22,7 @@ The plugin uses three kinds of element, and they behave differently.
 |---|---|---|
 | Topic | Something you read: a note or a PDF | SuperMemo 20 reading schedule (length-based initial A-Factor, `a^3` first interval, log-uniform spread, and ease updates). Never graded |
 | Extract | A span pulled out of a topic or another extract | Blends parent A-Factor with extract length, decays parent A-Factor by 5%, spreads priority around the parent, and keeps a link to its source |
-| Item | A card you grade: a cloze or an image occlusion | FSRS-6 (with subtle priority drift on passing grades so mastered items slowly make room for fresh material) |
+| Item | A card you grade: a cloze or an image occlusion | SuperMemo 20 or FSRS-6 (switchable anytime in Settings, with subtle priority drift on passing grades so mastered items slowly make room for fresh material) |
 
 Every element carries a **priority** from 0 to 100, where **lower means more important**. Priority 0 floats to the top of the queue.
 
@@ -175,7 +175,7 @@ Review covers how many items sit between reading cards, interleaving, the schedu
 
 Restore defaults at the top returns every control to a new vault's values. It does not touch notes or review history.
 
-FSRS handles grading. Turning on the scheduler divergence picker asks you to choose when FSRS and classic SM-2 disagree sharply about the next interval. New vaults leave it off.
+New vaults use the SuperMemo 20 item scheduler by default, and existing vaults keep FSRS-6 unless you choose to switch. You can switch between SuperMemo 20 and FSRS-6 at any time in Settings without converting your cards. Turning on the scheduler divergence picker asks you to choose when the schedulers disagree sharply about the next interval.
 
 ## Privacy
 Built to work offline. Full threat model, verification commands and reproducible-build instructions: [`SECURITY.md`](SECURITY.md).
@@ -191,9 +191,9 @@ PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be ex
 
 Planned, in order (full details in [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md)):
 
-- [ ] **Rich-content collection import & duplicate-source guards:** Full HTML and image component decoding, automatic Q&A/cloze synthesis from display flags, extract-vs-topic provenance detection, read-point caret/scroll bookmark recovery, and URL/source deduplication on import.
-- [ ] **Final Drill, semantic review passes & dynamic Neural Review:** End-of-session Final Drill stage for lapsed items, branch/subset/search review passes, safe Advance / Add-to-outstanding tools, and incremental spreading-activation expansion in Neural Review (`Alt+N`).
-- [ ] **Queue diagnostics, leech triage & stats trends:** Visual queue-randomization probability curve in Settings, multi-criteria leech filtering and one-click triage actions in Stats, plus calendar heatmap and rolling retention trend.
+- [x] **Rich-content collection import & duplicate-source guards:** Full HTML and image component decoding, automatic Q&A/cloze synthesis from display flags, extract-vs-topic provenance detection, read-point caret/scroll bookmark recovery, and URL/source deduplication on import.
+- [x] **Final Drill, semantic review passes & dynamic Neural Review:** End-of-session Final Drill stage for lapsed items, branch/subset/search review passes, safe Advance / Add-to-outstanding tools, and incremental spreading-activation expansion in Neural Review (`Alt+N`).
+- [x] **Queue diagnostics, leech triage & stats trends:** Visual queue-randomization probability curve in Settings, multi-criteria leech filtering and one-click triage actions in Collection and Stats.
 - [ ] **Incremental video, audio & web capture:** Timestamp-anchored media extracts (`resume / start / stop`), side-by-side review player, and a companion browser extension for one-click web import.
 - [ ] **Community directory submission & mobile polish:** Final plugin ID/name migration path from BRAT and real-device mobile refinements.
 
@@ -201,16 +201,16 @@ Under consideration: a one-way structure export for external collections.
 
 If you're interested in the architecture and full roadmap, check [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md).
 
-## Changelog
+## Recent changes (0.14.0)
 
-### Unreleased
+See [`CHANGELOG.md`](CHANGELOG.md) for the full version history.
 
-- **Multi-Factor Mercy Scoring:** Mercy and auto-postpone now rank due overflow across five configurable dimensions (**Importance**, **Lateness**, **Easiness**, **Investment**, and **Recency**) paired with a baseline interval-growth curve, protecting high-investment and difficult items over fresh, easy items when trimming overload.
-- **Interactive Mercy Preview (`Alt+M`):** Upgraded the Mercy modal with live sliders for **Daily ceiling**, **Priority cutoff**, and a **Multi-factor Mercy scoring** toggle. Adjusting any control recomputes the redistribution on the fly and previews the exact elements and target dates being postponed.
-- **3-Model Scheduler Divergence (`FSRS` / `DSR` / `SM-2`):** Added a power-law **DSR** shadow scheduler (`src/dsr-scheduler.ts`) alongside FSRS-6 and SM-2 in the post-grade Divergence Picker (`src/ir/grade-divergence.ts`), allowing one-click interval overrides when models disagree.
-- **Priority-Scaled First Topic Intervals:** When priority-aware scheduling is enabled, fresh topics now scale their first interval by collection priority position (clamped to `[1, 44530]` days) instead of assigning a flat 1-day interval to every newly imported topic.
-- **True Ledger Postpone & Reading History Tracking:** Derived real reading advance counts (`topic-advanced` events) and separate `totalPostponeCount` / `recentPostponeCount` metrics from the ledger (with `recentPostponeCount` resetting automatically upon grading or advancing an element).
-- **Advanced Startup Auto-Postpone:** Wired the advanced auto-postpone policy into startup execution, scaling delays by priority, retention, and A-Factor while skipping elements that have already been postponed repeatedly (`skipPostponeCountAbove`).
+- **SuperMemo 20 card scheduling:** New vaults now use SuperMemo 20's card scheduler by default, and existing vaults can switch between SuperMemo 20 and FSRS-6 anytime in Settings without changing their notes.
+- **Final Drill at the end of review:** Cards you grade **Again** or **Hard** come back at the end of today's session so you can practice them until they stick, without changing their future review dates.
+- **Smarter Neural Review:** As you read, grade, or make new extracts in Neural mode, nearby linked notes and child cards are added to the queue automatically, and you can pick up where you left off with **Resume Neural Queue**.
+- **Spot and reset stubborn cards (leeches):** Collection can now highlight and filter cards you keep forgetting or postponing, and you can reset a card's schedule for a fresh start without deleting the note.
+- **Review a single branch or selection:** Right-click any item in Collection to review just that branch, review a multi-selection, add specific cards to today's session, duplicate a card as a sibling, or jump a card to a specific future date.
+- **Import from SuperMemo 18 and 20:** A new **Import SuperMemo collection (SM18 / SM20)** command brings in your SuperMemo topics, extracts, cloze cards, images, reading positions, and review history while skipping duplicates.
 
 ## Installation
 
