@@ -172,9 +172,13 @@ import {
 import { promptSourceRelink } from "./src/relink-confirm-modal";
 import { promptSourceGone, type SourceGoneChoice } from "./src/source-gone-modal";
 import {
-  contentFingerprint,
-  normalizeUrlForDedupe,
+  buildDuplicateIndex,
+  findDuplicateTopicOrExtract,
   planBulkImport,
+  type BulkImportPlan,
+  type DuplicateIndex,
+  type DuplicateMatch,
+  type DuplicateSourceNote,
 } from "./src/ir/bulk-import";
 import { planSmCollectionImport, type SmSourceFs } from "./src/ir/sm-collection-import";
 import { folderTopicCandidates } from "./src/ir/folder-topics";
@@ -231,6 +235,7 @@ import {
 import {
   bodyOffsetsFromFullOffsets,
   fullOffsetsFromBodyOffsets,
+  saveBody,
   stripFrontmatter,
 } from "./src/ir/frontmatter-body";
 import {
@@ -4592,6 +4597,24 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   /** Create a topic from mobile capture text. */
   private async mobileCreateTopic(text: string, title: string): Promise<ElementId | null> {
+    const trimmed = text.trim();
+    const index = await this.buildVaultDuplicateIndex();
+    const dup = findDuplicateTopicOrExtract(index, { text: trimmed });
+    if (dup) {
+      this.showDuplicateImportNotice(dup, {
+        title,
+        body: trimmed,
+        onCreate: async () => {
+          const id = await this.createMobileTopicDirect(trimmed, title);
+          if (id) new Notice(`Incremental Reading: topic "${title}" captured.`);
+        },
+      });
+      return null;
+    }
+    return this.createMobileTopicDirect(trimmed, title);
+  }
+
+  private async createMobileTopicDirect(trimmedText: string, title: string): Promise<ElementId | null> {
     const folder = this.settings.extractFolder.trim().replace(/^\/+|\/+$/g, "");
     const stem =
       title
@@ -4603,10 +4626,190 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.app.vault.createFolder(folder);
     }
     const path = uniqueMarkdownNotePath(this.app, folder, stem);
-    const file = await this.app.vault.create(path, text.trim() + "\n");
+    const file = await this.app.vault.create(path, trimmedText + "\n");
     await markAsTopic(this.app, file, this.settings);
     await this.recordElement(file);
     return elementIdForPath(file.path);
+  }
+
+  private async buildVaultDuplicateIndex(): Promise<DuplicateIndex> {
+    const state = this.ledger ? await this.ledger.load() : null;
+    const byPath = new Map<string, ElementId>();
+    if (state) {
+      for (const el of state.elements.values()) {
+        if (el.notePath && !byPath.has(el.notePath)) {
+          byPath.set(el.notePath, el.id);
+        }
+      }
+    }
+    const mdFiles = this.app.vault.getMarkdownFiles();
+    const notes: DuplicateSourceNote[] = [];
+    for (const file of mdFiles) {
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as
+        | Record<string, unknown>
+        | undefined;
+      const body = await this.app.vault.cachedRead(file);
+      notes.push({
+        path: file.path,
+        title: file.basename,
+        body,
+        frontmatter: fm,
+        elementId: byPath.get(file.path),
+      });
+    }
+    return buildDuplicateIndex({
+      elements: state ? state.elements.values() : [],
+      notes,
+    });
+  }
+
+  private showDuplicateImportNotice(
+    dup: DuplicateMatch,
+    opts: {
+      title: string;
+      body: string;
+      onCreate: () => Promise<void>;
+    },
+  ): void {
+    const targetPath = dup.notePath ?? dup.sourcePath;
+    const label = dup.title || targetPath || "an existing element";
+    const reasonText = dup.reason === "url" ? "matching URL" : "matching content";
+    const notice = new Notice("", 15000);
+    notice.noticeEl.empty();
+    const wrap = notice.noticeEl.createDiv();
+    wrap.createDiv({
+      text: `Incremental Reading: duplicate ${reasonText} already exists (${label}).`,
+    });
+    const actions = wrap.createDiv();
+    actions.style.display = "flex";
+    actions.style.gap = "6px";
+    actions.style.flexWrap = "wrap";
+    actions.style.marginTop = "6px";
+
+    let handled = false;
+    const runOnce = (fn: () => Promise<void>) => {
+      if (handled) return;
+      handled = true;
+      notice.hide();
+      void fn().catch((err) => {
+        console.error("Incremental Reading: duplicate action failed", err);
+        new Notice("Incremental Reading: action failed.");
+      });
+    };
+
+    const openBtn = actions.createEl("button", { text: "Open existing" });
+    openBtn.addEventListener("click", () =>
+      runOnce(async () => {
+        if (dup.elementId) {
+          this.revealSessionEntry(dup.elementId, targetPath);
+          return;
+        }
+        if (targetPath) {
+          const af = this.app.vault.getAbstractFileByPath(targetPath);
+          if (af instanceof TFile) {
+            await this.app.workspace.getLeaf(true).openFile(af);
+            return;
+          }
+        }
+        new Notice("Incremental Reading: existing target could not be opened.");
+      }),
+    );
+
+    const appendBtn = actions.createEl("button", { text: "Append as extract" });
+    appendBtn.addEventListener("click", () =>
+      runOnce(async () => {
+        await this.appendDuplicateAsExtract(dup, opts.body);
+      }),
+    );
+
+    const importBtn = actions.createEl("button", { text: "Import anyway" });
+    importBtn.addEventListener("click", () =>
+      runOnce(async () => {
+        await opts.onCreate();
+      }),
+    );
+  }
+
+  private async appendDuplicateAsExtract(
+    dup: DuplicateMatch,
+    rawBody: string,
+  ): Promise<void> {
+    const trimmed = rawBody.trim();
+    if (!trimmed) {
+      new Notice("Incremental Reading: nothing to append.");
+      return;
+    }
+    const targetPath = dup.notePath ?? dup.sourcePath;
+    const af = targetPath ? this.app.vault.getAbstractFileByPath(targetPath) : null;
+    if (!(af instanceof TFile) || af.extension !== "md" || !this.ledger) {
+      await this.mobileCreateExtract(trimmed);
+      new Notice("Incremental Reading: added as a standalone extract.");
+      return;
+    }
+
+    if (!getIrType(this.app, af)) {
+      await markAsTopic(this.app, af, this.settings);
+      await this.recordElement(af);
+    }
+
+    const oldBody = stripFrontmatter(await this.app.vault.read(af));
+    const sep = oldBody.length > 0 ? "\n\n" : "";
+    const newBody = oldBody + sep + trimmed;
+    const selStart = oldBody.length + sep.length;
+    const selEnd = newBody.length;
+    await saveBody(this.app, af, newBody);
+
+    const parentId =
+      (await this.resolveElementIdForFile(af)) ?? elementIdForPath(af.path);
+    const state = await this.ledger.load();
+    const parentEl = state.elements.get(parentId);
+    const parentPriority =
+      parentEl?.priority ?? getPriority(this.app, af, this.settings.defaultPriority);
+    const parentAf =
+      parentEl?.schedule?.aFactor ??
+      readTopicFromFrontmatter(
+        this.app.metadataCache.getFileCache(af)?.frontmatter,
+        this.settings,
+      ).aFactor;
+
+    const now = Date.now();
+    const lamport = Math.max(now, await this.ledger.nextLamport());
+    const device = await this.ledger.getDeviceId();
+    const { childAFactor, parentAFactorAfter } = computeExtractAFactorPair(
+      parentAf,
+      trimmed.length,
+    );
+    const childPriority = clampPriority(
+      spreadExtractPriority(parentPriority, trimmed.length),
+    );
+    const childState = newTopicState(this.settings, new Date(now));
+    childState.aFactor = childAFactor;
+    const ev = buildExtractEvent({
+      sourcePath: af.path,
+      sourceText: newBody,
+      selStart,
+      selEnd,
+      parentId,
+      priority: childPriority,
+      elementId: newElementId(),
+      eventId: newEventId(),
+      device,
+      lamport,
+      now,
+      schedule: topicStateToSchedule(childState),
+    });
+    await this.appendCreatedWithPlacement(ev);
+    await this.decayParentAFactorAfterExtract(
+      parentId,
+      parentEl,
+      af,
+      parentAFactorAfter,
+      device,
+    );
+    await this.ledger.reconcile();
+    void this.refreshStatusBar();
+    new Notice(`Appended extract to "${af.basename}".`);
+    await this.app.workspace.getLeaf(true).openFile(af);
   }
 
   private async mobileCreateScheduledElement(opts: {
@@ -4676,27 +4879,23 @@ export default class IncrementalReadingPlugin extends Plugin {
       now: Date.now(),
     });
 
-    if (this.ledger) {
-      const state = await this.ledger.load();
-      const fp = contentFingerprint(plan.body);
-      const normUrl = normalizeUrlForDedupe(text.trim());
-      for (const el of state.elements.values()) {
-        const anchorUrl = (el.anchor as unknown as { url?: unknown } | undefined)?.url;
-        const matchesUrl = typeof anchorUrl === "string" && normUrl.length > 0 && normalizeUrlForDedupe(anchorUrl) === normUrl;
-        const matchesText = Boolean(el.text) && contentFingerprint(el.text) === fp;
-        if (matchesUrl || matchesText) {
-          new Notice("Incremental Reading: duplicate content already exists in your collection.");
-          if (el.notePath) {
-            const existingFile = this.app.vault.getAbstractFileByPath(el.notePath);
-            if (existingFile instanceof TFile) {
-              await this.app.workspace.getLeaf(true).openFile(existingFile);
-            }
-          }
-          return;
-        }
-      }
+    const index = await this.buildVaultDuplicateIndex();
+    const dup = findDuplicateTopicOrExtract(index, {
+      texts: [text.trim(), plan.body],
+    });
+    if (dup) {
+      this.showDuplicateImportNotice(dup, {
+        title: plan.title,
+        body: plan.body.trim() || text.trim(),
+        onCreate: () => this.createBulkImportedTopic(plan),
+      });
+      return;
     }
 
+    await this.createBulkImportedTopic(plan);
+  }
+
+  private async createBulkImportedTopic(plan: BulkImportPlan): Promise<void> {
     const folder = this.settings.extractFolder.trim().replace(/^\/+|\/+$/g, "");
     const stem = plan.title.replace(/[\\/:*?"<>|#^[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "IR import";
     const dir = folder ? `${folder}/` : "";
@@ -4713,13 +4912,15 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     const trimmedBody = plan.body.trim();
     const file = await this.app.vault.create(path, trimmedBody + "\n");
-    await this.app.fileManager.processFrontMatter(file, (fm) => {
-      for (const [k, v] of Object.entries(plan.frontmatter)) fm[k] = v;
-      writeTopicToFrontmatter(
-        fm,
-        newTopicState(this.settings, new Date(), trimmedBody.length),
-      );
-    });
+    await quietFrontmatterWrite(async () => {
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        for (const [k, v] of Object.entries(plan.frontmatter)) fm[k] = v;
+        writeTopicToFrontmatter(
+          fm,
+          newTopicState(this.settings, new Date(), trimmedBody.length),
+        );
+      });
+    }, "bulkImport");
 
     await this.recordElement(file);
     new Notice(`Imported "${plan.title}" as an IR topic.`);
