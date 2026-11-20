@@ -148,6 +148,7 @@ function extractBody(text: string, titleHint?: string): string {
  * - ir-due: input.now
  */
 import { computeTopicAFactorFromTextLength } from "../sm18-ir-mechanics";
+import { stripFrontmatter } from "./frontmatter-body";
 
 function createFrontmatter(defaultPriority: number, now: number, bodyLen: number): Record<string, unknown> {
   return {
@@ -158,12 +159,6 @@ function createFrontmatter(defaultPriority: number, now: number, bodyLen: number
   };
 }
 
-/**
- * Main function to plan bulk import from text input.
- * 
- * This is a pure function that transforms input text into a structured plan
- * following all the specified rules. It never throws and handles all edge cases.
- */
 /**
  * Normalize a URL for duplicate detection without embedding network scheme literals
  * (keeps the zero-network bundle gate clean).
@@ -178,6 +173,12 @@ export function normalizeUrlForDedupe(rawUrl: string): string {
   return noHash.replace(/\/+$/, "").toLowerCase();
 }
 
+function looksLikeUrl(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  return /^(?:[a-z][a-z0-9+.-]*:\/\/|www\.)/i.test(trimmed);
+}
+
 /** Deterministic 32-bit FNV-1a fingerprint over normalized text. */
 export function contentFingerprint(text: string): string {
   const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
@@ -187,6 +188,170 @@ export function contentFingerprint(text: string): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return `fnv1a_${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+export interface DuplicateSourceElement {
+  id?: string;
+  notePath?: string;
+  text?: string;
+  anchor?: {
+    sourcePath?: string;
+    url?: unknown;
+  };
+  url?: string;
+}
+
+export interface DuplicateSourceNote {
+  path: string;
+  title?: string;
+  body?: string;
+  frontmatter?: Record<string, unknown>;
+  elementId?: string;
+}
+
+export interface DuplicateMatch {
+  reason: "url" | "content";
+  elementId?: string;
+  notePath?: string;
+  sourcePath?: string;
+  title?: string;
+  url?: string;
+}
+
+export interface DuplicateIndex {
+  byUrl: Map<string, DuplicateMatch>;
+  byContent: Map<string, DuplicateMatch>;
+}
+
+/**
+ * Build a vault-wide duplicate index across ledger elements (`anchor.url`, `el.text`)
+ * and Markdown notes (frontmatter `url`/`source` and frontmatter-stripped body).
+ */
+export function buildDuplicateIndex(input: {
+  elements?: Iterable<DuplicateSourceElement>;
+  notes?: Iterable<DuplicateSourceNote>;
+}): DuplicateIndex {
+  const byUrl = new Map<string, DuplicateMatch>();
+  const byContent = new Map<string, DuplicateMatch>();
+
+  if (input.elements) {
+    for (const el of input.elements) {
+      const sourcePath = el.anchor?.sourcePath;
+      const targetPath = el.notePath ?? sourcePath;
+      const anchorUrl =
+        typeof el.anchor?.url === "string"
+          ? el.anchor.url
+          : typeof el.url === "string"
+            ? el.url
+            : undefined;
+      if (anchorUrl) {
+        const norm = normalizeUrlForDedupe(anchorUrl);
+        if (norm && !byUrl.has(norm)) {
+          byUrl.set(norm, {
+            reason: "url",
+            elementId: el.id,
+            notePath: targetPath,
+            sourcePath,
+            url: anchorUrl,
+          });
+        }
+      }
+      if (typeof el.text === "string" && el.text.trim().length > 0) {
+        const fp = contentFingerprint(el.text);
+        if (!byContent.has(fp)) {
+          byContent.set(fp, {
+            reason: "content",
+            elementId: el.id,
+            notePath: targetPath,
+            sourcePath,
+          });
+        }
+      }
+    }
+  }
+
+  if (input.notes) {
+    for (const note of input.notes) {
+      const fm = note.frontmatter;
+      if (fm) {
+        for (const field of ["url", "source"] as const) {
+          const rawUrl = fm[field];
+          if (typeof rawUrl !== "string") continue;
+          const norm = normalizeUrlForDedupe(rawUrl);
+          if (norm && !byUrl.has(norm)) {
+            byUrl.set(norm, {
+              reason: "url",
+              elementId: note.elementId,
+              notePath: note.path,
+              title: note.title,
+              url: rawUrl,
+            });
+          }
+        }
+      }
+      if (typeof note.body === "string") {
+        const stripped = stripFrontmatter(note.body);
+        if (stripped.length > 0) {
+          const fp = contentFingerprint(stripped);
+          if (!byContent.has(fp)) {
+            byContent.set(fp, {
+              reason: "content",
+              elementId: note.elementId,
+              notePath: note.path,
+              title: note.title,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return { byUrl, byContent };
+}
+
+/**
+ * Look up a candidate URL or text body against a prebuilt `DuplicateIndex`.
+ * Matches URL first (explicit `url` or URL-shaped `text`), then normalized content fingerprint.
+ */
+export function findDuplicateTopicOrExtract(
+  index: DuplicateIndex,
+  candidate: { url?: string; text?: string; texts?: string[] },
+): DuplicateMatch | null {
+  if (candidate.url) {
+    const norm = normalizeUrlForDedupe(candidate.url);
+    if (norm) {
+      const hit = index.byUrl.get(norm);
+      if (hit) return hit;
+    }
+  }
+
+  const textCandidates: string[] = [];
+  if (typeof candidate.text === "string") textCandidates.push(candidate.text);
+  if (Array.isArray(candidate.texts)) {
+    for (const t of candidate.texts) {
+      if (typeof t === "string") textCandidates.push(t);
+    }
+  }
+
+  for (const raw of textCandidates) {
+    if (looksLikeUrl(raw)) {
+      const norm = normalizeUrlForDedupe(raw);
+      if (norm) {
+        const hit = index.byUrl.get(norm);
+        if (hit) return hit;
+      }
+    }
+  }
+
+  for (const raw of textCandidates) {
+    const stripped = stripFrontmatter(raw);
+    if (!stripped) continue;
+    const fp = contentFingerprint(stripped);
+    const hit = index.byContent.get(fp);
+    if (hit) return hit;
+  }
+
+  return null;
 }
 
 export function planBulkImport(input: BulkImportInput): BulkImportPlan {

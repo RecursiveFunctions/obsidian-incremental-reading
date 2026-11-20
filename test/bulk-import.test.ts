@@ -170,3 +170,70 @@ test("synthesized title preserves blank lines between body paragraphs (#39)", as
   assert.equal(plan.title, "Article Title");
   assert.equal(plan.body, "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.");
 });
+
+test("buildDuplicateIndex & findDuplicateTopicOrExtract match note frontmatter url/source and body", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/bulk-import.ts not implemented yet");
+  const index = m.buildDuplicateIndex({
+    elements: [
+      {
+        id: "el-1",
+        text: "An anchored extract body with   extra spacing.",
+        anchor: { sourcePath: "Topics/Source.md", url: "https://www.Example.COM/post/#frag" },
+      },
+    ],
+    notes: [
+      {
+        path: "Topics/NoteA.md",
+        title: "NoteA",
+        frontmatter: { url: "https://docs.example.org/guide/" },
+        body: "---\nir-type: topic\nurl: https://docs.example.org/guide/\n---\n\nThe actual markdown topic body.\n",
+      },
+      {
+        path: "Topics/NoteB.md",
+        title: "NoteB",
+        frontmatter: { source: "http://news.ycombinator.com/item?id=123" },
+        body: "---\nir-type: topic\n---\n\n   \n",
+      },
+    ],
+  });
+
+  // Match note frontmatter `url`
+  const hitUrl = m.findDuplicateTopicOrExtract(index, {
+    text: "http://www.docs.example.org/guide#top",
+  });
+  assert.equal(hitUrl?.reason, "url");
+  assert.equal(hitUrl?.notePath, "Topics/NoteA.md");
+
+  // Match note frontmatter `source`
+  const hitSource = m.findDuplicateTopicOrExtract(index, {
+    url: "https://news.ycombinator.com/item?id=123/",
+  });
+  assert.equal(hitSource?.reason, "url");
+  assert.equal(hitSource?.notePath, "Topics/NoteB.md");
+
+  // Match ledger anchor.url
+  const hitAnchorUrl = m.findDuplicateTopicOrExtract(index, {
+    text: "http://example.com/post",
+  });
+  assert.equal(hitAnchorUrl?.reason, "url");
+  assert.equal(hitAnchorUrl?.elementId, "el-1");
+
+  // Match frontmatter-stripped markdown body regardless of whitespace/casing
+  const hitNoteBody = m.findDuplicateTopicOrExtract(index, {
+    text: "  the ACTUAL markdown   topic body. ",
+  });
+  assert.equal(hitNoteBody?.reason, "content");
+  assert.equal(hitNoteBody?.notePath, "Topics/NoteA.md");
+
+  // Match ledger extract text
+  const hitExtractText = m.findDuplicateTopicOrExtract(index, {
+    text: "An anchored extract body with extra spacing.",
+  });
+  assert.equal(hitExtractText?.reason, "content");
+  assert.equal(hitExtractText?.elementId, "el-1");
+
+  // Empty/whitespace input never matches NoteB's empty body
+  assert.equal(m.findDuplicateTopicOrExtract(index, { text: "   \n  " }), null);
+  assert.equal(m.findDuplicateTopicOrExtract(index, { text: "Completely new article content." }), null);
+});
