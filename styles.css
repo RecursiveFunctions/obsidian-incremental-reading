@@ -2346,6 +2346,12 @@ img.ir-source-image.ir-cloze-source {
   fill: var(--interactive-accent);
 }
 
+.ir-repsort-svg-baseline {
+  stroke: var(--background-modifier-border);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
 .ir-stats-forecast-col--actionable {
   cursor: pointer;
 }
@@ -2377,6 +2383,81 @@ img.ir-source-image.ir-cloze-source {
   font-size: var(--font-ui-smaller);
   padding: 2px 6px;
   height: auto;
+}
+
+.ir-stats-leech-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ir-stats-leech-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ir-stats-leech-control input {
+  width: 52px;
+  padding: 1px 4px;
+  font-size: var(--font-ui-smaller);
+}
+
+.ir-stats-heatmap-grid {
+  display: grid;
+  grid-template-columns: repeat(26, minmax(0, 1fr));
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.ir-stats-heatmap-week {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.ir-stats-heatmap-cell {
+  aspect-ratio: 1;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+}
+
+.ir-stats-heatmap-cell[data-level="1"] {
+  background: color-mix(in srgb, var(--interactive-accent) 25%, var(--background-modifier-border));
+}
+
+.ir-stats-heatmap-cell[data-level="2"] {
+  background: color-mix(in srgb, var(--interactive-accent) 50%, var(--background-modifier-border));
+}
+
+.ir-stats-heatmap-cell[data-level="3"] {
+  background: color-mix(in srgb, var(--interactive-accent) 75%, var(--background-modifier-border));
+}
+
+.ir-stats-heatmap-cell[data-level="4"] {
+  background: var(--interactive-accent);
+}
+
+.ir-stats-retention-svg {
+  display: block;
+  width: 100%;
+  height: 52px;
+  margin-top: 4px;
+}
+
+.ir-stats-retention-line {
+  stroke: var(--interactive-accent);
+  stroke-width: 1.75;
+  fill: none;
+}
+
+.ir-stats-retention-guide {
+  stroke: var(--background-modifier-border);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
 }
 
 /* Status bar queue-load indicator (UI commitment #4). Sits in Obsidian's

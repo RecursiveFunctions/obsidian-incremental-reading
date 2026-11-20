@@ -3,7 +3,11 @@ import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import { IrLedger } from "./ir/ledger";
 import type { ElementId } from "./ir/ids";
 import { labelFor } from "./ir/labels";
-import { findLeeches, type LeechDiagnosis } from "./ir/leech";
+import {
+  DEFAULT_LEECH_CRITERIA,
+  findLeeches,
+  type LeechDiagnosis,
+} from "./ir/leech";
 import type { IrElement, IrEvent } from "./ir/model";
 import type { LogState } from "./ir/log";
 import type { IrSettings } from "./ir/settings-data";
@@ -15,11 +19,13 @@ import {
 import { evalCardsFor, fit, type FitResult } from "./ir/optimizer/fit";
 import { intervalDelta, meanLogLoss } from "./ir/optimizer/metrics";
 import {
+  activityHeatmap,
   computeStats,
   dueByType,
   forecast,
   gradeBreakdown,
   gradeSpark,
+  rollingTrueRetention,
   startOfLocalDayMs,
   type GradeEvent,
 } from "./ir/stats";
@@ -43,6 +49,7 @@ export interface SchedulerHost {
   postponeElement?(elementId: ElementId, days: number): Promise<void>;
   duplicateOrSplitElement?(elementId: ElementId): Promise<void>;
   dismissElement?(elementId: ElementId, dismissed: boolean): Promise<void>;
+  resetElement?(elementId: ElementId): Promise<void>;
   startSubsetReview?(ids: readonly ElementId[], includeFuture?: boolean): void | Promise<void>;
 }
 
@@ -86,6 +93,9 @@ export class IrStatsView extends ItemView {
   }
 
   private renderToken = 0;
+  private leechMinLapses = DEFAULT_LEECH_CRITERIA.minLapses;
+  private leechMaxInterval = DEFAULT_LEECH_CRITERIA.maxLapseIntervalDays;
+  private leechMaxPostpones = DEFAULT_LEECH_CRITERIA.maxPostpones;
 
   private async render(): Promise<void> {
     const token = ++this.renderToken;
@@ -150,6 +160,8 @@ export class IrStatsView extends ItemView {
     this.renderCounts(body, elements, stats, now);
     this.renderForecast(body, elements, now);
     this.renderReviewHistory(body, grades, stats, windowStart, now);
+    this.renderActivityHeatmap(body, events, now);
+    this.renderTrueRetentionTrend(body, events, now);
     this.renderLeechTriage(body, state, events);
     this.renderPriorityForgettingIndex(body, priorityGrades);
     this.renderScheduler(body, events, state);
@@ -610,17 +622,145 @@ export class IrStatsView extends ItemView {
     axis.createSpan({ text: "today" });
   }
 
+  private renderActivityHeatmap(
+    body: HTMLElement,
+    events: readonly IrEvent[],
+    now: number,
+  ): void {
+    const hm = activityHeatmap(events, now, 26);
+    const section = body.createDiv({ cls: "ir-stats-section" });
+    section.createDiv({
+      cls: "ir-stats-section-title",
+      text: `Activity · 26 weeks (${hm.totalCount} actions · ${hm.activeDays} active days)`,
+    });
+    const grid = section.createDiv({ cls: "ir-stats-heatmap-grid" });
+    for (let w = 0; w < 26; w += 1) {
+      const weekCol = grid.createDiv({ cls: "ir-stats-heatmap-week" });
+      for (let d = 0; d < 7; d += 1) {
+        const day = hm.days[w * 7 + d];
+        if (!day) continue;
+        let level = 0;
+        if (day.count > 0 && hm.maxCount > 0) {
+          const ratio = day.count / hm.maxCount;
+          level = ratio >= 0.75 ? 4 : ratio >= 0.5 ? 3 : ratio >= 0.25 ? 2 : 1;
+        }
+        const iso = new Date(day.dayStartMs).toISOString().slice(0, 10);
+        const label = `${iso}: ${day.grades} reviews, ${day.reads} reads`;
+        weekCol.createDiv({
+          cls: "ir-stats-heatmap-cell",
+          attr: {
+            "data-level": String(level),
+            title: label,
+            "aria-label": label,
+          },
+        });
+      }
+    }
+  }
+
+  private renderTrueRetentionTrend(
+    body: HTMLElement,
+    events: readonly IrEvent[],
+    now: number,
+  ): void {
+    const trend = rollingTrueRetention(events, now, 30, 7);
+    const section = body.createDiv({ cls: "ir-stats-section" });
+    const summary =
+      trend.overallRetention !== null
+        ? `${(trend.overallRetention * 100).toFixed(1)}% (${trend.totalPassedReps}/${trend.totalReviewReps} mature reps)`
+        : "no mature review reps in 30d";
+    section.createDiv({
+      cls: "ir-stats-section-title",
+      text: `True retention · 7d rolling (${summary})`,
+    });
+    const valid = trend.points
+      .map((pt, idx) => ({ pt, idx }))
+      .filter((x) => x.pt.retention !== null);
+    if (valid.length === 0) {
+      section.createDiv({
+        cls: "ir-stats-note",
+        text: "Complete follow-up reviews (excluding initial unmemorized reps) to plot true retention.",
+      });
+      return;
+    }
+
+    const width = 260;
+    const height = 52;
+    const svg = section.createSvg("svg", {
+      cls: "ir-stats-retention-svg",
+      attr: {
+        viewBox: `0 0 ${width} ${height}`,
+        role: "img",
+        "aria-label": `30-day rolling true retention trend: ${summary}`,
+      },
+    });
+    const minY = 0.5;
+    const yFor = (r: number) => {
+      const clamped = Math.min(1, Math.max(minY, r));
+      return height - 4 - ((clamped - minY) / (1 - minY)) * (height - 8);
+    };
+    const targetY = yFor(this.host.settings.desiredRetention);
+    svg.createSvg("line", {
+      cls: "ir-stats-retention-guide",
+      attr: { x1: "4", y1: targetY.toFixed(1), x2: String(width - 4), y2: targetY.toFixed(1) },
+    });
+    const pts = valid.map(({ pt, idx }) => {
+      const x = (idx / Math.max(1, trend.points.length - 1)) * (width - 8) + 4;
+      const y = yFor(pt.retention!);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    svg.createSvg("polyline", {
+      cls: "ir-stats-retention-line",
+      attr: { points: pts.join(" ") },
+    });
+  }
+
   private renderLeechTriage(
     body: HTMLElement,
     state: LogState,
     events: readonly IrEvent[],
   ): void {
-    const leeches: LeechDiagnosis[] = findLeeches(state, events);
+    const leeches: LeechDiagnosis[] = findLeeches(state, events, {
+      minLapses: this.leechMinLapses,
+      maxLapseIntervalDays: this.leechMaxInterval,
+      maxPostpones: this.leechMaxPostpones,
+    });
     const section = body.createDiv({ cls: "ir-stats-section ir-stats-leech-section" });
     section.createDiv({
       cls: "ir-stats-section-title",
       text: `Leech & High-Lapse (${leeches.length})`,
     });
+
+    const controls = section.createDiv({ cls: "ir-stats-leech-controls" });
+    const addThreshold = (
+      label: string,
+      value: number,
+      min: number,
+      onChange: (next: number) => void,
+    ) => {
+      const wrap = controls.createEl("label", { cls: "ir-stats-leech-control" });
+      wrap.createSpan({ text: label });
+      const input = wrap.createEl("input", { type: "number" });
+      input.min = String(min);
+      input.value = String(value);
+      input.addEventListener("change", () => {
+        const n = Number.parseInt(input.value, 10);
+        if (Number.isFinite(n) && n >= min) {
+          onChange(n);
+          void this.render();
+        }
+      });
+    };
+    addThreshold("Min lapses", this.leechMinLapses, 1, (n) => {
+      this.leechMinLapses = n;
+    });
+    addThreshold("Max iv (d)", this.leechMaxInterval, 1, (n) => {
+      this.leechMaxInterval = n;
+    });
+    addThreshold("Max postpones", this.leechMaxPostpones, 1, (n) => {
+      this.leechMaxPostpones = n;
+    });
+
     if (leeches.length === 0) {
       section.createDiv({
         cls: "ir-stats-note",
@@ -637,6 +777,9 @@ export class IrStatsView extends ItemView {
       infoTd.createDiv({ cls: "ir-stats-leech-title", text: labelFor(el) });
       const reasons: string[] = [];
       if (diag.lapses > 0) reasons.push(`${diag.lapses} lapses`);
+      if (diag.failRate !== undefined && diag.reasons.includes("high-fail-rate")) {
+        reasons.push(`${Math.round(diag.failRate * 100)}% fail`);
+      }
       if (diag.reasons.includes("high-difficulty-short-interval")) {
         reasons.push(`D ${diag.difficulty.toFixed(1)} · ${diag.scheduledDays}d`);
       }
@@ -673,6 +816,16 @@ export class IrStatsView extends ItemView {
         });
         dupBtn.addEventListener("click", () => {
           void this.host.duplicateOrSplitElement!(el.id).then(() => this.render());
+        });
+      }
+      if (this.host.resetElement) {
+        const resetBtn = actionsTd.createEl("button", {
+          cls: "ir-stats-triage-btn",
+          type: "button",
+          text: "Forget / Reset",
+        });
+        resetBtn.addEventListener("click", () => {
+          void this.host.resetElement!(el.id).then(() => this.render());
         });
       }
       if (this.host.dismissElement) {

@@ -908,6 +908,15 @@ export default class IncrementalReadingPlugin extends Plugin {
             const file = af instanceof TFile ? af : null;
             await this.applyIrDismissChange(elementId, file, dismissed);
           },
+          resetElement: async (elementId) => {
+            const state = await this.ledger!.load();
+            const el = state.elements.get(elementId);
+            const af = el?.notePath
+              ? this.app.vault.getAbstractFileByPath(el.notePath)
+              : null;
+            const file = af instanceof TFile ? af : null;
+            await this.applyIrReset(elementId, file);
+          },
           startSubsetReview: (ids, includeFuture) =>
             this.startSubsetReview(ids, includeFuture ?? false, "subset"),
         });
