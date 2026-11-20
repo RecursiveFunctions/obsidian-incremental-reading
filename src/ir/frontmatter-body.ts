@@ -2,7 +2,9 @@
 
 import type { App, TFile } from "obsidian";
 
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
+// Accept CRLF, LF, and a leading UTF-8 BOM. The `\r` is consumed by the match,
+// so offsets keep their original indices.
+const FRONTMATTER_RE = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 
 /** Drop the YAML frontmatter block so only the note body is rendered. */
 export function stripFrontmatter(content: string): string {

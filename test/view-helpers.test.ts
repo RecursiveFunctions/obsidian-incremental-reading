@@ -313,6 +313,25 @@ test("stripFrontmatter: handles multi-line front matter", () => {
   assert.equal(stripFrontmatter(input), "Content after.");
 });
 
+test("stripFrontmatter: removes CRLF front matter", () => {
+  const input = "---\r\ntitle: Hello\r\n---\r\nBody text here.";
+  assert.equal(stripFrontmatter(input), "Body text here.");
+});
+
+test("stripFrontmatter: removes front matter after a UTF-8 BOM", () => {
+  const input = "\uFEFF---\ntitle: Hello\n---\nBody text here.";
+  assert.equal(stripFrontmatter(input), "Body text here.");
+});
+
+test("stripFrontmatter: CRLF body offsets map the body, not the front matter", () => {
+  const input = "---\r\ntitle: Hello\r\n---\r\nBody text here.";
+  const start = input.indexOf("Body");
+  assert.deepEqual(bodyOffsetsFromFullOffsets(input, start, start + 4), {
+    start: 0,
+    end: 4,
+  });
+});
+
 test("sanitizeExtractSelection: strips accidental YAML from a selection", () => {
   const sel = "---\nir-type: topic\n---\nActual quote";
   assert.equal(sanitizeExtractSelection(sel), "Actual quote");
