@@ -316,7 +316,8 @@ export interface AdvancedPostponePolicy {
   scaleByPriority?: boolean;
   scaleByRetention?: boolean;
   scaleByAFactor?: boolean;
-  /** Optional 5-dimension Mercy weights to order candidates and scale delays. */
+  /** When true, only items due before local midnight today are eligible (newly-due-today items are kept). */
+  overdueOnly?: boolean;
   weights?: MercyWeights;
 }
 
@@ -547,6 +548,9 @@ export function planAdvancedPostpone(
   const skippedIds: string[] = [];
   const minDelay = Math.max(0, Math.round(policy.minDelayDays));
   const maxDelay = Math.max(minDelay, Math.round(policy.maxDelayDays));
+  const todayStart = new Date(actionMs);
+  todayStart.setHours(0, 0, 0, 0);
+  const todayCutoff = todayStart.getTime();
   for (const entry of sortByMercyImportance(entries, actionMs, policy.weights)) {
     const isItem = entry.type === "item";
     if ((isItem && !policy.includeItems) || (!isItem && !policy.includeReading)) {
@@ -554,6 +558,7 @@ export function planAdvancedPostpone(
       continue;
     }
     if (entry.dismissed || !Number.isFinite(entry.dueMs) ||
+      (policy.overdueOnly && entry.dueMs >= todayCutoff) ||
       (policy.operation === "postpone" && entry.dueMs > actionMs) ||
       (policy.skipIntervalAbove !== undefined && (entry.interval ?? 0) > policy.skipIntervalAbove) ||
       (policy.skipPriorityAtOrBelow !== undefined && entry.priority <= policy.skipPriorityAtOrBelow) ||

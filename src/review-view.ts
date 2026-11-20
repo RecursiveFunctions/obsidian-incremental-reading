@@ -119,7 +119,7 @@ import {
   removeDrillElement,
   shouldEnqueueForDrill,
 } from "./ir/drill";
-import { repetitionDayKey } from "./ir/session-snapshot";
+import { repetitionDayKey, shouldPersistSessionPhase } from "./ir/session-snapshot";
 import { setBookmark, getBookmark, type BookmarkMap } from "./ir/bookmark";
 import {
   applyScrollProgress,
@@ -807,6 +807,7 @@ export class IrReviewView extends ItemView {
   }
 
   private reportSessionState(): void {
+    if (!shouldPersistSessionPhase(this.sessionPhase)) return;
     const orderedIds = this.queue.map((slot) => slot.id);
     this.onSessionState?.(orderedIds, this.index, {
       processedIds: [...this.processedSlotIds],
@@ -822,31 +823,36 @@ export class IrReviewView extends ItemView {
       this.flashClearTimer = null;
     }
     this.captureBookmark();
-    if (!(await this.flushEdits())) return;
-    this.teardownLiveEditorSync();
-    this.swipeGestureCleanup?.();
-    this.swipeGestureCleanup = undefined;
-    this.mobileKeyboardCleanup?.();
-    this.mobileKeyboardCleanup = undefined;
-    this.mobileOrientationCleanup?.();
-    this.mobileOrientationCleanup = undefined;
-    this.mobileLayoutCleanup?.();
-    this.mobileLayoutCleanup = undefined;
-    this.swipeHintEl = undefined;
-    this.sessionBarEl = undefined;
-    this.cardHostEl = undefined;
-    this.contentEl.empty();
-    this.onSlotChange?.(null);
-    if (!this.bookmarksLoaded) {
-      this.onChange?.();
-      return;
+    try {
+      await this.flushEdits();
+    } finally {
+      this.divergenceKeyCleanup?.();
+      this.divergenceKeyCleanup = null;
+      this.teardownLiveEditorSync();
+      this.swipeGestureCleanup?.();
+      this.swipeGestureCleanup = undefined;
+      this.mobileKeyboardCleanup?.();
+      this.mobileKeyboardCleanup = undefined;
+      this.mobileOrientationCleanup?.();
+      this.mobileOrientationCleanup = undefined;
+      this.mobileLayoutCleanup?.();
+      this.mobileLayoutCleanup = undefined;
+      this.swipeHintEl = undefined;
+      this.sessionBarEl = undefined;
+      this.cardHostEl = undefined;
+      this.contentEl.empty();
+      this.onSlotChange?.(null);
+      if (!this.bookmarksLoaded) {
+        this.onChange?.();
+      } else {
+        void this.persistBookmarks()
+          .then(() => this.ledger.reconcile())
+          .catch((e) => {
+            console.error("Incremental Reading: reconcile after review failed", e);
+          })
+          .finally(() => this.onChange?.());
+      }
     }
-    void this.persistBookmarks()
-      .then(() => this.ledger.reconcile())
-      .catch((e) => {
-        console.error("Incremental Reading: reconcile after review failed", e);
-      })
-      .finally(() => this.onChange?.());
   }
 
   private get current(): ReviewSlot | undefined {
@@ -4581,11 +4587,16 @@ export class IrReviewView extends ItemView {
       await this.app.fileManager.processFrontMatter(result.file, (f) => {
         fm = { ...f };
       });
+      const now = Date.now();
       const events = migrateNotes(
         [{ path: result.file.path, frontmatter: fm }],
-        Date.now(),
+        now,
       );
+      let lamport = Math.max(now, await this.ledger.nextLamport());
+      const device = await this.ledger.getDeviceId();
       for (const ev of events) {
+        ev.lamport = lamport++;
+        ev.device = device;
         if (ev.kind === "element-created") {
           const element = ev.payload.element as IrElement;
           ev.payload = {

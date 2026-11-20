@@ -68,7 +68,9 @@ export class IrStatsView extends ItemView {
     await this.render();
   }
 
-  async onClose(): Promise<void> {}
+  async onClose(): Promise<void> {
+    this.fitCancelled = true;
+  }
 
   /** Re-render from the ledger. Safe to call from the host plugin onChange. */
   refresh(): Promise<void> {
@@ -286,11 +288,16 @@ export class IrStatsView extends ItemView {
     }
     progressWrap.remove();
 
+    const targetOut = out.isConnected
+      ? out
+      : this.contentEl.querySelector<HTMLElement>(".ir-opt-out");
+    if (!targetOut || !targetOut.isConnected) return;
+
     if (!result) {
-      out.createDiv({ cls: "ir-stats-note", text: "Cancelled." });
+      targetOut.createDiv({ cls: "ir-stats-note", text: "Cancelled." });
       return;
     }
-    this.renderFitResult(out, revlog, result);
+    this.renderFitResult(targetOut, revlog, result);
   }
 
   private renderFitResult(

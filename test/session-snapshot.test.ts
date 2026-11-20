@@ -5,6 +5,7 @@ import {
   parseSessionSnapshot,
   repetitionDayKey,
   restoreSessionSnapshot,
+  shouldPersistSessionPhase,
   type SessionSnapshot,
 } from "../src/ir/session-snapshot";
 
@@ -48,3 +49,12 @@ test("repetition day keys use the local calendar date", () => {
   const date = new Date(2026, 9, 8, 23, 30);
   assert.equal(repetitionDayKey(date), "2026-10-08");
 });
+
+test("shouldPersistSessionPhase: drill, branch, and subset sessions do not overwrite due/neural snapshots", () => {
+  assert.equal(shouldPersistSessionPhase("due"), true);
+  assert.equal(shouldPersistSessionPhase("neural"), true);
+  assert.equal(shouldPersistSessionPhase("drill"), false);
+  assert.equal(shouldPersistSessionPhase("branch"), false);
+  assert.equal(shouldPersistSessionPhase("subset"), false);
+});
+

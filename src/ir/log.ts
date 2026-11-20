@@ -83,6 +83,8 @@ export interface FoldIntermediate {
   undone: Set<EventId>;
   /** Last due-changing event per element (status bar's `postponed` count). */
   dueChange: Map<ElementId, DueChangeRecord>;
+  /** Timestamps of all `element-created` events (for 7-day inflow across compaction). */
+  createdTimestamps: number[];
 }
 
 const DUE_CHANGE_KINDS = new Set<IrEvent["kind"]>([
@@ -100,6 +102,7 @@ export function emptyFoldIntermediate(): FoldIntermediate {
     placements: [],
     undone: new Set(),
     dueChange: new Map(),
+    createdTimestamps: [],
   };
 }
 
@@ -160,6 +163,7 @@ export function foldFrom(
       case "element-created": {
         const payloadElement = event.payload.element as IrElement;
         base.elements.set(target, cloneElement(payloadElement));
+        if (Number.isFinite(event.ts)) base.createdTimestamps.push(event.ts);
         const placement = event.payload.placement as PriorityPlacement | undefined;
         if (placement) base.placements.push({ target, placement });
         break;
@@ -390,6 +394,7 @@ export interface SerializedFoldIntermediate {
   placements: Array<{ target: ElementId; placement: PriorityPlacement }>;
   undone: EventId[];
   dueChange: Array<{ id: ElementId } & DueChangeRecord>;
+  createdTimestamps: number[];
 }
 
 export function serializeFoldIntermediate(base: FoldIntermediate): SerializedFoldIntermediate {
@@ -405,6 +410,7 @@ export function serializeFoldIntermediate(base: FoldIntermediate): SerializedFol
     dueChange: [...base.dueChange.entries()]
       .map(([id, record]) => ({ id, ...record }))
       .sort((a, b) => a.id.localeCompare(b.id)),
+    createdTimestamps: [...base.createdTimestamps].sort((a, b) => a - b),
   };
 }
 
@@ -413,7 +419,7 @@ export function deserializeFoldIntermediate(raw: unknown): FoldIntermediate {
   if (!value || typeof value !== "object" ||
       !Array.isArray(value.elements) || !Array.isArray(value.tombstones) ||
       !Array.isArray(value.placements) || !Array.isArray(value.undone) ||
-      !Array.isArray(value.dueChange)) {
+      !Array.isArray(value.dueChange) || !Array.isArray(value.createdTimestamps)) {
     throw new Error("IrLedger: invalid checkpoint state");
   }
   const base = emptyFoldIntermediate();
@@ -448,6 +454,12 @@ export function deserializeFoldIntermediate(raw: unknown): FoldIntermediate {
       lamport: record.lamport,
       ts: record.ts,
     });
+  }
+  for (const ts of value.createdTimestamps) {
+    if (typeof ts !== "number" || !Number.isFinite(ts)) {
+      throw new Error("IrLedger: invalid checkpoint created timestamp");
+    }
+    base.createdTimestamps.push(ts);
   }
   return base;
 }

@@ -179,6 +179,18 @@ test("computeLoad: inflow counts element-created events within 7 days", () => {
   assert.equal(load.inflow7d, 3);
 });
 
+test("computeLoad: uses createdTimestamps when provided so compacted checkpoints preserve +N/7d (#54)", () => {
+  const sevenDaysAgo = NOW - 7 * DAY;
+  const load = computeLoad(
+    [],
+    [],
+    NOW,
+    undefined,
+    [NOW, NOW - 2 * DAY, sevenDaysAgo, sevenDaysAgo - 1],
+  );
+  assert.equal(load.inflow7d, 3);
+});
+
 test("computeLoad: non-create events do not count toward inflow", () => {
   const load = computeLoad(
     [],

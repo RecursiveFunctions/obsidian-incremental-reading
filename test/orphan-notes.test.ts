@@ -492,3 +492,52 @@ test("planOrphanRecoveries: 5,000 vault files, 1,000 events, and 50 orphans comp
   assert.equal(plan.restored, 50);
   assert.ok(elapsedMs < 500, `Expected < 500ms, took ${elapsedMs.toFixed(1)}ms`);
 });
+
+test("planOrphanRecoveries: does not resurrect deliberately deleted promoted notes (#53)", () => {
+  const promotedPath = "Promoted Slam.md";
+  const extractId = "el_ext_1" as ElementId;
+  const extract = newElement({
+    id: extractId,
+    type: "extract",
+    priority: 40,
+    text: "Promoted quote",
+    now: 0,
+  });
+  const events: IrEvent[] = [
+    created(extract, 1),
+    {
+      id: "ev_prom" as EventId,
+      ts: NOW,
+      lamport: 2,
+      device: DEV,
+      kind: "promoted",
+      target: extractId,
+      payload: { notePath: promotedPath },
+    },
+    {
+      id: "ev_del" as EventId,
+      ts: NOW,
+      lamport: 3,
+      device: DEV,
+      kind: "element-deleted",
+      target: extractId,
+      payload: {},
+    },
+  ];
+  const seq = ids();
+  const plan = planOrphanRecoveries(
+    [{ path: promotedPath, frontmatter: { [IR_KEYS.type]: "extract", [IR_KEYS.priority]: 40 } }],
+    [],
+    events,
+    [],
+    [promotedPath],
+    NOW,
+    4,
+    DEV,
+    seq.next,
+  );
+  assert.equal(plan.restored, 0);
+  assert.deepEqual(plan.events, []);
+  assert.ok(knownNotePathsFromEvents(events).includes(promotedPath));
+});
+

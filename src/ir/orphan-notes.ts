@@ -58,6 +58,9 @@ export function knownNotePathsFromEvents(events: IrEvent[]): string[] {
       const newPath = ev.payload.newPath;
       if (typeof oldPath === "string") s.add(oldPath);
       if (typeof newPath === "string") s.add(newPath);
+    } else if (ev.kind === "promoted") {
+      const notePath = ev.payload.notePath;
+      if (typeof notePath === "string") s.add(notePath);
     } else if (ev.kind === "source-tombstoned") {
       const t = ev.payload.tombstone as { path?: string } | undefined;
       if (typeof t?.path === "string") s.add(t.path);
@@ -81,6 +84,10 @@ export function lastIdForNotePath(
       if (el?.notePath === notePath) id = ev.target;
     } else if (ev.kind === "source-renamed") {
       if (ev.payload.oldPath === notePath || ev.payload.newPath === notePath) {
+        id = ev.target;
+      }
+    } else if (ev.kind === "promoted") {
+      if (ev.payload.notePath === notePath) {
         id = ev.target;
       }
     }
@@ -198,6 +205,10 @@ function buildLastIdByPath(sortedEvents: readonly IrEvent[]): Map<string, Elemen
       }
       if (typeof ev.payload.newPath === "string") {
         map.set(ev.payload.newPath, ev.target);
+      }
+    } else if (ev.kind === "promoted") {
+      if (typeof ev.payload.notePath === "string") {
+        map.set(ev.payload.notePath, ev.target);
       }
     }
   }

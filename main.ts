@@ -1736,8 +1736,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (!this.statusBarEl) return;
     if (!this.ledger) return;
     try {
-      const { state, recentEvents, lastDueChange } = await this.ledger.loadView();
-      const load = computeLoad(state.elements.values(), recentEvents, Date.now(), lastDueChange);
+      const { state, recentEvents, lastDueChange, createdTimestamps } = await this.ledger.loadView();
+      const load = computeLoad(
+        state.elements.values(),
+        recentEvents,
+        Date.now(),
+        lastDueChange,
+        createdTimestamps,
+      );
       const device = await this.ledger.getDeviceId();
       const analytics = await this.ledger.loadDailyAnalytics(device, repetitionDayKey());
       if (analytics) {
@@ -5070,6 +5076,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             scaleByPriority: true,
             scaleByRetention: true,
             scaleByAFactor: true,
+            overdueOnly: true,
             weights: this.settings.mercyWeights,
           }).assignments.slice(Math.max(0, Math.floor(policy.keepOverdue)))
         : planAutoPostpone(entries, now, {
@@ -5575,18 +5582,24 @@ export default class IncrementalReadingPlugin extends Plugin {
     for (const ev of newEvents) await this.ledger.appendEvent(ev);
     await this.ledger.reconcile();
 
-    this.lastSourceDeletionUndo = {
+    const undoEntry = {
       before,
       deletionEvents: newEvents,
       promotedPaths,
     };
-    if (!quiet) this.showSourceGoneNotice(choice, promotedPaths.length, title);
+    this.lastSourceDeletionUndo = undoEntry;
+    if (!quiet) this.showSourceGoneNotice(choice, promotedPaths.length, title, undoEntry);
   }
 
   private showSourceGoneNotice(
     choice: SourceGoneChoice,
     promoted: number,
     title: string,
+    undoEntry?: {
+      before: IrElement[];
+      deletionEvents: IrEvent[];
+      promotedPaths: string[];
+    },
   ): void {
     const text =
       choice === "promote-all"
@@ -5597,19 +5610,30 @@ export default class IncrementalReadingPlugin extends Plugin {
     const row = notice.noticeEl.createDiv();
     row.createSpan({ text: `${text} ` });
     const btn = row.createEl("button", { text: "Undo" });
+    let clicked = false;
     btn.addEventListener("click", () => {
+      if (clicked) return;
+      clicked = true;
       notice.hide();
-      void this.undoLastSourceDeletion();
+      void this.undoLastSourceDeletion(undoEntry);
     });
   }
 
-  private async undoLastSourceDeletion(): Promise<void> {
-    if (!this.ledger || !this.lastSourceDeletionUndo) {
+  private async undoLastSourceDeletion(
+    entry?: {
+      before: IrElement[];
+      deletionEvents: IrEvent[];
+      promotedPaths: string[];
+    },
+  ): Promise<void> {
+    const pending = entry ?? this.lastSourceDeletionUndo;
+    if (!this.ledger || !pending) {
       new Notice("Incremental Reading: nothing to undo.");
       return;
     }
-    const pending = this.lastSourceDeletionUndo;
-    this.lastSourceDeletionUndo = null;
+    if (this.lastSourceDeletionUndo === pending) {
+      this.lastSourceDeletionUndo = null;
+    }
     try {
       const events = await this.ledger.loadEvents();
       const undo = planUndoSourceDeletion(

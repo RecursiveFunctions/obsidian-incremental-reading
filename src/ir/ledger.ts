@@ -100,11 +100,13 @@ export interface LedgerView {
   maxLamport: number;
   /** Last due-changing event per element (status bar's `postponed` count). */
   lastDueChange: Map<ElementId, IrEvent["kind"]>;
+  /** Timestamps of all `element-created` events across checkpoint + live shards. */
+  createdTimestamps: number[];
   /** Events the checkpoint does not cover — the live shards. */
   recentEvents: IrEvent[];
 }
 
-const CHECKPOINT_SCHEMA = 1;
+const CHECKPOINT_SCHEMA = 2;
 /** A fold checkpoint is only worth its file once the history is non-trivial. */
 const CHECKPOINT_MIN_EVENTS = 250;
 
@@ -171,6 +173,7 @@ function emptyLedgerView(): LedgerView {
     state: finalizeFold(emptyFoldIntermediate()),
     maxLamport: 0,
     lastDueChange: new Map(),
+    createdTimestamps: [],
     recentEvents: [],
   };
 }
@@ -188,6 +191,7 @@ function viewFromIntermediate(
     state: finalizeFold(intermediate),
     maxLamport,
     lastDueChange,
+    createdTimestamps: intermediate.createdTimestamps,
     recentEvents,
   };
 }

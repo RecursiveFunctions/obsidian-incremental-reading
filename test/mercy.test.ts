@@ -464,3 +464,28 @@ test("postponeCeilingForPriority (0x00b86810) caps high-priority postpone horizo
     assert.ok(a.targetLocalDate === "2026-01-11" || a.targetLocalDate === "2026-01-12");
   }
 });
+
+test("planAdvancedPostpone with overdueOnly keeps items newly due today (#58)", () => {
+  const now = new Date(2026, 0, 10, 12, 0).getTime();
+  const yesterday = new Date(2026, 0, 9, 9, 0).getTime();
+  const dueThisMorning = new Date(2026, 0, 10, 8, 0).getTime();
+  const plan = planAdvancedPostpone(
+    [
+      { id: "overdue", type: "item", priority: 50, dueMs: yesterday, interval: 10 },
+      { id: "today", type: "item", priority: 50, dueMs: dueThisMorning, interval: 10 },
+    ],
+    now,
+    {
+      operation: "postpone",
+      includeItems: true,
+      includeReading: true,
+      itemDelayFactor: 1.5,
+      readingDelayFactor: 1.5,
+      minDelayDays: 1,
+      maxDelayDays: 30,
+      overdueOnly: true,
+    },
+  );
+  assert.deepEqual(plan.assignments.map((a) => a.id), ["overdue"]);
+  assert.deepEqual(plan.protectedIds, ["today"]);
+});

@@ -444,3 +444,23 @@ test("a torn newest slot rebuilds rather than trusting the older slot", async ()
   await restarted.init();
   assert.deepEqual(await restarted.load(), expectFold(events));
 });
+
+test("loadView().createdTimestamps preserves 7-day creation timestamps across compaction (#54)", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  const a = newElementId();
+  const b = newElementId();
+  const now = 20 * DAY;
+  const events: IrEvent[] = [
+    ev({ lamport: 1, ts: now - 10 * DAY, kind: "element-created", target: a, payload: { element: newElement({ id: a, type: "item", priority: 50, now: now - 10 * DAY }) } }),
+    ev({ lamport: 2, ts: now - 2 * DAY, kind: "element-created", target: b, payload: { element: newElement({ id: b, type: "item", priority: 50, now: now - 2 * DAY }) } }),
+  ];
+  for (let i = 3; i <= 15; i += 1) {
+    events.push(ev({ lamport: i, ts: now - DAY, kind: "priority-set", target: b, payload: { priority: i } }));
+  }
+  await seed(ledger, events);
+  await ledger.compactLocalShard(now, { maxEvents: 3, maxAgeDays: 7 });
+
+  const view = await ledger.loadView();
+  assert.deepEqual(view.createdTimestamps, [now - 10 * DAY, now - 2 * DAY]);
+});

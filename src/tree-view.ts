@@ -1003,12 +1003,61 @@ export class IrTreeView extends ItemView {
     const sheet = backdrop.createDiv({ cls: "ir-adaptive-sheet" });
     sheet.setAttr("role", "dialog");
     sheet.setAttr("aria-modal", "true");
+    sheet.setAttr("aria-label", title);
+    sheet.tabIndex = -1;
     const header = sheet.createDiv({ cls: "ir-adaptive-sheet-header" });
     header.createEl("h3", { text: title });
-    const close = () => { backdrop.remove(); restoreFocus?.focus(); };
-    header.createEl("button", { text: "Done", type: "button" }).onclick = close;
+    const doneBtn = header.createEl("button", { text: "Done", type: "button" });
+    const focusables = (): HTMLElement[] =>
+      Array.from(
+        sheet.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+    const close = () => {
+      document.removeEventListener("keydown", onKeydown, true);
+      backdrop.remove();
+      restoreFocus?.focus();
+    };
+    const onKeydown = (event: KeyboardEvent) => {
+      if (!backdrop.isConnected) {
+        document.removeEventListener("keydown", onKeydown, true);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+        return;
+      }
+      if (event.key === "Tab") {
+        const items = focusables();
+        if (items.length === 0) {
+          event.preventDefault();
+          sheet.focus();
+          return;
+        }
+        const first = items[0]!;
+        const last = items[items.length - 1]!;
+        const active = document.activeElement as HTMLElement | null;
+        if (!active || !sheet.contains(active)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        } else if (event.shiftKey && active === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && active === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    doneBtn.onclick = close;
     backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
-    sheet.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+    document.addEventListener("keydown", onKeydown, true);
+    requestAnimationFrame(() => {
+      if (backdrop.isConnected) (focusables()[0] ?? doneBtn).focus();
+    });
     return sheet;
   }
 
@@ -1017,7 +1066,7 @@ export class IrTreeView extends ItemView {
     const addToggle = (label: string, checked: boolean, toggle: () => void) => {
       const button = sheet.createEl("button", { cls: "ir-sheet-option", type: "button", text: label });
       button.setAttr("aria-pressed", String(checked));
-      button.addClass(checked ? "is-active" : "");
+      if (checked) button.addClass("is-active");
       button.onclick = () => { toggle(); void this.render(); };
     };
     for (const [type, label] of [["topic", "Topics"], ["extract", "Extracts"], ["item", "Cloze items"]] as const) {

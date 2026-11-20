@@ -169,6 +169,7 @@ export function computeLoad(
   events: Iterable<IrEvent>,
   now: number,
   lastDueChange?: Map<string, IrEvent["kind"]>,
+  createdTimestamps?: Iterable<number>,
 ): QueueLoad {
   const endToday = endOfDayMs(now);
   const sevenDaysAgo = now - 7 * DAY_MS;
@@ -192,8 +193,14 @@ export function computeLoad(
     }
   }
   let inflow7d = 0;
-  for (const ev of events) {
-    if (ev.kind === "element-created" && ev.ts >= sevenDaysAgo) inflow7d += 1;
+  if (createdTimestamps) {
+    for (const ts of createdTimestamps) {
+      if (ts >= sevenDaysAgo) inflow7d += 1;
+    }
+  } else {
+    for (const ev of events) {
+      if (ev.kind === "element-created" && ev.ts >= sevenDaysAgo) inflow7d += 1;
+    }
   }
   return { due, later, postponed, inflow7d, dueByType };
 }
