@@ -67,6 +67,16 @@
   color: var(--text-muted);
 }
 
+.ir-review-mode-chip--drill {
+  background: color-mix(in srgb, var(--color-orange, #e67e22) 22%, transparent);
+  color: var(--text-warning, var(--color-orange, #e67e22));
+}
+
+.ir-review-mode-chip--provenance {
+  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  color: var(--text-accent);
+}
+
 .ir-review-neural-via {
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
@@ -85,6 +95,8 @@
 
 .ir-review-session-track {
   height: 3px;
+  display: flex;
+  overflow: hidden;
   background: var(--background-modifier-border);
 }
 
@@ -92,6 +104,10 @@
   height: 100%;
   background: var(--text-accent);
   transition: width 0.3s ease;
+}
+
+.ir-review-session-fill--drill {
+  background: var(--color-orange, #e67e22);
 }
 
 .ir-review-resume {
@@ -200,6 +216,76 @@ img.ir-source-image.ir-cloze-source {
   padding: 0.05em 0;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+}
+
+@keyframes ir-extract-pulse {
+  0% {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 2px;
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 6px;
+  }
+}
+
+.ir-extract-highlight--pulse {
+  animation: ir-extract-pulse 1.2s ease-out 1;
+}
+
+.ir-review-context-splitter {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 2;
+  transition: background 0.15s ease;
+}
+
+.ir-review-context-splitter:hover,
+.ir-review-context-splitter.is-dragging {
+  background: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+}
+
+.ir-review-selection-pill {
+  position: absolute;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: var(--shadow-s);
+}
+
+.ir-review-selection-pill.is-hidden,
+.ir-review-held-badge.is-hidden {
+  display: none !important;
+}
+
+.ir-review-selection-pill-btn {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 6px;
+  height: auto;
+}
+
+.ir-review-held-badge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: var(--font-ui-smaller);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-secondary));
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ir-review-held-badge-btn {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+  height: auto;
 }
 
 /* PDF text-layer highlights (store-painted; the PDF file is never mutated).
@@ -1642,6 +1728,31 @@ img.ir-source-image.ir-cloze-source {
   background-color: var(--background-modifier-hover);
 }
 
+.ir-priority-badge--critical {
+  color: var(--color-red, #e05252);
+  background: color-mix(in srgb, var(--color-red, #e05252) 14%, transparent);
+  border-radius: var(--radius-s);
+  padding: 0 4px;
+}
+
+.ir-priority-badge--high {
+  color: var(--color-orange, #d9822b);
+  background: color-mix(in srgb, var(--color-orange, #d9822b) 14%, transparent);
+  border-radius: var(--radius-s);
+  padding: 0 4px;
+}
+
+.ir-priority-badge--medium {
+  color: var(--text-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  border-radius: var(--radius-s);
+  padding: 0 4px;
+}
+
+.ir-priority-badge--low {
+  color: var(--text-muted);
+}
+
 .ir-tree-priority-input {
   width: 3.25em;
   font-size: var(--font-ui-smaller);
@@ -2198,6 +2309,57 @@ img.ir-source-image.ir-cloze-source {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   min-width: 3.6em;
+}
+
+.ir-repsort-svg {
+  display: block;
+  overflow: visible;
+}
+
+.ir-repsort-svg-area {
+  fill: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+}
+
+.ir-repsort-svg-line {
+  stroke: var(--interactive-accent);
+  stroke-width: 1.5;
+}
+
+.ir-repsort-svg-dot {
+  fill: var(--interactive-accent);
+}
+
+.ir-stats-forecast-col--actionable {
+  cursor: pointer;
+}
+
+.ir-stats-forecast-col--actionable:hover .ir-stats-forecast-bar {
+  filter: brightness(1.15);
+}
+
+.ir-stats-overdue-action {
+  font-size: var(--font-ui-smaller);
+  padding: 1px 6px;
+  height: auto;
+  cursor: pointer;
+}
+
+.ir-stats-leech-meta {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ir-stats-leech-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.ir-stats-triage-btn {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 6px;
+  height: auto;
 }
 
 /* Status bar queue-load indicator (UI commitment #4). Sits in Obsidian's

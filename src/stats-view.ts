@@ -1,6 +1,9 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 
 import { IrLedger } from "./ir/ledger";
+import type { ElementId } from "./ir/ids";
+import { labelFor } from "./ir/labels";
+import { findLeeches, type LeechDiagnosis } from "./ir/leech";
 import type { IrElement, IrEvent } from "./ir/model";
 import type { LogState } from "./ir/log";
 import type { IrSettings } from "./ir/settings-data";
@@ -36,6 +39,11 @@ export interface SchedulerHost {
   saveSettings(): Promise<void>;
   /** Rebuild the FSRS engine from the current settings. */
   applyEngineConfig(): void;
+  openElement?(elementId: ElementId, notePath?: string): void | Promise<void>;
+  postponeElement?(elementId: ElementId, days: number): Promise<void>;
+  duplicateOrSplitElement?(elementId: ElementId): Promise<void>;
+  dismissElement?(elementId: ElementId, dismissed: boolean): Promise<void>;
+  startSubsetReview?(ids: readonly ElementId[], includeFuture?: boolean): void | Promise<void>;
 }
 
 /** Fixed fit seed: same log in, same parameters out, every run. */
@@ -142,6 +150,7 @@ export class IrStatsView extends ItemView {
     this.renderCounts(body, elements, stats, now);
     this.renderForecast(body, elements, now);
     this.renderReviewHistory(body, grades, stats, windowStart, now);
+    this.renderLeechTriage(body, state, events);
     this.renderPriorityForgettingIndex(body, priorityGrades);
     this.renderScheduler(body, events, state);
   }
@@ -462,7 +471,9 @@ export class IrStatsView extends ItemView {
     const today = startOfLocalDayMs(now);
     for (let i = 0; i < fc.byDay.length; i++) {
       const n = fc.byDay[i];
-      const day = new Date(today + i * DAY_MS);
+      const dayStart = today + i * DAY_MS;
+      const dayEnd = dayStart + DAY_MS;
+      const day = new Date(dayStart);
       const label = i === 0 ? "Today" : WEEKDAYS[day.getDay()];
       const col = chart.createDiv({ cls: "ir-stats-forecast-col" });
       // Count above the bar: the number is the answer, the bar is the shape.
@@ -476,14 +487,58 @@ export class IrStatsView extends ItemView {
         "aria-label",
         `${label}: ${n} element${n === 1 ? "" : "s"} due`,
       );
+      if (n > 0 && this.host.startSubsetReview) {
+        col.addClass("ir-stats-forecast-col--actionable");
+        col.setAttr("role", "button");
+        col.setAttr("tabindex", "0");
+        col.setAttr("title", `Review ${n} element${n === 1 ? "" : "s"} due on ${label}`);
+        const launchDayReview = () => {
+          const dayIds = elements
+            .filter((el) => {
+              if (el.dismissed) return false;
+              const due = el.card?.due ?? el.schedule?.due;
+              if (due === undefined || !Number.isFinite(due)) return false;
+              return i === 0 ? due > now && due < dayEnd : due >= dayStart && due < dayEnd;
+            })
+            .map((el) => el.id);
+          if (dayIds.length > 0) void this.host.startSubsetReview!(dayIds, true);
+        };
+        col.addEventListener("click", launchDayReview);
+        col.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            launchDayReview();
+          }
+        });
+      }
     }
 
-    section.createDiv({
-      cls: "ir-stats-note",
-      text: `${fc.windowTotal} due in the next ${FORECAST_DAYS} days${
-        fc.overdue > 0 ? ` · ${fc.overdue} already overdue` : ""
-      }`,
+    const noteRow = section.createDiv({ cls: "ir-stats-note ir-stats-forecast-footer" });
+    noteRow.createSpan({
+      text: `${fc.windowTotal} due in the next ${FORECAST_DAYS} days`,
     });
+    if (fc.overdue > 0) {
+      noteRow.createSpan({ text: " · " });
+      if (this.host.startSubsetReview) {
+        const overdueBtn = noteRow.createEl("button", {
+          cls: "ir-stats-overdue-action",
+          type: "button",
+          text: `${fc.overdue} already overdue (Review)`,
+        });
+        overdueBtn.addEventListener("click", () => {
+          const overdueIds = elements
+            .filter((el) => {
+              if (el.dismissed) return false;
+              const due = el.card?.due ?? el.schedule?.due;
+              return due !== undefined && due <= now;
+            })
+            .map((el) => el.id);
+          if (overdueIds.length > 0) void this.host.startSubsetReview!(overdueIds, false);
+        });
+      } else {
+        noteRow.createSpan({ text: `${fc.overdue} already overdue` });
+      }
+    }
   }
 
   private renderReviewHistory(
@@ -553,6 +608,84 @@ export class IrStatsView extends ItemView {
     const oldest = new Date(firstDay);
     axis.createSpan({ text: `${WEEKDAYS[oldest.getDay()]} ${oldest.getDate()}` });
     axis.createSpan({ text: "today" });
+  }
+
+  private renderLeechTriage(
+    body: HTMLElement,
+    state: LogState,
+    events: readonly IrEvent[],
+  ): void {
+    const leeches: LeechDiagnosis[] = findLeeches(state, events);
+    const section = body.createDiv({ cls: "ir-stats-section ir-stats-leech-section" });
+    section.createDiv({
+      cls: "ir-stats-section-title",
+      text: `Leech & High-Lapse (${leeches.length})`,
+    });
+    if (leeches.length === 0) {
+      section.createDiv({
+        cls: "ir-stats-note",
+        text: "No leeches or high-lapse items detected.",
+      });
+      return;
+    }
+    const table = section.createEl("table", { cls: "ir-stats-table ir-stats-leech-table" });
+    for (const diag of leeches.slice(0, 15)) {
+      const el = state.elements.get(diag.elementId);
+      if (!el) continue;
+      const tr = table.createEl("tr", { cls: "ir-stats-leech-row" });
+      const infoTd = tr.createEl("td", { cls: "ir-stats-leech-info" });
+      infoTd.createDiv({ cls: "ir-stats-leech-title", text: labelFor(el) });
+      const reasons: string[] = [];
+      if (diag.lapses > 0) reasons.push(`${diag.lapses} lapses`);
+      if (diag.reasons.includes("high-difficulty-short-interval")) {
+        reasons.push(`D ${diag.difficulty.toFixed(1)} · ${diag.scheduledDays}d`);
+      }
+      if (diag.postponeCount > 0) reasons.push(`${diag.postponeCount} postpones`);
+      infoTd.createDiv({ cls: "ir-stats-leech-meta", text: reasons.join(" · ") });
+
+      const actionsTd = tr.createEl("td", { cls: "ir-stats-leech-actions" });
+      const path = el.notePath ?? el.anchor?.sourcePath;
+      if (this.host.openElement) {
+        const openBtn = actionsTd.createEl("button", {
+          cls: "ir-stats-triage-btn",
+          type: "button",
+          text: "Open",
+        });
+        openBtn.addEventListener("click", () => {
+          void this.host.openElement!(el.id, path);
+        });
+      }
+      if (this.host.postponeElement) {
+        const postBtn = actionsTd.createEl("button", {
+          cls: "ir-stats-triage-btn",
+          type: "button",
+          text: "Postpone",
+        });
+        postBtn.addEventListener("click", () => {
+          void this.host.postponeElement!(el.id, 7).then(() => this.render());
+        });
+      }
+      if (this.host.duplicateOrSplitElement && (el.type === "item" || el.type === "extract")) {
+        const dupBtn = actionsTd.createEl("button", {
+          cls: "ir-stats-triage-btn",
+          type: "button",
+          text: "Duplicate/Split",
+        });
+        dupBtn.addEventListener("click", () => {
+          void this.host.duplicateOrSplitElement!(el.id).then(() => this.render());
+        });
+      }
+      if (this.host.dismissElement) {
+        const disBtn = actionsTd.createEl("button", {
+          cls: "ir-stats-triage-btn",
+          type: "button",
+          text: "Dismiss",
+        });
+        disBtn.addEventListener("click", () => {
+          void this.host.dismissElement!(el.id, true).then(() => this.render());
+        });
+      }
+    }
   }
 
   private renderPriorityForgettingIndex(

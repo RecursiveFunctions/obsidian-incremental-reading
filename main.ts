@@ -824,7 +824,35 @@ export default class IncrementalReadingPlugin extends Plugin {
             "Incremental Reading: ledger not ready for stats view.",
           );
         }
-        return new IrStatsView(leaf, this.ledger, this);
+        return new IrStatsView(leaf, this.ledger, {
+          settings: this.settings,
+          saveSettings: () => this.saveSettings(),
+          applyEngineConfig: () => this.applyEngineConfig(),
+          openElement: (elementId, notePath) =>
+            this.revealSessionEntry(elementId, notePath),
+          postponeElement: async (elementId, days) => {
+            const state = await this.ledger!.load();
+            const el = state.elements.get(elementId);
+            const af = el?.notePath
+              ? this.app.vault.getAbstractFileByPath(el.notePath)
+              : null;
+            const file = af instanceof TFile ? af : null;
+            await this.applyIrPostponeChange(elementId, file, days);
+          },
+          duplicateOrSplitElement: (elementId) =>
+            this.duplicateSiblingElement(elementId),
+          dismissElement: async (elementId, dismissed) => {
+            const state = await this.ledger!.load();
+            const el = state.elements.get(elementId);
+            const af = el?.notePath
+              ? this.app.vault.getAbstractFileByPath(el.notePath)
+              : null;
+            const file = af instanceof TFile ? af : null;
+            await this.applyIrDismissChange(elementId, file, dismissed);
+          },
+          startSubsetReview: (ids, includeFuture) =>
+            this.startSubsetReview(ids, includeFuture ?? false, "subset"),
+        });
       },
     );
 
@@ -6537,6 +6565,10 @@ export default class IncrementalReadingPlugin extends Plugin {
   /* ----------------------------------------------------------------- */
 
   private onHeldSelectionsChange(n: number): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(IR_REVIEW_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof IrReviewView) view.updateHeldSpanBadge();
+    }
     if (n <= 0) return;
     new Notice(
       `Incremental Reading: ${n} selection${n === 1 ? "" : "s"} held. Alt+X extracts them together; Esc clears.`,

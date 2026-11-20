@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  priorityUrgencyTier,
   shouldShowReanchorBanner,
   treeClickKind,
   treeKeyCommand,
@@ -59,6 +60,18 @@ test("tree keys: j/k and arrows move; Enter/o/p/d/m/Space are actions", () => {
   assert.deepEqual(treeKeyCommand({ key: "m", ...none }), { kind: "postpone" });
   assert.deepEqual(treeKeyCommand({ key: " ", ...none }), { kind: "toggle-collapse" });
   assert.equal(treeKeyCommand({ key: "j", altKey: true, ctrlKey: false, metaKey: false }), null);
+  assert.deepEqual(
+    treeKeyCommand({ key: "ArrowUp", altKey: true, ctrlKey: false, metaKey: false }),
+    { kind: "priority-nudge", delta: -5 },
+  );
+  assert.deepEqual(
+    treeKeyCommand({ key: "ArrowDown", altKey: true, ctrlKey: false, metaKey: false }),
+    { kind: "priority-nudge", delta: 5 },
+  );
+  assert.equal(priorityUrgencyTier(5), "critical");
+  assert.equal(priorityUrgencyTier(25), "high");
+  assert.equal(priorityUrgencyTier(50), "medium");
+  assert.equal(priorityUrgencyTier(80), "low");
 });
 
 test("tree keys: x picks up, v drops, Escape cancels a move", () => {

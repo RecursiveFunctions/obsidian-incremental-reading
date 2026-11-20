@@ -709,15 +709,46 @@ export class IrSettingTab extends PluginSettingTab {
         title: `SM-20 dispersion factor: ${factorLabel}`,
       },
     });
-    const curve = buildRepSortDispersionCurve(10);
+    const curve = buildRepSortDispersionCurve(16);
     const activeIndex = Math.round(clamped * (curve.length - 1));
-    for (let i = 0; i < curve.length; i += 1) {
-      const point = curve[i]!;
-      const col = chart.createDiv({
-        cls: `ir-repsort-bar${i <= activeIndex && clamped > 0 ? " is-active" : ""}${i === activeIndex ? " is-current" : ""}`,
-      });
-      col.style.setProperty("height", `${Math.max(12, Math.round(point.normalizedSpread * 100))}%`);
-    }
+    const width = 96;
+    const height = 24;
+    const svg = chart.createSvg("svg", {
+      cls: "ir-repsort-svg",
+      attr: {
+        viewBox: `0 0 ${width} ${height}`,
+        width: String(width),
+        height: String(height),
+      },
+    });
+    const pts = curve.map((pt, idx) => {
+      const x = (idx / Math.max(1, curve.length - 1)) * (width - 8) + 4;
+      const y = height - 3 - pt.normalizedSpread * (height - 6);
+      return { x, y };
+    });
+    const polyPoints = pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+    svg.createSvg("polygon", {
+      cls: "ir-repsort-svg-area",
+      attr: {
+        points: `4,${height - 3} ${polyPoints} ${width - 4},${height - 3}`,
+      },
+    });
+    svg.createSvg("polyline", {
+      cls: "ir-repsort-svg-line",
+      attr: {
+        points: polyPoints,
+        fill: "none",
+      },
+    });
+    const activePt = pts[activeIndex] ?? pts[0]!;
+    svg.createSvg("circle", {
+      cls: "ir-repsort-svg-dot",
+      attr: {
+        cx: activePt.x.toFixed(1),
+        cy: activePt.y.toFixed(1),
+        r: "2.8",
+      },
+    });
     host.createSpan({ cls: "ir-repsort-readout", text: factorLabel });
   }
 

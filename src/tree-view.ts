@@ -22,11 +22,13 @@ import {
   TreeNode,
 } from "./ir/tree";
 import {
+  priorityUrgencyTier,
   treeClickKind,
   treeKeyCommand,
   treeNavId,
   treeRowCollapsed,
 } from "./ir/tree-nav";
+import { clampPriority } from "./ir/model";
 import { treeRowLabel } from "./ir/labels";
 import type { IrElement, IrType } from "./ir/model";
 import {
@@ -1291,6 +1293,19 @@ export class IrTreeView extends ItemView {
       if (path) void this.openNote(path, node.element);
       return;
     }
+    if (cmd.kind === "priority-nudge") {
+      if (!this.commitPriority) return;
+      const abs = node.element.notePath
+        ? this.app.vault.getAbstractFileByPath(node.element.notePath)
+        : null;
+      const file = abs instanceof TFile ? abs : null;
+      const nextPriority = clampPriority(node.element.priority + cmd.delta);
+      void (async () => {
+        await this.commitPriority!(current as ElementId, file, nextPriority);
+        void this.render().then(() => this.focusId(current));
+      })();
+      return;
+    }
     if (cmd.kind === "priority") {
       this.ensureRowRendered(current);
       const wrap = this.contentEl.querySelector<HTMLElement>(
@@ -1549,10 +1564,17 @@ export class IrTreeView extends ItemView {
         menu.showAtMouseEvent(event);
       };
     }
+    if (this.startBranchReview && ids.length === 1) {
+      const reviewBranchBtn = actions.createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: "Review branch",
+      });
+      reviewBranchBtn.onclick = () => this.startBranchReview!(ids[0]!, false);
+    }
     if (this.startSubsetReview) {
       const reviewSel = actions.createEl("button", {
         cls: "ir-tree-selection-bar-btn",
-        text: `Review (${ids.length})`,
+        text: `Review selection (${ids.length})`,
       });
       reviewSel.onclick = () => this.startSubsetReview!(ids, false);
     }
@@ -2034,21 +2056,23 @@ export class IrTreeView extends ItemView {
     let priWrap: HTMLElement;
     let percentage: HTMLElement | null = null;
     const rank = this.rankById.get(node.id) ?? 1;
+    const urgencyTier = priorityUrgencyTier(node.element.priority);
     if (this.displayMode === "priority") {
       const content = row.createDiv({ cls: "ir-collection-row-content" });
       const primary = content.createDiv({ cls: "ir-collection-row-primary" });
       priWrap = primary.createSpan({
-        cls: "ir-tree-priority-wrap ir-collection-rank",
+        cls: `ir-tree-priority-wrap ir-collection-rank ir-priority-badge--${urgencyTier}`,
         text: `#${rank}`,
         attr: {
           "data-ir-element-id": node.id,
           "data-ir-note-path": node.element.notePath ?? "",
           "data-ir-priority": formatPriority(node.element.priority),
+          "data-ir-urgency": urgencyTier,
         },
       });
       titleEl = primary.createSpan({ cls: "ir-tree-title", text: label });
       percentage = primary.createSpan({
-        cls: "ir-collection-percentage",
+        cls: `ir-collection-percentage ir-priority-badge--${urgencyTier}`,
         text: formatPriority(node.element.priority),
       });
       const secondary = content.createDiv({ cls: "ir-collection-row-secondary" });
@@ -2078,12 +2102,13 @@ export class IrTreeView extends ItemView {
       setIcon(iconSpan, ICONS[node.type] ?? "circle");
       titleEl = row.createSpan({ cls: "ir-tree-title", text: label });
       priWrap = row.createSpan({
-        cls: "ir-tree-priority-wrap ir-collection-source-rank",
-        text: `#${rank}`,
+        cls: `ir-tree-priority-wrap ir-collection-source-rank ir-priority-badge--${urgencyTier}`,
+        text: `#${rank} · ${formatPriority(node.element.priority)}`,
         attr: {
           "data-ir-element-id": node.id,
           "data-ir-note-path": node.element.notePath ?? "",
           "data-ir-priority": formatPriority(node.element.priority),
+          "data-ir-urgency": urgencyTier,
         },
       });
     }
@@ -2369,7 +2394,7 @@ export class IrTreeView extends ItemView {
     if (this.startBranchReview) {
       menu.addItem((item) =>
         item
-          .setTitle("Review branch (due)")
+          .setTitle("Review branch")
           .setIcon("play-circle")
           .onClick(() => this.startBranchReview!(elId, false)),
       );
@@ -2378,6 +2403,15 @@ export class IrTreeView extends ItemView {
           .setTitle("Review branch (all)")
           .setIcon("layers")
           .onClick(() => this.startBranchReview!(elId, true)),
+      );
+    }
+    if (this.startSubsetReview && this.selectedIds.size > 0) {
+      const selIds = Array.from(this.selectedIds) as ElementId[];
+      menu.addItem((item) =>
+        item
+          .setTitle(`Review selection (${selIds.length})`)
+          .setIcon("check-square")
+          .onClick(() => this.startSubsetReview!(selIds, false)),
       );
     }
     if (this.addToSession) {

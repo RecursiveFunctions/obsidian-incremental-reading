@@ -105,6 +105,7 @@ import { neuralViaLabel } from "./ir/neural";
 import { shouldShowReanchorBanner } from "./ir/tree-nav";
 import type { ReviewSlot, SessionBarPhase } from "./review";
 import {
+  computeSessionTrackSegments,
   contextSourceParentId,
   drillReviewQueue,
   EMPTY_COLLECTION_COPY,
@@ -198,6 +199,8 @@ const IR_SWIPE_LEGEND_KEY = "incremental-reading:swipe-legend-seen";
  */
 const IR_SWIPE_COACH_COUNT_KEY = "incremental-reading:swipe-coach-shown";
 const IR_SWIPE_COACH_MAX_SHOWS = 3;
+const IR_CONTEXT_COL_WIDTH_KEY = "incremental-reading:context-col-width";
+const DEFAULT_CONTEXT_COL_WIDTH_PCT = 38;
 
 /** How the divergence bar sizes its segments. "log" keeps a 5-year and a
  *  47-year proposal both visible; "linear" is proportional but hides the small one. */
@@ -309,6 +312,10 @@ export class IrReviewView extends ItemView {
   private cardHostEl?: HTMLElement;
   /** Mobile swipe hint overlay; sibling of `cardHostEl`, survives re-renders. */
   private swipeHintEl?: HTMLElement;
+  private selectionPillEl?: HTMLElement;
+  private heldSpanBadgeEl?: HTMLElement;
+  private selectionChangeCleanup?: () => void;
+  private splitterDragCleanup?: () => void;
   private swipeGestureCleanup?: () => void;
   private mobileKeyboardCleanup?: () => void;
   private mobileOrientationCleanup?: () => void;
@@ -621,7 +628,14 @@ export class IrReviewView extends ItemView {
       cls: "ir-review-live",
       attr: { role: "status", "aria-live": "polite" },
     });
+    this.heldSpanBadgeEl = this.contentEl.createDiv({
+      cls: "ir-review-held-badge is-hidden",
+    });
+    this.selectionPillEl = this.contentEl.createDiv({
+      cls: "ir-review-selection-pill is-hidden",
+    });
     this.cardHostEl = this.contentEl.createDiv({ cls: "ir-review-card-host" });
+    this.attachSelectionAffordances();
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
       this.mobileLayoutCleanup?.();
@@ -828,6 +842,10 @@ export class IrReviewView extends ItemView {
     } finally {
       this.divergenceKeyCleanup?.();
       this.divergenceKeyCleanup = null;
+      this.selectionChangeCleanup?.();
+      this.selectionChangeCleanup = undefined;
+      this.splitterDragCleanup?.();
+      this.splitterDragCleanup = undefined;
       this.teardownLiveEditorSync();
       this.swipeGestureCleanup?.();
       this.swipeGestureCleanup = undefined;
@@ -838,6 +856,8 @@ export class IrReviewView extends ItemView {
       this.mobileLayoutCleanup?.();
       this.mobileLayoutCleanup = undefined;
       this.swipeHintEl = undefined;
+      this.selectionPillEl = undefined;
+      this.heldSpanBadgeEl = undefined;
       this.sessionBarEl = undefined;
       this.cardHostEl = undefined;
       this.contentEl.empty();
@@ -1172,7 +1192,7 @@ export class IrReviewView extends ItemView {
     const doc = this.contentEl.ownerDocument;
     const live = doc.getSelection();
     const range = live && live.rangeCount > 0 ? live.getRangeAt(0) : null;
-    return ms.hold(
+    const ok = ms.hold(
       {
         kind: "body",
         sourcePath: this.heldKey(slot),
@@ -1182,6 +1202,229 @@ export class IrReviewView extends ItemView {
       },
       range,
     );
+    this.updateHeldSpanBadge();
+    return ok;
+  }
+
+  public updateHeldSpanBadge(): void {
+    const badge = this.heldSpanBadgeEl;
+    if (!badge) return;
+    const slot = this.current;
+    const heldCount = slot
+      ? (this.multiSelect?.pending.body(this.heldKey(slot)).length ?? 0) ||
+        (this.multiSelect?.size ?? 0)
+      : (this.multiSelect?.size ?? 0);
+    if (heldCount <= 0 || this.sessionComplete) {
+      badge.empty();
+      badge.addClass("is-hidden");
+      return;
+    }
+    badge.empty();
+    badge.removeClass("is-hidden");
+    badge.createSpan({
+      cls: "ir-review-held-badge-text",
+      text: `${heldCount} span${heldCount === 1 ? "" : "s"} held · Alt+X to join · Esc to clear`,
+    });
+    const joinBtn = badge.createEl("button", {
+      cls: "ir-review-held-badge-btn mod-cta",
+      type: "button",
+      text: "Join (Alt+X)",
+    });
+    this.preventClickStealingFocus(joinBtn);
+    joinBtn.addEventListener("click", () => void this.handleExtract());
+    const clearBtn = badge.createEl("button", {
+      cls: "ir-review-held-badge-btn",
+      type: "button",
+      text: "Clear",
+    });
+    this.preventClickStealingFocus(clearBtn);
+    clearBtn.addEventListener("click", () => {
+      this.multiSelect?.clear();
+      this.updateHeldSpanBadge();
+    });
+  }
+
+  private applySavedContextColWidth(ctxCol: HTMLElement): void {
+    try {
+      const raw = window.localStorage.getItem(IR_CONTEXT_COL_WIDTH_KEY);
+      if (!raw) return;
+      const pct = Number(raw);
+      if (Number.isFinite(pct) && pct >= 18 && pct <= 65) {
+        ctxCol.style.flex = `0 0 ${pct}%`;
+        ctxCol.style.maxWidth = `${pct}%`;
+      }
+    } catch {
+      /* ignore localStorage failures */
+    }
+  }
+
+  private mountContextSplitter(columns: HTMLElement, ctxCol: HTMLElement): void {
+    this.splitterDragCleanup?.();
+    this.splitterDragCleanup = undefined;
+    const splitter = columns.createDiv({
+      cls: "ir-review-context-splitter",
+      attr: {
+        role: "separator",
+        "aria-orientation": "vertical",
+        "aria-label": "Resize source column (double-click to reset)",
+        title: "Drag to resize source column · Double-click to reset to 38%",
+        tabindex: "0",
+      },
+    });
+    const applyPct = (pct: number, persist: boolean) => {
+      const clamped = Math.min(65, Math.max(18, Math.round(pct * 10) / 10));
+      ctxCol.style.flex = `0 0 ${clamped}%`;
+      ctxCol.style.maxWidth = `${clamped}%`;
+      if (persist) {
+        try {
+          window.localStorage.setItem(IR_CONTEXT_COL_WIDTH_KEY, String(clamped));
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    const resetPct = () => {
+      ctxCol.style.removeProperty("flex");
+      ctxCol.style.removeProperty("max-width");
+      try {
+        window.localStorage.removeItem(IR_CONTEXT_COL_WIDTH_KEY);
+      } catch {
+        /* ignore */
+      }
+    };
+    splitter.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      resetPct();
+    });
+    splitter.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      const rect = columns.getBoundingClientRect();
+      const curPct =
+        rect.width > 0
+          ? (ctxCol.getBoundingClientRect().width / rect.width) * 100
+          : DEFAULT_CONTEXT_COL_WIDTH_PCT;
+      applyPct(curPct + (e.key === "ArrowRight" ? 3 : -3), true);
+    });
+    let detachMove: (() => void) | null = null;
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      splitter.addClass("is-dragging");
+      const onMove = (moveEvt: MouseEvent) => {
+        const rect = columns.getBoundingClientRect();
+        if (rect.width <= 0) return;
+        const pct = ((moveEvt.clientX - rect.left) / rect.width) * 100;
+        applyPct(pct, false);
+      };
+      const onUp = (upEvt: MouseEvent) => {
+        splitter.removeClass("is-dragging");
+        const rect = columns.getBoundingClientRect();
+        if (rect.width > 0) {
+          const pct = ((upEvt.clientX - rect.left) / rect.width) * 100;
+          applyPct(pct, true);
+        }
+        detachMove?.();
+        detachMove = null;
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+      detachMove = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+    };
+    splitter.addEventListener("mousedown", onMouseDown);
+    this.splitterDragCleanup = () => {
+      detachMove?.();
+      detachMove = null;
+    };
+  }
+
+  private attachSelectionAffordances(): void {
+    this.selectionChangeCleanup?.();
+    const doc = this.contentEl.ownerDocument;
+    const onSelectionChange = () => {
+      this.updateSelectionPill();
+      this.updateHeldSpanBadge();
+    };
+    doc.addEventListener("selectionchange", onSelectionChange);
+    this.selectionChangeCleanup = () => {
+      doc.removeEventListener("selectionchange", onSelectionChange);
+    };
+  }
+
+  private updateSelectionPill(): void {
+    const pill = this.selectionPillEl;
+    if (!pill) return;
+    if (Platform.isMobile || this.sessionComplete || !this.current) {
+      pill.empty();
+      pill.addClass("is-hidden");
+      return;
+    }
+    const doc = this.contentEl.ownerDocument;
+    const sel = doc.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !sel.toString().trim()) {
+      pill.empty();
+      pill.addClass("is-hidden");
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    const anc = range.commonAncestorContainer;
+    const ancEl = anc instanceof HTMLElement ? anc : anc.parentElement;
+    if (!ancEl || !this.contentEl.contains(ancEl)) {
+      pill.empty();
+      pill.addClass("is-hidden");
+      return;
+    }
+    const inMainBody = !!ancEl.closest(".ir-review-main-body, .ir-review-textarea, .ir-review-live-editor");
+    const inContextBody = !!ancEl.closest(".ir-review-context-markdown");
+    if (!inMainBody && !inContextBody) {
+      pill.empty();
+      pill.addClass("is-hidden");
+      return;
+    }
+    const canExt = this.canMakeChild();
+    const canClz = inMainBody && this.canMakeClozeChild();
+    if (!canExt && !canClz) {
+      pill.empty();
+      pill.addClass("is-hidden");
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    const hostRect = this.contentEl.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      pill.empty();
+      pill.addClass("is-hidden");
+      return;
+    }
+    pill.empty();
+    pill.removeClass("is-hidden");
+    if (canExt) {
+      const extBtn = pill.createEl("button", {
+        cls: "ir-review-selection-pill-btn",
+        type: "button",
+        text: "Extract (Alt+X)",
+      });
+      this.preventClickStealingFocus(extBtn);
+      extBtn.addEventListener("click", () => void this.handleExtract());
+    }
+    if (canClz) {
+      const clzBtn = pill.createEl("button", {
+        cls: "ir-review-selection-pill-btn",
+        type: "button",
+        text: "Cloze (Alt+Z)",
+      });
+      this.preventClickStealingFocus(clzBtn);
+      clzBtn.addEventListener("click", () => void this.handleCloze());
+    }
+    const top = Math.max(8, rect.top - hostRect.top - 34);
+    const left = Math.max(
+      8,
+      Math.min(hostRect.width - 180, rect.left - hostRect.left),
+    );
+    pill.style.top = `${Math.round(top)}px`;
+    pill.style.left = `${Math.round(left)}px`;
   }
 
   /** Nearest topic/extract note new child notes should be filed under. */
@@ -2207,6 +2450,9 @@ export class IrReviewView extends ItemView {
         (this.mobileSourceExpanded && this.settings.mobileReviewLayout !== "minimal"))
     ) {
       const ctxCol = columns.createDiv({ cls: "ir-review-context-col" });
+      if (!Platform.isMobile) {
+        this.applySavedContextColWidth(ctxCol);
+      }
       const sourceHeaderText = maskClozeChrome
         ? "Source (hidden until reveal)"
         : `Source · ${sourceCtx.title}`;
@@ -2301,15 +2547,21 @@ export class IrReviewView extends ItemView {
         this.wireMarkdownLinks(ctxBody, sourceCtx.path);
         if (sourceCtx.highlightRange) {
           requestAnimationFrame(() => {
-            const mark = ctxBody.querySelector(".ir-extract-highlight");
+            const mark = ctxBody.querySelector<HTMLElement>(".ir-extract-highlight");
             if (mark) {
+              mark.addClass("ir-extract-highlight--pulse");
               mark.scrollIntoView({ block: "center", behavior: "smooth" });
             }
           });
         }
       }
+      if (!Platform.isMobile) {
+        this.mountContextSplitter(columns, ctxCol);
+      }
     }
 
+    this.updateHeldSpanBadge();
+    this.updateSelectionPill();
     const mainCol = columns.createDiv({ cls: "ir-review-main-col" });
     const scroll = mainCol.createDiv({
       cls: "ir-review-scroll ir-review-swipe-zone",
@@ -2813,18 +3065,24 @@ export class IrReviewView extends ItemView {
     const row = bar.createDiv({ cls: "ir-review-session-row" });
     const modeText =
       this.sessionPhase === "drill"
-        ? "Drill"
+        ? `Final Drill (${remaining} left)`
         : this.sessionPhase === "branch"
-          ? "Branch"
+          ? "via branch"
           : this.sessionPhase === "subset"
-            ? "Subset"
+            ? "via subset"
             : this.isNeural
               ? "Neural"
               : "Due";
+    const chipMod =
+      this.sessionPhase === "drill"
+        ? "ir-review-mode-chip--drill"
+        : this.sessionPhase === "branch" || this.sessionPhase === "subset"
+          ? "ir-review-mode-chip--provenance"
+          : this.isNeural
+            ? "ir-review-mode-chip--neural"
+            : "ir-review-mode-chip--due";
     const chip = row.createSpan({
-      cls: this.isNeural
-        ? "ir-review-mode-chip ir-review-mode-chip--neural"
-        : "ir-review-mode-chip ir-review-mode-chip--due",
+      cls: `ir-review-mode-chip ${chipMod}`,
       text: idleChip ?? (this.sessionComplete ? "Done" : modeText),
     });
     chip.setAttr("aria-hidden", "true");
@@ -2887,8 +3145,21 @@ export class IrReviewView extends ItemView {
     }
 
     const track = bar.createDiv({ cls: "ir-review-session-track" });
+    const segments = computeSessionTrackSegments({
+      done: this.sessionComplete,
+      phase: this.sessionPhase,
+      index: this.index,
+      queueLength: this.queue.length,
+      drillPendingCount: this.drillEnqueuedByGrade.size,
+    });
     const fill = track.createDiv({ cls: "ir-review-session-fill" });
-    fill.style.width = `${pct}%`;
+    fill.style.width = `${this.sessionPhase === "drill" ? 0 : segments.primaryPct}%`;
+    if (segments.drillPct > 0 || this.sessionPhase === "drill") {
+      const drillFill = track.createDiv({
+        cls: "ir-review-session-fill ir-review-session-fill--drill",
+      });
+      drillFill.style.width = `${this.sessionPhase === "drill" ? pct : segments.drillPct}%`;
+    }
   }
 
   private endNeuralMode(): void {
@@ -3991,12 +4262,19 @@ export class IrReviewView extends ItemView {
       return { ok: false, reason: "Nothing selected." };
     }
     const bodyEl = this.contentEl.querySelector(".ir-review-main-body");
-    if (!bodyEl || !sel.anchorNode || !bodyEl.contains(sel.anchorNode)) {
+    const ctxEl = this.contentEl.querySelector(".ir-review-context-markdown");
+    const containerEl =
+      bodyEl && sel.anchorNode && bodyEl.contains(sel.anchorNode)
+        ? (bodyEl as HTMLElement)
+        : ctxEl && sel.anchorNode && ctxEl.contains(sel.anchorNode)
+          ? (ctxEl as HTMLElement)
+          : null;
+    if (!containerEl) {
       return { ok: false, reason: "Selection must be inside the card body." };
     }
     const mapped = mapRenderedSelectionToRaw(
       this.currentRaw,
-      bodyEl as HTMLElement,
+      containerEl,
       sel.getRangeAt(0),
     );
     if (!mapped) {

@@ -59,7 +59,19 @@ export type TreeKeyCommand =
   | { kind: "move-pick" }
   /** Drop what was picked up onto the focused element. */
   | { kind: "move-drop" }
-  | { kind: "move-cancel" };
+  | { kind: "move-cancel" }
+  /** Alt+Up / Alt+Down: nudge priority by ±5 (#17). */
+  | { kind: "priority-nudge"; delta: number };
+
+export type PriorityUrgencyTier = "critical" | "high" | "medium" | "low";
+
+export function priorityUrgencyTier(priority: number): PriorityUrgencyTier {
+  const p = Number.isFinite(priority) ? priority : 50;
+  if (p <= 15) return "critical";
+  if (p <= 35) return "high";
+  if (p <= 65) return "medium";
+  return "low";
+}
 
 export function treeKeyCommand(evt: {
   key: string;
@@ -67,6 +79,11 @@ export function treeKeyCommand(evt: {
   ctrlKey: boolean;
   metaKey: boolean;
 }): TreeKeyCommand | null {
+  if (evt.altKey && !evt.ctrlKey && !evt.metaKey) {
+    if (evt.key === "ArrowUp") return { kind: "priority-nudge", delta: -5 };
+    if (evt.key === "ArrowDown") return { kind: "priority-nudge", delta: 5 };
+    return null;
+  }
   if (evt.altKey || evt.ctrlKey || evt.metaKey) return null;
   switch (evt.key) {
     case "ArrowDown":

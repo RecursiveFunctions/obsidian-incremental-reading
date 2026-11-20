@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  computeSessionTrackSegments,
   contextSourceParentId,
   EMPTY_COLLECTION_COPY,
   EMPTY_NEURAL_COPY,
@@ -72,7 +73,27 @@ test("sessionBarLabel: due, neural, and complete", () => {
   );
   assert.equal(
     sessionBarLabel({ done: false, isNeural: false, remaining: 4, phase: "drill" }),
-    "Drill · 4 left",
+    "Final Drill · 4 left",
+  );
+  assert.deepEqual(
+    computeSessionTrackSegments({
+      done: false,
+      phase: "due",
+      index: 4,
+      queueLength: 8,
+      drillPendingCount: 2,
+    }),
+    { primaryPct: 40, drillPct: 20 },
+  );
+  assert.deepEqual(
+    computeSessionTrackSegments({
+      done: false,
+      phase: "drill",
+      index: 1,
+      queueLength: 4,
+      drillPendingCount: 4,
+    }),
+    { primaryPct: 0, drillPct: 25 },
   );
   assert.equal(
     sessionBarLabel({

@@ -374,6 +374,42 @@ export function drillReviewQueue(
  * Session chrome (distinct from the per-card title). `remaining` includes
  * the current card. Neural vs Due vs Drill is a mode, not a `Neuro=` prefix.
  */
+export interface SessionTrackSegments {
+  primaryPct: number;
+  drillPct: number;
+}
+
+export function computeSessionTrackSegments(opts: {
+  done: boolean;
+  phase: SessionBarPhase;
+  index: number;
+  queueLength: number;
+  drillPendingCount: number;
+}): SessionTrackSegments {
+  if (opts.done || opts.queueLength <= 0) {
+    return opts.phase === "drill"
+      ? { primaryPct: 0, drillPct: 100 }
+      : { primaryPct: 100, drillPct: 0 };
+  }
+  if (opts.phase === "drill") {
+    return {
+      primaryPct: 0,
+      drillPct: Math.min(100, Math.max(0, Math.round((opts.index / opts.queueLength) * 100))),
+    };
+  }
+  const drillCount = Math.max(0, opts.drillPendingCount);
+  const totalUnits = opts.queueLength + drillCount;
+  const primaryPct = Math.min(
+    100,
+    Math.max(0, Math.round((opts.index / totalUnits) * 100)),
+  );
+  const drillPct = Math.min(
+    100 - primaryPct,
+    Math.max(0, Math.round((drillCount / totalUnits) * 100)),
+  );
+  return { primaryPct, drillPct };
+}
+
 export function sessionBarLabel(opts: {
   done: boolean;
   isNeural: boolean;
@@ -383,7 +419,7 @@ export function sessionBarLabel(opts: {
 }): string {
   if (opts.done) return "Session complete";
   if (opts.phase === "drill") {
-    return `Drill · ${opts.remaining} left`;
+    return `Final Drill · ${opts.remaining} left`;
   }
   if (opts.phase === "branch") {
     const rest = `${opts.remaining} left`;
