@@ -109,6 +109,8 @@ export interface IrSettings {
   mobileReviewFontSize: number;
   /** Mobile review button size: "compact" or "comfortable". */
   mobileReviewButtons: "compact" | "comfortable";
+  /** Include title-mention and rare-term lexical edges in Neural Queue spreading activation. */
+  neuralUseLexicalLinks: boolean;
 }
 
 export interface SortingPolicySettings {
@@ -246,6 +248,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   mobileReviewLayout: "full",
   mobileReviewFontSize: 1,
   mobileReviewButtons: "comfortable",
+  neuralUseLexicalLinks: true,
 };
 
 /** Fresh copy so restoring defaults cannot mutate the constant. */

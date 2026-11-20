@@ -57,8 +57,10 @@ import type { QueuePolicy } from "./src/queue";
 import {
   elementIdForNotePath,
   exciteNeuralElement,
+  expandNeuralQueueIfNeeded,
   makeLcg,
   NEURAL_MAX_QUEUE,
+  popNextNeuralElement,
   seedNeuralQueueState,
 } from "./src/ir/neural";
 import { buildNeuralAdjacency, neighborsForWalk } from "./src/ir/neural-graph";
@@ -3324,12 +3326,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     const sessionSeed = Date.now() ^ 0x9e3779b9;
     const resolvedSeed =
       seedElementId ?? (seedNotePath ? elementIdForNotePath(state, seedNotePath) : null);
+    const useLexical = this.settings.neuralUseLexicalLinks;
     const queue = neuralQueue(
       this.app,
       state,
       seedElementId,
       seedNotePath,
       makeLcg(sessionSeed),
+      useLexical,
     );
     
     if (queue.length < 2) {
@@ -3343,6 +3347,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         const adj = buildNeuralAdjacency(state, obsidianLinkIndex(this.app), {
           useTags: true,
           tagDegreeCap: 40,
+          useLexical,
         });
         const seeded = seedNeuralQueueState({
           seedId: resolvedSeed,
@@ -3400,23 +3405,49 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<ReviewSlot[]> {
     if (!this.ledger) return [];
     const state = await this.ledger.load();
+    const nowMs = Date.now();
     const curNeural = await this.ledger.readNeural(state.elements);
     const adj = buildNeuralAdjacency(state, obsidianLinkIndex(this.app), {
       useTags: true,
       tagDegreeCap: 40,
+      useLexical: this.settings.neuralUseLexicalLinks,
     });
-    const updated = exciteNeuralElement(curNeural, {
+    const priorityOf = (id: ElementId) => state.elements.get(id)?.priority ?? 50;
+    const neighbors = (id: ElementId) => neighborsForWalk(adj, id);
+    const dismissed = (id: ElementId) => state.elements.get(id)?.dismissed === true;
+
+    const excited = exciteNeuralElement(curNeural, {
       elementId,
-      priorityOf: (id) => state.elements.get(id)?.priority ?? 50,
-      neighbors: (id) => neighborsForWalk(adj, id),
-      dismissed: (id) => state.elements.get(id)?.dismissed === true,
-      nowMs: Date.now(),
+      priorityOf,
+      neighbors,
+      dismissed,
+      nowMs,
       capacity: NEURAL_MAX_QUEUE,
     });
-    await this.ledger.writeNeural(updated);
-    return neuralSlotsFromQueueState(this.app, state, updated).filter(
+    const expanded = expandNeuralQueueIfNeeded(excited, {
+      priorityOf,
+      neighbors,
+      dismissed,
+      nowMs,
+      capacity: NEURAL_MAX_QUEUE,
+      random: Math.random,
+    });
+    const popped = popNextNeuralElement(expanded, {
+      excludeIds: visitedPrefixIds,
+      elements: state.elements,
+      rng: Math.random,
+      nowMs,
+    });
+    await this.ledger.writeNeural(popped.state);
+
+    const slots = neuralSlotsFromQueueState(this.app, state, expanded).filter(
       (slot) => !visitedPrefixIds.has(slot.id),
     );
+    if (!popped.next) return slots;
+    const nextIdx = slots.findIndex((s) => s.id === popped.next!.id);
+    if (nextIdx <= 0) return slots;
+    const pickedSlot = slots[nextIdx]!;
+    return [pickedSlot, ...slots.slice(0, nextIdx), ...slots.slice(nextIdx + 1)];
   }
 
   public async startBranchReview(rootId: ElementId, includeFuture = false): Promise<void> {

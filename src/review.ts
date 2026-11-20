@@ -178,6 +178,7 @@ export function neuralQueue(
   seedElementId: ElementId | null,
   seedNotePath: string | null,
   random?: () => number,
+  useLexical = true,
 ): ReviewSlot[] {
   let elementId = seedElementId;
   let notePath = seedNotePath;
@@ -195,6 +196,7 @@ export function neuralQueue(
   const adj = buildNeuralAdjacency(state, obsidianLinkIndex(app), {
     useTags: true,
     tagDegreeCap: 40,
+    useLexical,
   });
   const walked = neuralWalkDetailed({
     seed: elementId,
@@ -294,6 +296,19 @@ export function obsidianLinkIndex(app: App): NoteLinkIndex {
         addFm(fmTags);
       }
       return [...out];
+    },
+    aliases(path: string): readonly string[] {
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!isVaultFile(file)) return [];
+      const cache = app.metadataCache.getFileCache(file);
+      const raw = cache?.frontmatter?.aliases;
+      if (Array.isArray(raw)) {
+        return raw.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+      }
+      if (typeof raw === "string" && raw.trim().length > 0) {
+        return [raw];
+      }
+      return [];
     },
   };
 }

@@ -12,6 +12,7 @@ import type { IrElement } from "./model";
 
 export const WIKILINK_DEGREE_CAP = 12;
 export const NEURAL_MAX_QUEUE = 200;
+export const NEURAL_EXPAND_THRESHOLD = 50;
 export const NEURAL_MAX_LAYERS = 3;
 export const NEURAL_STATE_VERSION = 1;
 export const NEURAL_COOLDOWN_MS = 4 * 3_600_000;
@@ -22,8 +23,10 @@ export const GROUP_P = {
   wikilink: 0.05,
   child: 0.16,
   parent: 0.16,
-  rootParent: 0.4,
+  titleMention: 0.20,
   sibling: 0.26,
+  lexical: 0.35,
+  rootParent: 0.4,
   siblingFar: 0.5,
 } as const;
 
@@ -48,7 +51,9 @@ export type NeuralEdgeKind =
   | "parent"
   | "rootParent"
   | "sibling"
-  | "tag";
+  | "tag"
+  | "titleMention"
+  | "lexical";
 
 export interface NeuralNeighbor {
   id: string;
@@ -56,6 +61,8 @@ export interface NeuralNeighbor {
   kind: NeuralEdgeKind;
   /** Set when `kind` is `tag`. */
   tag?: string;
+  /** Set when `kind` is `titleMention` or `lexical`. */
+  term?: string;
 }
 
 /** How this card was reached from the previous firing node. Seed has none. */
@@ -63,6 +70,7 @@ export interface NeuralProvenance {
   fromId: string;
   kind: NeuralEdgeKind;
   tag?: string;
+  term?: string;
 }
 
 export interface NeuralWalkOpts {
@@ -129,6 +137,10 @@ export function neuralViaLabel(
       return `via sibling of ${fromLabel}`;
     case "tag":
       return via.tag ? `via tag #${via.tag}` : `via tag ← ${fromLabel}`;
+    case "titleMention":
+      return via.term ? `via mention "${via.term}" ← ${fromLabel}` : `via mention ← ${fromLabel}`;
+    case "lexical":
+      return via.term ? `via term "${via.term}" ← ${fromLabel}` : `via term ← ${fromLabel}`;
   }
 }
 
@@ -181,6 +193,7 @@ export function neuralWalkDetailed(opts: NeuralWalkOpts): {
           fromId: id,
           kind: n.kind,
           ...(n.tag ? { tag: n.tag } : {}),
+          ...(n.term ? { term: n.term } : {}),
         };
         const prev = frontier.get(n.id);
         if (prev === undefined || combined < prev.p) {
@@ -302,6 +315,7 @@ export function parseNeuralQueueState(value: unknown): NeuralQueueState | null {
           fromId: v.fromId,
           kind: v.kind as NeuralEdgeKind,
           ...(typeof v.tag === "string" ? { tag: v.tag } : {}),
+          ...(typeof v.term === "string" ? { term: v.term } : {}),
         };
       }
     }
@@ -410,6 +424,7 @@ export function exciteNeuralElement(
       fromId: opts.elementId,
       kind: neighbor.kind,
       ...(neighbor.tag ? { tag: neighbor.tag } : {}),
+      ...(neighbor.term ? { term: neighbor.term } : {}),
     };
     const prev = byId.get(nId);
     if (!prev || score < prev.score) {
@@ -430,6 +445,117 @@ export function exciteNeuralElement(
   };
 }
 
+/** `TNeuralQueue.NeedsExpanding` (`0x00b5cf00`): true when frontier size is below 50 (`0x32`). */
+export function needsNeuralExpansion(
+  state: NeuralQueueState,
+  threshold = NEURAL_EXPAND_THRESHOLD,
+): boolean {
+  return state.entries.length < threshold;
+}
+
+export interface ExpandNeuralQueueOptions {
+  priorityOf: (id: ElementId) => number;
+  neighbors: (id: ElementId) => readonly NeuralNeighbor[];
+  dismissed?: (id: ElementId) => boolean;
+  nowMs?: number;
+  cooldownMs?: number;
+  capacity?: number;
+  threshold?: number;
+  random?: () => number;
+}
+
+function spreadFromEntries(
+  state: NeuralQueueState,
+  sources: readonly NeuralFrontierEntry[],
+  layerPenalty: number,
+  opts: ExpandNeuralQueueOptions,
+): NeuralQueueState {
+  const nowMs = opts.nowMs ?? state.updatedAt;
+  const cooldownMs = Math.max(1, opts.cooldownMs ?? NEURAL_COOLDOWN_MS);
+  const capacity = Math.max(1, opts.capacity ?? NEURAL_MAX_QUEUE);
+  const isDismissed = opts.dismissed ?? (() => false);
+
+  const byId = new Map<ElementId, NeuralFrontierEntry>();
+  for (const existing of state.entries) {
+    if (existing.id !== state.seedId && isDismissed(existing.id)) continue;
+    byId.set(existing.id, { ...existing });
+  }
+
+  for (const src of sources) {
+    for (const neighbor of opts.neighbors(src.id)) {
+      const nId = neighbor.id as ElementId;
+      if (nId === src.id || isDismissed(nId)) continue;
+      const hopScore = combinePriority(
+        toUnitPriority(opts.priorityOf(nId)),
+        neighbor.groupP,
+      );
+      let score = layerPenalty > 0 ? combinePriority(hopScore, layerPenalty) : hopScore;
+      const lastVisited = state.visitedAt[nId];
+      if (lastVisited !== undefined && nowMs >= lastVisited && nowMs - lastVisited < cooldownMs) {
+        const recencyFrac = 1 - (nowMs - lastVisited) / cooldownMs;
+        score = combinePriority(score, 0.85 * recencyFrac);
+      }
+      const via: NeuralProvenance = {
+        fromId: src.id,
+        kind: neighbor.kind,
+        ...(neighbor.tag ? { tag: neighbor.tag } : {}),
+        ...(neighbor.term ? { term: neighbor.term } : {}),
+      };
+      const prev = byId.get(nId);
+      if (!prev || score < prev.score) {
+        byId.set(nId, { id: nId, score, via });
+      }
+    }
+  }
+
+  const entries = [...byId.values()]
+    .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+    .slice(0, capacity);
+  return {
+    ...state,
+    entries,
+    updatedAt: nowMs,
+  };
+}
+
+function sampleEntries(
+  entries: readonly NeuralFrontierEntry[],
+  count: number,
+  random?: () => number,
+): NeuralFrontierEntry[] {
+  if (entries.length <= count) return [...entries];
+  if (!random) return entries.slice(0, count);
+  const pool = [...entries];
+  for (let i = 0; i < count; i += 1) {
+    const j = i + Math.floor(random() * (pool.length - i));
+    const tmp = pool[i]!;
+    pool[i] = pool[j]!;
+    pool[j] = tmp;
+  }
+  return pool.slice(0, count);
+}
+
+/**
+ * `0x00b5f280`: incremental `< 50` expansion.
+ * Pass 1 samples up to 15 (`0xf`) entries with penalty `0.5`;
+ * Pass 2 (if still `< 50`) samples up to 30 (`0x1e`) entries with penalty `0.9`.
+ */
+export function expandNeuralQueueIfNeeded(
+  state: NeuralQueueState,
+  opts: ExpandNeuralQueueOptions,
+): NeuralQueueState {
+  const threshold = Math.max(1, opts.threshold ?? NEURAL_EXPAND_THRESHOLD);
+  if (!needsNeuralExpansion(state, threshold)) return state;
+
+  const pass1Sources = sampleEntries(state.entries, 15, opts.random);
+  let next = spreadFromEntries(state, pass1Sources, 0.5, opts);
+  if (!needsNeuralExpansion(next, threshold)) return next;
+
+  const pass2Sources = sampleEntries(next.entries, 30, opts.random);
+  next = spreadFromEntries(next, pass2Sources, 0.9, opts);
+  return next;
+}
+
 export interface SeedNeuralQueueOptions {
   seedId: ElementId;
   baseState?: NeuralQueueState | null;
@@ -439,64 +565,100 @@ export interface SeedNeuralQueueOptions {
   nowMs?: number;
   cooldownMs?: number;
   capacity?: number;
+  threshold?: number;
   random?: () => number;
 }
 
+/**
+ * `0x00b5ece0` + `0x00b5ee50` + `0x00b5f280`: enqueue seed (`score = -1`),
+ * spread 1-hop neighbors, and expand incrementally while `< 50`.
+ */
 export function seedNeuralQueueState(opts: SeedNeuralQueueOptions): NeuralQueueState {
   const nowMs = opts.nowMs ?? 0;
   const capacity = Math.max(1, opts.capacity ?? NEURAL_MAX_QUEUE);
-  const walked = neuralWalkDetailed({
-    seed: opts.seedId,
-    priorityOf: (id) => opts.priorityOf(id as ElementId),
-    neighbors: (id) => opts.neighbors(id as ElementId),
-    dismissed: opts.dismissed ? (id) => opts.dismissed!(id as ElementId) : undefined,
-    maxQueue: capacity,
-    random: opts.random,
-  });
-
   const visitedAt = { ...(opts.baseState?.visitedAt ?? {}) };
-  const cooldownMs = Math.max(1, opts.cooldownMs ?? NEURAL_COOLDOWN_MS);
-  const entries: NeuralFrontierEntry[] = [];
-
-  for (let idx = 0; idx < walked.sequence.length; idx += 1) {
-    const id = walked.sequence[idx]! as ElementId;
-    if (idx === 0) {
-      entries.push({ id, score: -1 });
-      continue;
-    }
-    const via = walked.provenance.get(id);
-    const baseScore = Math.min(0.999, idx / capacity);
-    const lastVisited = visitedAt[id];
-    const score =
-      lastVisited !== undefined && nowMs >= lastVisited && nowMs - lastVisited < cooldownMs
-        ? combinePriority(baseScore, 0.5 * (1 - (nowMs - lastVisited) / cooldownMs))
-        : baseScore;
-    entries.push({ id, score, ...(via ? { via } : {}) });
-  }
-
-  entries.sort((a, b) => a.score - b.score || a.id.localeCompare(b.id));
-  return {
+  const seedState: NeuralQueueState = {
     schemaVersion: NEURAL_STATE_VERSION,
     seedId: opts.seedId,
-    entries: entries.slice(0, capacity),
+    entries: [{ id: opts.seedId, score: -1 }],
     visitedAt,
     updatedAt: nowMs,
   };
+
+  const oneHop = spreadFromEntries(
+    seedState,
+    seedState.entries,
+    0,
+    {
+      priorityOf: opts.priorityOf,
+      neighbors: opts.neighbors,
+      dismissed: opts.dismissed,
+      nowMs,
+      cooldownMs: opts.cooldownMs,
+      capacity,
+    },
+  );
+
+  return expandNeuralQueueIfNeeded(oneHop, {
+    priorityOf: opts.priorityOf,
+    neighbors: opts.neighbors,
+    dismissed: opts.dismissed,
+    nowMs,
+    cooldownMs: opts.cooldownMs,
+    capacity,
+    threshold: opts.threshold,
+    random: opts.random,
+  });
 }
 
+/**
+ * `TNeuralQueue.PickNext` (`0x00b5d220`).
+ * Deterministic lowest-score pop when `opts.rng` is omitted; heavy-tailed stochastic
+ * selection (`factor = r < 0.5 ? 1 / max(r, 0.0001) : 1 - r`) when `opts.rng` is provided.
+ */
 export function popNextNeuralElement(
   state: NeuralQueueState,
   opts?: {
     excludeIds?: ReadonlySet<ElementId>;
     elements?: ReadonlyMap<ElementId, IrElement>;
+    rng?: () => number;
+    nowMs?: number;
+    cooldownMs?: number;
   },
 ): { next: NeuralFrontierEntry | null; state: NeuralQueueState } {
   const normalized = normalizeNeuralQueueState(state, opts?.elements);
   const exclude = opts?.excludeIds;
-  const idx = normalized.entries.findIndex((entry) => !exclude?.has(entry.id));
-  if (idx < 0) return { next: null, state: normalized };
-  const picked = normalized.entries[idx]!;
-  const rest = normalized.entries.slice(0, idx).concat(normalized.entries.slice(idx + 1));
+  const candidates = normalized.entries.filter((entry) => !exclude?.has(entry.id));
+  if (candidates.length === 0) return { next: null, state: normalized };
+
+  let picked: NeuralFrontierEntry;
+  if (!opts?.rng) {
+    picked = candidates[0]!;
+  } else if (candidates[0]!.score <= 0) {
+    picked = candidates[0]!;
+  } else {
+    const nowMs = opts.nowMs ?? normalized.updatedAt;
+    const cooldownMs = Math.max(1, opts.cooldownMs ?? NEURAL_COOLDOWN_MS);
+    const uncooled = candidates.filter((entry) => {
+      const lastVisited = normalized.visitedAt[entry.id];
+      return !(lastVisited !== undefined && nowMs >= lastVisited && nowMs - lastVisited < cooldownMs);
+    });
+    const pool = uncooled.length > 0 ? uncooled : candidates;
+    let best = pool[0]!;
+    let bestWeighted = Number.POSITIVE_INFINITY;
+    for (const entry of pool) {
+      const r = opts.rng();
+      const factor = r < 0.5 ? 1.0 / Math.max(r, 0.0001) : 1.0 - r;
+      const weighted = factor * Math.max(entry.score, 1e-6);
+      if (weighted < bestWeighted) {
+        bestWeighted = weighted;
+        best = entry;
+      }
+    }
+    picked = best;
+  }
+
+  const rest = normalized.entries.filter((entry) => entry.id !== picked.id);
   return {
     next: picked,
     state: {

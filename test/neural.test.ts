@@ -14,7 +14,9 @@ import {
   createNeuralQueueState,
   elementIdForNotePath,
   exciteNeuralElement,
+  expandNeuralQueueIfNeeded,
   makeLcg,
+  needsNeuralExpansion,
   neuralViaLabel,
   neuralWalk,
   neuralWalkDetailed,
@@ -705,4 +707,123 @@ test("IrLedger.readNeural and writeNeural persist generation-scoped neural.json 
   const nextLedger = new IrLedger(fs);
   await nextLedger.init();
   assert.deepEqual((await nextLedger.readNeural()).entries, []);
+});
+
+test("needsNeuralExpansion and expandNeuralQueueIfNeeded expand <50 and halt at >=50", () => {
+  const nodes: IrElement[] = [];
+  const notes: FakeNote[] = [];
+  for (let i = 0; i < 65; i += 1) {
+    const id = `n${i}`;
+    const path = `N${i}.md`;
+    const links: string[] = [];
+    if (2 * i + 1 < 65) links.push(`N${2 * i + 1}.md`);
+    if (2 * i + 2 < 65) links.push(`N${2 * i + 2}.md`);
+    nodes.push(el(id, { type: "topic", notePath: path, text: `node ${i}`, priority: 30 }));
+    notes.push({
+      path,
+      basename: `N${i}`,
+      extension: "md",
+      links,
+    });
+  }
+  const s = state(nodes);
+  const adj = buildNeuralAdjacency(s, linkIndex(notes));
+
+  const small = createNeuralQueueState(eid("n0"), 1_000);
+  assert.equal(needsNeuralExpansion(small), true);
+
+  const seeded = seedNeuralQueueState({
+    seedId: eid("n0"),
+    priorityOf: (id) => s.elements.get(id)?.priority ?? 50,
+    neighbors: (id) => neighborsForWalk(adj, id),
+    nowMs: 1_000,
+    random: makeLcg(7),
+  });
+  assert.ok(seeded.entries.length >= 2);
+
+  // Repeated incremental expansion stops once >= 50 or component is exhausted
+  let cur = seeded;
+  for (let step = 0; step < 20 && needsNeuralExpansion(cur); step += 1) {
+    cur = expandNeuralQueueIfNeeded(cur, {
+      priorityOf: (id) => s.elements.get(id)?.priority ?? 50,
+      neighbors: (id) => neighborsForWalk(adj, id),
+      nowMs: 1_000 + step,
+      random: makeLcg(7 + step),
+    });
+  }
+  assert.ok(cur.entries.length >= 50);
+  assert.equal(needsNeuralExpansion(cur), false);
+
+  const unchanged = expandNeuralQueueIfNeeded(cur, {
+    priorityOf: (id) => s.elements.get(id)?.priority ?? 50,
+    neighbors: (id) => neighborsForWalk(adj, id),
+  });
+  assert.equal(unchanged, cur);
+});
+
+test("popNextNeuralElement is deterministic without rng and heavy-tailed stochastic with rng", () => {
+  const q = createNeuralQueueState(eid("a"), 10_000);
+  q.entries = [
+    { id: eid("a"), score: 0.2 },
+    { id: eid("b"), score: 0.4 },
+    { id: eid("c"), score: 0.6 },
+    { id: eid("d"), score: 0.8 },
+  ];
+
+  const det = popNextNeuralElement(q);
+  assert.equal(det.next?.id, eid("a"));
+
+  const rng = makeLcg(12345);
+  const picks = new Set<string>();
+  for (let i = 0; i < 12; i += 1) {
+    const p = popNextNeuralElement(q, { rng, nowMs: 10_000 });
+    if (p.next) picks.add(p.next.id);
+  }
+  assert.ok(picks.size >= 2, "stochastic PickNext should explore beyond only the top entry");
+});
+
+test("buildNeuralAdjacency with useLexical connects titleMention & rare lexical terms, ignores URLs/stopwords, and respects cap", () => {
+  const t1 = el("t1", {
+    type: "topic",
+    notePath: "Quantum Entanglement.md",
+    text: "See https://example.com/quantum-entanglement-ignore-url for details about superconductivity and decoherence.",
+  });
+  const t2 = el("t2", {
+    type: "extract",
+    text: "We observed Quantum Entanglement in the lab with strong decoherence effects.",
+  });
+  const t3 = el("t3", {
+    type: "extract",
+    text: "Another note discussing superconductivity without linking directly.",
+  });
+  const t4 = el("t4", {
+    type: "extract",
+    text: "This note only shares common stopwords like because and through and https://example.com/quantum-entanglement-ignore-url.",
+  });
+
+  const s = state([t1, t2, t3, t4]);
+  const adjOn = buildNeuralAdjacency(s, emptyLinkIndex(), { useLexical: true, lexicalDegreeCap: 5 });
+  const t1Neighbors = adjOn.get("t1") ?? [];
+  const mentionEdge = t1Neighbors.find((n) => n.id === "t2");
+  assert.equal(mentionEdge?.kind, "titleMention");
+  assert.equal(mentionEdge?.term, "Quantum Entanglement");
+  assert.equal(
+    neuralViaLabel({ fromId: "t1", kind: "titleMention", term: "Quantum Entanglement" }, "Quantum Entanglement"),
+    "via mention \"Quantum Entanglement\" ← Quantum Entanglement",
+  );
+
+  const lexicalEdge = t1Neighbors.find((n) => n.id === "t3");
+  assert.equal(lexicalEdge?.kind, "lexical");
+  assert.equal(lexicalEdge?.term, "superconductivity");
+  assert.equal(
+    neuralViaLabel({ fromId: "t1", kind: "lexical", term: "superconductivity" }, "Quantum Entanglement"),
+    "via term \"superconductivity\" ← Quantum Entanglement",
+  );
+
+  // Stopwords & URLs do not connect t4
+  assert.equal(t1Neighbors.some((n) => n.id === "t4"), false);
+
+  // useLexical: false disables both titleMention and lexical edges
+  const adjOff = buildNeuralAdjacency(s, emptyLinkIndex(), { useLexical: false });
+  assert.equal((adjOff.get("t1") ?? []).length, 0);
 });

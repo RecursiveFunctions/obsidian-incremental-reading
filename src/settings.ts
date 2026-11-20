@@ -247,6 +247,20 @@ export class IrSettingTab extends PluginSettingTab {
         });
       });
 
+    new Setting(containerEl)
+      .setName("Neural Queue: lexical & title-mention links")
+      .setDesc(
+        "Connect unlinked note-title/alias mentions and shared rare terms during Neural Queue spreading activation.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.neuralUseLexicalLinks)
+          .onChange(async (value) => {
+            this.plugin.settings.neuralUseLexicalLinks = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
     containerEl.createEl("h3", { text: "Extracts" });
 
     new Setting(containerEl)
