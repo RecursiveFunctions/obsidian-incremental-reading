@@ -2,6 +2,7 @@ import { newElementId, newEventId, type DeviceId, type ElementId } from "./ids";
 import { clampPriority, type IrElement, type IrEvent, type IrType, type ReadSchedule, type StoredCard } from "./model";
 import type { Bookmark } from "./bookmark";
 import { normalizeUrlForDedupe, contentFingerprint } from "./bulk-import";
+import { htmlToMarkdown as sharedHtmlToMarkdown } from "./html-to-markdown";
 import {
   parseContents,
   parseElementInfo,
@@ -140,24 +141,7 @@ function decodeWindows1252(bytes: Uint8Array): string {
 }
 
 export function defaultHtmlToMarkdown(html: string): string {
-  return html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>|<\/div>|<\/li>|<\/h[1-6]>/gi, "\n\n")
-    .replace(/<li\b[^>]*>/gi, "- ")
-    .replace(/<h([1-6])\b[^>]*>/gi, (_, level: string) => `${"#".repeat(Number(level))} `)
-    .replace(/<(?:strong|b)\b[^>]*>(.*?)<\/(?:strong|b)>/gi, "**$1**")
-    .replace(/<(?:em|i)\b[^>]*>(.*?)<\/(?:em|i)>/gi, "*$1*")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return sharedHtmlToMarkdown(html);
 }
 
 function sanitizeNoteStem(raw: string, fallback: string): string {
