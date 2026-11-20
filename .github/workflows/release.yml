@@ -105,3 +105,37 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post changelog to Discord
+        if: env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          node - <<'EOF'
+          const fs = require("fs");
+          const tag = process.env.TAG;
+          const md = fs.readFileSync("CHANGELOG.md", "utf8");
+          const esc = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const re = new RegExp(`^## \\[${esc}\\][^\n]*\n([\\s\\S]*?)(?=^## \\[|$(?!\\n))`, "m");
+          const match = md.match(re);
+          const notes = (match ? match[1].trim() : `Release ${tag}`).slice(0, 3900);
+
+          const payload = {
+            embeds: [{
+              title: `obsidian-incremental-reading ${tag}`,
+              url: `${process.env.REPO_URL}/releases/tag/${tag}`,
+              description: notes,
+              color: 0x7c3aed
+            }]
+          };
+
+          fetch(process.env.DISCORD_WEBHOOK, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          }).then(r => {
+            if (!r.ok) process.exit(1);
+          });
+          EOF
