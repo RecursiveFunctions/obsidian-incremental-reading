@@ -429,6 +429,15 @@ img.ir-source-image.ir-cloze-source {
   display: none;
 }
 
+/* The mobile shell and the capture/review FABs toggle `is-hidden` from their
+   one-second sync; without a rule for the classes they actually carry, the
+   matching "Show ..." settings only add a class that nothing styles. */
+.ir-mobile-shell.is-hidden,
+.ir-mobile-capture-fab.is-hidden,
+.ir-mobile-review-fab.is-hidden {
+  display: none;
+}
+
 .ir-workspace-fab:active {
   transform: scale(0.96);
 }
