@@ -501,11 +501,11 @@ export class IrSettingTab extends PluginSettingTab {
 
     if (((this.plugin.settings.mercyWeights.mode ?? 3) & 1) === 1) {
       for (const [key, name, desc] of [
-        ["importance", "Mercy weight: Importance", "Weight on difficulty / easiness complement (default: 5)."],
+        ["importance", "Mercy weight: Importance", "Weight on element priority complement 1 - priority/100 (default: 5)."],
         ["lateness", "Mercy weight: Lateness", "Weight on sigmoid lateness ratio (default: 1)."],
-        ["easiness", "Mercy weight: Easiness", "Weight on recency and lifetime ratio (default: 6)."],
+        ["easiness", "Mercy weight: Easiness", "Weight on low lapse count and low overdue ratio (default: 6)."],
         ["investment", "Mercy weight: Investment", "Weight on repetition count and typical interval (default: 10)."],
-        ["recency", "Mercy weight: Recency", "Weight on investment and lateness blend (default: 8)."],
+        ["recency", "Mercy weight: Recency", "Weight on short overdue elapsed time and low lapse count (default: 8)."],
       ] as const) {
         new Setting(containerEl)
           .setName(name)

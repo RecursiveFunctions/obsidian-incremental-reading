@@ -55,14 +55,16 @@ export const DEFAULT_MERCY_WEIGHTS: MercyWeights = {
 };
 
 export interface MercyElementInput {
-  /** Priority fraction in [0, 1], where 1 = highest importance (priority 0). */
-  importance: number;
+  /** Element priority in [0, 100] (0 = highest importance, 100 = lowest). */
+  priority: number;
   /** Days overdue (clamped to >= 1; < -1 throws). */
   lateness: number;
-  /** Repetition / investment count (>= 0). */
-  investment: number;
-  /** Easiness in [0, 1] (scaled to 0..100). */
-  easiness: number;
+  /** Repetition count (clamped to [0, 20] for typicalInterval). */
+  reps: number;
+  /** Lapse / reset count (>= 0). */
+  lapses: number;
+  /** Spread horizon in days (>= 1, default 1). */
+  spreadDays?: number;
   /** Optional stored interval cap in days. */
   intervalCap?: number;
 }
@@ -86,7 +88,8 @@ export function typicalInterval(rep: number, pageRow = TYPICAL_INTERVAL_PAGE_ROW
 }
 
 /**
- * Compute the five Mercy dimension scores `[d0, d1, d2, d3, d4]` in `[0, 1]`.
+ * Compute the five Mercy dimension scores `[d0, d1, d2, d3, d4]` in `[0, 1]`
+ * matching `Str_MercyOrdinalInComputeMercyOrdinals` (`0x00cfe750`).
  */
 export function computeMercyDimensionScores(element: MercyElementInput): [number, number, number, number, number] {
   const latenessDays = Number(element.lateness);
@@ -94,31 +97,34 @@ export function computeMercyDimensionScores(element: MercyElementInput): [number
     throw new RangeError("Interval passed found to be negative!");
   }
   const lateness = Math.max(1.0, latenessDays);
-  const investment = Math.max(0.0, Number(element.investment));
-  const rep = Math.max(1, Math.min(REP_CAP, Math.round(Number(element.importance) * REP_CAP)));
+  const spreadDays = Math.max(1, Math.trunc(Number(element.spreadDays ?? 1)));
+  const reps = Math.max(0, Math.min(REP_CAP, Math.trunc(Number(element.reps ?? 0))));
+  const lapses = Math.max(0, Math.trunc(Number(element.lapses ?? 0)));
+  const rawPriority = Number(element.priority);
+  const priority = Math.min(100.0, Math.max(0.0, Number.isFinite(rawPriority) ? rawPriority : 50.0));
 
-  let typical = typicalInterval(rep);
+  let typical = typicalInterval(reps);
   const cap = element.intervalCap !== undefined ? Number(element.intervalCap) : typical;
   if (Number.isFinite(cap) && cap > 0 && typical > cap) {
     typical = cap;
   }
 
-  const lifetimeRatio = investment / (investment + 1.0);
-  const lapseRatio = lateness / (lateness + 200.0);
+  const lapseRatio = lapses / (lapses + 1.0);
+  const latenessRatio = lateness / (lateness + 200.0);
+  const effectiveLateness = Math.max(1.0, lateness + spreadDays - 1);
 
-  // d[0] (weighted by w_recency): investment + lateness axis
-  const d0 = 0.65 * (1.0 - lifetimeRatio) + 0.35 * (1.0 - lapseRatio);
-  // d[1] (weighted by w_investment): rep + typical interval axis
-  const d1 = 0.5 * (rep / (rep + 3.0)) + 0.5 * (typical / (typical + 400.0));
-  // d[3] (weighted by w_importance): easiness complement
-  const easinessPct = Number(element.easiness) * 100.0;
-  const d3 = 1.0 - easinessPct / 100.0;
-  // d[4] (weighted by w_lateness): sigmoid lateness
-  const ratio = typical === 0.0 ? 0.0 : lateness / typical;
+  // d[0] (weighted by w_recency): short overdue elapsed time & low lapse count
+  const d0 = 0.65 * (1.0 - latenessRatio) + 0.35 * (1.0 - lapseRatio);
+  // d[1] (weighted by w_investment): repetition count & typical interval
+  const d1 = 0.5 * (reps / (reps + 3.0)) + 0.5 * (typical / (typical + 400.0));
+  // d[3] (weighted by w_importance): element priority complement (0 = highest -> 1.0)
+  const d3 = 1.0 - priority / 100.0;
+  // d[4] (weighted by w_lateness): sigmoid lateness ratio
+  const ratio = typical === 0.0 ? 0.0 : effectiveLateness / typical;
   const sigmoid = 1.4 + ratio !== 0.0 ? ratio / (1.4 + ratio) : 0.0;
-  const d4 = 0.6 * sigmoid + 0.4 * lapseRatio;
-  // d[2] (weighted by w_easiness): recency axis (depends on d[4])
-  const d2 = 0.7 * (1.0 - lifetimeRatio) + 0.3 * (1.0 - d4);
+  const d4 = 0.6 * sigmoid + 0.4 * latenessRatio;
+  // d[2] (weighted by w_easiness): low lapse count & low overdue ratio
+  const d2 = 0.7 * (1.0 - lapseRatio) + 0.3 * (1.0 - d4);
 
   return [d0, d1, d2, d3, d4];
 }
@@ -159,29 +165,22 @@ export function computeMercyOrdinals(
 /**
  * Derive `MercyElementInput` from a plugin `MercyEntry` at `actionMs`.
  */
-export function toMercyElementInput(entry: MercyEntry, actionMs: number): MercyElementInput {
+export function toMercyElementInput(
+  entry: MercyEntry,
+  actionMs: number,
+  spreadDays = 1,
+): MercyElementInput {
   const reps = Math.max(0, entry.reps ?? 0);
-  const importance = Math.min(1, Math.max(0.05, reps / REP_CAP));
+  const lapses = Math.max(0, entry.lapses ?? 0);
   const overdueMs = Math.max(0, actionMs - entry.dueMs);
   const lateness = Math.max(1, overdueMs / MS_PER_DAY);
-  const investment = reps;
-
-  // Easiness in [0, 1]: for items use FSRS difficulty (1..10, 1=easiest) or retention;
-  // for reading elements use A-Factor (1.1..4.0).
-  let easiness = 0.5;
-  if (entry.difficulty !== undefined && Number.isFinite(entry.difficulty)) {
-    easiness = Math.min(1, Math.max(0, (10 - entry.difficulty) / 9));
-  } else if (entry.aFactor !== undefined && Number.isFinite(entry.aFactor)) {
-    easiness = Math.min(1, Math.max(0, (entry.aFactor - 1.0) / 3.0));
-  } else if (entry.requestedRetention !== undefined && Number.isFinite(entry.requestedRetention)) {
-    easiness = Math.min(1, Math.max(0, entry.requestedRetention));
-  }
 
   return {
-    importance,
+    priority: entry.priority,
     lateness,
-    investment,
-    easiness,
+    reps,
+    lapses,
+    spreadDays,
     ...(entry.interval !== undefined && entry.interval > 0 ? { intervalCap: entry.interval } : {}),
   };
 }
@@ -194,6 +193,7 @@ export interface MercyEntry {
   type?: "item" | "reading";
   interval?: number;
   reps?: number;
+  lapses?: number;
   difficulty?: number;
   requestedRetention?: number;
   aFactor?: number;
@@ -340,20 +340,21 @@ function compareImportance(a: MercyEntry, b: MercyEntry): number {
 /**
  * Order entries from most-important-to-keep-today to most-deserving-of-postponement.
  * When `weights` is provided and `((weights.mode ?? 3) & 1) === 1`,
- * entries are sorted by ascending mercy ordinal (since a higher ordinal
- * means postpone sooner), with `compareImportance` as the tiebreaker.
+ * entries are sorted by descending mercy ordinal (matching `FUN_00d46c50` Max-criteria
+ * ordering where higher score = keep due today, lower score = postpone first),
+ * with `compareImportance` as the tiebreaker.
  */
-
 export function sortByMercyImportance(
   entries: readonly MercyEntry[],
   actionMs: number,
   weights?: MercyWeights,
+  spreadDays = 1,
 ): MercyEntry[] {
   const copy = [...entries];
   if (!weights || ((weights.mode ?? 3) & 1) === 0) {
     return copy.sort(compareImportance);
   }
-  const inputs = copy.map((e) => toMercyElementInput(e, actionMs));
+  const inputs = copy.map((e) => toMercyElementInput(e, actionMs, spreadDays));
   const ordinals = computeMercyOrdinals(weights, inputs);
   const ordById = new Map<string, number>();
   for (let i = 0; i < copy.length; i++) {
@@ -362,7 +363,7 @@ export function sortByMercyImportance(
   return copy.sort((a, b) => {
     const oa = ordById.get(a.id) ?? 0;
     const ob = ordById.get(b.id) ?? 0;
-    if (Math.abs(oa - ob) > 1e-12) return oa - ob;
+    if (Math.abs(oa - ob) > 1e-12) return ob - oa;
     return compareImportance(a, b);
   });
 }
@@ -422,10 +423,12 @@ export function planMercy(
       perDay: [],
     };
   }
+  const maxHorizon = Math.max(1, Math.floor(opts.maxHorizonDays ?? 30));
   const due = sortByMercyImportance(
     entries.filter((e) => !e.dismissed && Number.isFinite(e.dueMs) && e.dueMs <= actionMs),
     actionMs,
     opts.weights,
+    maxHorizon,
   );
   const future = entries.filter((e) => !e.dismissed && Number.isFinite(e.dueMs) && e.dueMs > actionMs);
   const dueToday = due.slice(0, ceiling);
@@ -439,7 +442,6 @@ export function planMercy(
     const day = localDateKey(entry.dueMs);
     counts.set(day, (counts.get(day) ?? 0) + 1);
   }
-  const maxHorizon = Math.max(1, Math.floor(opts.maxHorizonDays ?? 30));
   const assignments: MercyAssignment[] = [];
   for (const entry of overflow) {
     const elementCeiling = Math.max(
@@ -482,16 +484,19 @@ export function planAutoPostpone(
   const todayStart = new Date(actionMs);
   todayStart.setHours(0, 0, 0, 0);
   const cutoff = todayStart.getTime();
+  const horizon = Math.max(1, Math.floor(opts.maxHorizonDays ?? 30));
   const overdue = sortByMercyImportance(
     entries.filter((entry) => !entry.dismissed && Number.isFinite(entry.dueMs) && entry.dueMs < cutoff),
     actionMs,
     opts.weights,
+    horizon,
   );
   const dueToday = sortByMercyImportance(
     entries.filter((entry) => !entry.dismissed && Number.isFinite(entry.dueMs) &&
       entry.dueMs >= cutoff && entry.dueMs <= actionMs),
     actionMs,
     opts.weights,
+    horizon,
   );
   const keep = Math.max(0, Math.floor(opts.keepOverdue));
   const keptOverdue = overdue.slice(0, keep);
@@ -500,7 +505,6 @@ export function planAutoPostpone(
   for (const entry of overdue.slice(keep)) {
     (entry.priority <= opts.priorityCutoff ? protectedOverdue : overflow).push(entry);
   }
-  const horizon = Math.max(1, Math.floor(opts.maxHorizonDays ?? 30));
   const counts = new Map<string, number>();
   const assignments = overflow.map((entry, index) => {
     const elementHorizon = Math.max(

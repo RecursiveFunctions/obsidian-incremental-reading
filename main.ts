@@ -4727,6 +4727,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         type: isItem ? "item" : "reading",
         interval: el.card?.scheduledDays ?? el.schedule?.interval,
         reps: isItem ? (el.card?.reps ?? 0) : (hist?.readingReps ?? 0),
+        lapses: el.card?.lapses ?? 0,
         difficulty: el.card?.difficulty,
         requestedRetention: this.settings.desiredRetention,
         aFactor: el.schedule?.aFactor,

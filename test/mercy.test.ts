@@ -172,29 +172,31 @@ test("typicalInterval matches baseline interval table vectors", () => {
   assert.equal(typicalInterval(30), typicalInterval(20));
 });
 
-test("computeMercyOrdinals matches 5-dimension reference vectors", () => {
-  const v1 = computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
-    { importance: 0.05, lateness: 1, investment: 0.0, easiness: 0.5 },
-  ]);
-  assert.ok(Math.abs(v1[0]! - 0.588604523187) < 1e-9);
+test("computeMercyOrdinals matches 0x00cfe750 5-dimension formulas and one-hot weight pairing (#34)", () => {
+  const base = { priority: 20, lateness: 30, reps: 10, lapses: 2, spreadDays: 1 };
+  const dims = computeMercyDimensionScores(base);
 
-  const v2 = computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
-    { importance: 0.5, lateness: 30, investment: 100.0, easiness: 0.8 },
-  ]);
-  assert.ok(Math.abs(v2[0]! - 0.299571702717) < 1e-9);
+  // Verify d3 = 1 - priority / 100
+  assert.ok(Math.abs(dims[3] - 0.8) < 1e-12);
 
-  const v3 = computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
-    { importance: 1.0, lateness: 1, investment: 500.0, easiness: 0.9 },
-  ]);
-  assert.ok(Math.abs(v3[0]! - 0.342484818874) < 1e-9);
+  // Verify priority -> d3 sensitivity (lower priority number = higher importance = higher d3)
+  const highPri = computeMercyDimensionScores({ ...base, priority: 5 });
+  const lowPri = computeMercyDimensionScores({ ...base, priority: 95 });
+  assert.ok(highPri[3] > lowPri[3]);
+  assert.ok(Math.abs(highPri[3] - 0.95) < 1e-12);
+  assert.ok(Math.abs(lowPri[3] - 0.05) < 1e-12);
+
+  // Verify lapses -> d0/d2 sensitivity (fewer lapses = higher d0 and d2)
+  const zeroLapse = computeMercyDimensionScores({ ...base, lapses: 0 });
+  const manyLapse = computeMercyDimensionScores({ ...base, lapses: 5 });
+  assert.ok(zeroLapse[0] > manyLapse[0]);
+  assert.ok(zeroLapse[2] > manyLapse[2]);
 
   // Verify one-hot weight-to-dimension pairing (#34)
-  const sample = { importance: 0.5, lateness: 30, investment: 100.0, easiness: 0.8 };
-  const dims = computeMercyDimensionScores(sample);
   const oneHot = (key: "recency" | "investment" | "easiness" | "importance" | "lateness") =>
     computeMercyOrdinals(
       { importance: 0, lateness: 0, easiness: 0, investment: 0, recency: 0, [key]: 1, mode: 3 },
-      [sample],
+      [base],
     )[0]!;
   assert.ok(Math.abs(oneHot("recency") - dims[0]) < 1e-12);
   assert.ok(Math.abs(oneHot("investment") - dims[1]) < 1e-12);
@@ -202,31 +204,55 @@ test("computeMercyOrdinals matches 5-dimension reference vectors", () => {
   assert.ok(Math.abs(oneHot("importance") - dims[3]) < 1e-12);
   assert.ok(Math.abs(oneHot("lateness") - dims[4]) < 1e-12);
 
+  // Verify spreadDays increases effectiveLateness in d4 and lowers d2
+  const spread = computeMercyDimensionScores({ ...base, spreadDays: 30 });
+  assert.ok(spread[4] > dims[4]);
+  assert.ok(spread[2] < dims[2]);
+
   const zero = computeMercyOrdinals(
     { importance: 0, lateness: 0, easiness: 0, investment: 0, recency: 0, mode: 3 },
-    [{ importance: 0.5, lateness: 10, investment: 5, easiness: 0.5 }],
+    [{ priority: 50, lateness: 10, reps: 5, lapses: 0 }],
   );
   assert.equal(zero[0], 0.0);
 
   assert.throws(
     () => computeMercyOrdinals(DEFAULT_MERCY_WEIGHTS, [
-      { importance: 0.5, lateness: -2, investment: 0, easiness: 0.5 },
+      { priority: 50, lateness: -2, reps: 0, lapses: 0 },
     ]),
     /negative/,
   );
 });
 
-test("toMercyElementInput maps reps to importance fraction independent of priority (#26)", () => {
+test("toMercyElementInput maps priority, reps, lapses, lateness, spreadDays, and intervalCap", () => {
   const now = new Date(2026, 0, 10, 12).getTime();
-  const due = now - 86_400_000;
+  const due = now - 5 * 86_400_000;
 
-  assert.equal(toMercyElementInput({ id: "r1", priority: 90, dueMs: due, reps: 1 }, now).importance, 0.05);
-  assert.equal(toMercyElementInput({ id: "r10", priority: 10, dueMs: due, reps: 10 }, now).importance, 0.5);
-  assert.equal(toMercyElementInput({ id: "r20", priority: 50, dueMs: due, reps: 20 }, now).importance, 1.0);
-  assert.equal(
-    toMercyElementInput({ id: "p5", priority: 5, dueMs: due, reps: 8 }, now).importance,
-    toMercyElementInput({ id: "p95", priority: 95, dueMs: due, reps: 8 }, now).importance,
+  const input = toMercyElementInput(
+    { id: "el", priority: 15, dueMs: due, reps: 12, lapses: 3, interval: 45 },
+    now,
+    30,
   );
+  assert.equal(input.priority, 15);
+  assert.equal(input.reps, 12);
+  assert.equal(input.lapses, 3);
+  assert.equal(input.lateness, 5);
+  assert.equal(input.spreadDays, 30);
+  assert.equal(input.intervalCap, 45);
+});
+
+test("planMercy Max-criteria keeps high-priority / high-rep / zero-lapse elements dueToday", () => {
+  const now = new Date(2026, 0, 10, 12).getTime();
+  const due = now - 5 * 86_400_000;
+  const plan = planMercy(
+    [
+      { id: "lowPriLapsed", priority: 85, dueMs: due, reps: 1, lapses: 4, interval: 1 },
+      { id: "highPriInvested", priority: 5, dueMs: due, reps: 18, lapses: 0, interval: 40 },
+    ],
+    now,
+    { ceiling: 1, priorityCutoff: 0, weights: DEFAULT_MERCY_WEIGHTS },
+  );
+  assert.deepEqual(plan.dueToday, ["highPriInvested"]);
+  assert.deepEqual(plan.postponed, ["lowPriLapsed"]);
 });
 
 test("planAutoPostpone bounds overflow spread within maxHorizonDays (#30)", () => {
