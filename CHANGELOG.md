@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Vault-wide duplicate URL & content guard** (`src/ir/bulk-import.ts`, `main.ts`): `bulkImport` and mobile capture now check normalized URLs (ledger `anchor.url` plus Markdown frontmatter `url`/`source`) and content fingerprints (ledger text plus frontmatter-stripped Markdown bodies), surfacing a non-blocking Notice with **Open existing**, **Append as extract**, and **Import anyway** actions.
+- **Zero-dependency EPUB & HTML document importer** (`src/ir/zip-read.ts`, `src/ir/html-to-markdown.ts`, `src/ir/epub-opf.ts`, `src/ir/epub-import.ts`, `main.ts`): Added PKZIP decoding with zip-bomb caps, shared HTML-to-Markdown conversion (tables, lists, fenced code, `<img src>` / SVG `<image href>` attachment embeds), and `Import EPUB or HTML document` (plus file-menu entry) producing a Book parent topic, ordered Chapter child topics, wikilink TOC/cross-links, and attachments.
+- **SM-20 `Advance` & Obsidian `via search` review sessions** (`src/ir/manual-schedule.ts`, `src/ir/search-view.ts`, `src/review.ts`, `src/review-view.ts`, `src/tree-view.ts`, `main.ts`): Added priority-ordered `Advance` rescheduling across `[0..horizonDays]` (with undoable `manual-reschedule` events), `Review Obsidian search results (due / all)`, and `Review filtered` in Collection with a `via search` session provenance chip.
+- **Neural session `Due today` toggle** (`src/ir/neural.ts`, `src/ir/settings-data.ts`, `src/review.ts`, `src/review-view.ts`, `main.ts`): Added an inline `Due today` toggle chip (`neuralDueOnly`) on the Neural session bar that filters candidate/popped slots to elements due today while keeping unvisited seeds and associative bridges intact.
+- **Stats 26-week activity heatmap, rolling true retention & bounded leech triage** (`src/ir/leech.ts`, `src/ir/stats.ts`, `src/stats-view.ts`, `src/sm18-ir-mechanics.ts`, `src/settings.ts`, `main.ts`): Added interval-bounded leech detection (`maxLapseIntervalDays`), post-reset `failRate`, interactive leech threshold inputs and `Forget / Reset` action, 26-week calendar activity heatmap, 30-day rolling 7-day true retention trend, and simulated `(position, 100 - P)` dispersion curve preview in Settings.
+
+### Changed
+
+- **SM-20 early-review stability damping & growth-floor bypass** (`src/ir/sm20-matrix.ts`, `src/ir/sm20-scheduler.ts`): Reviews completed before `prevS` (`elapsedDays < prevS` and `retrievability > desiredRetention`) proportionally scale stability gain by `(1 - R) / (1 - target)` and bypass the `1.1x` minimum interval growth floor.
+
 ## [0.14.1] — 2026-11-20
 
 ### Fixed
