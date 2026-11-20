@@ -9,8 +9,10 @@ import type IncrementalReadingPlugin from "../main";
 import { PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
 import { cloneDefaultSettings } from "./ir/settings-data";
 import { getSm20MatrixStats } from "./ir/sm20-matrix";
-import { buildRepSortDispersionCurve } from "./queue";
-import { sliderToRepSortFactor } from "./sm18-ir-mechanics";
+import {
+  sliderToRepSortFactor,
+  simulateRepSortPositionCurve,
+} from "./sm18-ir-mechanics";
 import {
   isSpaceAfterReveal,
   SPACE_AFTER_REVEAL_OPTIONS,
@@ -705,12 +707,11 @@ export class IrSettingTab extends PluginSettingTab {
       cls: "ir-repsort-bars",
       attr: {
         role: "img",
-        "aria-label": `Repetition sort dispersion factor ${factorLabel}`,
-        title: `SM-20 dispersion factor: ${factorLabel}`,
+        "aria-label": `Simulated (position, 100 - priority) dispersion curve at ${factorLabel}`,
+        title: `SM-20 (pos, 100 - P) curve · dispersion ${factorLabel}`,
       },
     });
-    const curve = buildRepSortDispersionCurve(16);
-    const activeIndex = Math.round(clamped * (curve.length - 1));
+    const curve = simulateRepSortPositionCurve(clamped, 24);
     const width = 96;
     const height = 24;
     const svg = chart.createSvg("svg", {
@@ -721,9 +722,18 @@ export class IrSettingTab extends PluginSettingTab {
         height: String(height),
       },
     });
-    const pts = curve.map((pt, idx) => {
-      const x = (idx / Math.max(1, curve.length - 1)) * (width - 8) + 4;
-      const y = height - 3 - pt.normalizedSpread * (height - 6);
+    svg.createSvg("line", {
+      cls: "ir-repsort-svg-baseline",
+      attr: {
+        x1: "4",
+        y1: "3",
+        x2: String(width - 4),
+        y2: String(height - 3),
+      },
+    });
+    const pts = curve.map((pt) => {
+      const x = pt.position * (width - 8) + 4;
+      const y = height - 3 - (pt.inversePriority / 100) * (height - 6);
       return { x, y };
     });
     const polyPoints = pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
@@ -740,13 +750,13 @@ export class IrSettingTab extends PluginSettingTab {
         fill: "none",
       },
     });
-    const activePt = pts[activeIndex] ?? pts[0]!;
+    const activePt = pts[Math.round(clamped * (pts.length - 1))] ?? pts[0]!;
     svg.createSvg("circle", {
       cls: "ir-repsort-svg-dot",
       attr: {
         cx: activePt.x.toFixed(1),
         cy: activePt.y.toFixed(1),
-        r: "2.8",
+        r: "2.5",
       },
     });
     host.createSpan({ cls: "ir-repsort-readout", text: factorLabel });

@@ -8,7 +8,11 @@ import {
   rebuildQueueTail,
   type QueueEntry,
 } from "../src/queue";
-import { priorityToBucket20, sliderToRepSortFactor } from "../src/sm18-ir-mechanics";
+import {
+  priorityToBucket20,
+  simulateRepSortPositionCurve,
+  sliderToRepSortFactor,
+} from "../src/sm18-ir-mechanics";
 
 const NOW = 1_000_000;
 
@@ -258,4 +262,12 @@ test("sliderToRepSortFactor matches sm20.exe 0x00b2c950 curve and priorityToBuck
   assert.equal(priorityToBucket20(0), 1);
   assert.equal(priorityToBucket20(100), 20);
   assert.ok(priorityToBucket20(5) < priorityToBucket20(50));
+
+  const strictCurve = simulateRepSortPositionCurve(0, 11);
+  assert.equal(strictCurve.length, 11);
+  assert.equal(strictCurve[0]?.inversePriority, 100);
+  assert.equal(strictCurve[10]?.inversePriority, 0);
+  const dispersedCurve = simulateRepSortPositionCurve(0.8, 11);
+  assert.equal(dispersedCurve.length, 11);
+  assert.notDeepEqual(dispersedCurve, strictCurve);
 });

@@ -380,3 +380,44 @@ export function postponeCeilingForPriority(
   const p = Math.min(100.0, Math.max(0.0, Number.isFinite(priority) ? priority : 50.0));
   return lo + roundHalfToEven(((hi - lo) * p) / 100.0);
 }
+
+export interface RepSortPositionPoint {
+  position: number;
+  inversePriority: number;
+}
+
+/**
+ * Simulate the `(queue_position, 100 - P)` curve produced by `sliderToRepSortFactor`
+ * for a given jitter strength (`0..1`) over `count` uniformly prioritized items.
+ */
+export function simulateRepSortPositionCurve(
+  sliderStrength01: number,
+  count = 24,
+): RepSortPositionPoint[] {
+  const n = Math.max(2, Math.trunc(count));
+  const strength = Math.min(1.0, Math.max(0.0, Number.isFinite(sliderStrength01) ? sliderStrength01 : 0.0));
+  const ordered = Array.from({ length: n }, (_, idx) => ({
+    idx,
+    priority: (idx / (n - 1)) * 100.0,
+  }));
+  if (strength <= 0) {
+    return ordered.map((item, pos) => ({
+      position: pos / (n - 1),
+      inversePriority: 100.0 - item.priority,
+    }));
+  }
+  const factor = sliderToRepSortFactor(strength * 100.0);
+  const maxDisp = Math.min(n, Math.max(1, Math.ceil((factor / 20.0) * Math.sqrt(n))));
+  const permuted = ordered
+    .map((item) => {
+      let h = Math.imul((item.idx + 1) ^ 0x9e3779b9, 0x45d9f3b) >>> 0;
+      h ^= h >>> 16;
+      const unit = h / 0x1_0000_0000;
+      return { item, key: item.idx + (unit * 2.0 - 1.0) * maxDisp };
+    })
+    .sort((a, b) => a.key - b.key || a.item.idx - b.item.idx);
+  return permuted.map(({ item }, pos) => ({
+    position: pos / (n - 1),
+    inversePriority: 100.0 - item.priority,
+  }));
+}
