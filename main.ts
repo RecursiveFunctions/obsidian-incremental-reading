@@ -143,7 +143,14 @@ import {
 } from "./src/sm18-ir-mechanics";
 import { scheduleToTopicState, topicStateToSchedule } from "./src/ir/queue-adapter";
 import { buildCardResetCard } from "./src/ir/leech";
-import { parseJumpIntervalInput, planManualSchedule } from "./src/ir/manual-schedule";
+import {
+  buildAdvanceEvents,
+  parseAdvanceInput,
+  parseJumpIntervalInput,
+  planAdvanceElements,
+  planManualSchedule,
+} from "./src/ir/manual-schedule";
+import { readCoreSearchMatchedPaths } from "./src/ir/search-view";
 import { collectBranchIds } from "./src/ir/tree";
 import {
   addLocalDays,
@@ -741,6 +748,43 @@ export default class IncrementalReadingPlugin extends Plugin {
     });
 
     this.irCommand({
+      id: "advance-elements",
+      name: "Advance element / selection…",
+      icon: "fast-forward",
+      checkCallback: (checking) => {
+        const rv = this.getActiveReviewView();
+        if (rv && rv.getCurrentElementId()) {
+          if (!checking) rv.openAdvanceBar();
+          return true;
+        }
+        const tv = this.getTreeView();
+        if (tv) {
+          if (!checking) {
+            if (!tv.openAdvanceForSelection()) {
+              new Notice("Incremental Reading: select an element in Collection or Review first.");
+            }
+          }
+          return true;
+        }
+        return false;
+      },
+    });
+
+    this.irCommand({
+      id: "review-search-due",
+      name: "Review Obsidian search results (due)",
+      icon: "search",
+      callback: () => void this.reviewObsidianSearchResults(false),
+    });
+
+    this.irCommand({
+      id: "review-search-all",
+      name: "Review Obsidian search results (all)",
+      icon: "search-check",
+      callback: () => void this.reviewObsidianSearchResults(true),
+    });
+
+    this.irCommand({
       id: "duplicate-sibling-element",
       name: "Duplicate element as sibling",
       icon: "copy-plus",
@@ -780,12 +824,14 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrReset(elementId, file),
           commitJumpInterval: (elementId, file, raw) =>
             this.applyManualReschedule(elementId, file, raw),
+          commitAdvance: (ids, rawHorizon) =>
+            this.applyAdvanceElements(ids, rawHorizon),
           forkExtract: (elementId) => void this.forkStoreExtract(elementId),
           duplicateSibling: (elementId) => void this.duplicateSiblingElement(elementId),
           startBranchReview: (rootId, includeFuture) =>
             void this.startBranchReview(rootId, includeFuture),
-          startSubsetReview: (ids, includeFuture) =>
-            void this.startSubsetReview(ids, includeFuture),
+          startSubsetReview: (ids, includeFuture, phase) =>
+            void this.startSubsetReview(ids, includeFuture, phase ?? "subset"),
           addToSession: (ids) => void this.addElementsToSession(ids),
           resumeReading: (elementId) => this.resumeReadingBookmark(elementId),
           startNeuralReview: (elementId) =>
@@ -917,6 +963,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrPriorityPreview(preview, file),
           commitJumpInterval: (id, file, raw) =>
             this.applyManualReschedule(id, file, raw),
+          commitAdvance: (ids, rawHorizon) =>
+            this.applyAdvanceElements(ids, rawHorizon),
           duplicateSibling: (id) => this.duplicateSiblingElement(id),
           onSessionState: (orderedIds, cursor, progress) =>
             void this.persistSessionCursor(orderedIds, cursor, progress),
@@ -3650,6 +3698,120 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.getActiveReviewView()?.removePostponed(new Set([elementId]));
     new Notice(`Incremental Reading: jumped interval to +${plan.newInterval}d.`);
     return true;
+  }
+
+  private async applyAdvanceElements(
+    ids: readonly ElementId[],
+    rawHorizon: string,
+  ): Promise<boolean> {
+    if (!this.ledger) return false;
+    const horizonDays = parseAdvanceInput(rawHorizon);
+    if (horizonDays === null) {
+      new Notice("Incremental Reading: enter 0, today, or a positive day count.");
+      return false;
+    }
+    const now = Date.now();
+    const state = await this.ledger.load();
+    const targets: IrElement[] = [];
+    const seen = new Set<ElementId>();
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const el = state.elements.get(id);
+      if (el) targets.push(el);
+    }
+    const entries = planAdvanceElements(targets, horizonDays, now);
+    if (entries.length === 0) {
+      new Notice("Incremental Reading: no schedulable elements selected to advance.");
+      return false;
+    }
+    const deviceId = await this.ledger.getDeviceId();
+    const lamportStart = Math.max(now, await this.ledger.nextLamport());
+    const batchId = `advance:${deviceId}:${now}`;
+    const events = buildAdvanceEvents(entries, {
+      nowMs: now,
+      lamportStart,
+      deviceId,
+      batchId,
+      newEventId: () => newEventId(),
+    });
+
+    await this.ledger.appendEvents(events);
+    for (const entry of entries) {
+      const el = state.elements.get(entry.elementId);
+      if (!el?.notePath) continue;
+      const abs = this.app.vault.getAbstractFileByPath(el.notePath);
+      if (!(abs instanceof TFile) || abs.extension !== "md") continue;
+      await quietFrontmatterWrite(async () => {
+        await this.app.fileManager.processFrontMatter(abs, (fm) => {
+          if (entry.card) writeCardToFrontmatter(fm, storedToCard(entry.card));
+          else if (entry.schedule) {
+            const topicState = scheduleToTopicState(entry.schedule);
+            if (topicState) writeTopicToFrontmatter(fm, topicState);
+          }
+        });
+      }, "advance");
+    }
+
+    await this.ledger.reconcile();
+    const movedFuture = new Set<ElementId>(
+      entries.filter((e) => e.dayOffset > 0).map((e) => e.elementId),
+    );
+    if (movedFuture.size > 0) {
+      this.getActiveReviewView()?.removePostponed(movedFuture);
+    }
+    await this.getTreeView()?.refresh();
+    void this.refreshStatusBar();
+    new Notice(
+      `Incremental Reading: advanced ${entries.length} element${entries.length === 1 ? "" : "s"} (${
+        horizonDays === 0 ? "due today" : `spread over ${horizonDays}d`
+      }).`,
+    );
+    return true;
+  }
+
+  private async reviewObsidianSearchResults(includeFuture: boolean): Promise<void> {
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
+      return;
+    }
+    await this.ledgerInit;
+    const matchedPaths = readCoreSearchMatchedPaths(this.app);
+    if (matchedPaths.length === 0) {
+      new Notice("Incremental Reading: open Obsidian Search with matching notes first.");
+      return;
+    }
+
+    const state = await this.ledger.load();
+    const elementsByPath = new Map<string, ElementId[]>();
+    for (const el of state.elements.values()) {
+      if (el.dismissed) continue;
+      const keys = new Set<string>();
+      if (el.notePath) keys.add(el.notePath);
+      if (el.anchor?.sourcePath) keys.add(el.anchor.sourcePath);
+      for (const path of keys) {
+        const list = elementsByPath.get(path) ?? [];
+        list.push(el.id);
+        elementsByPath.set(path, list);
+      }
+    }
+
+    const ids: ElementId[] = [];
+    const seen = new Set<ElementId>();
+    for (const path of matchedPaths) {
+      for (const id of elementsByPath.get(path) ?? []) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          ids.push(id);
+        }
+      }
+    }
+
+    if (ids.length === 0) {
+      new Notice("Incremental Reading: none of the Obsidian search matches are IR elements.");
+      return;
+    }
+    await this.startSubsetReview(ids, includeFuture, "search");
   }
 
   public async startFinalDrill(): Promise<void> {

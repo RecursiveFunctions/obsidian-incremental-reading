@@ -31,6 +31,7 @@ import {
 import { clampPriority } from "./ir/model";
 import { treeRowLabel } from "./ir/labels";
 import type { IrElement, IrType } from "./ir/model";
+import type { SessionBarPhase } from "./review";
 import {
   formatPriority,
   collectionSortOrder,
@@ -123,10 +124,18 @@ export interface IrTreeViewHost {
     file: TFile | null,
     rawInput: string,
   ) => Promise<boolean>;
+  commitAdvance?: (
+    ids: readonly ElementId[],
+    rawHorizon: string,
+  ) => Promise<boolean>;
   forkExtract?: CommitIrForkFn;
   duplicateSibling?: CommitIrForkFn;
   startBranchReview?: (rootId: ElementId, includeFuture: boolean) => void;
-  startSubsetReview?: (ids: readonly ElementId[], includeFuture: boolean) => void;
+  startSubsetReview?: (
+    ids: readonly ElementId[],
+    includeFuture: boolean,
+    phase?: SessionBarPhase,
+  ) => void;
   addToSession?: (ids: readonly ElementId[]) => void;
   /**
    * Open the review pane on the given (or most-recent-by-default)
@@ -250,6 +259,7 @@ export class IrTreeView extends ItemView {
   private readonly commitReanchor?: CommitIrReanchorFn;
   private readonly commitReset?: CommitIrResetFn;
   private readonly commitJumpInterval?: IrTreeViewHost["commitJumpInterval"];
+  private readonly commitAdvance?: IrTreeViewHost["commitAdvance"];
   private readonly forkExtract?: CommitIrForkFn;
   private readonly duplicateSibling?: CommitIrForkFn;
   private readonly startBranchReview?: IrTreeViewHost["startBranchReview"];
@@ -277,6 +287,7 @@ export class IrTreeView extends ItemView {
     this.commitReanchor = host.commitReanchor;
     this.commitReset = host.commitReset;
     this.commitJumpInterval = host.commitJumpInterval;
+    this.commitAdvance = host.commitAdvance;
     this.forkExtract = host.forkExtract;
     this.duplicateSibling = host.duplicateSibling;
     this.startBranchReview = host.startBranchReview;
@@ -527,6 +538,21 @@ export class IrTreeView extends ItemView {
         void this.render();
       }, FILTER_DEBOUNCE_MS);
     });
+    if (this.startSubsetReview && (this.filterText.trim().length > 0 || activeFilterCount > 0)) {
+      const reviewFiltered = searchRow.createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: "Review filtered",
+        attr: { type: "button" },
+      });
+      reviewFiltered.onclick = () => {
+        const ids = [...this.lastNodeIds] as ElementId[];
+        if (ids.length === 0) {
+          new Notice("Incremental Reading: no filtered elements to review.");
+          return;
+        }
+        this.startSubsetReview!(ids, true, "search");
+      };
+    }
     if (this.filterText) {
       requestAnimationFrame(() => {
         searchInput.focus();
@@ -1609,6 +1635,14 @@ export class IrTreeView extends ItemView {
           .setTitle(`Postpone ${days} day${days === 1 ? "" : "s"}`).setIcon("clock")
           .onClick(() => void this.bulkPostpone(days, ids)));
       }
+      if (this.commitAdvance && activeCount > 0) {
+        menu.addItem((item) =>
+          item
+            .setTitle("Advance…")
+            .setIcon("fast-forward")
+            .onClick(() => this.showAdvanceEditor(more, ids)),
+        );
+      }
       if (this.commitReset) {
         menu.addItem((item) => item.setTitle("Forget / Reset schedule").setIcon("rotate-ccw")
           .onClick(() => void this.bulkReset(ids)));
@@ -1633,6 +1667,49 @@ export class IrTreeView extends ItemView {
     if (!Platform.isMobile) surface.createEl("h3", { text: title });
     const close = () => { surface.remove(); trigger.focus(); };
     return { surface, close };
+  }
+
+  openAdvanceForSelection(): boolean {
+    if (!this.commitAdvance) return false;
+    const ids: ElementId[] =
+      this.selectedIds.size > 0
+        ? ([...this.selectedIds] as ElementId[])
+        : this.focusedId
+          ? [this.focusedId as ElementId]
+          : [];
+    if (ids.length === 0) return false;
+    const trigger =
+      (this.contentEl.querySelector(".ir-tree-selection-bar") as HTMLElement | null) ??
+      this.contentEl;
+    this.showAdvanceEditor(trigger, ids);
+    return true;
+  }
+
+  private showAdvanceEditor(trigger: HTMLElement, ids: readonly ElementId[]): void {
+    if (!this.commitAdvance || ids.length === 0) return;
+    const label = ids.length === 1 ? "Advance element" : `Advance ${ids.length} elements`;
+    const { surface, close } = this.createAdaptiveSurface(trigger, label);
+    const input = surface.createEl("input", {
+      type: "text",
+      placeholder: "0 / today, or N days",
+    });
+    const row = surface.createDiv({ cls: "ir-bulk-preview-actions" });
+    const submit = async () => {
+      const ok = await this.commitAdvance!(ids, input.value);
+      if (ok) {
+        close();
+        void this.render();
+      }
+    };
+    row.createEl("button", { text: "Advance", cls: "mod-cta", type: "button" })
+      .addEventListener("click", () => void submit());
+    row.createEl("button", { text: "Cancel", type: "button" })
+      .addEventListener("click", close);
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); void submit(); }
+      else if (ev.key === "Escape") { ev.preventDefault(); close(); }
+    });
+    input.focus();
   }
 
   private showBulkMoveEditor(trigger: HTMLElement, ids: ElementId[]): void {
@@ -2587,6 +2664,15 @@ export class IrTreeView extends ItemView {
             });
             input.focus();
           }),
+      );
+    }
+
+    if (this.commitAdvance && !node.element.dismissed) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Advance…")
+          .setIcon("fast-forward")
+          .onClick(() => this.showAdvanceEditor(li, [elId])),
       );
     }
 

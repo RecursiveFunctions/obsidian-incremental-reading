@@ -269,6 +269,10 @@ export interface IrReviewViewHost {
     file: TFile | null,
     rawInput: string,
   ) => Promise<boolean>;
+  commitAdvance?: (
+    ids: ElementId[],
+    rawHorizon: string,
+  ) => Promise<boolean>;
   duplicateSibling?: (id: ElementId) => Promise<void>;
   onSessionState?: (
     orderedIds: ElementId[],
@@ -516,6 +520,10 @@ export class IrReviewView extends ItemView {
     file: TFile | null,
     rawInput: string,
   ) => Promise<boolean>;
+  private readonly commitAdvance?: (
+    ids: ElementId[],
+    rawHorizon: string,
+  ) => Promise<boolean>;
   private readonly duplicateSibling?: (id: ElementId) => Promise<void>;
   private readonly onSessionState?: (
     orderedIds: ElementId[],
@@ -563,6 +571,7 @@ export class IrReviewView extends ItemView {
     this.commitPriority = host.commitPriority;
     this.commitPriorityPreview = host.commitPriorityPreview;
     this.commitJumpInterval = host.commitJumpInterval;
+    this.commitAdvance = host.commitAdvance;
     this.duplicateSibling = host.duplicateSibling;
     this.onSessionState = host.onSessionState;
     this.onNeuralExcite = host.onNeuralExcite;
@@ -1660,6 +1669,12 @@ export class IrReviewView extends ItemView {
         run: () => this.openJumpIntervalBar(),
       });
     }
+    if (this.commitAdvance) {
+      items.push({
+        label: "Advance…",
+        run: () => this.openAdvanceBar(),
+      });
+    }
     items.push({
       label: this.labelWithHotkey("Dismiss", "D"),
       run: () => void this.dismiss(),
@@ -1725,6 +1740,12 @@ export class IrReviewView extends ItemView {
       items.push({
         label: "Jump interval…",
         run: () => this.openJumpIntervalBar(),
+      });
+    }
+    if (this.commitAdvance) {
+      items.push({
+        label: "Advance…",
+        run: () => this.openAdvanceBar(),
       });
     }
     items.push({
@@ -2960,6 +2981,43 @@ export class IrReviewView extends ItemView {
     input.focus();
   }
 
+  /** Non-modal inline bar for SM-20 Advance (0 / today, or N days). */
+  openAdvanceBar(): void {
+    const slot = this.current;
+    if (!slot || !this.commitAdvance) return;
+    this.contentEl.querySelector(".ir-jump-interval-bar")?.remove();
+    const dock = this.contentEl.querySelector(".ir-review-dock") ?? this.contentEl;
+    const bar = createDiv({ cls: "ir-jump-interval-bar ir-advance-bar" });
+    dock.prepend(bar);
+
+    bar.createSpan({ cls: "ir-jump-interval-label", text: "Advance:" });
+    const input = bar.createEl("input", {
+      cls: "ir-jump-interval-input",
+      type: "text",
+      placeholder: "0 / today, or N days",
+    });
+    const submit = async () => {
+      const ok = await this.commitAdvance!([slot.id], input.value);
+      if (ok) bar.remove();
+    };
+    bar
+      .createEl("button", { text: "Advance", cls: "mod-cta", type: "button" })
+      .addEventListener("click", () => void submit());
+    bar
+      .createEl("button", { text: "Cancel", type: "button" })
+      .addEventListener("click", () => bar.remove());
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void submit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        bar.remove();
+      }
+    });
+    input.focus();
+  }
+
   /**
    * Adopt a new review session in place when a review leaf is already open,
    * avoiding detaching the sole tab in the workspace.
@@ -3070,13 +3128,17 @@ export class IrReviewView extends ItemView {
           ? "via branch"
           : this.sessionPhase === "subset"
             ? "via subset"
-            : this.isNeural
-              ? "Neural"
-              : "Due";
+            : this.sessionPhase === "search"
+              ? "via search"
+              : this.isNeural
+                ? "Neural"
+                : "Due";
     const chipMod =
       this.sessionPhase === "drill"
         ? "ir-review-mode-chip--drill"
-        : this.sessionPhase === "branch" || this.sessionPhase === "subset"
+        : this.sessionPhase === "branch" ||
+            this.sessionPhase === "subset" ||
+            this.sessionPhase === "search"
           ? "ir-review-mode-chip--provenance"
           : this.isNeural
             ? "ir-review-mode-chip--neural"
