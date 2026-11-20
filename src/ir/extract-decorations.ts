@@ -40,13 +40,13 @@ import {
   clozeRangesInBody,
   type SourceMarkKind,
 } from "./cloze-marks";
+import { FRONTMATTER_RE } from "./frontmatter-body";
 
 export { paintIrSourceMarksInElement } from "./extract-reading-marks";
 
 /** CSS class shared with pre-§Q3 inline marks so styles.css needs no change. */
 const EXTRACT_CLASS = "ir-extract-source";
 const CLOZE_CLASS = "ir-cloze-source";
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
 
 /**
  * Resolved anchor entry held in the decoration cache. CM6 needs `start`/`end`

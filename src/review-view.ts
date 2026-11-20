@@ -353,8 +353,11 @@ export class IrReviewView extends ItemView {
   private setReviewControlsDisabled(disabled: boolean): void {
     for (const el of Array.from(this.contentEl.querySelectorAll<
       HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >("button, input, textarea, select"))) {
+    >("button, input, textarea:not(.ir-review-textarea), select"))) {
       el.disabled = disabled;
+    }
+    for (const ta of Array.from(this.contentEl.querySelectorAll<HTMLTextAreaElement>(".ir-review-textarea"))) {
+      ta.readOnly = disabled;
     }
   }
 
@@ -3928,21 +3931,25 @@ export class IrReviewView extends ItemView {
         };
       }
       const active = this.contentEl.ownerDocument.activeElement;
-      if (!(active instanceof HTMLTextAreaElement)) {
+      const textarea =
+        active instanceof HTMLTextAreaElement
+          ? active
+          : this.contentEl.querySelector<HTMLTextAreaElement>(".ir-review-textarea");
+      if (!(textarea instanceof HTMLTextAreaElement)) {
         return { ok: false, reason: "Click into the editor first." };
       }
-      const rawStart = active.selectionStart ?? 0;
-      const rawEnd = active.selectionEnd ?? 0;
+      const rawStart = textarea.selectionStart ?? 0;
+      const rawEnd = textarea.selectionEnd ?? 0;
       if (rawEnd <= rawStart) return { ok: false, reason: "Nothing selected." };
-      this.currentRaw = active.value;
+      this.currentRaw = textarea.value;
       const { start, end } = expandSelectionAroundLinks(
-        active.value,
+        textarea.value,
         rawStart,
         rawEnd,
       );
       return {
         ok: true,
-        text: active.value.slice(start, end),
+        text: textarea.value.slice(start, end),
         start,
         end,
       };

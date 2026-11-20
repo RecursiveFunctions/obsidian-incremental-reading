@@ -13,12 +13,15 @@ import {
 } from "../src/ir/extract-range";
 import { formatDueLabel } from "../src/ir/due-label";
 import {
+  bodyOffsetFromFullOffset,
   bodyOffsetsFromFullOffsets,
   fullOffsetsFromBodyOffsets,
   sanitizeExtractSelection,
+  saveBody,
   stripExtractMarks,
   stripFrontmatter,
 } from "../src/ir/frontmatter-body";
+import type { App, TFile } from "obsidian";
 import type { IrElement } from "../src/ir/model";
 
 /* ------------------------------------------------------------------ */
@@ -468,4 +471,104 @@ test("stripExtractMarks: mixed orphan opener + user-authored balanced pair", () 
     stripExtractMarks(mixed),
     "lead text <mark>plain</mark> rest of body",
   );
+});
+
+test("CRLF and UTF-8 BOM frontmatter stripping and offset mapping (#47)", async () => {
+  const variants = [
+    { name: "LF", full: "---\ntitle: Note\nir-type: topic\n---\n\nFirst line.\nTarget phrase here.\n" },
+    { name: "CRLF", full: "---\r\ntitle: Note\r\nir-type: topic\r\n---\r\n\r\nFirst line.\r\nTarget phrase here.\r\n" },
+    { name: "BOM+LF", full: "\uFEFF---\ntitle: Note\nir-type: topic\n---\n\nFirst line.\nTarget phrase here.\n" },
+    { name: "BOM+CRLF", full: "\uFEFF---\r\ntitle: Note\r\nir-type: topic\r\n---\r\n\r\nFirst line.\r\nTarget phrase here.\r\n" },
+  ];
+
+  for (const { name, full } of variants) {
+    const stripped = stripFrontmatter(full);
+    assert.equal(
+      stripped.replace(/\r\n/g, "\n"),
+      "First line.\nTarget phrase here.",
+      `${name}: stripFrontmatter removes YAML block`,
+    );
+
+    const targetInFull = full.indexOf("Target phrase");
+    const targetEndInFull = targetInFull + "Target phrase".length;
+    const bodyRange = bodyOffsetsFromFullOffsets(full, targetInFull, targetEndInFull);
+    assert.ok(bodyRange, `${name}: bodyOffsetsFromFullOffsets resolves`);
+    assert.equal(
+      stripped.slice(bodyRange.start, bodyRange.end),
+      "Target phrase",
+      `${name}: body slice matches exact selection`,
+    );
+
+    const roundTrip = fullOffsetsFromBodyOffsets(full, bodyRange.start, bodyRange.end);
+    assert.deepEqual(
+      roundTrip,
+      { from: targetInFull, to: targetEndInFull },
+      `${name}: fullOffsetsFromBodyOffsets round-trips cleanly`,
+    );
+
+    const caret = bodyOffsetFromFullOffset(full, targetInFull);
+    assert.equal(caret, bodyRange.start, `${name}: bodyOffsetFromFullOffset matches start`);
+
+    const el = makeElement({
+      text: "Target phrase",
+      anchor: {
+        sourcePath: "Note.md",
+        quote: { exact: "Target phrase", prefix: "line.", suffix: " here." },
+        position: { start: bodyRange.start, end: bodyRange.end },
+      },
+    });
+    const pos = findExtractEditorPosition(el, full);
+    assert.ok(pos, `${name}: findExtractEditorPosition resolves`);
+    assert.equal(pos.line, 6, `${name}: line index skips frontmatter`);
+
+    let written = "";
+    const fakeApp = {
+      vault: {
+        read: async () => full,
+        modify: async (_f: TFile, content: string) => {
+          written = content;
+        },
+      },
+    } as unknown as App;
+    await saveBody(fakeApp, {} as TFile, "Updated body.");
+    assert.equal(stripFrontmatter(written), "Updated body.", `${name}: saveBody preserves frontmatter without duplicating`);
+    assert.ok(written.startsWith(full.slice(0, full.indexOf("First line.")).trimEnd()), `${name}: saveBody keeps frontmatter prefix`);
+  }
+});
+
+test("ObsidianVaultFs guards absent mkdir/remove and manifest/versions declare 1.7.2 (#46)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { resolve } = await import("node:path");
+  const { ObsidianVaultFs } = await import("../src/ir/obsidian-vault-fs");
+
+  const manifest = JSON.parse(readFileSync(resolve(process.cwd(), "manifest.json"), "utf8")) as { minAppVersion: string; version: string };
+  const versions = JSON.parse(readFileSync(resolve(process.cwd(), "versions.json"), "utf8")) as Record<string, string>;
+  assert.equal(manifest.minAppVersion, "1.7.2");
+  assert.equal(versions[manifest.version], "1.7.2");
+
+  const written = new Map<string, string>();
+  const adapterWithoutMkdirOrRemove = {
+    exists: async (p: string) => written.has(p),
+    read: async (p: string) => written.get(p) ?? "",
+    write: async (p: string, data: string) => { written.set(p, data); },
+    append: async (p: string, data: string) => { written.set(p, (written.get(p) ?? "") + data); },
+    list: async () => ({ files: [...written.keys()], folders: [] }),
+  };
+  const fs = new ObsidianVaultFs(adapterWithoutMkdirOrRemove as never);
+  await assert.doesNotReject(fs.write(".ir/meta.json", "{}"));
+  await assert.doesNotReject(fs.remove(".ir/meta.json"));
+});
+
+test("main.ts helpers: awaitMetadataCacheReady (#44), trashFileSafe & getAvailableAttachmentPathSafe (#46), and review-view textarea selection (#49)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { resolve } = await import("node:path");
+
+  const mainSrc = readFileSync(resolve(process.cwd(), "main.ts"), "utf8");
+  assert.match(mainSrc, /await this\.awaitMetadataCacheReady\(\)/);
+  assert.match(mainSrc, /typeof fm\?\.trashFile === "function"/);
+  assert.match(mainSrc, /typeof fm\?\.getAvailablePathForAttachment === "function"/);
+
+  const reviewSrc = readFileSync(resolve(process.cwd(), "src/review-view.ts"), "utf8");
+  assert.match(reviewSrc, /textarea:not\(\.ir-review-textarea\)/);
+  assert.match(reviewSrc, /\.querySelector<HTMLTextAreaElement>\("\.ir-review-textarea"\)/);
 });

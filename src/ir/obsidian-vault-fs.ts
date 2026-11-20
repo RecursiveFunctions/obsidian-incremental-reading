@@ -27,6 +27,7 @@ function ancestorFolders(filePath: string): string[] {
 }
 
 async function ensureAncestors(adapter: ObsidianDataAdapter, filePath: string): Promise<void> {
+  if (typeof adapter.mkdir !== "function") return;
   for (const folder of ancestorFolders(filePath)) {
     if (!(await adapter.exists(folder))) {
       try {
@@ -91,6 +92,7 @@ export class ObsidianVaultFs implements VaultFs {
   }
 
   async remove(p: string): Promise<void> {
+    if (typeof this.adapter.remove !== "function") return;
     try {
       await this.adapter.remove(p);
     } catch (error) {

@@ -9,6 +9,7 @@ import {
   Notice,
   Platform,
   Plugin,
+  type TAbstractFile,
   TFile,
   TFolder,
   WorkspaceLeaf,
@@ -5405,7 +5406,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       try {
         for (const notePath of pending.promotedPaths) {
           const af = this.app.vault.getAbstractFileByPath(notePath);
-          if (af instanceof TFile) await this.app.fileManager.trashFile(af);
+          if (af instanceof TFile) await this.trashFileSafe(af);
         }
       } finally {
         this.nuking = false;
@@ -6445,11 +6446,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     const pageN = pdfPageNumber(page);
-    const attachmentPath =
-      await this.app.fileManager.getAvailablePathForAttachment(
-        `${pdfCropStem(file.path, pageN)}.png`,
-        file.path,
-      );
+    const attachmentPath = await this.getAvailableAttachmentPathSafe(
+      `${pdfCropStem(file.path, pageN)}.png`,
+      file.path,
+    );
     const image = await this.app.vault.createBinary(attachmentPath, png);
     const pdf: PdfSelector = { page: pageN, selection: [0, 0, 0, 0], rect };
     if (mode === "extract") {
@@ -6673,7 +6673,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             new Notice("Incremental Reading: could not crop that image.");
             return;
           }
-          const path = await this.app.fileManager.getAvailablePathForAttachment(
+          const path = await this.getAvailableAttachmentPathSafe(
             `${image.basename} crop.png`,
             source.path,
           );
@@ -6889,7 +6889,18 @@ export default class IncrementalReadingPlugin extends Plugin {
         "IrLedger.initDevice",
       );
 
+      await this.awaitMetadataCacheReady();
       const notes = this.enumerateIrNotes();
+      const mdFiles = this.app.vault.getMarkdownFiles();
+      if (
+        notes.length === 0 &&
+        mdFiles.length > 0 &&
+        mdFiles.some((f) => this.app.metadataCache.getFileCache(f) == null)
+      ) {
+        throw new Error(
+          "Incremental Reading: metadataCache is not ready for first-run migration",
+        );
+      }
       const events = migrateNotes(notes, Date.now());
       await ledger.commitMigration(events);
       await ledger.reconcile();
@@ -6918,6 +6929,103 @@ export default class IncrementalReadingPlugin extends Plugin {
    * exactly what the old frontmatter readers consumed, so migrated state is
    * equivalent to what the live plugin saw.
    */
+  /**
+   * Wait for workspace layout and `metadataCache` resolution before reading
+   * cached frontmatter during first-run migration (#44).
+   */
+  async awaitMetadataCacheReady(timeoutMs = 15_000): Promise<void> {
+    if (typeof this.app.workspace?.onLayoutReady === "function") {
+      await new Promise<void>((resolve) => {
+        this.app.workspace.onLayoutReady(() => resolve());
+      });
+    }
+    const allCached = () => {
+      const files = this.app.vault?.getMarkdownFiles?.() ?? [];
+      if (files.length === 0) return true;
+      return files.every((f) => this.app.metadataCache?.getFileCache?.(f) != null);
+    };
+    if (allCached()) return;
+    const mc = this.app.metadataCache as unknown as {
+      on?: (name: string, cb: () => void) => unknown;
+      offref?: (ref: unknown) => void;
+      off?: (name: string, cb: () => void) => void;
+    };
+    if (typeof mc?.on !== "function") return;
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      let ref: unknown;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        if (ref !== undefined && typeof mc.offref === "function") {
+          mc.offref(ref);
+        } else if (typeof mc.off === "function") {
+          mc.off("resolved", onResolved);
+        }
+        resolve();
+      };
+      const onResolved = () => {
+        finish();
+      };
+      const timer = window.setTimeout(finish, timeoutMs);
+      ref = mc.on!("resolved", onResolved);
+      if (allCached()) finish();
+    });
+  }
+
+  /**
+   * Guard `fileManager.trashFile` (1.6.6+) with a fallback to `vault.trash` (#46).
+   */
+  async trashFileSafe(file: TAbstractFile): Promise<void> {
+    const fm = this.app.fileManager as unknown as {
+      trashFile?: (f: TAbstractFile) => Promise<void>;
+    } | undefined;
+    if (typeof fm?.trashFile === "function") {
+      await fm.trashFile(file);
+      return;
+    }
+    await this.app.vault.trash(file, true);
+  }
+
+  /**
+   * Guard `fileManager.getAvailablePathForAttachment` (1.5.7+) with a fallback
+   * that picks a non-colliding sibling/root path (#46).
+   */
+  async getAvailableAttachmentPathSafe(
+    filename: string,
+    sourcePath?: string,
+  ): Promise<string> {
+    const fm = this.app.fileManager as unknown as {
+      getAvailablePathForAttachment?: (
+        name: string,
+        src?: string,
+      ) => Promise<string>;
+    } | undefined;
+    if (typeof fm?.getAvailablePathForAttachment === "function") {
+      return fm.getAvailablePathForAttachment(filename, sourcePath);
+    }
+    const slash = sourcePath ? sourcePath.lastIndexOf("/") : -1;
+    const dir = slash > 0 ? `${sourcePath!.slice(0, slash)}/` : "";
+    const dot = filename.lastIndexOf(".");
+    const stem = dot > 0 ? filename.slice(0, dot) : filename;
+    const ext = dot > 0 ? filename.slice(dot) : "";
+    const isTaken = async (candidate: string): Promise<boolean> => {
+      if (this.app.vault?.getAbstractFileByPath?.(candidate)) return true;
+      if (typeof this.app.vault?.adapter?.exists === "function") {
+        return await this.app.vault.adapter.exists(candidate);
+      }
+      return false;
+    };
+    let candidate = `${dir}${filename}`;
+    let n = 1;
+    while (await isTaken(candidate)) {
+      candidate = `${dir}${stem} ${n}${ext}`;
+      n += 1;
+    }
+    return candidate;
+  }
+
   private enumerateIrNotes(): FrontmatterNote[] {
     const out: FrontmatterNote[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
@@ -6949,6 +7057,20 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  /** Apply Mobile Shell / Capture FAB / Review FAB visibility immediately. */
+  refreshMobileVisibility(): void {
+    if (!Platform.isMobile) return;
+    document
+      .querySelector<HTMLElement>(".ir-mobile-shell")
+      ?.toggleClass("is-hidden", !this.settings.mobileShell);
+    document
+      .querySelector<HTMLElement>(".ir-mobile-capture-fab")
+      ?.toggleClass("is-hidden", !this.settings.mobileCaptureFab);
+    document
+      .querySelector<HTMLElement>(".ir-mobile-review-fab")
+      ?.toggleClass("is-hidden", !this.settings.mobileReviewFab);
   }
 
   /**
@@ -7059,7 +7181,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       let trashed = 0;
       for (const file of irFiles) {
         try {
-          await this.app.fileManager.trashFile(file);
+          await this.trashFileSafe(file);
           trashed++;
         } catch (e) {
           console.error(

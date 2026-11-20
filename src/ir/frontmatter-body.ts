@@ -2,7 +2,7 @@
 
 import type { App, TFile } from "obsidian";
 
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
+export const FRONTMATTER_RE = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
 
 /** Drop the YAML frontmatter block so only the note body is rendered. */
 export function stripFrontmatter(content: string): string {

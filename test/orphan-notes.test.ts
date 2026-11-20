@@ -427,3 +427,68 @@ test("knownNotePathsFromEvents collects create, rename, tombstone", () => {
   const paths = knownNotePathsFromEvents(events).sort();
   assert.deepEqual(paths, ["A.md", "Gone.md"]);
 });
+
+test("planOrphanRecoveries: 5,000 vault files, 1,000 events, and 50 orphans completes in < 500ms (#45)", () => {
+  const vaultPaths: string[] = [];
+  for (let i = 0; i < 4950; i += 1) {
+    vaultPaths.push(`Library/Folder_${i % 50}/Note_${i}.md`);
+  }
+  const events: IrEvent[] = [];
+  const live: IrElement[] = [];
+  const tombstones: string[] = [];
+  for (let i = 0; i < 900; i += 1) {
+    const p = `Library/Folder_${i % 50}/Note_${i}.md`;
+    const el = newElement({
+      id: elementIdForPath(p),
+      type: "topic",
+      priority: (i % 90) + 5,
+      notePath: p,
+      now: NOW - i * 1000,
+    });
+    live.push(el);
+    events.push(created(el, i + 1));
+  }
+  const orphanDiskNotes = [];
+  for (let i = 0; i < 50; i += 1) {
+    const oldPath = `OldFolder/Sub_${i % 5}/Moved_${i}.md`;
+    const newPath = `Archive/OldFolder/Sub_${i % 5}/Moved_${i}.md`;
+    vaultPaths.push(newPath);
+    tombstones.push(oldPath);
+    const id = elementIdForPath(oldPath);
+    const el = newElement({
+      id,
+      type: "topic",
+      priority: 30 + (i % 40),
+      notePath: oldPath,
+      now: NOW - 500_000,
+    });
+    events.push(created(el, 901 + i * 2));
+    events.push({
+      id: `ev_del_bench_${i}` as EventId,
+      ts: NOW,
+      lamport: 902 + i * 2,
+      device: DEV,
+      kind: "element-deleted",
+      target: id,
+      payload: {},
+    });
+    orphanDiskNotes.push({ path: newPath, frontmatter: topicFm({ [IR_KEYS.priority]: 30 + (i % 40) }) });
+  }
+
+  const seq = ids();
+  const t0 = performance.now();
+  const plan = planOrphanRecoveries(
+    orphanDiskNotes,
+    live,
+    events,
+    tombstones,
+    vaultPaths,
+    NOW,
+    3000,
+    DEV,
+    seq.next,
+  );
+  const elapsedMs = performance.now() - t0;
+  assert.equal(plan.restored, 50);
+  assert.ok(elapsedMs < 500, `Expected < 500ms, took ${elapsedMs.toFixed(1)}ms`);
+});

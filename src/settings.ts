@@ -534,6 +534,7 @@ export class IrSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.mobileCaptureFab = value;
             await this.plugin.saveSettings();
+            this.plugin.refreshMobileVisibility();
           }),
       );
 
@@ -546,6 +547,7 @@ export class IrSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.mobileReviewFab = value;
             await this.plugin.saveSettings();
+            this.plugin.refreshMobileVisibility();
           }),
       );
 
@@ -558,6 +560,7 @@ export class IrSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.mobileShell = value;
             await this.plugin.saveSettings();
+            this.plugin.refreshMobileVisibility();
           }),
       );
 

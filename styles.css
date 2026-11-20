@@ -397,7 +397,10 @@ img.ir-source-image.ir-cloze-source {
   pointer-events: auto;
 }
 
-.ir-workspace-fab.is-hidden {
+.ir-workspace-fab.is-hidden,
+.ir-mobile-shell.is-hidden,
+.ir-mobile-capture-fab.is-hidden,
+.ir-mobile-review-fab.is-hidden {
   display: none;
 }
 

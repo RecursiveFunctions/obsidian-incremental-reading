@@ -10,7 +10,7 @@
 
 import type { IrElement } from "./model";
 import { resolveAnchor } from "./anchor";
-import { stripFrontmatter } from "./frontmatter-body";
+import { FRONTMATTER_RE, stripFrontmatter } from "./frontmatter-body";
 import { clozeAnswersInline, hasCloze } from "../cloze";
 
 export function findExtractRange(
@@ -46,8 +46,6 @@ function uniqueIndexOf(haystack: string, needle: string): number {
   if (haystack.indexOf(needle, idx + 1) !== -1) return -1;
   return idx;
 }
-
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
 
 /**
  * Editor coordinates ({ line, ch }, both zero-based) of where an extract

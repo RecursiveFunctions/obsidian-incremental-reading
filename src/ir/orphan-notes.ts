@@ -15,8 +15,16 @@ import type { DeviceId, ElementId, EventId } from "./ids";
 import { fold } from "./log";
 import { elementIdForPath, migrateNotes, type FrontmatterNote } from "./migrate";
 import type { IrElement, IrEvent } from "./model";
-import { buildPriorityPlacement } from "./relative-priority";
 import {
+  buildPriorityPlacement,
+  collectionSortOrder,
+  insertionIndexForPriority,
+  type PriorityPlacement,
+} from "./relative-priority";
+import { clampPriority } from "./model";
+import {
+  basenameOf,
+  dirnameOf,
   inferPrefixRewrite,
   originalPathBySuffix,
   rewriteStoredPath,
@@ -171,16 +179,173 @@ export interface OrphanRecoveryPlan {
   restored: number;
 }
 
-function recoveredIdFor(
-  events: IrEvent[],
+interface MoveIndex {
+  candidatesByBasename: Map<string, string[]>;
+  uniqueVaultByBasename: Map<string, string | null>;
+  prefix: { from: string; to: string } | null;
+  tombs: ReadonlySet<string>;
+}
+
+function buildLastIdByPath(sortedEvents: readonly IrEvent[]): Map<string, ElementId> {
+  const map = new Map<string, ElementId>();
+  for (const ev of sortedEvents) {
+    if (ev.kind === "element-created") {
+      const el = ev.payload.element as IrElement | undefined;
+      if (el?.notePath) map.set(el.notePath, ev.target);
+    } else if (ev.kind === "source-renamed") {
+      if (typeof ev.payload.oldPath === "string") {
+        map.set(ev.payload.oldPath, ev.target);
+      }
+      if (typeof ev.payload.newPath === "string") {
+        map.set(ev.payload.newPath, ev.target);
+      }
+    }
+  }
+  return map;
+}
+
+function buildMoveIndex(
+  historicalList: readonly string[],
+  vault: readonly string[],
+  tombs: ReadonlySet<string>,
+): MoveIndex {
+  const uniqueCandidates = [...new Set(historicalList.filter(Boolean))];
+  const candidatesByBasename = new Map<string, string[]>();
+  for (const p of uniqueCandidates) {
+    const base = basenameOf(p);
+    if (!base) continue;
+    let bucket = candidatesByBasename.get(base);
+    if (!bucket) {
+      bucket = [];
+      candidatesByBasename.set(base, bucket);
+    }
+    bucket.push(p);
+  }
+
+  const uniqueVaultByBasename = new Map<string, string | null>();
+  const vaultSet = new Set<string>();
+  for (const p of vault) {
+    vaultSet.add(p);
+    const base = basenameOf(p);
+    if (!base) continue;
+    if (!uniqueVaultByBasename.has(base)) {
+      uniqueVaultByBasename.set(base, p);
+    } else if (uniqueVaultByBasename.get(base) !== p) {
+      uniqueVaultByBasename.set(base, null);
+    }
+  }
+
+  const votes = new Map<string, number>();
+  for (const gone of uniqueCandidates) {
+    const base = basenameOf(gone);
+    if (!base) continue;
+    let hit: string | null = null;
+    const singleVault = uniqueVaultByBasename.get(base) ?? null;
+    if (singleVault && singleVault !== gone) {
+      hit = singleVault;
+    } else {
+      const needle = `/${gone}`;
+      let suffixHit: string | null = null;
+      let suffixAmbiguous = false;
+      for (const vp of vault) {
+        if (vp === gone) continue;
+        if (vp.endsWith(needle)) {
+          if (suffixHit !== null) {
+            suffixAmbiguous = true;
+            break;
+          }
+          suffixHit = vp;
+        }
+      }
+      if (!suffixAmbiguous && suffixHit) {
+        hit = suffixHit;
+      } else if (singleVault === null) {
+        // Only possible if gone itself was one of 2 vault files with same basename
+        let altHit: string | null = null;
+        let altCount = 0;
+        if (vaultSet.has(gone)) {
+          for (const vp of vault) {
+            if (vp === gone) continue;
+            if (basenameOf(vp) === base) {
+              altHit = vp;
+              altCount += 1;
+              if (altCount > 1) break;
+            }
+          }
+          if (altCount === 1) hit = altHit;
+        }
+      }
+    }
+    if (!hit) continue;
+    const from = dirnameOf(gone);
+    const to = dirnameOf(hit);
+    if (from === to) continue;
+    const key = `${from}\n${to}`;
+    votes.set(key, (votes.get(key) ?? 0) + 1);
+  }
+
+  let best: { from: string; to: string; n: number } | null = null;
+  for (const [key, n] of votes) {
+    if (n < 2) continue;
+    if (!best || n > best.n) {
+      const sep = key.indexOf("\n");
+      best = { from: key.slice(0, sep), to: key.slice(sep + 1), n };
+    }
+  }
+
+  return {
+    candidatesByBasename,
+    uniqueVaultByBasename,
+    prefix: best ? { from: best.from, to: best.to } : null,
+    tombs,
+  };
+}
+
+function matchMovedFromIndexed(newPath: string, index: MoveIndex): string | null {
+  const base = basenameOf(newPath);
+  const sameBase = (index.candidatesByBasename.get(base) ?? []).filter(
+    (p) => p !== newPath,
+  );
+  if (sameBase.length === 0) return null;
+
+  const bySuffix = originalPathBySuffix(newPath, sameBase);
+  if (bySuffix) return bySuffix;
+
+  if (index.uniqueVaultByBasename.get(base) === newPath) {
+    const byUnique = [...sameBase];
+    if (byUnique.length === 1) return byUnique[0]!;
+    if (byUnique.length > 1) {
+      const tombHits = byUnique.filter((p) => index.tombs.has(p));
+      if (tombHits.length === 1) return tombHits[0]!;
+      byUnique.sort((a, b) => b.length - a.length);
+      if (byUnique[0]!.length > byUnique[1]!.length) return byUnique[0]!;
+    }
+  }
+
+  if (index.prefix) {
+    const prefix = index.prefix;
+    const hits = sameBase.filter(
+      (old) => rewriteStoredPath(old, prefix.from, prefix.to) === newPath,
+    );
+    if (hits.length === 1) return hits[0]!;
+    if (hits.length > 1) {
+      hits.sort((a, b) => b.length - a.length);
+      return hits[0]!;
+    }
+  }
+  return null;
+}
+
+function recoveredIdForIndexed(
+  lastIdByPath: ReadonlyMap<string, ElementId>,
   notePath: string,
   oldPath: string | null,
   tombSet: Set<string>,
   historical: Set<string>,
 ): ElementId | null {
-  const fromOld = oldPath ? lastIdForNotePath(events, oldPath) : null;
+  const fromOld = oldPath ? (lastIdByPath.get(oldPath) ?? null) : null;
   if (fromOld) return fromOld;
-  const fromNew = lastIdForNotePath(events, notePath);
+  const fromNew = lastIdByPath.get(notePath) ?? null;
   if (fromNew) return fromNew;
   if (
     oldPath &&
@@ -189,6 +354,39 @@ function recoveredIdFor(
     return elementIdForPath(oldPath);
   }
   return null;
+}
+
+function insertIntoCollectionOrder(
+  order: ElementId[],
+  live: ReadonlyMap<ElementId, IrElement>,
+  el: IrElement,
+): PriorityPlacement {
+  const existingIdx = order.indexOf(el.id);
+  if (existingIdx !== -1) order.splice(existingIdx, 1);
+  const index = insertionIndexForPriority(el.priority, order.length + 1);
+  const placement: PriorityPlacement = {
+    requestedPriority: clampPriority(el.priority),
+    beforeId: order[index],
+    afterId: index > 0 ? order[index - 1] : undefined,
+  };
+  // Maintain collectionSortOrder invariant: priority ASC, created DESC, id ASC
+  let lo = 0;
+  let hi = order.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const midEl = live.get(order[mid]!)!;
+    const cmp =
+      el.priority - midEl.priority ||
+      midEl.created - el.created ||
+      el.id.localeCompare(midEl.id);
+    if (cmp < 0) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  order.splice(lo, 0, el.id);
+  return placement;
 }
 
 function elementAtNewPath(
@@ -254,14 +452,22 @@ export function planOrphanRecoveries(
     events.filter((e) => e.kind !== "element-deleted"),
   ).elements;
 
+  const sortedEvents = [...events].sort((a, b) => {
+    if (a.lamport !== b.lamport) return a.lamport - b.lamport;
+    return a.id.localeCompare(b.id);
+  });
+  const lastIdByPath = buildLastIdByPath(sortedEvents);
+
   const tombSet = new Set(tombstonePaths);
-  const explicitDeletes = explicitlyDeletedIds(events, tombSet);
+  const explicitDeletes = explicitlyDeletedIds(sortedEvents, tombSet);
   const historicalList = [
-    ...knownNotePathsFromEvents(events),
+    ...knownNotePathsFromEvents(sortedEvents),
     ...tombSet,
   ];
   const historical = new Set(historicalList);
   const vault = Array.from(vaultPaths);
+  const moveIndex = buildMoveIndex(historicalList, vault, tombSet);
+  const currentOrder = collectionSortOrder(live.values());
 
   const out: IrEvent[] = [];
   let lamport = startLamport;
@@ -290,9 +496,9 @@ export function planOrphanRecoveries(
   const sorted = [...orphans].sort((a, b) => a.path.localeCompare(b.path));
 
   for (const note of sorted) {
-    const oldPath = matchMovedFrom(note.path, historicalList, vault, tombSet);
-    const recoveredId = recoveredIdFor(
-      events,
+    const oldPath = matchMovedFromIndexed(note.path, moveIndex);
+    const recoveredId = recoveredIdForIndexed(
+      lastIdByPath,
       note.path,
       oldPath,
       tombSet,
@@ -329,9 +535,10 @@ export function planOrphanRecoveries(
         now,
       );
       if (!element) continue;
+      const placement = insertIntoCollectionOrder(currentOrder, live, element);
       push("element-created", recoveredId, {
         element,
-        placement: buildPriorityPlacement(live.values(), recoveredId, element.priority),
+        placement,
       });
       live.set(recoveredId, element);
       seenIds.add(recoveredId);
@@ -342,9 +549,10 @@ export function planOrphanRecoveries(
       const ev = created[0]!;
       if (seenIds.has(ev.target) || live.has(ev.target)) continue;
       const element = ev.payload.element as IrElement;
+      const placement = insertIntoCollectionOrder(currentOrder, live, element);
       push("element-created", ev.target, {
         ...ev.payload,
-        placement: buildPriorityPlacement(live.values(), ev.target, element.priority),
+        placement,
       });
       live.set(ev.target, element);
       seenIds.add(ev.target);
@@ -365,7 +573,7 @@ export function planOrphanRecoveries(
     }
     if (tombSet.has(oldPath) && !restoredTombs.has(oldPath)) {
       const target =
-        lastIdForNotePath(events, oldPath) ??
+        lastIdByPath.get(oldPath) ??
         elementIdForPath(oldPath);
       push("source-restored", target, { path: oldPath, restoredPath: newPath });
       restoredTombs.add(oldPath);

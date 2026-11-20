@@ -201,16 +201,15 @@ Under consideration: a one-way structure export for external collections.
 
 If you're interested in the architecture and full roadmap, check [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md).
 
-## Recent changes (0.14.0)
+## Recent changes (0.14.1)
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full version history.
 
-- **SuperMemo 20 card scheduling:** New vaults now use SuperMemo 20's card scheduler by default, and existing vaults can switch between SuperMemo 20 and FSRS-6 anytime in Settings without changing their notes.
-- **Final Drill at the end of review:** Cards you grade **Again** or **Hard** come back at the end of today's session so you can practice them until they stick, without changing their future review dates.
-- **Smarter Neural Review:** As you read, grade, or make new extracts in Neural mode, nearby linked notes and child cards are added to the queue automatically, and you can pick up where you left off with **Resume Neural Queue**.
-- **Spot and reset stubborn cards (leeches):** Collection can now highlight and filter cards you keep forgetting or postponing, and you can reset a card's schedule for a fresh start without deleting the note.
-- **Review a single branch or selection:** Right-click any item in Collection to review just that branch, review a multi-selection, add specific cards to today's session, duplicate a card as a sibling, or jump a card to a specific future date.
-- **Import from SuperMemo 18 and 20:** A new **Import SuperMemo collection (SM18 / SM20)** command brings in your SuperMemo topics, extracts, cloze cards, images, reading positions, and review history while skipping duplicates.
+- **Mobile shell & FAB toggles take effect right away:** Turning off the mobile bottom bar, Capture button, or Review button in Settings now hides them immediately (#48).
+- **Edit-mode extract and cloze buttons keep your selection:** Clicking **Extract**, **Cloze**, or **Cloze\*** while editing a card in Review no longer drops your text selection (#49).
+- **Windows (CRLF) and UTF-8 BOM note support:** Notes saved with Windows line endings or a UTF-8 byte-order mark now strip YAML frontmatter and align extract highlights and jump positions cleanly (#47).
+- **Safer first-run migration & faster startup on large vaults:** First-run migration waits for Obsidian's metadata cache to finish indexing before scanning notes (#44), and startup orphan recovery is indexed so large vaults load in milliseconds (#45).
+- **Obsidian 1.7.2 compatibility:** Minimum Obsidian version updated to 1.7.2 with safe fallbacks for file trashing, attachment paths, and vault adapter operations (#46).
 
 ## Installation
 
@@ -221,7 +220,7 @@ Install through BRAT while the plugin is in alpha.
 3. Install the latest release. If a tag was just pushed, wait for the Release workflow to go green first.
 4. Enable Incremental Reading under Community Plugins.
 
-Requires Obsidian 1.5.0 or newer. Desktop and mobile.
+Requires Obsidian 1.7.2 or newer. Desktop and mobile.
 
 This is alpha software. Expect breaking changes between updates. Personally I do actually use this in my own vault, but you may want to back yours up just in case.
 

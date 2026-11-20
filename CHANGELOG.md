@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-11-20
+
+### Fixed
+
+- **Mobile shell, Capture FAB, and Review FAB `.is-hidden` rules & immediate toggle sync** (`styles.css`, `main.ts`, `src/settings.ts`): Added `display: none` rules for `.ir-mobile-shell.is-hidden`, `.ir-mobile-capture-fab.is-hidden`, and `.ir-mobile-review-fab.is-hidden`, and triggered `refreshMobileVisibility()` immediately when mobile settings toggles change (#48).
+- **Review edit-mode selection loss on toolbar click** (`src/review-view.ts`): Kept `.ir-review-textarea` enabled (`readOnly` instead of `disabled`) while `runAction` is active and fell back to `.ir-review-textarea` in `resolveSelection()` when focus shifts to a dock button (#49).
+- **CRLF and UTF-8 BOM frontmatter stripping & offset alignment** (`src/ir/frontmatter-body.ts`, `src/ir/extract-decorations.ts`, `src/ir/extract-range.ts`): Unified `FRONTMATTER_RE` (`/^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/`) across frontmatter stripping, body offset mapping, and decoration/editor range calculation (#47).
+- **First-run migration `metadataCache` readiness guard** (`main.ts`): Added `awaitMetadataCacheReady()` before `enumerateIrNotes()` in `runMigrationIfOwed` and aborted empty migration commits when markdown files exist with unindexed `metadataCache` entries (#44).
+- **Startup orphan recovery $O(N \cdot M)$ scaling bottleneck** (`src/ir/orphan-notes.ts`): Pre-sorted ledger events once, indexed historical and vault paths by basename and prefix rewrite, and maintained incremental collection sort order during `planOrphanRecoveries` (#45).
+- **Obsidian API version floor & adapter guards** (`manifest.json`, `versions.json`, `main.ts`, `src/ir/obsidian-vault-fs.ts`): Raised `minAppVersion` to `1.7.2`, added `trashFileSafe` and `getAvailableAttachmentPathSafe` fallbacks in `main.ts`, and guarded `adapter.mkdir` / `adapter.remove` in `ObsidianVaultFs` (#46).
+
 ## [0.14.0] — 2026-11-19
 
 ### Added
