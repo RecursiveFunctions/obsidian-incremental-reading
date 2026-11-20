@@ -233,3 +233,50 @@ test("gradeBreakdown: counts each grade inside the window only", async (t) => {
   );
   assert.deepEqual(b, { again: 1, hard: 1, good: 2, easy: 1 });
 });
+
+test("activityHeatmap counts graded + reading topic-advanced and excludes undone & extract-parent-decay", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/stats.ts not implemented yet");
+  const now = new Date(2026, 4, 19, 15, 0, 0, 0).getTime();
+  const today = m.startOfLocalDayMs(now);
+  const events = [
+    { id: "g1", ts: today + 1000, lamport: 1, device: "d", kind: "graded", target: "e1", payload: { grade: 3 } },
+    { id: "g2", ts: today + 2000, lamport: 2, device: "d", kind: "graded", target: "e1", payload: { grade: 1 } },
+    { id: "u1", ts: today + 2500, lamport: 3, device: "d", kind: "grade-undone", target: "e1", payload: { eventId: "g2" } },
+    { id: "r1", ts: today - DAY + 1000, lamport: 4, device: "d", kind: "topic-advanced", target: "t1", payload: {} },
+    { id: "r2", ts: today - DAY + 2000, lamport: 5, device: "d", kind: "topic-advanced", target: "t1", payload: { operation: "extract-parent-decay" } },
+  ];
+
+  const hm = m.activityHeatmap(events, now, 26);
+  assert.equal(hm.days.length, 26 * 7);
+  assert.equal(hm.totalCount, 2);
+  assert.equal(hm.activeDays, 2);
+  assert.equal(hm.days[hm.days.length - 1].grades, 1);
+  assert.equal(hm.days[hm.days.length - 2].reads, 1);
+});
+
+test("rollingTrueRetention excludes first unmemorized rep & undone grades across rolling window", async (t) => {
+  const m = await load();
+  if (!m) return t.skip("src/ir/stats.ts not implemented yet");
+  const now = new Date(2026, 4, 19, 15, 0, 0, 0).getTime();
+  const today = m.startOfLocalDayMs(now);
+  const freshEl = withCard("el1", today);
+  freshEl.card!.reps = 0;
+  const events = [
+    { id: "c1", ts: today - 10 * DAY, lamport: 1, device: "d", kind: "element-created", target: "el1", payload: { element: freshEl } },
+    // First unmemorized rep (Again) -> excluded from True Retention!
+    { id: "g0", ts: today - 3 * DAY + 100, lamport: 2, device: "d", kind: "graded", target: "el1", payload: { grade: 1, card: { reps: 1 } } },
+    // Second rep (Good) -> counted as passed!
+    { id: "g1", ts: today - 2 * DAY + 100, lamport: 3, device: "d", kind: "graded", target: "el1", payload: { grade: 3, card: { reps: 2 } } },
+    // Third rep (Again) -> counted as failed!
+    { id: "g2", ts: today + 100, lamport: 4, device: "d", kind: "graded", target: "el1", payload: { grade: 1, card: { reps: 3 } } },
+  ];
+
+  const tr = m.rollingTrueRetention(events, now, 30, 7);
+  assert.equal(tr.totalReviewReps, 2);
+  assert.equal(tr.totalPassedReps, 1);
+  assert.equal(tr.overallRetention, 0.5);
+  assert.equal(tr.points.length, 30);
+  assert.equal(tr.points[29].retention, 0.5);
+  assert.equal(tr.points[27].retention, 1);
+});
