@@ -111,6 +111,8 @@ export interface IrSettings {
   mobileReviewButtons: "compact" | "comfortable";
   /** Include title-mention and rare-term lexical edges in Neural Queue spreading activation. */
   neuralUseLexicalLinks: boolean;
+  /** Filter Neural Queue review slots to elements due today (preserving seed & associative bridges). */
+  neuralDueOnly: boolean;
 }
 
 export interface SortingPolicySettings {
@@ -249,6 +251,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   mobileReviewFontSize: 1,
   mobileReviewButtons: "comfortable",
   neuralUseLexicalLinks: true,
+  neuralDueOnly: false,
 };
 
 /** Fresh copy so restoring defaults cannot mutate the constant. */

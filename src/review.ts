@@ -50,6 +50,7 @@ import {
 } from "./ir/neural-graph";
 import { isVaultFile } from "./ir/vault-file";
 import { normalizeDrillState, orderDrillIds, type DrillState } from "./ir/drill";
+import { endOfDayMs } from "./status-bar";
 
 /**
  * One element scheduled into the session: its current ledger state plus the
@@ -179,6 +180,8 @@ export function neuralQueue(
   seedNotePath: string | null,
   random?: () => number,
   useLexical = true,
+  dueOnly = false,
+  endOfTodayMs?: number,
 ): ReviewSlot[] {
   let elementId = seedElementId;
   let notePath = seedNotePath;
@@ -207,10 +210,15 @@ export function neuralQueue(
     random,
   });
 
+  const cutoffMs = dueOnly ? (endOfTodayMs ?? endOfDayMs(Date.now())) : Infinity;
   const slots: ReviewSlot[] = [];
   for (const id of walked.sequence) {
     const el = state.elements.get(id as ElementId);
     if (!el) continue;
+    if (dueOnly && id !== elementId) {
+      const due = dueMsOf(el);
+      if (!Number.isFinite(due) || due > cutoffMs) continue;
+    }
     let file: TFile | null = null;
     if (el.notePath) {
       const af = app.vault.getAbstractFileByPath(el.notePath);
@@ -228,12 +236,19 @@ export function neuralSlotsFromQueueState(
   app: App,
   state: Pick<LogState, "elements">,
   neural: NeuralQueueState,
+  opts?: { dueOnly?: boolean; endOfTodayMs?: number },
 ): ReviewSlot[] {
+  const dueOnly = opts?.dueOnly === true;
+  const cutoffMs = dueOnly ? (opts?.endOfTodayMs ?? endOfDayMs(Date.now())) : Infinity;
   const slots: ReviewSlot[] = [];
   for (const entry of neural.entries) {
     const el = state.elements.get(entry.id);
     if (!el) continue;
     if (entry.id !== neural.seedId && el.dismissed) continue;
+    if (dueOnly && entry.id !== neural.seedId) {
+      const due = dueMsOf(el);
+      if (!Number.isFinite(due) || due > cutoffMs) continue;
+    }
     const slot = slotFromElement(app, el);
     if (!slot) continue;
     slots.push(entry.via ? { ...slot, neuralVia: entry.via } : slot);

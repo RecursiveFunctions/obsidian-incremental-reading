@@ -132,5 +132,6 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
   result.mobileReviewFontSize = finite(saved.mobileReviewFontSize, 1, 0.75, 1.5);
   result.mobileReviewButtons = saved.mobileReviewButtons === "compact" ? "compact" : "comfortable";
   result.neuralUseLexicalLinks = saved.neuralUseLexicalLinks !== false;
+  result.neuralDueOnly = saved.neuralDueOnly === true;
   return result;
 }

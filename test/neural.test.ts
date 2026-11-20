@@ -32,7 +32,8 @@ import {
   neighborsForWalk,
   type NoteLinkIndex,
 } from "../src/ir/neural-graph";
-import { neuralQueue } from "../src/review";
+import { neuralQueue, neuralSlotsFromQueueState } from "../src/review";
+import { resolveSettings } from "../src/ir/settings-resolve";
 import { newElement } from "../src/ir/model";
 import type { IrElement } from "../src/ir/model";
 import type { LogState } from "../src/ir/log";
@@ -826,4 +827,50 @@ test("buildNeuralAdjacency with useLexical connects titleMention & rare lexical 
   // useLexical: false disables both titleMention and lexical edges
   const adjOff = buildNeuralAdjacency(s, emptyLinkIndex(), { useLexical: false });
   assert.equal((adjOff.get("t1") ?? []).length, 0);
+});
+
+test("neuralDueOnly filters popNextNeuralElement and neuralSlotsFromQueueState while preserving seed", () => {
+  const now = 1_760_000_000_000;
+  const dayMs = 86_400_000;
+  const seed = el("seed", {
+    type: "topic",
+    text: "seed topic",
+    schedule: { due: now + 10 * dayMs, interval: 10, aFactor: 2 },
+  });
+  const dueSoon = el("dueSoon", {
+    type: "extract",
+    text: "due today",
+    schedule: { due: now - 1000, interval: 1, aFactor: 2 },
+  });
+  const futureNode = el("futureNode", {
+    type: "extract",
+    text: "due next week",
+    schedule: { due: now + 5 * dayMs, interval: 5, aFactor: 2 },
+  });
+  const s = state([seed, dueSoon, futureNode]);
+
+  const q = createNeuralQueueState(eid("seed"), now);
+  q.entries = [
+    { id: eid("seed"), score: -1 },
+    { id: eid("futureNode"), score: 0.1 },
+    { id: eid("dueSoon"), score: 0.5 },
+  ];
+
+  const popped = popNextNeuralElement(q, {
+    isEligible: (id) => id === eid("dueSoon"),
+  });
+  assert.equal(popped.next?.id, eid("dueSoon"));
+
+  const app = fakeApp([]);
+  const dueSlots = neuralSlotsFromQueueState(app, s, q, {
+    dueOnly: true,
+    endOfTodayMs: now,
+  });
+  assert.deepEqual(dueSlots.map((slot) => slot.id), ["seed", "dueSoon"]);
+
+  const allSlots = neuralSlotsFromQueueState(app, s, q, { dueOnly: false });
+  assert.deepEqual(allSlots.map((slot) => slot.id), ["seed", "futureNode", "dueSoon"]);
+
+  assert.equal(resolveSettings(undefined).neuralDueOnly, false);
+  assert.equal(resolveSettings({ neuralDueOnly: true }).neuralDueOnly, true);
 });

@@ -620,6 +620,7 @@ export function popNextNeuralElement(
   state: NeuralQueueState,
   opts?: {
     excludeIds?: ReadonlySet<ElementId>;
+    isEligible?: (id: ElementId) => boolean;
     elements?: ReadonlyMap<ElementId, IrElement>;
     rng?: () => number;
     nowMs?: number;
@@ -628,7 +629,10 @@ export function popNextNeuralElement(
 ): { next: NeuralFrontierEntry | null; state: NeuralQueueState } {
   const normalized = normalizeNeuralQueueState(state, opts?.elements);
   const exclude = opts?.excludeIds;
-  const candidates = normalized.entries.filter((entry) => !exclude?.has(entry.id));
+  const isEligible = opts?.isEligible;
+  const candidates = normalized.entries.filter(
+    (entry) => !exclude?.has(entry.id) && (!isEligible || isEligible(entry.id)),
+  );
   if (candidates.length === 0) return { next: null, state: normalized };
 
   let picked: NeuralFrontierEntry;
