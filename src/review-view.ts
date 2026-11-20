@@ -287,6 +287,10 @@ export interface IrReviewViewHost {
     elementId: ElementId,
     visitedPrefixIds: ReadonlySet<ElementId>,
   ) => Promise<ReviewSlot[]>;
+  onNeuralRefreshSlots?: (
+    visitedPrefixIds: ReadonlySet<ElementId>,
+  ) => Promise<ReviewSlot[]>;
+  saveSettings?: () => Promise<void>;
   getSm20Matrix?: () => Sm20Matrix | undefined;
   onSm20Grade?: (
     eventId: string,
@@ -538,6 +542,10 @@ export class IrReviewView extends ItemView {
     elementId: ElementId,
     visitedPrefixIds: ReadonlySet<ElementId>,
   ) => Promise<ReviewSlot[]>;
+  private readonly onNeuralRefreshSlots?: (
+    visitedPrefixIds: ReadonlySet<ElementId>,
+  ) => Promise<ReviewSlot[]>;
+  private readonly saveSettings?: () => Promise<void>;
   private readonly getSm20Matrix?: () => Sm20Matrix | undefined;
   private readonly onSm20Grade?: IrReviewViewHost["onSm20Grade"];
 
@@ -575,6 +583,8 @@ export class IrReviewView extends ItemView {
     this.duplicateSibling = host.duplicateSibling;
     this.onSessionState = host.onSessionState;
     this.onNeuralExcite = host.onNeuralExcite;
+    this.onNeuralRefreshSlots = host.onNeuralRefreshSlots;
+    this.saveSettings = host.saveSettings;
     this.getSm20Matrix = host.getSm20Matrix;
     this.onSm20Grade = host.onSm20Grade;
   }
@@ -3148,6 +3158,18 @@ export class IrReviewView extends ItemView {
       text: idleChip ?? (this.sessionComplete ? "Done" : modeText),
     });
     chip.setAttr("aria-hidden", "true");
+    if (this.isNeural && !this.emptyVault && !this.sessionComplete) {
+      const dueBtn = row.createEl("button", {
+        cls: `ir-review-neural-due-chip${this.settings.neuralDueOnly ? " is-active" : ""}`,
+        text: "Due today",
+        attr: {
+          type: "button",
+          "aria-pressed": String(this.settings.neuralDueOnly),
+          title: "Filter remaining Neural queue to elements due today",
+        },
+      });
+      dueBtn.addEventListener("click", () => void this.toggleNeuralDueOnly());
+    }
     row.createSpan({
       cls: "ir-review-session-label",
       text:
@@ -4961,6 +4983,24 @@ export class IrReviewView extends ItemView {
       await this.exciteIfNeural(created.id);
     }
     return created;
+  }
+
+  private async toggleNeuralDueOnly(): Promise<void> {
+    if (!this.isNeural) return;
+    this.settings.neuralDueOnly = !this.settings.neuralDueOnly;
+    await this.saveSettings?.();
+    if (this.onNeuralRefreshSlots) {
+      const prefix = this.queue.slice(0, this.index + 1);
+      const prefixIds = new Set(prefix.map((s) => s.id));
+      const refreshed = await this.onNeuralRefreshSlots(prefixIds);
+      for (const s of refreshed) {
+        this.elementsById.set(s.id, s.element);
+      }
+      const tail = refreshed.filter((s) => !prefixIds.has(s.id));
+      this.queue = prefix.concat(tail).slice(0, 200);
+      this.reportSessionState();
+    }
+    this.paintSessionBar();
   }
 
   private async exciteIfNeural(elementId: ElementId): Promise<void> {

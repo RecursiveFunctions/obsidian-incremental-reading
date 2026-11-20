@@ -90,6 +90,7 @@ import {
   computeLoad,
   computeUpcoming,
   disposeStatusBar,
+  endOfDayMs,
   renderStatusBar,
   renderStatusBarError,
   type UpcomingLoad,
@@ -141,7 +142,11 @@ import {
   SM20_IMAGE_EXTRACT_AFACTOR,
   spreadExtractPriority,
 } from "./src/sm18-ir-mechanics";
-import { scheduleToTopicState, topicStateToSchedule } from "./src/ir/queue-adapter";
+import {
+  dueMsOf,
+  scheduleToTopicState,
+  topicStateToSchedule,
+} from "./src/ir/queue-adapter";
 import { buildCardResetCard } from "./src/ir/leech";
 import {
   buildAdvanceEvents,
@@ -970,6 +975,9 @@ export default class IncrementalReadingPlugin extends Plugin {
             void this.persistSessionCursor(orderedIds, cursor, progress),
           onNeuralExcite: (elementId, visitedPrefixIds) =>
             this.exciteActiveNeuralSession(elementId, visitedPrefixIds),
+          onNeuralRefreshSlots: (visitedPrefixIds) =>
+            this.refreshActiveNeuralSlots(visitedPrefixIds),
+          saveSettings: () => this.saveSettings(),
           getSm20Matrix: () => this.sm20Matrix,
           onSm20Grade: (eventId, prevCard, nextCard, grade) =>
             this.recordSm20Grade(eventId, prevCard, nextCard, grade),
@@ -3439,6 +3447,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       seedNotePath,
       makeLcg(sessionSeed),
       useLexical,
+      this.settings.neuralDueOnly,
     );
     
     if (queue.length < 2) {
@@ -3488,7 +3497,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.ledgerInit;
     const state = await this.ledger.load();
     const neural = await this.ledger.readNeural(state.elements);
-    const queue = neuralSlotsFromQueueState(this.app, state, neural);
+    const queue = neuralSlotsFromQueueState(this.app, state, neural, {
+      dueOnly: this.settings.neuralDueOnly,
+    });
     if (queue.length === 0) {
       new Notice("Incremental Reading: no saved Neural Queue frontier yet. Run Go neural on a note first.");
       return;
@@ -3537,22 +3548,44 @@ export default class IncrementalReadingPlugin extends Plugin {
       capacity: NEURAL_MAX_QUEUE,
       random: Math.random,
     });
+    const endOfToday = endOfDayMs(nowMs);
+    const isDueTodayOrSeed = (id: ElementId) => {
+      if (!this.settings.neuralDueOnly || id === expanded.seedId) return true;
+      const el = state.elements.get(id);
+      if (!el) return false;
+      const due = dueMsOf(el);
+      return Number.isFinite(due) && due <= endOfToday;
+    };
     const popped = popNextNeuralElement(expanded, {
       excludeIds: visitedPrefixIds,
+      isEligible: this.settings.neuralDueOnly ? isDueTodayOrSeed : undefined,
       elements: state.elements,
       rng: Math.random,
       nowMs,
     });
     await this.ledger.writeNeural(popped.state);
 
-    const slots = neuralSlotsFromQueueState(this.app, state, expanded).filter(
-      (slot) => !visitedPrefixIds.has(slot.id),
-    );
+    const slots = neuralSlotsFromQueueState(this.app, state, expanded, {
+      dueOnly: this.settings.neuralDueOnly,
+      endOfTodayMs: endOfToday,
+    }).filter((slot) => !visitedPrefixIds.has(slot.id));
     if (!popped.next) return slots;
     const nextIdx = slots.findIndex((s) => s.id === popped.next!.id);
     if (nextIdx <= 0) return slots;
     const pickedSlot = slots[nextIdx]!;
     return [pickedSlot, ...slots.slice(0, nextIdx), ...slots.slice(nextIdx + 1)];
+  }
+
+  private async refreshActiveNeuralSlots(
+    visitedPrefixIds: ReadonlySet<ElementId>,
+  ): Promise<ReviewSlot[]> {
+    if (!this.ledger) return [];
+    const state = await this.ledger.load();
+    const curNeural = await this.ledger.readNeural(state.elements);
+    return neuralSlotsFromQueueState(this.app, state, curNeural, {
+      dueOnly: this.settings.neuralDueOnly,
+      endOfTodayMs: endOfDayMs(Date.now()),
+    }).filter((slot) => !visitedPrefixIds.has(slot.id));
   }
 
   public async startBranchReview(rootId: ElementId, includeFuture = false): Promise<void> {
