@@ -2,7 +2,7 @@ import type { ElementId } from "./ids";
 
 export const SESSION_SNAPSHOT_VERSION = 1;
 export type SessionMode = "due" | "random" | "neural";
-export type SessionPhase = "due" | "neural" | "drill" | "branch" | "subset";
+export type SessionPhase = "due" | "neural" | "drill" | "branch" | "subset" | "search";
 
 export function shouldPersistSessionPhase(phase: SessionPhase): boolean {
   return phase === "due" || phase === "neural";

@@ -1,8 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseJumpIntervalInput, planManualSchedule } from "../src/ir/manual-schedule";
+import {
+  buildAdvanceEvents,
+  parseAdvanceInput,
+  parseJumpIntervalInput,
+  planAdvanceElements,
+  planManualSchedule,
+} from "../src/ir/manual-schedule";
+import { readCoreSearchMatchedPaths } from "../src/ir/search-view";
+import { fold } from "../src/ir/log";
+import { computeElementHistoryCounts } from "../src/ir/mercy";
+import { SM20_MAX_INTERVAL_DAYS } from "../src/sm18-ir-mechanics";
 import { newElement } from "../src/ir/model";
-import type { ElementId } from "../src/ir/ids";
+import type { DeviceId, ElementId, EventId } from "../src/ir/ids";
 
 test("manual item reschedule changes due and interval without review state", () => {
   const element = newElement({ id: "item" as ElementId, type: "item", priority: 50, now: 0 });
@@ -51,4 +61,116 @@ test("JumpInterval adjusts topic A-Factor via adjustTopicAFactor and optionally 
     disperseRng: () => 0.9,
   })!;
   assert.ok(dispersed.newInterval !== 100);
+});
+
+test("parseAdvanceInput parses today/0 and positive day counts", () => {
+  assert.equal(parseAdvanceInput(""), 0);
+  assert.equal(parseAdvanceInput("0"), 0);
+  assert.equal(parseAdvanceInput("Today"), 0);
+  assert.equal(parseAdvanceInput("7"), 7);
+  assert.equal(parseAdvanceInput("999999"), SM20_MAX_INTERVAL_DAYS);
+  assert.equal(parseAdvanceInput("-3"), null);
+  assert.equal(parseAdvanceInput("abc"), null);
+});
+
+test("planAdvanceElements spreads in priority order, preserves lastReview/stability, and adds zero mercy count", () => {
+  const now = 1_760_000_000_000;
+  const dayMs = 86_400_000;
+  const lowPri = newElement({ id: "el-low" as ElementId, type: "item", priority: 60, now: 0 });
+  lowPri.card = {
+    due: now + 90 * dayMs,
+    stability: 42,
+    difficulty: 4.5,
+    elapsedDays: 20,
+    scheduledDays: 90,
+    reps: 5,
+    lapses: 0,
+    state: 2,
+    lastReview: now - 10 * dayMs,
+  };
+  const highPri = newElement({ id: "el-high" as ElementId, type: "topic", priority: 10, now: 0 });
+  highPri.schedule = { due: now + 30 * dayMs, interval: 30, aFactor: 2.3 };
+  const dismissed = newElement({ id: "el-dis" as ElementId, type: "topic", priority: 5, now: 0 });
+  dismissed.dismissed = true;
+  dismissed.schedule = { due: now + 5 * dayMs, interval: 5, aFactor: 2.0 };
+
+  const entries = planAdvanceElements([lowPri, highPri, dismissed], 2, now);
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0]!.elementId, highPri.id);
+  assert.equal(entries[0]!.dayOffset, 0);
+  assert.equal(entries[1]!.elementId, lowPri.id);
+  assert.equal(entries[1]!.dayOffset, 1);
+  assert.equal(entries[1]!.card?.stability, 42);
+  assert.equal(entries[1]!.card?.lastReview, now - 10 * dayMs);
+
+  let seq = 1;
+  const createdEvents = [lowPri, highPri].map((el, i) => ({
+    id: `c-${i}` as EventId,
+    ts: 0,
+    lamport: i + 1,
+    device: "dev-a" as DeviceId,
+    kind: "element-created" as const,
+    target: el.id,
+    payload: { element: el },
+  }));
+  const advEvents = buildAdvanceEvents(entries, {
+    nowMs: now,
+    lamportStart: 10,
+    deviceId: "dev-a" as DeviceId,
+    batchId: "adv-batch-1",
+    newEventId: () => `adv-${seq++}` as EventId,
+  });
+
+  const allEvents = [...createdEvents, ...advEvents];
+  const folded = fold(allEvents);
+  assert.equal(folded.elements.get(highPri.id)?.schedule?.due, now);
+  assert.equal(folded.elements.get(highPri.id)?.schedule?.aFactor, 2.3);
+  assert.equal(folded.elements.get(lowPri.id)?.card?.due, now + dayMs);
+  assert.equal(folded.elements.get(lowPri.id)?.card?.stability, 42);
+
+  const counts = computeElementHistoryCounts(allEvents);
+  assert.equal(counts.get(highPri.id)?.totalPostponeCount ?? 0, 0);
+  assert.equal(counts.get(lowPri.id)?.totalPostponeCount ?? 0, 0);
+});
+
+test("readCoreSearchMatchedPaths reads resultDomLookup Map and DOM .tree-item-self fallback", () => {
+  const fakeAppMap = {
+    workspace: {
+      getLeavesOfType: (t: string) =>
+        t === "search"
+          ? [
+              {
+                view: {
+                  dom: {
+                    resultDomLookup: new Map([[{ path: "Notes/A.md" }, {}], [{ path: "Notes/B.md" }, {}]]),
+                  },
+                },
+              },
+            ]
+          : [],
+    },
+  };
+  assert.deepEqual(readCoreSearchMatchedPaths(fakeAppMap as never), ["Notes/A.md", "Notes/B.md"]);
+
+  const fakeAppDom = {
+    workspace: {
+      getLeavesOfType: () => [
+        {
+          view: {
+            containerEl: {
+              querySelectorAll: () => [
+                { getAttribute: (n: string) => (n === "data-path" ? "Notes/C.md" : null) },
+                { getAttribute: () => null, querySelector: () => ({ textContent: "Notes/D.md" }) },
+              ],
+            },
+          },
+        },
+      ],
+    },
+    metadataCache: {
+      getFirstLinkpathDest: (link: string) => (link === "Notes/D.md" ? { path: "Notes/D.md" } : null),
+    },
+    vault: { getFiles: () => [] },
+  };
+  assert.deepEqual(readCoreSearchMatchedPaths(fakeAppDom as never), ["Notes/C.md", "Notes/D.md"]);
 });

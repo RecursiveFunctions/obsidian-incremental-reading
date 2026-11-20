@@ -349,7 +349,7 @@ export const EMPTY_NEURAL_COPY =
 export const EMPTY_COLLECTION_COPY =
   "Mark a note as a topic (Alt+T), then start review (Alt+R).";
 
-export type SessionBarPhase = "due" | "neural" | "drill" | "branch" | "subset";
+export type SessionBarPhase = "due" | "neural" | "drill" | "branch" | "subset" | "search";
 
 export function drillReviewQueue(
   app: App,
@@ -427,6 +427,9 @@ export function sessionBarLabel(opts: {
   }
   if (opts.phase === "subset") {
     return `Subset · ${opts.remaining} left`;
+  }
+  if (opts.phase === "search") {
+    return `Search · ${opts.remaining} left`;
   }
   if (opts.isNeural) {
     const rest = `${opts.remaining} left`;

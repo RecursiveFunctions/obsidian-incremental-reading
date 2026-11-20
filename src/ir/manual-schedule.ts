@@ -1,4 +1,5 @@
-import type { IrElement, ReadSchedule, StoredCard } from "./model";
+import type { IrElement, IrEvent, ReadSchedule, StoredCard } from "./model";
+import type { DeviceId, ElementId, EventId } from "./ids";
 import { clampPriority } from "./model";
 import {
   adjustTopicAFactor,
@@ -123,4 +124,105 @@ export function planManualSchedule(
     ...base,
     schedule: { ...element.schedule!, due: finalDue, interval: finalInterval, aFactor: nextAf },
   };
+}
+
+export interface AdvancePlanEntry {
+  elementId: ElementId;
+  previousDue: number;
+  newDue: number;
+  dayOffset: number;
+  card?: StoredCard;
+  schedule?: ReadSchedule;
+}
+
+/**
+ * Parse an Advance horizon input:
+ * - "", "0", or "today" (case-insensitive) -> 0 (bring due immediately today)
+ * - Positive integer N -> clamped to [1, SM20_MAX_INTERVAL_DAYS]
+ * - Invalid / negative -> null
+ */
+export function parseAdvanceInput(raw: string): number | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed || trimmed === "0" || trimmed === "today") return 0;
+  if (!/^\d+$/.test(trimmed)) return null;
+  const days = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(days) || days < 0) return null;
+  return Math.min(SM20_MAX_INTERVAL_DAYS, days);
+}
+
+/**
+ * SM-20 `Advance` planner (`TBrowser.Advance`): priority-ordered reschedule
+ * across `[0..horizonDays]` preserving `lastReview`, `stability`, `interval`,
+ * and `aFactor`.
+ */
+export function planAdvanceElements(
+  elements: Iterable<IrElement>,
+  horizonDays: number,
+  nowMs: number,
+): AdvancePlanEntry[] {
+  const cleanHorizon = Math.max(0, Math.min(SM20_MAX_INTERVAL_DAYS, Math.trunc(horizonDays)));
+  const candidates: Array<{ el: IrElement; currentDue: number }> = [];
+  for (const el of elements) {
+    if (el.dismissed) continue;
+    const due = el.card?.due ?? el.schedule?.due;
+    if (due === undefined || !Number.isFinite(due)) continue;
+    candidates.push({ el, currentDue: due });
+  }
+  if (candidates.length === 0) return [];
+
+  candidates.sort((a, b) => {
+    if (a.el.priority !== b.el.priority) return a.el.priority - b.el.priority;
+    if (a.currentDue !== b.currentDue) return a.currentDue - b.currentDue;
+    return a.el.id.localeCompare(b.el.id);
+  });
+
+  const n = candidates.length;
+  const entries: AdvancePlanEntry[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const { el, currentDue } = candidates[i]!;
+    const dayOffset =
+      cleanHorizon === 0 || n === 1
+        ? 0
+        : Math.floor((i * (cleanHorizon + 1)) / n);
+    const newDue = nowMs + dayOffset * MS_PER_DAY;
+    const card = el.card ? { ...el.card, due: newDue } : undefined;
+    const schedule = el.schedule ? { ...el.schedule, due: newDue } : undefined;
+    entries.push({
+      elementId: el.id,
+      previousDue: currentDue,
+      newDue,
+      dayOffset,
+      ...(card ? { card } : {}),
+      ...(schedule ? { schedule } : {}),
+    });
+  }
+  return entries;
+}
+
+export function buildAdvanceEvents(
+  entries: AdvancePlanEntry[],
+  opts: {
+    nowMs: number;
+    lamportStart: number;
+    deviceId: DeviceId;
+    batchId: string;
+    newEventId: () => EventId;
+  },
+): IrEvent[] {
+  return entries.map((entry, idx) => ({
+    id: opts.newEventId(),
+    ts: opts.nowMs,
+    lamport: opts.lamportStart + idx,
+    device: opts.deviceId,
+    kind: "mercy-postponed",
+    target: entry.elementId,
+    payload: {
+      operation: "manual-reschedule",
+      batchId: opts.batchId,
+      previousDue: entry.previousDue,
+      newDue: entry.newDue,
+      ...(entry.card ? { card: entry.card } : {}),
+      ...(entry.schedule ? { schedule: entry.schedule } : {}),
+    },
+  }));
 }
