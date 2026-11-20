@@ -1,8 +1,8 @@
 import sys, time, json
 from playwright.sync_api import sync_playwright
 
-def connect(pw):
-    b = pw.chromium.connect_over_cdp("http://127.0.0.1:9333")
+def connect(pw, port=9333):
+    b = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
     ctx = b.contexts[0]
     page = [p for p in ctx.pages if "Obsidian" in (p.title() or "") or p.url.startswith("app://")][0]
     return b, page

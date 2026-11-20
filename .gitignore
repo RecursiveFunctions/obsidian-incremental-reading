@@ -29,3 +29,7 @@ npm-debug.log*
 # Env
 .env
 .env.*
+
+# Python
+__pycache__/
+*.pyc
