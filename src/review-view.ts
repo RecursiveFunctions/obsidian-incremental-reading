@@ -68,7 +68,14 @@ import {
   type IrElement,
   type IrEventKind,
 } from "./ir/model";
-import { buildPriorityPlacement, formatPriority, type PriorityPlacementPreview } from "./ir/relative-priority";
+import {
+  applyPriorityPlacement,
+  buildPriorityPlacement,
+  collectionSortOrder,
+  formatPriority,
+  projectRelativePriorities,
+  type PriorityPlacementPreview,
+} from "./ir/relative-priority";
 import { mountPriorityEditor } from "./priority-prompt";
 import { rebuildQueueTail } from "./queue";
 import {
@@ -4873,6 +4880,10 @@ export class IrReviewView extends ItemView {
       priorityDelta > 0
         ? clampPriority(slot.element.priority + priorityDelta)
         : slot.element.priority;
+    const priorityChanged = priorityDelta > 0 && nextPriority !== slot.element.priority;
+    const placement = priorityChanged
+      ? buildPriorityPlacement(this.elementsById.values(), slot.id, nextPriority)
+      : undefined;
     const payload: Record<string, unknown> = {
       card: stored,
       grade: gradeNumber(g),
@@ -4880,9 +4891,10 @@ export class IrReviewView extends ItemView {
       prioritySnapshot: slot.element.priority,
       effectiveRetention,
       schedulingPolicyVersion: PRIORITY_SCHEDULING_POLICY_VERSION,
-      ...(priorityDelta > 0
+      ...(priorityChanged
         ? {
             newPriority: nextPriority,
+            ...(placement ? { placement } : {}),
           }
         : {}),
     };
@@ -4908,12 +4920,30 @@ export class IrReviewView extends ItemView {
       priority: nextPriority,
     };
     this.elementsById.set(slot.id, slot.element);
+    if (placement) {
+      const order = applyPriorityPlacement(
+        collectionSortOrder(this.elementsById.values()),
+        slot.id,
+        placement,
+      );
+      const projected = projectRelativePriorities(order);
+      for (const [id, p] of projected) {
+        const el = this.elementsById.get(id);
+        if (el && el.priority !== p) {
+          this.elementsById.set(id, { ...el, priority: p });
+        }
+      }
+      const updatedSlotEl = this.elementsById.get(slot.id);
+      if (updatedSlotEl) {
+        slot.element = updatedSlotEl;
+      }
+    }
     if (slot.file) {
       await quietFrontmatterWrite(async () => {
         await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
           writeCardToFrontmatter(f, next);
-          if (priorityDelta > 0) {
-            f["ir-priority"] = nextPriority;
+          if (priorityChanged) {
+            f["ir-priority"] = slot.element.priority;
           }
         });
       }, "grade");

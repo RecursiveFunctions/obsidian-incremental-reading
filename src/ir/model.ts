@@ -362,7 +362,10 @@ export function validateIrEvent(value: unknown): string | null {
         (payload.placement === undefined || validPriorityPlacement(payload.placement))
         ? null : "priority payload is invalid";
     case "dismiss-set": return typeof payload.dismissed === "boolean" ? null : "dismissed must be boolean";
-    case "graded": return validCard(payload.card) ? null : "card is invalid";
+    case "graded":
+      if (!validCard(payload.card)) return "card is invalid";
+      return payload.placement === undefined || validPriorityPlacement(payload.placement)
+        ? null : "placement is invalid";
     case "grade-undone": return typeof payload.eventId === "string" && payload.eventId ? null : "eventId is required";
     case "card-reset":
       return (payload.card === undefined || validCard(payload.card)) &&

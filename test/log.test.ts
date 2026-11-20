@@ -588,3 +588,56 @@ test("isReviewEvent: grade-undone is preserved through compaction", () => {
   assert.equal(isReviewEvent("graded"), true);
   assert.equal(isReviewEvent("grade-undone"), true);
 });
+
+test("fold: graded placement persists relative rank shift across reload and reverts on grade-undone", () => {
+  const ids = [newElementId(), newElementId(), newElementId(), newElementId(), newElementId()];
+  const baseEvents: IrEvent[] = ids.map((id, i) => {
+    const p = i * 25;
+    const el = newElement({ id, type: "item", priority: p, now: i + 1 });
+    return ev({
+      lamport: i + 1,
+      kind: "element-created",
+      target: id,
+      payload: {
+        element: el,
+        placement: {
+          requestedPriority: p,
+          afterId: i > 0 ? ids[i - 1] : undefined,
+        },
+      },
+    });
+  });
+
+  const gradeEvent = ev({
+    lamport: 10,
+    kind: "graded",
+    target: ids[0],
+    payload: {
+      card: card(5000),
+      newPriority: 30,
+      placement: {
+        requestedPriority: 30,
+        afterId: ids[1],
+        beforeId: ids[2],
+      },
+    },
+  });
+
+  const shifted = fold([...baseEvents, gradeEvent]);
+  assert.equal(shifted.elements.get(ids[1])?.priority, 0);
+  assert.equal(shifted.elements.get(ids[0])?.priority, 25);
+  assert.equal(shifted.elements.get(ids[2])?.priority, 50);
+  assert.equal(shifted.elements.get(ids[3])?.priority, 75);
+  assert.equal(shifted.elements.get(ids[4])?.priority, 100);
+
+  const undoEvent = ev({
+    lamport: 11,
+    kind: "grade-undone",
+    target: ids[0],
+    payload: { eventId: gradeEvent.id },
+  });
+  const reverted = fold([...baseEvents, gradeEvent, undoEvent]);
+  assert.equal(reverted.elements.get(ids[0])?.priority, 0);
+  assert.equal(reverted.elements.get(ids[1])?.priority, 25);
+  assert.equal(reverted.elements.get(ids[2])?.priority, 50);
+});
