@@ -245,11 +245,21 @@ export function scheduleSm20Item(
     : analyticalR;
   const sincRaw = Math.max(1.05, lookupBlendedSinc(matrix, prevD01, prevS, retrievability));
   const smGrade = grade === "hard" ? 3 : grade === "easy" ? 5 : 4;
-  const nextStability = computePostReviewStability(prevS, sincRaw, elapsedFloat, smGrade);
+  const nextStability = computePostReviewStability(
+    prevS,
+    sincRaw,
+    elapsedFloat,
+    smGrade,
+    retrievability,
+    clampedRetention,
+  );
   const rawIv = clamp(nextStability * fiFactor, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
   const candidateIv = clamp(roundHalfToEven(rawIv), 1, SM20_MAX_INTERVAL_DAYS);
   const prevIv = Math.max(1, prevScheduledDays || roundHalfToEven(prevS));
-  const scheduledDays = enforceMinimumIntervalGrowthFactor(prevIv, candidateIv, nextRepNumber);
+  const scheduledDays =
+    elapsedFloat < prevS
+      ? candidateIv
+      : enforceMinimumIntervalGrowthFactor(prevIv, candidateIv, nextRepNumber);
 
   return {
     due: nowMs + scheduledDays * MS_PER_DAY,

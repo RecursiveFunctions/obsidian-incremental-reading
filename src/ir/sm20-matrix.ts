@@ -313,17 +313,31 @@ export function updateSm20Difficulty(d01: number, smGrade: number): number {
   return clamp(prev - 0.025, 0.0, 1.0);
 }
 
-/** `0x00ce66e0`: post-review stability for passing grade. */
+/** `0x00ce66e0`: post-review stability for passing grade (with early-review R damping). */
 export function computePostReviewStability(
   prevS: number,
   sinc: number,
   elapsedDays: number,
   smGrade: number,
+  retrievability?: number,
+  desiredRetention?: number,
 ): number {
   const safeS = clamp(prevS, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
   const gradeScale = smGrade === 3 ? 1.0 + (sinc - 1.0) * 0.5 : smGrade === 5 ? sinc * 1.15 : sinc;
+  const baseScale = Math.max(1.02, gradeScale);
+  const isEarly =
+    elapsedDays < safeS &&
+    retrievability !== undefined &&
+    desiredRetention !== undefined &&
+    Number.isFinite(retrievability) &&
+    Number.isFinite(desiredRetention) &&
+    retrievability > desiredRetention;
+  const earlyScale = isEarly
+    ? clamp((1.0 - retrievability!) / Math.max(1e-6, 1.0 - desiredRetention!), 0.0, 1.0)
+    : 1.0;
+  const dampedScale = 1.0 + (baseScale - 1.0) * earlyScale;
   const overdueCredit = Math.max(0.0, elapsedDays - safeS) * 0.5;
-  return clamp((safeS + overdueCredit) * Math.max(1.02, gradeScale), SM20_STABILITY_MIN, SM20_STABILITY_MAX);
+  return clamp((safeS + overdueCredit) * dampedScale, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
 }
 
 /** `0x00ce6470`: blended next stability. */
@@ -332,8 +346,10 @@ export function computeBlendedNextStability(
   sinc: number,
   elapsedDays: number,
   smGrade: number,
+  retrievability?: number,
+  desiredRetention?: number,
 ): number {
-  return computePostReviewStability(prevS, sinc, elapsedDays, smGrade);
+  return computePostReviewStability(prevS, sinc, elapsedDays, smGrade, retrievability, desiredRetention);
 }
 
 /** `0x00ce0460` / `0x00ce0600`: post-lapse stability. */

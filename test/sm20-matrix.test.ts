@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   calibrateSm20Retrievability,
+  computePostReviewStability,
   createEmptySm20Matrix,
   foldSm20MatrixFromEvents,
   getSm20MatrixStats,
@@ -224,4 +225,20 @@ test("foldSm20MatrixFromEvents respects grade-undone, forget-reset, and baseline
   const incStats = getSm20MatrixStats(incremental);
   assert.equal(incStats.totalSincCases, 1);
   assert.equal(incStats.totalRecallCases, 1);
+});
+
+test("computePostReviewStability dampens early-review stability gain proportionally as R approaches 1", () => {
+  const prevS = 100;
+  const sinc = 2.5;
+  const onTime = computePostReviewStability(prevS, sinc, 100, 4, 0.9, 0.9);
+  const earlyMid = computePostReviewStability(prevS, sinc, 50, 4, 0.95, 0.9);
+  const earlyVeryHigh = computePostReviewStability(prevS, sinc, 1, 4, 0.999, 0.9);
+  const earlyLimit = computePostReviewStability(prevS, sinc, 0, 4, 1.0, 0.9);
+
+  assert.equal(onTime, 250);
+  // At R=0.95 with target 0.9, scale factor is (1-0.95)/(1-0.9)=0.5 -> 1 + 1.5*0.5 = 1.75
+  assert.ok(Math.abs(earlyMid - 175) < 1e-9);
+  // As R -> 1, stability gain scales linearly to 0
+  assert.ok(Math.abs(earlyVeryHigh - 101.5) < 1e-9);
+  assert.equal(earlyLimit, prevS);
 });

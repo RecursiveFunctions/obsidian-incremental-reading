@@ -145,3 +145,28 @@ test("scheduleItem: switches seamlessly between SM-20 and FSRS without card migr
   });
   assert.equal(err, null);
 });
+
+test("scheduleSm20Item early review dampens stability gain and bypasses 1.1x growth floor", () => {
+  const matureCard = {
+    due: NOW + 99 * DAY_MS,
+    stability: 100,
+    difficulty: 5,
+    elapsedDays: 100,
+    scheduledDays: 100,
+    reps: 5,
+    lapses: 0,
+    state: 2,
+    lastReview: NOW - 1 * DAY_MS,
+  };
+
+  // Reviewed after only 1 day (R ≈ 0.995): damped gain & no 1.1x (110d) ratchet
+  const earlyGood = scheduleSm20Item(matureCard, "good", NOW, 0.9);
+  assert.ok(earlyGood.stability < 110, `expected damped stability < 110, got ${earlyGood.stability}`);
+  assert.ok(earlyGood.scheduledDays < 110, `expected bypassed growth floor (<110), got ${earlyGood.scheduledDays}`);
+
+  // Reviewed on time at 100 days: full gain & growth floor active
+  const onTimeCard = { ...matureCard, lastReview: NOW - 100 * DAY_MS, due: NOW };
+  const onTimeGood = scheduleSm20Item(onTimeCard, "good", NOW, 0.9);
+  assert.ok(onTimeGood.scheduledDays >= 110);
+  assert.ok(onTimeGood.stability > earlyGood.stability);
+});
