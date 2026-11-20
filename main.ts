@@ -181,6 +181,8 @@ import {
   type DuplicateSourceNote,
 } from "./src/ir/bulk-import";
 import { planSmCollectionImport, type SmSourceFs } from "./src/ir/sm-collection-import";
+import { readZipEntries } from "./src/ir/zip-read";
+import { planEpubImport, planHtmlImport } from "./src/ir/epub-import";
 import { folderTopicCandidates } from "./src/ir/folder-topics";
 import { buildExtractEvent, buildPdfExtractEvent, buildPromoteEvent } from "./src/ir/extract";
 import {
@@ -1370,6 +1372,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     });
 
     this.irCommand({
+      id: "import-epub-or-html",
+      name: "Import EPUB or HTML document",
+      icon: "book-plus",
+      callback: () => void this.importEpubOrHtmlDocument(),
+    });
+
+    this.irCommand({
       id: "optimizer-data-report",
       name: "Copy optimizer data report",
       icon: "clipboard-list",
@@ -1555,6 +1564,15 @@ export default class IncrementalReadingPlugin extends Plugin {
             );
           }
           this.addMobileIrFileMenuNav(menu);
+          return;
+        }
+        if (file.extension === "epub" || file.extension === "html" || file.extension === "htm") {
+          menu.addItem((item) =>
+            item
+              .setTitle("Import into Incremental Reading")
+              .setIcon("book-plus")
+              .onClick(() => void this.importEpubOrHtmlDocument(file)),
+          );
           return;
         }
         if (file.extension !== "md") return;
@@ -5136,6 +5154,201 @@ export default class IncrementalReadingPlugin extends Plugin {
       (s.skippedDuplicates > 0 ? ` (${s.skippedDuplicates} duplicates skipped)` : "");
     console.info(`Incremental Reading: ${summary}`);
     new Notice(`Incremental Reading: ${summary}`);
+  }
+
+  private async pickEpubOrHtmlDocument(): Promise<{ name: string; bytes: Uint8Array } | null> {
+    if (Platform.isDesktopApp) {
+      const req = (window as unknown as { require?: (id: string) => unknown }).require;
+      if (typeof req === "function") {
+        try {
+          const electron = req("electron") as {
+            remote?: { dialog?: { showOpenDialog?: (opts: unknown) => Promise<{ canceled: boolean; filePaths: string[] }> } };
+            dialog?: { showOpenDialog?: (opts: unknown) => Promise<{ canceled: boolean; filePaths: string[] }> };
+          };
+          const dialog = electron?.remote?.dialog ?? electron?.dialog;
+          if (dialog?.showOpenDialog) {
+            const picked = await dialog.showOpenDialog({
+              title: "Select EPUB or HTML document",
+              properties: ["openFile"],
+              filters: [{ name: "EPUB & HTML", extensions: ["epub", "html", "htm"] }],
+            });
+            if (picked.canceled || picked.filePaths.length === 0) return null;
+            const filePath = picked.filePaths[0]!;
+            const fsPromises = req("fs/promises") as {
+              readFile: (p: string) => Promise<Uint8Array>;
+            };
+            const pathMod = req("path") as { basename: (p: string) => string };
+            const buf = await fsPromises.readFile(filePath);
+            return {
+              name: pathMod.basename(filePath),
+              bytes: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength),
+            };
+          }
+        } catch {
+          // Fall through to in-vault picker
+        }
+      }
+    }
+
+    const candidates = this.app.vault
+      .getFiles()
+      .filter((f) => /^(?:epub|html?)$/i.test(f.extension))
+      .sort((a, b) => a.path.localeCompare(b.path));
+    if (candidates.length === 0) {
+      new Notice("Incremental Reading: no .epub or .html files found in the vault.");
+      return null;
+    }
+
+    const pickedFile = await new Promise<TFile | null>((resolve) => {
+      class DocumentSuggest extends FuzzySuggestModal<TFile> {
+        private settled = false;
+        getItems(): TFile[] {
+          return candidates;
+        }
+        getItemText(item: TFile): string {
+          return item.path;
+        }
+        onChooseItem(item: TFile): void {
+          this.settled = true;
+          resolve(item);
+        }
+        onClose(): void {
+          if (!this.settled) resolve(null);
+        }
+      }
+      const modal = new DocumentSuggest(this.app);
+      modal.setPlaceholder("Choose an EPUB or HTML file from the vault…");
+      modal.open();
+    });
+    if (!pickedFile) return null;
+    const ab = await this.app.vault.readBinary(pickedFile);
+    return { name: pickedFile.name, bytes: new Uint8Array(ab) };
+  }
+
+  private async ensureVaultFoldersForFile(filePath: string): Promise<void> {
+    const slash = filePath.lastIndexOf("/");
+    if (slash <= 0) return;
+    const dir = filePath.slice(0, slash);
+    const parts = dir.split("/").filter(Boolean);
+    let acc = "";
+    for (const part of parts) {
+      acc = acc ? `${acc}/${part}` : part;
+      if (!this.app.vault.getAbstractFileByPath(acc)) {
+        await this.app.vault.createFolder(acc).catch(() => undefined);
+      }
+    }
+  }
+
+  private async importEpubOrHtmlDocument(vaultFile?: TFile): Promise<void> {
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
+      return;
+    }
+    await this.ledgerInit;
+
+    let docName: string;
+    let bytes: Uint8Array;
+    if (vaultFile) {
+      docName = vaultFile.name;
+      bytes = new Uint8Array(await this.app.vault.readBinary(vaultFile));
+    } else {
+      const picked = await this.pickEpubOrHtmlDocument();
+      if (!picked) return;
+      docName = picked.name;
+      bytes = picked.bytes;
+    }
+
+    const now = Date.now();
+    const deviceId = await this.ledger.getDeviceId();
+    const extractFolder = this.settings.extractFolder.trim().replace(/^\/+|\/+$/g, "");
+    const existingPaths = new Set(this.app.vault.getFiles().map((f) => f.path));
+    const isZipMagic = bytes.byteLength >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+    const isEpub = /\.epub$/i.test(docName) || isZipMagic;
+
+    if (isEpub) {
+      let plan;
+      try {
+        const zipEntries = await readZipEntries(bytes);
+        plan = planEpubImport({
+          zipEntries,
+          extractFolder,
+          attachmentFolder: `${extractFolder || "IR"}/attachments`,
+          defaultPriority: this.settings.defaultPriority,
+          now,
+          deviceId,
+          fileNameHint: docName,
+          existingPaths,
+        });
+      } catch (e) {
+        console.error("Incremental Reading: EPUB import failed", e);
+        new Notice(
+          `Incremental Reading: EPUB import failed (${e instanceof Error ? e.message : String(e)}).`,
+        );
+        return;
+      }
+
+      for (const att of plan.attachments) {
+        if (this.app.vault.getAbstractFileByPath(att.vaultPath)) continue;
+        await this.ensureVaultFoldersForFile(att.vaultPath);
+        const ab = att.bytes.buffer.slice(
+          att.bytes.byteOffset,
+          att.bytes.byteOffset + att.bytes.byteLength,
+        ) as ArrayBuffer;
+        await this.app.vault.createBinary(att.vaultPath, ab);
+      }
+
+      for (const note of plan.notes) {
+        if (this.app.vault.getAbstractFileByPath(note.path)) continue;
+        await this.ensureVaultFoldersForFile(note.path);
+        const created = await this.app.vault.create(note.path, note.markdown + "\n");
+        await quietFrontmatterWrite(async () => {
+          await this.app.fileManager.processFrontMatter(created, (fm) => {
+            for (const [k, v] of Object.entries(note.frontmatter)) fm[k] = v;
+          });
+        }, "epub-import");
+      }
+
+      let lamport = Math.max(now, await this.ledger.nextLamport());
+      const stamped = plan.events.map((ev) => ({ ...ev, lamport: lamport++ }));
+      await this.ledger.appendEvents(stamped);
+      await this.ledger.reconcile();
+      await this.getTreeView()?.refresh();
+      void this.refreshStatusBar();
+
+      const chapterCount = plan.notes.filter((n) => n.role === "chapter").length;
+      new Notice(`Imported "${plan.bookTitle}" (${chapterCount} chapter${chapterCount === 1 ? "" : "s"}).`);
+      const bookFile = this.app.vault.getAbstractFileByPath(plan.bookPath);
+      if (bookFile instanceof TFile) {
+        await this.app.workspace.getLeaf(true).openFile(bookFile);
+      }
+      return;
+    }
+
+    const html = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    const plan = planHtmlImport({
+      html,
+      fileName: docName,
+      extractFolder,
+      defaultPriority: this.settings.defaultPriority,
+      now,
+      deviceId,
+      existingPaths,
+    });
+    await this.ensureVaultFoldersForFile(plan.path);
+    const created = await this.app.vault.create(plan.path, (plan.markdown || "") + "\n");
+    await quietFrontmatterWrite(async () => {
+      await this.app.fileManager.processFrontMatter(created, (fm) => {
+        for (const [k, v] of Object.entries(plan.frontmatter)) fm[k] = v;
+      });
+    }, "html-import");
+
+    const lamport = Math.max(now, await this.ledger.nextLamport());
+    await this.ledger.appendEvents([{ ...plan.event, lamport }]);
+    await this.ledger.reconcile();
+    await this.getTreeView()?.refresh();
+    void this.refreshStatusBar();
+    new Notice(`Imported "${plan.title}" as an IR topic.`);
+    await this.app.workspace.getLeaf(true).openFile(created);
   }
 
   /**
