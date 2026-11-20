@@ -84,6 +84,7 @@ import {
   PRIORITY_SCHEDULING_POLICY_VERSION,
 } from "./ir/priority-scheduling";
 import { scheduleToTopicState, topicStateToSchedule } from "./ir/queue-adapter";
+import type { Sm20Matrix } from "./ir/sm20-matrix";
 import { describeNextDue, type UpcomingLoad } from "./status-bar";
 import {
   ancestorBreadcrumbLabel,
@@ -279,6 +280,13 @@ export interface IrReviewViewHost {
     elementId: ElementId,
     visitedPrefixIds: ReadonlySet<ElementId>,
   ) => Promise<ReviewSlot[]>;
+  getSm20Matrix?: () => Sm20Matrix | undefined;
+  onSm20Grade?: (
+    eventId: string,
+    prevCard: import("./ir/model").StoredCard | undefined,
+    nextCard: import("./ir/model").StoredCard,
+    grade: Grade,
+  ) => Promise<void>;
 }
 
 export class IrReviewView extends ItemView {
@@ -515,6 +523,8 @@ export class IrReviewView extends ItemView {
     elementId: ElementId,
     visitedPrefixIds: ReadonlySet<ElementId>,
   ) => Promise<ReviewSlot[]>;
+  private readonly getSm20Matrix?: () => Sm20Matrix | undefined;
+  private readonly onSm20Grade?: IrReviewViewHost["onSm20Grade"];
 
   constructor(leaf: WorkspaceLeaf, host: IrReviewViewHost) {
     super(leaf);
@@ -549,6 +559,8 @@ export class IrReviewView extends ItemView {
     this.duplicateSibling = host.duplicateSibling;
     this.onSessionState = host.onSessionState;
     this.onNeuralExcite = host.onNeuralExcite;
+    this.getSm20Matrix = host.getSm20Matrix;
+    this.onSm20Grade = host.onSm20Grade;
   }
 
   /** Whether the review dock is on screen (FAB sits above it). */
@@ -1215,9 +1227,10 @@ export class IrReviewView extends ItemView {
     kind: IrEventKind,
     target: ElementId,
     payload: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<string> {
+    const id = newEventId();
     await this.ledger.appendEvent({
-      id: newEventId(),
+      id,
       ts: Date.now(),
       // Live single-device events sort after the small migration lamports and
       // among themselves by wall clock; ties break on the unique event id.
@@ -1227,6 +1240,7 @@ export class IrReviewView extends ItemView {
       target,
       payload,
     });
+    return id;
   }
 
   /**
@@ -4716,6 +4730,7 @@ export class IrReviewView extends ItemView {
       now,
       retention,
       this.activePrimaryScheduler(),
+      this.getSm20Matrix?.(),
     );
     const out = {} as Record<Grade, string>;
     for (const grade of PREVIEW_GRADES) {
@@ -4837,9 +4852,11 @@ export class IrReviewView extends ItemView {
       policy.itemHighRetention,
       policy.itemLowRetention,
     );
+    const sm20Matrix = this.getSm20Matrix?.();
     const scheduled = scheduleItem(slot.element.card, g, nowMs, {
       primaryScheduler,
       requestRetention: effectiveRetention,
+      sm20Matrix,
     });
     const next = scheduled.card;
     const stored = scheduled.stored;
@@ -4854,7 +4871,7 @@ export class IrReviewView extends ItemView {
             undefined,
             undefined,
             slot.element.priority,
-            { primaryScheduler, effectiveRetention },
+            { primaryScheduler, effectiveRetention, sm20Matrix },
           )
         : null;
 
@@ -4899,7 +4916,13 @@ export class IrReviewView extends ItemView {
         : {}),
     };
     if (intervalOverridden) payload.overridden = true;
-    await this.emit("graded", slot.id, payload);
+    const prevCard = slot.element.card;
+    const eventId = await this.emit("graded", slot.id, payload);
+    if (this.onSm20Grade) {
+      await this.onSm20Grade(eventId, prevCard, stored, g).catch((e) => {
+        console.warn("Incremental Reading: could not update SM-20 matrix", e);
+      });
+    }
     this.gradedSlotIds.add(slot.id);
     this.processedSlotIds.add(slot.id);
     this.skippedSlotIds.delete(slot.id);

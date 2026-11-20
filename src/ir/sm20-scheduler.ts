@@ -1,6 +1,13 @@
 import type { Grade } from "../fsrs";
 import type { StoredCard } from "./model";
 import { roundHalfToEven, SM20_MAX_INTERVAL_DAYS } from "../sm18-ir-mechanics";
+import {
+  calibrateSm20Retrievability,
+  computePostLapseStability,
+  computePostReviewStability,
+  lookupBlendedSinc,
+  type Sm20Matrix,
+} from "./sm20-matrix";
 
 export const SM20_STABILITY_MIN = 0.7;
 export const SM20_STABILITY_MAX = 44_530.0;
@@ -86,15 +93,18 @@ export function evaluateSincModelV2(
 
 /** `ComputeInitialStabilityIncreaseEstimate` (`0x00cdeb50`) clamped via `0x00ce60b0`. */
 export function computeInitialSincPrior(
-  repFrac: number,
-  sTransformed: number,
-  diffFrac: number,
+  difficulty01: number,
+  stability: number,
+  retrievability: number,
 ): number {
-  const d1 = Math.pow(Math.max(0.7, sTransformed), repFrac * -0.26999999999999996 - 0.08);
-  const d2 = Math.min(600.0, repFrac * -2.0 + 2.25);
-  const expTerm = Math.exp(clamp(-d2 * diffFrac, -SM20_EXP_ARG_CLAMP, SM20_EXP_ARG_CLAMP));
-  const value = ((((1.0 - repFrac) * 12.0 + 3.0) - 1.0) * d1 + 1.0) * expTerm;
-  return clamp(value, 0.8, 20.0);
+  const d01 = clamp(Number.isFinite(difficulty01) ? difficulty01 : DEFAULT_DIFFICULTY_01, 0.0, 1.0);
+  const safeS = Math.max(SM20_STABILITY_MIN, Number.isFinite(stability) ? stability : SM20_STABILITY_MIN);
+  const safeR = clamp(Number.isFinite(retrievability) ? retrievability : SM20_RETRIEVABILITY_MAX, 0.0, 1.0);
+  const dVar1 = Math.pow(safeS, d01 * -0.27 - 0.08);
+  const dVar2 = Math.min(600.0, d01 * -2.0 + 2.25);
+  const expTerm = Math.exp(clamp(-dVar2 * safeR, -SM20_EXP_ARG_CLAMP, SM20_EXP_ARG_CLAMP));
+  const raw = (((1.0 - d01) * 12.0 + 2.0) * dVar1 + 1.0) * expTerm;
+  return clamp(raw, 0.8, 20.0);
 }
 
 /** `EnforceMinimumIntervalGrowthFactor` (`0x00cf29c0`). */
@@ -140,12 +150,13 @@ function nextDifficulty01ForGrade(prevD01: number, grade: Grade): number {
   }
 }
 
-/** Closed-form SM-20 item scheduler (`0x00cf3980`, `0x00a960f0`, `0x00cdeb50`, `0x00cf29c0`). */
+/** Closed-form SM-20 item scheduler (`0x00cf3980`, `0x00cde4a0`, `0x00cdeb50`, `0x00cf29c0`). */
 export function scheduleSm20Item(
   card: StoredCard | null | undefined,
   grade: Grade,
   nowMs: number,
   desiredRetention = 0.9,
+  matrix?: Sm20Matrix,
 ): StoredCard {
   const prevReps = Math.max(0, Math.trunc(card?.reps ?? 0));
   const prevLapses = Math.max(0, Math.trunc(card?.lapses ?? 0));
@@ -182,10 +193,7 @@ export function scheduleSm20Item(
         lastReview: nowMs,
       };
     }
-    const repFrac = repetitionIndexToFraction19(1);
-    const sTransformed = stabilityIndex20ToTransformed(1);
-    const diffFrac = difficultyIndex20ToLogFraction(difficulty01ToIndex20(prevD01));
-    const priorSinc = computeInitialSincPrior(repFrac, sTransformed, diffFrac);
+    const priorSinc = lookupBlendedSinc(matrix, prevD01, 2.0, SM20_RETRIEVABILITY_MAX);
     const gradeScale = grade === "hard" ? 0.6 : grade === "easy" ? 1.3 : 1.0;
     const nextStability = clamp(priorSinc * gradeScale, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
     const rawIv = clamp(nextStability * fiFactor, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
@@ -213,11 +221,7 @@ export function scheduleSm20Item(
   );
 
   if (grade === "again") {
-    const postLapseStability = clamp(
-      Math.min(prevS * 0.3, 2.0),
-      SM20_STABILITY_MIN,
-      SM20_STABILITY_MAX,
-    );
+    const postLapseStability = computePostLapseStability(prevS, prevLapses + 1);
     return {
       due: nowMs + MS_PER_DAY,
       stability: postLapseStability,
@@ -233,25 +237,15 @@ export function scheduleSm20Item(
   }
 
   const nextRepNumber = prevReps + 1;
-  const repFrac = repetitionIndexToFraction19(nextRepNumber);
-  const sTransformed = stabilityIndex20ToTransformed(stabilityToIndex20(prevS));
-  const diffFrac = difficultyIndex20ToLogFraction(difficulty01ToIndex20(prevD01));
-  const sincRaw = Math.max(1.05, evaluateSincModelV2(repFrac, sTransformed, diffFrac));
-
-  const gradeSinc =
-    grade === "hard"
-      ? Math.max(1.02, 1.0 + (sincRaw - 1.0) * 0.5)
-      : grade === "easy"
-        ? sincRaw * 1.15
-        : sincRaw;
-
-  const overdueCredit = Math.max(0.0, elapsedFloat - prevS) * 0.5;
-  const anchorStability = clamp(prevS + overdueCredit, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
-  const nextStability = clamp(
-    anchorStability * gradeSinc,
-    SM20_STABILITY_MIN,
-    SM20_STABILITY_MAX,
-  );
+  const dIdx = difficulty01ToIndex20(prevD01);
+  const sIdx = stabilityToIndex20(prevS);
+  const analyticalR = computeSm20Retrievability(elapsedFloat, prevS);
+  const retrievability = matrix
+    ? calibrateSm20Retrievability(matrix, dIdx, sIdx, analyticalR)
+    : analyticalR;
+  const sincRaw = Math.max(1.05, lookupBlendedSinc(matrix, prevD01, prevS, retrievability));
+  const smGrade = grade === "hard" ? 3 : grade === "easy" ? 5 : 4;
+  const nextStability = computePostReviewStability(prevS, sincRaw, elapsedFloat, smGrade);
   const rawIv = clamp(nextStability * fiFactor, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
   const candidateIv = clamp(roundHalfToEven(rawIv), 1, SM20_MAX_INTERVAL_DAYS);
   const prevIv = Math.max(1, prevScheduledDays || roundHalfToEven(prevS));

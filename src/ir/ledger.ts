@@ -39,6 +39,7 @@ import {
   parseNeuralQueueState,
   type NeuralQueueState,
 } from "./neural";
+import type { Sm20MatrixSnapshot } from "./sm20-matrix";
 
 // Fixed paths (constants in the module)
 export const META = ".ir/meta.json";
@@ -65,6 +66,15 @@ interface LedgerMetaV1 {
   generation?: string;
 }
 
+export interface Sm20MatrixFileV1 {
+  schemaVersion: 1;
+  matrix: Sm20MatrixSnapshot;
+  baseline?: Sm20MatrixSnapshot;
+  baselineCursorEventId?: string | null;
+  headEventId: string | null;
+  eventCount: number;
+}
+
 interface LedgerPaths {
   logDir: string;
   migrationLog: string;
@@ -75,6 +85,7 @@ interface LedgerPaths {
   bookmarks: string;
   drill: string;
   neural: string;
+  sm20Matrix: string;
 }
 
 /**
@@ -460,6 +471,7 @@ export class IrLedger {
       bookmarks: `${base}/bookmarks.json`,
       drill: `${base}/drill.json`,
       neural: `${base}/neural.json`,
+      sm20Matrix: `${base}/sm20-matrix.json`,
     };
   }
 
@@ -1254,6 +1266,24 @@ export class IrLedger {
     if (!validated) throw new Error("IrLedger.writeNeural: invalid neural state");
     const { neural } = await this.paths();
     await this.fs.write(neural, deterministicJsonStringify(validated));
+  }
+
+  async readSm20Matrix(): Promise<Sm20MatrixFileV1 | null> {
+    const { sm20Matrix } = await this.paths();
+    if (!(await this.fs.exists(sm20Matrix))) return null;
+    try {
+      const parsed = JSON.parse(await this.fs.read(sm20Matrix)) as Partial<Sm20MatrixFileV1>;
+      if (parsed.schemaVersion !== 1 || !parsed.matrix) return null;
+      return parsed as Sm20MatrixFileV1;
+    } catch {
+      return null;
+    }
+  }
+
+  async writeSm20Matrix(file: Sm20MatrixFileV1): Promise<void> {
+    await this.awaitReady();
+    const { sm20Matrix } = await this.paths();
+    await this.fs.write(sm20Matrix, JSON.stringify(file));
   }
 
   async loadSessionSnapshot(): Promise<SessionSnapshot | null> {

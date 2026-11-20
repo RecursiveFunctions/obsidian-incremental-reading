@@ -48,8 +48,8 @@ test("SM-20 axis mappers match sm20.exe 1..20 indices and transforms", () => {
 });
 
 test("computeInitialSincPrior and evaluateSincModelV2 stay finite and decreasing with difficulty", () => {
-  const easyPrior = computeInitialSincPrior(0, 2.0, difficultyIndex20ToLogFraction(2));
-  const hardPrior = computeInitialSincPrior(0, 2.0, difficultyIndex20ToLogFraction(18));
+  const easyPrior = computeInitialSincPrior(0.1, 2.0, 0.1);
+  const hardPrior = computeInitialSincPrior(0.9, 2.0, 0.1);
   assert.ok(easyPrior > hardPrior);
   assert.ok(easyPrior <= 20.0 && hardPrior >= 0.8);
 

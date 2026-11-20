@@ -6,6 +6,13 @@ import {
   type SmSourceFs,
 } from "../src/ir/sm-collection-import";
 import { contentFingerprint, normalizeUrlForDedupe } from "../src/ir/bulk-import";
+import {
+  foldSm20MatrixFromEvents,
+  getSm20MatrixStats,
+  matrixIndex,
+  SM20_CASES_DAT_BYTES,
+  SM20_SINC_DAT_BYTES,
+} from "../src/ir/sm20-matrix";
 import type { DeviceId, ElementId } from "../src/ir/ids";
 import type { IrElement } from "../src/ir/model";
 
@@ -329,4 +336,49 @@ test("duplicate guard skips already-imported elements and normalizes URLs withou
     contentFingerprint("  Hello   World "),
     contentFingerprint("hello world"),
   );
+});
+
+test("import seeds sm20Baseline from alg17/*.dat and cursor skips imported RepetitionHistory.dat", async () => {
+  const sincBuf = new Uint8Array(SM20_SINC_DAT_BYTES);
+  const sincCasesBuf = new Uint8Array(SM20_CASES_DAT_BYTES);
+  const recallBuf = new Uint8Array(SM20_CASES_DAT_BYTES);
+  const recallCasesBuf = new Uint8Array(SM20_CASES_DAT_BYTES);
+  const idx = matrixIndex(5, 3, 18);
+  new DataView(sincBuf.buffer).setFloat64(idx * 8, 4.2, true);
+  new DataView(sincCasesBuf.buffer).setUint32(idx * 4, 25, true);
+  new DataView(recallBuf.buffer).setUint32(idx * 4, 24, true);
+  new DataView(recallCasesBuf.buffer).setUint32(idx * 4, 25, true);
+
+  const span = makeRtxSpan("Item Q", 1);
+  const fs = memSourceFs({
+    "info/ElementInfo.dat": makeElementInfo({ type: 1, status: 1, textMember: 1, reps: 1, interval: 5, lastRepMs: NOW - DAY_MS }),
+    "info/RepetitionHistory.dat": makeRepHistory([
+      { elementId: 1, rep: 1, lapses: 0, iv: 5, dateMs: NOW - DAY_MS, grade: 4 },
+    ]),
+    "registry/text.mem": makeMemRecord(1, span.length),
+    "registry/text.ptr": makeSub([1]),
+    "registry/text.rtx": span,
+    "alg17/StabilityIncrease.dat": sincBuf,
+    "alg17/StabilityIncreaseCases.dat": sincCasesBuf,
+    "alg17/Recall.dat": recallBuf,
+    "alg17/RecallCases.dat": recallCasesBuf,
+  });
+
+  const plan = await planSmCollectionImport({
+    fs,
+    nowMs: NOW,
+    deviceId: DEV,
+    targetFolder: "SM Import",
+  });
+  assert.ok(plan.sm20Baseline);
+  assert.ok(plan.baselineCursorEventId);
+
+  // Folding imported events from baseline + cursor must NOT double-count RepetitionHistory.dat
+  const seeded = foldSm20MatrixFromEvents(plan.events, {
+    baseline: plan.sm20Baseline,
+    afterEventId: plan.baselineCursorEventId,
+  });
+  const stats = getSm20MatrixStats(seeded);
+  assert.equal(stats.totalSincCases, 25);
+  assert.equal(stats.totalRecallCases, 25);
 });

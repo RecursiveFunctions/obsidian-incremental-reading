@@ -64,7 +64,26 @@ import {
 import { buildNeuralAdjacency, neighborsForWalk } from "./src/ir/neural-graph";
 import { IR_REVIEW_VIEW_TYPE, IrReviewView } from "./src/review-view";
 import { openPriorityPrompt } from "./src/priority-prompt";
-import { IrLedger, META } from "./src/ir/ledger";
+import { IrLedger, META, type Sm20MatrixFileV1 } from "./src/ir/ledger";
+import {
+  createEmptySm20Matrix,
+  foldSm20MatrixFromEvents,
+  getSm20MatrixStats,
+  gradeToSmGrade,
+  recordSm20Outcome,
+  restoreSm20Matrix,
+  snapshotSm20Matrix,
+  type Sm20Matrix,
+  type Sm20MatrixStats,
+} from "./src/ir/sm20-matrix";
+import {
+  computeSm20Retrievability,
+  SM20_RETRIEVABILITY_MAX,
+  SM20_STABILITY_MIN,
+  storedDifficultyTo01,
+} from "./src/ir/sm20-scheduler";
+import type { Grade } from "./src/fsrs";
+import type { StoredCard } from "./src/ir/model";
 import {
   computeLoad,
   computeUpcoming,
@@ -380,6 +399,8 @@ export default class IncrementalReadingPlugin extends Plugin {
    * action only as the migration fallback.
    */
   private ledger?: IrLedger;
+  private sm20Matrix?: Sm20Matrix;
+  private sm20MatrixMeta?: Pick<Sm20MatrixFileV1, "baseline" | "baselineCursorEventId" | "headEventId" | "eventCount">;
 
   /**
    * Ledger init / first-run migration. Started from onload but not awaited
@@ -574,6 +595,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       (evt) => this.showStatusBarMenu(evt),
     );
     void this.ledgerInit.then(async () => {
+      await this.ensureSm20Matrix();
       await this.runStartupAutoPostpone();
       void this.refreshStatusBar();
       // Maintenance runs after the first paint: the first load still reads the
@@ -863,6 +885,9 @@ export default class IncrementalReadingPlugin extends Plugin {
             void this.persistSessionCursor(orderedIds, cursor, progress),
           onNeuralExcite: (elementId, visitedPrefixIds) =>
             this.exciteActiveNeuralSession(elementId, visitedPrefixIds),
+          getSm20Matrix: () => this.sm20Matrix,
+          onSm20Grade: (eventId, prevCard, nextCard, grade) =>
+            this.recordSm20Grade(eventId, prevCard, nextCard, grade),
         });
         view.multiSelect = this.multiSelect;
         return view;
@@ -1316,6 +1341,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       callback: () => void this.copyOptimizerDataReport(),
     });
 
+    this.irCommand({
+      id: "rebuild-sm20-matrix",
+      name: "Rebuild SM-20 optimization matrix",
+      icon: "refresh-cw",
+      callback: () => void this.rebuildSm20MatrixFromHistory(true),
+    });
+
     this.registerEvent(
       this.app.workspace.on(
         "editor-menu",
@@ -1739,6 +1771,130 @@ export default class IncrementalReadingPlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType(IR_STATS_VIEW_TYPE)) {
       const view = leaf.view;
       if (view instanceof IrStatsView) void view.refresh();
+    }
+  }
+
+  public getSm20Matrix(): Sm20Matrix | undefined {
+    return this.sm20Matrix;
+  }
+
+  private async ensureSm20Matrix(): Promise<Sm20Matrix> {
+    if (!this.ledger) {
+      this.sm20Matrix = this.sm20Matrix ?? createEmptySm20Matrix();
+      return this.sm20Matrix;
+    }
+    const events = await this.ledger.loadEvents();
+    const sorted = [...events].sort((a, b) => a.lamport - b.lamport || a.id.localeCompare(b.id));
+    const headEventId = sorted.length > 0 ? sorted[sorted.length - 1]!.id : null;
+    const eventCount = sorted.length;
+
+    const cached = await this.ledger.readSm20Matrix();
+    if (cached && cached.headEventId === headEventId && cached.eventCount === eventCount) {
+      try {
+        this.sm20Matrix = restoreSm20Matrix(cached.matrix);
+        this.sm20MatrixMeta = {
+          baseline: cached.baseline,
+          baselineCursorEventId: cached.baselineCursorEventId ?? null,
+          headEventId,
+          eventCount,
+        };
+        return this.sm20Matrix;
+      } catch {
+        // Fall through to rebuild
+      }
+    }
+
+    const baseline = cached?.baseline;
+    const baselineCursorEventId = cached?.baselineCursorEventId ?? null;
+    const matrix = foldSm20MatrixFromEvents(sorted, {
+      ...(baseline ? { baseline } : {}),
+      ...(baselineCursorEventId ? { afterEventId: baselineCursorEventId } : {}),
+    });
+    this.sm20Matrix = matrix;
+    this.sm20MatrixMeta = { baseline, baselineCursorEventId, headEventId, eventCount };
+    await this.ledger.writeSm20Matrix({
+      schemaVersion: 1,
+      matrix: snapshotSm20Matrix(matrix),
+      ...(baseline ? { baseline } : {}),
+      ...(baselineCursorEventId !== null ? { baselineCursorEventId } : {}),
+      headEventId,
+      eventCount,
+    }).catch((e) => {
+      console.warn("Incremental Reading: could not persist SM-20 matrix cache", e);
+    });
+    return matrix;
+  }
+
+  private async recordSm20Grade(
+    eventId: string,
+    prevCard: StoredCard | undefined,
+    nextCard: StoredCard,
+    grade: Grade,
+  ): Promise<void> {
+    const matrix = this.sm20Matrix ?? (await this.ensureSm20Matrix());
+    const prevS = prevCard && prevCard.stability > 0 ? prevCard.stability : SM20_STABILITY_MIN;
+    const prevD01 = storedDifficultyTo01(prevCard?.difficulty);
+    const elapsedDays =
+      prevCard?.lastReview !== undefined && nextCard.lastReview !== undefined
+        ? Math.max(0, (nextCard.lastReview - prevCard.lastReview) / 86_400_000)
+        : Math.max(0, nextCard.elapsedDays ?? 0);
+    const r = prevCard && prevCard.reps > 0
+      ? computeSm20Retrievability(elapsedDays, prevS)
+      : SM20_RETRIEVABILITY_MAX;
+    recordSm20Outcome(matrix, {
+      prevDifficulty01: prevD01,
+      prevStability: prevS,
+      retrievability: r,
+      nextStability: nextCard.stability,
+      smGrade: gradeToSmGrade(grade),
+    });
+    if (!this.ledger) return;
+    const prevCount = this.sm20MatrixMeta?.eventCount ?? 0;
+    const meta: Sm20MatrixFileV1 = {
+      schemaVersion: 1,
+      matrix: snapshotSm20Matrix(matrix),
+      ...(this.sm20MatrixMeta?.baseline ? { baseline: this.sm20MatrixMeta.baseline } : {}),
+      ...(this.sm20MatrixMeta?.baselineCursorEventId !== undefined
+        ? { baselineCursorEventId: this.sm20MatrixMeta.baselineCursorEventId }
+        : {}),
+      headEventId: eventId,
+      eventCount: prevCount + 1,
+    };
+    this.sm20MatrixMeta = {
+      baseline: meta.baseline,
+      baselineCursorEventId: meta.baselineCursorEventId ?? null,
+      headEventId: meta.headEventId,
+      eventCount: meta.eventCount,
+    };
+    await this.ledger.writeSm20Matrix(meta);
+  }
+
+  public async rebuildSm20MatrixFromHistory(notify = false): Promise<void> {
+    if (!this.ledger) return;
+    const events = await this.ledger.loadEvents();
+    const sorted = [...events].sort((a, b) => a.lamport - b.lamport || a.id.localeCompare(b.id));
+    const headEventId = sorted.length > 0 ? sorted[sorted.length - 1]!.id : null;
+    const eventCount = sorted.length;
+    const matrix = foldSm20MatrixFromEvents(sorted);
+    this.sm20Matrix = matrix;
+    this.sm20MatrixMeta = {
+      baseline: undefined,
+      baselineCursorEventId: null,
+      headEventId,
+      eventCount,
+    };
+    await this.ledger.writeSm20Matrix({
+      schemaVersion: 1,
+      matrix: snapshotSm20Matrix(matrix),
+      headEventId,
+      eventCount,
+    });
+    this.refreshSchedulerViews();
+    if (notify) {
+      const stats = getSm20MatrixStats(matrix);
+      new Notice(
+        `Incremental Reading: rebuilt SM-20 matrix (${stats.totalSincCases} SInc, ${stats.totalRecallCases} Recall observations).`,
+      );
     }
   }
 
@@ -3963,6 +4119,9 @@ export default class IncrementalReadingPlugin extends Plugin {
         refreshTree: true,
       },
     );
+    await this.ensureSm20Matrix().catch((e) => {
+      console.warn("Incremental Reading: could not refresh SM-20 matrix after reset", e);
+    });
   }
 
   /** Delete an element, reparenting its children to its parent. */
@@ -4200,6 +4359,9 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     await this.ledger.reconcile().catch((e) => {
       console.error("Incremental Reading: reconcile after undo failed", e);
+    });
+    await this.ensureSm20Matrix().catch((e) => {
+      console.warn("Incremental Reading: could not refresh SM-20 matrix after undo", e);
     });
     void this.refreshStatusBar();
 
@@ -4665,6 +4827,32 @@ export default class IncrementalReadingPlugin extends Plugin {
       const stampedEvents = plan.events.map((ev) => ({ ...ev, lamport: lamport++ }));
       await this.ledger.appendEvents(stampedEvents);
       await this.ledger.reconcile();
+    }
+
+    if (plan.sm20Baseline) {
+      const allEvents = await this.ledger.loadEvents();
+      const sorted = [...allEvents].sort((a, b) => a.lamport - b.lamport || a.id.localeCompare(b.id));
+      const headEventId = sorted.length > 0 ? sorted[sorted.length - 1]!.id : null;
+      const baselineCursorEventId = plan.baselineCursorEventId ?? headEventId;
+      const matrix = foldSm20MatrixFromEvents(sorted, {
+        baseline: plan.sm20Baseline,
+        afterEventId: baselineCursorEventId,
+      });
+      this.sm20Matrix = matrix;
+      this.sm20MatrixMeta = {
+        baseline: plan.sm20Baseline,
+        baselineCursorEventId,
+        headEventId,
+        eventCount: sorted.length,
+      };
+      await this.ledger.writeSm20Matrix({
+        schemaVersion: 1,
+        matrix: snapshotSm20Matrix(matrix),
+        baseline: plan.sm20Baseline,
+        baselineCursorEventId,
+        headEventId,
+        eventCount: sorted.length,
+      });
     }
 
     if (plan.bookmarks.length > 0) {

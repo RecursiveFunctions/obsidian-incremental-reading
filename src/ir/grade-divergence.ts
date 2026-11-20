@@ -4,6 +4,7 @@ import { sm2, type Sm2State } from "../scheduler";
 import { predict as predictDsr, type SchedulerStatePrimitive } from "../sm18-scheduler";
 import { buildDivergenceModal, type DivergenceModalConfig } from "./divergence-modal";
 import { scheduleSm20Item } from "./sm20-scheduler";
+import type { Sm20Matrix } from "./sm20-matrix";
 import type { PrimaryItemScheduler } from "./item-scheduler";
 
 const MS_PER_DAY = 86_400_000;
@@ -30,6 +31,7 @@ export interface DivergenceCheck {
 export interface DivergenceOptions {
   primaryScheduler?: PrimaryItemScheduler;
   effectiveRetention?: number;
+  sm20Matrix?: Sm20Matrix;
 }
 
 function approximateSm2State(card: StoredCard): Sm2State {
@@ -109,7 +111,7 @@ export function checkGradeDivergence(
   const sm20Card =
     primaryScheduler === "sm20"
       ? primaryNextCard
-      : scheduleSm20Item(card, grade, now, effectiveRetention);
+      : scheduleSm20Item(card, grade, now, effectiveRetention, options.sm20Matrix);
   const sm20IntervalDays = sm20Card.scheduledDays;
   const sm20Due = sm20Card.due;
 
@@ -125,9 +127,13 @@ export function checkGradeDivergence(
   const sm2IntervalDays = sm2Prediction.intervalDays;
   const sm2Due = sm2Prediction.due;
 
-  const dsrPrediction = predictPowerLawDsr(card, grade, now, priority);
-  const dsrIntervalDays = dsrPrediction.intervalDays;
-  const dsrDue = dsrPrediction.due;
+  const dsrCard = scheduleSm20Item(card, grade, now, effectiveRetention);
+  const dsrIntervalDays = dsrCard.scheduledDays;
+  const dsrDue = dsrCard.due;
+  const dsrPrediction = {
+    stability: dsrCard.stability,
+    difficulty: dsrCard.difficulty,
+  };
 
   const config = buildDivergenceModal({
     members: [

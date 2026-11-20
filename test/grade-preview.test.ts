@@ -15,6 +15,7 @@ import {
 } from "../src/ir/grade-preview";
 import { schedule, storedToCard } from "../src/fsrs";
 import { scheduleSm20Item } from "../src/ir/sm20-scheduler";
+import { createEmptySm20Matrix, recordSm20Outcome } from "../src/ir/sm20-matrix";
 
 const NOW = 1_760_000_000_000;
 const MIN = 60_000;
@@ -81,5 +82,21 @@ test("previewGradeDelays: matches SM-20 delays when primaryScheduler === 'sm20'"
   for (const grade of PREVIEW_GRADES) {
     const expected = scheduleSm20Item(undefined, grade, NOW, 0.9).due - NOW;
     assert.equal(delays[grade], expected, `SM-20 grade ${grade}`);
+  }
+
+  const matrix = createEmptySm20Matrix();
+  for (let i = 0; i < 40; i += 1) {
+    recordSm20Outcome(matrix, {
+      prevDifficulty01: 4 / 9,
+      prevStability: 2.0,
+      retrievability: 0.995,
+      nextStability: 14.0,
+      smGrade: 4,
+    });
+  }
+  const adapted = previewGradeDelays(undefined, NOW, 0.9, "sm20", matrix);
+  for (const grade of PREVIEW_GRADES) {
+    const expected = scheduleSm20Item(undefined, grade, NOW, 0.9, matrix).due - NOW;
+    assert.equal(adapted[grade], expected, `adapted SM-20 grade ${grade}`);
   }
 });

@@ -8,6 +8,7 @@ import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type IncrementalReadingPlugin from "../main";
 import { PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
 import { cloneDefaultSettings } from "./ir/settings-data";
+import { getSm20MatrixStats } from "./ir/sm20-matrix";
 import { buildRepSortDispersionCurve } from "./queue";
 import { sliderToRepSortFactor } from "./sm18-ir-mechanics";
 import {
@@ -60,6 +61,23 @@ export class IrSettingTab extends PluginSettingTab {
             this.plugin.settings.notices.sm20SchedulerOffer = true;
             await this.plugin.saveSettings();
             this.plugin.refreshSchedulerViews();
+          }),
+      );
+
+    const matrix = this.plugin.getSm20Matrix();
+    const matrixStats = matrix ? getSm20MatrixStats(matrix) : null;
+    const obsSummary = matrixStats
+      ? `Learned observations: ${matrixStats.totalSincCases} SInc, ${matrixStats.totalRecallCases} Recall`
+      : "Learned observations: not yet loaded";
+    new Setting(containerEl)
+      .setName("SM-20 optimization matrix")
+      .setDesc(obsSummary)
+      .addButton((btn) =>
+        btn
+          .setButtonText("Rebuild SM-20 matrix from history")
+          .onClick(async () => {
+            await this.plugin.rebuildSm20MatrixFromHistory(true);
+            this.display();
           }),
       );
 

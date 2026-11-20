@@ -13,6 +13,11 @@ import {
 } from "../sm18-format-read";
 import { decodeHex, parseSub, real48 } from "../sm18-priority-queue";
 import { priorityScaledFirstInterval } from "../topic";
+import {
+  parseSm20Alg17DatFiles,
+  snapshotSm20Matrix,
+  type Sm20MatrixSnapshot,
+} from "./sm20-matrix";
 
 const MS_PER_DAY = 86_400_000;
 const DELPHI_EPOCH_MS = Date.UTC(1899, 11, 30);
@@ -102,6 +107,8 @@ export interface SmCollectionImportPlan {
   notes: SmImportedNotePlan[];
   attachments: SmImportedAttachment[];
   bookmarks: Bookmark[];
+  sm20Baseline?: Sm20MatrixSnapshot;
+  baselineCursorEventId?: string;
   stats: {
     topics: number;
     ledgerExtracts: number;
@@ -403,6 +410,32 @@ export async function planSmCollectionImport(
   const repHistoryBytes = await readCaseInsensitive(fs, "info", "RepetitionHistory.dat");
   const repHistory = repHistoryBytes ? parseRepetitionHistory(repHistoryBytes) : [];
 
+  const [
+    alg17Sinc,
+    alg17SincCases,
+    alg17Recall,
+    alg17RecallCases,
+  ] = await Promise.all([
+    readCaseInsensitive(fs, "alg17", "StabilityIncrease.dat"),
+    readCaseInsensitive(fs, "alg17", "StabilityIncreaseCases.dat"),
+    readCaseInsensitive(fs, "alg17", "Recall.dat"),
+    readCaseInsensitive(fs, "alg17", "RecallCases.dat"),
+  ]);
+  let sm20Baseline: Sm20MatrixSnapshot | undefined;
+  if (alg17Sinc && alg17SincCases && alg17Recall && alg17RecallCases) {
+    try {
+      const parsed = parseSm20Alg17DatFiles({
+        sinc: alg17Sinc,
+        sincCases: alg17SincCases,
+        recall: alg17Recall,
+        recallCases: alg17RecallCases,
+      });
+      sm20Baseline = snapshotSm20Matrix(parsed);
+    } catch (e) {
+      console.warn("Incremental Reading: could not parse alg17/*.dat SM-20 matrices", e);
+    }
+  }
+
   const slotToFiles = await scanElementsFilespace(fs);
   const textReg = await resolveRichRegistryKind(fs, "text", slotToFiles);
   const imageReg = await resolveRichRegistryKind(fs, "image", slotToFiles);
@@ -658,6 +691,7 @@ export async function planSmCollectionImport(
   }
 
   // Translate RepetitionHistory.dat into graded ledger events
+  let lastHistoryEventId: string | undefined;
   for (const rep of repHistory) {
     const elementId = smToElementId.get(rep.element_id);
     if (!elementId) continue;
@@ -675,8 +709,9 @@ export async function planSmCollectionImport(
       learningSteps: 0,
       lastReview: repMs,
     };
+    const evId = newEventId();
     events.push({
-      id: newEventId(),
+      id: evId,
       ts: repMs,
       lamport: lamport++,
       device: deviceId,
@@ -685,11 +720,17 @@ export async function planSmCollectionImport(
       payload: {
         card,
         grade: smGradeToIrGrade(rep.grade),
+        smGrade: rep.grade,
         scheduler: "sm20",
       },
     });
+    lastHistoryEventId = evId;
     stats.historyEvents += 1;
   }
+
+  const baselineCursorEventId = sm20Baseline
+    ? (lastHistoryEventId ?? events[events.length - 1]?.id)
+    : undefined;
 
   return {
     elements,
@@ -697,6 +738,8 @@ export async function planSmCollectionImport(
     notes,
     attachments,
     bookmarks,
+    ...(sm20Baseline ? { sm20Baseline } : {}),
+    ...(baselineCursorEventId ? { baselineCursorEventId } : {}),
     stats,
   };
 }

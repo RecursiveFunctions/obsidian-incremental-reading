@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { checkGradeDivergence } from "../src/ir/grade-divergence";
 import { scheduleSm20Item } from "../src/ir/sm20-scheduler";
+import { createEmptySm20Matrix, recordSm20Outcome } from "../src/ir/sm20-matrix";
 import type { StoredCard } from "../src/ir/model";
 
 const NOW = 1_700_000_000_000;
@@ -95,4 +96,40 @@ test("checkGradeDivergence: config message includes spread info and due timestam
   assert.ok(result.sm20Due > NOW);
   assert.ok(result.dsrDue > NOW);
   assert.ok(result.sm2Due > NOW);
+});
+
+test("checkGradeDivergence: DSR uses analytical SM-20 (cases=0) while SM-20 uses adaptive matrix", () => {
+  const card = makeCard({
+    scheduledDays: 10,
+    stability: 10,
+    reps: 3,
+    difficulty: 5,
+    lastReview: NOW - 10 * MS_PER_DAY,
+  });
+  const matrix = createEmptySm20Matrix();
+  for (let i = 0; i < 200; i += 1) {
+    for (const r of [0.9, 0.99, 0.995]) {
+      recordSm20Outcome(matrix, {
+        prevDifficulty01: 4 / 9,
+        prevStability: 10,
+        retrievability: r,
+        nextStability: 150,
+        smGrade: 4,
+      });
+    }
+  }
+  const sm20Next = scheduleSm20Item(card, "good", NOW, 0.9, matrix);
+  const dsrNext = scheduleSm20Item(card, "good", NOW, 0.9);
+  assert.ok(sm20Next.scheduledDays > dsrNext.scheduledDays);
+
+  const result = checkGradeDivergence(card, sm20Next, "good", NOW, 1.05, 1, 33, {
+    primaryScheduler: "sm20",
+    effectiveRetention: 0.9,
+    sm20Matrix: matrix,
+  });
+  if (!result) {
+    assert.fail("Expected divergence between adaptive SM-20 and analytical DSR");
+  }
+  assert.equal(result.sm20IntervalDays, sm20Next.scheduledDays);
+  assert.equal(result.dsrIntervalDays, dsrNext.scheduledDays);
 });
