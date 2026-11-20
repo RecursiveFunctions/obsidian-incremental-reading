@@ -136,7 +136,7 @@ test("newTopicState computes SM20 length-based A-Factor when textLength is provi
   assert.equal(imageTopic.aFactor, 1.3);
 });
 
-test("advanceTopic sm20Commit uses a^3 first interval, log-uniform dispersion, and updates aFactor", () => {
+test("advanceTopic sm20Commit uses a^3 first interval, preserves rep-1 aFactor, and updates aFactor on rep >= 2", () => {
   const initial = { dueMs: NOW.getTime(), interval: 0, aFactor: 2.0 };
   const first = advanceTopic(
     initial,
@@ -150,7 +150,7 @@ test("advanceTopic sm20Commit uses a^3 first interval, log-uniform dispersion, a
   );
   // a^3 for a = 2.0 -> 8 days when rng returns 0 (zero perturbation)
   assert.equal(first.interval, 8);
-  assert.ok(first.aFactor > initial.aFactor);
+  assert.equal(first.aFactor, initial.aFactor);
 
   const second = advanceTopic(
     first,
@@ -164,6 +164,20 @@ test("advanceTopic sm20Commit uses a^3 first interval, log-uniform dispersion, a
   );
   assert.ok(second.interval > first.interval);
   assert.ok(second.aFactor > first.aFactor);
+
+  const forced = advanceTopic(
+    first,
+    { ...SETTINGS, topicMaxInterval: 44530 },
+    NOW,
+    undefined,
+    undefined,
+    false,
+    1000,
+    { sm20Commit: true, forced: true, rng: () => 0 },
+  );
+  assert.equal(forced.interval, second.interval);
+  assert.ok(forced.aFactor > first.aFactor);
+  assert.ok(forced.aFactor < second.aFactor);
 });
 
 test("adjustTopicPriorityAfterCommit matches FUN_00ca1270 ratio scaling and minimum ±1 rank step", async () => {

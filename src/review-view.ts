@@ -409,6 +409,11 @@ export class IrReviewView extends ItemView {
   private skippedSlotIds = new Set<ElementId>();
   private drillEnqueuedByGrade = new Set<ElementId>();
   private sessionPhase: SessionBarPhase = "due";
+  private cachedTopicAdvance: {
+    key: string;
+    interval: number;
+    aFactor: number;
+  } | null = null;
 
   /** Thin session chrome; sibling of cardHost so it survives card re-renders. */
   private sessionBarEl?: HTMLElement;
@@ -4719,10 +4724,24 @@ export class IrReviewView extends ItemView {
    * preview runs the same call `nextNow` runs and reads the interval it
    * produces.
    */
-  private topicNextPreview(slot: ReviewSlot): string | null {
-    const cur = scheduleToTopicState(slot.element.schedule);
-    if (!cur) return null;
-    const now = Date.now();
+  private resolveActiveTopicAdvance(
+    slot: ReviewSlot,
+    now: number,
+  ): {
+    cur: TopicState;
+    effectiveAFactor: number;
+    interval: number;
+    aFactor: number;
+    dueMs: number;
+  } {
+    const cur =
+      scheduleToTopicState(slot.element.schedule) ??
+      ({
+        dueMs: now,
+        interval: 0,
+        aFactor: this.settings.topicAFactor,
+      } as TopicState);
+    const collectionSize = Math.max(1, this.elementsById.size);
     const policy = this.settings.prioritySchedulingPolicy;
     const effectiveAFactor = effectiveReadingAFactor(
       slot.element.priority,
@@ -4731,6 +4750,16 @@ export class IrReviewView extends ItemView {
       policy.readingHighAFactor,
       policy.readingLowAFactor,
     );
+    const key = `${slot.id}|${cur.dueMs}|${cur.interval}|${cur.aFactor}|${effectiveAFactor}|${collectionSize}`;
+    if (this.cachedTopicAdvance?.key === key) {
+      return {
+        cur,
+        effectiveAFactor,
+        interval: this.cachedTopicAdvance.interval,
+        aFactor: this.cachedTopicAdvance.aFactor,
+        dueMs: now + this.cachedTopicAdvance.interval * 86_400_000,
+      };
+    }
     const advanced = advanceTopic(
       cur,
       this.settings,
@@ -4738,10 +4767,28 @@ export class IrReviewView extends ItemView {
       effectiveAFactor,
       slot.element.priority,
       policy.enabled,
-      this.queue.length,
-      { sm20Commit: true },
+      collectionSize,
+      { sm20Commit: true, rng: Math.random },
     );
-    return formatIntervalShort(advanced.dueMs - now, now);
+    this.cachedTopicAdvance = {
+      key,
+      interval: advanced.interval,
+      aFactor: advanced.aFactor,
+    };
+    return {
+      cur,
+      effectiveAFactor,
+      interval: advanced.interval,
+      aFactor: advanced.aFactor,
+      dueMs: now + advanced.interval * 86_400_000,
+    };
+  }
+
+  private topicNextPreview(slot: ReviewSlot): string | null {
+    if (!scheduleToTopicState(slot.element.schedule)) return null;
+    const now = Date.now();
+    const next = this.resolveActiveTopicAdvance(slot, now);
+    return formatIntervalShort(next.interval * 86_400_000, now);
   }
 
   private renderGradePreviewLabel(
@@ -5060,32 +5107,16 @@ export class IrReviewView extends ItemView {
     if (!slot) return;
     if (!(await this.flushEdits())) return;
 
-    const cur =
-      scheduleToTopicState(slot.element.schedule) ??
-      ({
-        dueMs: Date.now(),
-        interval: 0,
-        aFactor: this.settings.topicAFactor,
-      } as TopicState);
-    const policy = this.settings.prioritySchedulingPolicy;
-    const effectiveAFactor = effectiveReadingAFactor(
-      slot.element.priority,
-      policy.enabled,
-      cur.aFactor,
-      policy.readingHighAFactor,
-      policy.readingLowAFactor,
-    );
+    const now = Date.now();
+    const resolved = this.resolveActiveTopicAdvance(slot, now);
+    this.cachedTopicAdvance = null;
+    const { cur, effectiveAFactor } = resolved;
     const collectionSize = Math.max(1, this.elementsById.size);
-    const advanced = advanceTopic(
-      cur,
-      this.settings,
-      new Date(),
-      effectiveAFactor,
-      slot.element.priority,
-      policy.enabled,
-      collectionSize,
-      { sm20Commit: true, rng: Math.random },
-    );
+    const advanced: TopicState = {
+      interval: resolved.interval,
+      aFactor: resolved.aFactor,
+      dueMs: now + resolved.interval * 86_400_000,
+    };
     const nextPriority = clampPriority(
       adjustTopicPriorityAfterCommit(
         slot.element.priority,

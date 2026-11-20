@@ -92,6 +92,7 @@ export function priorityScaledFirstInterval(
 export interface AdvanceTopicOptions {
   rng?: () => number;
   sm20Commit?: boolean;
+  forced?: boolean;
 }
 
 export function advanceTopic(
@@ -132,8 +133,8 @@ export function advanceTopic(
     next = first;
   }
   const interval = Math.min(max, Math.max(1, next));
-  const nextAFactor = opts?.sm20Commit
-    ? adjustTopicAFactor(baseAFactor, Math.max(1, state.interval), interval, false)
+  const nextAFactor = opts?.sm20Commit && state.interval >= 1
+    ? adjustTopicAFactor(baseAFactor, state.interval, interval, Boolean(opts?.forced))
     : baseAFactor;
 
   return {
