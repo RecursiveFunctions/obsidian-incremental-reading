@@ -199,3 +199,46 @@ test("planHtmlImport converts standalone HTML into a topic note and ledger event
   assert.equal(plan.event.kind, "element-created");
   assert.equal(plan.event.target, plan.elementId);
 });
+
+test("planEpubImport does not emit parent-directory paths for a dot-only title", async () => {
+  const epubBytes = buildZipFromStrings({
+    "META-INF/container.xml": `<?xml version="1.0"?>
+      <container version="1.0">
+        <rootfiles>
+          <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
+        </rootfiles>
+      </container>`,
+    "content.opf": `<package version="3.0">
+      <metadata><dc:title>..</dc:title></metadata>
+      <manifest>
+        <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+      </manifest>
+      <spine><itemref idref="ch1"/></spine>
+    </package>`,
+    "ch1.xhtml": `<html><body><h1>Chapter One</h1></body></html>`,
+  });
+
+  const plan = planEpubImport({
+    zipEntries: await readZipEntries(epubBytes),
+    extractFolder: "",
+    defaultPriority: 50,
+    now: NOW,
+    deviceId: DEVICE,
+  });
+
+  assert.equal(plan.bookPath, "Untitled EPUB/Untitled EPUB.md");
+  assert.ok(plan.notes.every((note) => !note.path.split("/").includes("..")));
+});
+
+test("planHtmlImport does not emit a parent-directory path for a dot-only title", () => {
+  const plan = planHtmlImport({
+    html: "<html><head><title>..</title></head><body><p>Body.</p></body></html>",
+    fileName: "page.html",
+    extractFolder: "",
+    defaultPriority: 50,
+    now: NOW,
+    deviceId: DEVICE,
+  });
+
+  assert.equal(plan.path, "HTML Import.md");
+});
