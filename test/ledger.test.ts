@@ -8,7 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { IrLedger, META, type VaultFs } from "../src/ir/ledger";
+import { BOOKMARKS, IrLedger, META, type VaultFs } from "../src/ir/ledger";
 import type { IrEvent } from "../src/ir/model";
 import { newElement } from "../src/ir/model";
 import { newElementId, newEventId, newDeviceId, type ElementId } from "../src/ir/ids";
@@ -521,6 +521,26 @@ test("saveBookmarks overwrites previous bookmarks", async () => {
   assert.equal(Object.keys(loaded).length, 1);
   assert.equal(loaded[id2]?.line, 99);
   assert.equal(loaded[id1], undefined);
+});
+
+test("loadBookmarksResult reports a missing file as a successful empty load", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  const result = await ledger.loadBookmarksResult();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.bookmarks, {});
+});
+
+test("loadBookmarksResult reports corrupt bookmarks without returning them as valid", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+  await fs.write(BOOKMARKS, "{");
+  const result = await ledger.loadBookmarksResult();
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.bookmarks, {});
+  assert.deepEqual(await ledger.loadBookmarks(), {});
 });
 
 test("session snapshot storage is secondary and corrupt data is ignored", async () => {

@@ -630,8 +630,12 @@ export class IrReviewView extends ItemView {
       }
     }
 
-    this.bookmarks = await this.ledger.loadBookmarks();
-    this.bookmarksLoaded = true;
+    const bookmarkLoad = await this.ledger.loadBookmarksResult();
+    this.bookmarks = bookmarkLoad.bookmarks;
+    this.bookmarksLoaded = bookmarkLoad.ok;
+    if (!bookmarkLoad.ok) {
+      new Notice("Incremental Reading: could not load reading bookmarks; changes will not be saved.");
+    }
     this.sessionSeedLabel = this.queue[0]
       ? labelFor(this.queue[0].element)
       : "";
@@ -3116,8 +3120,12 @@ export class IrReviewView extends ItemView {
     this.sessionSeedLabel = this.queue[0]
       ? labelFor(this.queue[0].element)
       : "";
-    this.bookmarks = await this.ledger.loadBookmarks();
-    this.bookmarksLoaded = true;
+    const bookmarkLoad = await this.ledger.loadBookmarksResult();
+    this.bookmarks = bookmarkLoad.bookmarks;
+    this.bookmarksLoaded = bookmarkLoad.ok;
+    if (!bookmarkLoad.ok) {
+      new Notice("Incremental Reading: could not load reading bookmarks; changes will not be saved.");
+    }
     this.contentEl.focus();
     await this.renderCard();
   }

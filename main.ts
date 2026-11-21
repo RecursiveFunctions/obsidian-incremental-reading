@@ -5418,11 +5418,16 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
 
     if (plan.bookmarks.length > 0) {
-      let bm = await this.ledger.loadBookmarks();
-      for (const b of plan.bookmarks) {
-        bm = setBookmark(bm, b);
+      const bookmarkLoad = await this.ledger.loadBookmarksResult();
+      if (!bookmarkLoad.ok) {
+        new Notice("Incremental Reading: imported bookmarks were not saved because existing bookmarks could not be read.");
+      } else {
+        let bm = bookmarkLoad.bookmarks;
+        for (const b of plan.bookmarks) {
+          bm = setBookmark(bm, b);
+        }
+        await this.ledger.saveBookmarks(bm);
       }
-      await this.ledger.saveBookmarks(bm);
     }
 
     await this.getTreeView()?.refresh();
