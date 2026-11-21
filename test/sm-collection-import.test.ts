@@ -13,6 +13,7 @@ import {
   SM20_CASES_DAT_BYTES,
   SM20_SINC_DAT_BYTES,
 } from "../src/ir/sm20-matrix";
+import { fold } from "../src/ir/log";
 import type { DeviceId, ElementId } from "../src/ir/ids";
 import type { IrElement } from "../src/ir/model";
 
@@ -381,4 +382,87 @@ test("import seeds sm20Baseline from alg17/*.dat and cursor skips imported Repet
   const stats = getSm20MatrixStats(seeded);
   assert.equal(stats.totalSincCases, 25);
   assert.equal(stats.totalRecallCases, 25);
+});
+
+test("planSmCollectionImport scans nested TFileSpace elements/<bucket>/ dirs, ignores status grade=8 on topics, and preserves ElementInfo card state on fold", async () => {
+  const htmlBytes = new TextEncoder().encode("<p>Nested slot 62 body</p>");
+  const qSpan = makeRtxSpan("Question [...]", 1);
+  const aSpan = makeRtxSpan("Answer", 2);
+  const textRtx = concatBytes(qSpan, aSpan);
+  const textMem = concatBytes(
+    makeMemRecord(0, 0, 62), // Topic backed by nested elements/6/62.HTM
+    makeMemRecord(1, qSpan.length),
+    makeMemRecord(1 + qSpan.length, aSpan.length),
+  );
+  const textPtr = makeSub([1, 2, 3]);
+
+  const elementInfo = concatBytes(
+    // 1: Topic using slot 62 in nested elements/6/62.HTM
+    makeElementInfo({ type: 0, status: 1, textMember: 1, reps: 1, interval: 14, lastRepMs: NOW - 2 * DAY_MS }),
+    // 2: Item with current interval=30d in ElementInfo, but preceding iv=0 on rep 1 in RepetitionHistory.dat
+    makeElementInfo({ type: 1, status: 1, textMember: 2, reps: 1, interval: 30, lastRepMs: NOW - 2 * DAY_MS }),
+  );
+  const compon = concatBytes(
+    makeComponRecord({ elementNumber: 1, components: [{ type: 13, displayAt: 0xff, member: 1 }] }),
+    makeComponRecord({
+      elementNumber: 2,
+      components: [
+        { type: 1, displayAt: 0xff, member: 2 },
+        { type: 1, displayAt: 0xd7, member: 3 },
+      ],
+    }),
+  );
+
+  // MemSourceFs mimicking directory-by-directory listing (like real fs.readdir / adapter.list)
+  const rawFiles: Record<string, Uint8Array> = {
+    "info/ElementInfo.dat": elementInfo,
+    "info/compon.dat": compon,
+    "info/RepetitionHistory.dat": makeRepHistory([
+      // ABC of SuperMemo 20 style grade=8 status code on Topic 1 -> must NOT become graded item event
+      { elementId: 1, rep: 1, lapses: 0, iv: 0, dateMs: NOW - 2 * DAY_MS, grade: 8 },
+      // Item 2 rep 1 with preceding iv=0 -> must NOT clobber ElementInfo's 30d interval!
+      { elementId: 2, rep: 1, lapses: 0, iv: 0, dateMs: NOW - 2 * DAY_MS, grade: 4 },
+    ]),
+    "registry/text.mem": textMem,
+    "registry/text.ptr": textPtr,
+    "registry/text.rtx": textRtx,
+    "elements/6/62.HTM": htmlBytes,
+  };
+  const dirFs: SmSourceFs = {
+    async listDir(relDir: string): Promise<string[]> {
+      const clean = relDir.replace(/\/+$/, "");
+      const prefix = clean ? `${clean}/` : "";
+      const children = new Set<string>();
+      for (const k of Object.keys(rawFiles)) {
+        if (!k.startsWith(prefix)) continue;
+        const rest = k.slice(prefix.length);
+        const seg = rest.split("/")[0]!;
+        children.add(clean ? `${clean}/${seg}` : seg);
+      }
+      return [...children];
+    },
+    async readBinary(relPath: string): Promise<Uint8Array | null> {
+      return rawFiles[relPath] ?? null;
+    },
+  };
+
+  const plan = await planSmCollectionImport({
+    fs: dirFs,
+    nowMs: NOW,
+    deviceId: DEV,
+    targetFolder: "SM Import",
+  });
+
+  const topicEl = plan.elements.find((e) => e.type === "topic")!;
+  assert.ok(topicEl.text.includes("Nested slot 62 body"), `expected nested HTM body, got: ${topicEl.text}`);
+  assert.equal(plan.stats.historyEvents, 1, "grade=8 topic status row must not emit graded event");
+
+  const folded = fold(plan.events, { conflict: "clock-order" });
+  const foldedTopic = folded.elements.get(topicEl.id)!;
+  assert.equal(foldedTopic.card, undefined, "topic must not acquire a StoredCard from RepetitionHistory");
+
+  const itemEl = plan.elements.find((e) => e.type === "item")!;
+  const foldedItem = folded.elements.get(itemEl.id)!;
+  assert.equal(foldedItem.card?.scheduledDays, 30, "ElementInfo scheduledDays must survive RepetitionHistory fold");
+  assert.equal(foldedItem.card?.due, (NOW - 2 * DAY_MS) + 30 * DAY_MS);
 });

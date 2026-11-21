@@ -308,5 +308,28 @@ test("foldSm20MatrixFromEvents skips unmemorized first rep (prevReps === 0), ove
     baseline: snapshotSm20Matrix(createEmptySm20Matrix()),
     afterEventId: "ev_compacted_away",
   });
+  // Folding from compacted cursor keeps observations
   assert.equal(getSm20MatrixStats(compacted).totalSincCases, 1);
+});
+
+test("createEmptySm20Matrix matches ABC of SuperMemo 20 alg17/StabilityIncrease.dat 0-based layout and leading IEEE-754 values", () => {
+  const empty = createEmptySm20Matrix();
+  assert.equal(matrixIndex(1, 1, 1), 0);
+  assert.equal(matrixIndex(1, 1, 2), 1);
+  assert.equal(matrixIndex(1, 1, 3), 2);
+  assert.equal(matrixIndex(1, 1, 4), 3);
+
+  // Verified against ~/code/sm20-re/docs/findings/format/alg17.md (ABC of SuperMemo 20 StabilityIncrease.dat)
+  assert.ok(Math.abs(empty.sinc[0]! - 14.244807054158343) < 1e-12);
+  assert.ok(Math.abs(empty.sinc[1]! - 8.4637426) < 1e-4);
+  assert.ok(Math.abs(empty.sinc[2]! - 6.2417) < 1e-4);
+  assert.ok(Math.abs(empty.sinc[3]! - 5.0288) < 1e-4);
+
+  let nonZero = 0;
+  for (let i = 0; i < SM20_MATRIX_CELLS; i += 1) {
+    if (empty.sinc[i]! > 0) nonZero += 1;
+  }
+  assert.equal(nonZero, 8000);
+  // Trailing sentinel slot (index 20 on contiguous axis) remains 0
+  assert.equal(empty.sinc[20], 0);
 });

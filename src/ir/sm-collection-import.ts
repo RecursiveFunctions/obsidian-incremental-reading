@@ -315,20 +315,31 @@ export async function resolveRichRegistryKind(
 
 async function scanElementsFilespace(fs: SmSourceFs): Promise<Map<number, string[]>> {
   const map = new Map<number, string[]>();
-  const entries = await fs.listDir("elements");
-  for (const entry of entries) {
-    const leaf = entry.split("/").pop() ?? entry;
-    if (!leaf || leaf.toLowerCase().endsWith(".del")) continue;
-    if (leaf.toLowerCase().endsWith("_files")) continue;
-    const match = /^(\d+)\.(.+)$/.exec(leaf);
-    if (!match) continue;
-    const slot = Number.parseInt(match[1]!, 10);
-    if (!Number.isFinite(slot) || slot <= 0) continue;
-    const rel = `elements/${leaf}`;
-    const list = map.get(slot);
-    if (list) list.push(rel);
-    else map.set(slot, [rel]);
-  }
+  const visited = new Set<string>();
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    if (depth > 5 || visited.has(dir)) return;
+    visited.add(dir);
+    const entries = await fs.listDir(dir);
+    for (const rawEntry of entries) {
+      const norm = rawEntry.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+      const leaf = norm.split("/").pop() ?? norm;
+      if (!leaf || leaf.toLowerCase().endsWith(".del")) continue;
+      if (leaf.toLowerCase().endsWith("_files")) continue;
+      const rel = norm.startsWith(`${dir}/`) ? norm : `${dir}/${leaf}`;
+      if (/^\d+$/.test(leaf)) {
+        await walk(rel, depth + 1);
+        continue;
+      }
+      const match = /^(\d+)\.(.+)$/.exec(leaf);
+      if (!match) continue;
+      const slot = Number.parseInt(match[1]!, 10);
+      if (!Number.isFinite(slot) || slot <= 0) continue;
+      const list = map.get(slot);
+      if (list) list.push(rel);
+      else map.set(slot, [rel]);
+    }
+  };
+  await walk("elements", 0);
   return map;
 }
 
@@ -562,7 +573,7 @@ export async function planSmCollectionImport(
     existingFingerprints.add(fp);
 
     const aFactorRaw = real48(decodeHex(rec.a_factor.hex));
-    const aFactor = Number.isFinite(aFactorRaw) && aFactorRaw >= 1.1 && aFactorRaw <= 10 ? aFactorRaw : 2.0;
+    const aFactor = Number.isFinite(aFactorRaw) && aFactorRaw >= 1.01 && aFactorRaw <= 10 ? aFactorRaw : 2.0;
     const diffRaw = real48(decodeHex(rec.difficulty.hex));
     const difficulty = Number.isFinite(diffRaw) && diffRaw >= 0 && diffRaw <= 1 ? 1 + diffRaw * 9 : 5.0;
 
@@ -674,42 +685,100 @@ export async function planSmCollectionImport(
     }
   }
 
-  // Translate RepetitionHistory.dat into graded ledger events
-  let lastHistoryEventId: string | undefined;
-  for (const rep of repHistory) {
+  // Translate item RepetitionHistory.dat rows (valid SM grades 0..5) into graded ledger events
+  // without clobbering authoritative ElementInfo.dat card state on the final event.
+  const elementById = new Map<ElementId, IrElement>(elements.map((e) => [e.id, e]));
+  const repHistoryView =
+    repHistoryBytes && repHistoryBytes.byteLength >= 39
+      ? new DataView(repHistoryBytes.buffer, repHistoryBytes.byteOffset, repHistoryBytes.byteLength)
+      : null;
+
+  interface IndexedRepRow {
+    rowIndex: number;
+    rep: (typeof repHistory)[number];
+    repMs: number;
+    rawDifficultyI16: number;
+  }
+
+  const historyByElement = new Map<ElementId, IndexedRepRow[]>();
+  for (let rowIndex = 0; rowIndex < repHistory.length; rowIndex += 1) {
+    const rep = repHistory[rowIndex]!;
+    if (rep.grade < 0 || rep.grade > 5) continue;
     const elementId = smToElementId.get(rep.element_id);
     if (!elementId) continue;
+    const targetEl = elementById.get(elementId);
+    if (!targetEl || targetEl.type !== "item") continue;
     const repMs = delphiDateToEpochMs(rep.repetition_date);
     if (repMs === null) continue;
-    const card: StoredCard = {
-      due: repMs + Math.max(1, rep.interval_days) * MS_PER_DAY,
-      stability: Math.max(0.7, rep.interval_days || 1),
-      difficulty: 5.0,
-      elapsedDays: 0,
-      scheduledDays: rep.interval_days,
-      reps: rep.repetition_number,
-      lapses: rep.lapse_count,
-      state: 2,
-      learningSteps: 0,
-      lastReview: repMs,
-    };
-    const evId = newEventId();
-    events.push({
-      id: evId,
-      ts: repMs,
-      lamport: lamport++,
-      device: deviceId,
-      kind: "graded",
-      target: elementId,
-      payload: {
-        card,
-        grade: smGradeToIrGrade(rep.grade),
-        smGrade: rep.grade,
-        scheduler: "sm20",
-      },
-    });
-    lastHistoryEventId = evId;
-    stats.historyEvents += 1;
+    const rawDifficultyI16 = repHistoryView
+      ? repHistoryView.getInt16(rowIndex * 39 + 0x19, true)
+      : -1;
+    const list = historyByElement.get(elementId);
+    const entry: IndexedRepRow = { rowIndex, rep, repMs, rawDifficultyI16 };
+    if (list) list.push(entry);
+    else historyByElement.set(elementId, [entry]);
+  }
+
+  let lastHistoryEventId: string | undefined;
+  for (const [elementId, rows] of historyByElement) {
+    const targetEl = elementById.get(elementId)!;
+    const authoritativeCard = targetEl.card;
+    rows.sort((a, b) => a.repMs - b.repMs || a.rep.repetition_number - b.rep.repetition_number || a.rowIndex - b.rowIndex);
+
+    for (let idx = 0; idx < rows.length; idx += 1) {
+      const { rep, repMs, rawDifficultyI16 } = rows[idx]!;
+      const prevRow = idx > 0 ? rows[idx - 1] : undefined;
+      const nextRow = idx + 1 < rows.length ? rows[idx + 1] : undefined;
+      const isFinal = idx === rows.length - 1;
+
+      const histDifficulty =
+        rawDifficultyI16 >= 0 && rawDifficultyI16 <= 10_000
+          ? 1 + (rawDifficultyI16 / 10_000) * 9
+          : (authoritativeCard?.difficulty ?? 5.0);
+      const elapsedDays = prevRow
+        ? Math.max(0, Math.floor((repMs - prevRow.repMs) / MS_PER_DAY))
+        : Math.max(0, rep.interval_days);
+      const nextScheduledDays = nextRow
+        ? Math.max(1, Math.round((nextRow.repMs - repMs) / MS_PER_DAY))
+        : Math.max(1, authoritativeCard?.scheduledDays || rep.interval_days || 1);
+
+      const card: StoredCard = isFinal && authoritativeCard
+        ? {
+            ...authoritativeCard,
+            elapsedDays,
+            lastReview: authoritativeCard.lastReview ?? repMs,
+          }
+        : {
+            due: repMs + nextScheduledDays * MS_PER_DAY,
+            stability: Math.max(0.7, nextScheduledDays),
+            difficulty: histDifficulty,
+            elapsedDays,
+            scheduledDays: nextScheduledDays,
+            reps: rep.repetition_number,
+            lapses: rep.lapse_count,
+            state: 2,
+            learningSteps: 0,
+            lastReview: repMs,
+          };
+
+      const evId = newEventId();
+      events.push({
+        id: evId,
+        ts: repMs,
+        lamport: lamport++,
+        device: deviceId,
+        kind: "graded",
+        target: elementId,
+        payload: {
+          card,
+          grade: smGradeToIrGrade(rep.grade),
+          smGrade: rep.grade,
+          scheduler: "sm20",
+        },
+      });
+      lastHistoryEventId = evId;
+      stats.historyEvents += 1;
+    }
   }
 
   const baselineCursorEventId = sm20Baseline

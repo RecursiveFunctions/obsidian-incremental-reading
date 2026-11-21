@@ -1964,7 +1964,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.sm20Matrix = matrix;
     this.sm20MatrixMeta = { baseline, baselineCursorEventId, headEventId, eventCount };
     await this.ledger.writeSm20Matrix({
-      schemaVersion: 1,
+      schemaVersion: 2,
       matrix: snapshotSm20Matrix(matrix),
       ...(baseline ? { baseline } : {}),
       ...(baselineCursorEventId !== null ? { baselineCursorEventId } : {}),
@@ -2003,7 +2003,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (!this.ledger) return;
     const prevCount = this.sm20MatrixMeta?.eventCount ?? 0;
     const meta: Sm20MatrixFileV1 = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       matrix: snapshotSm20Matrix(matrix),
       ...(this.sm20MatrixMeta?.baseline ? { baseline: this.sm20MatrixMeta.baseline } : {}),
       ...(this.sm20MatrixMeta?.baselineCursorEventId !== undefined
@@ -2036,7 +2036,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       eventCount,
     };
     await this.ledger.writeSm20Matrix({
-      schemaVersion: 1,
+      schemaVersion: 2,
       matrix: snapshotSm20Matrix(matrix),
       headEventId,
       eventCount,
@@ -5298,7 +5298,9 @@ export default class IncrementalReadingPlugin extends Plugin {
         const target = [base, relDir].filter(Boolean).join("/");
         try {
           const listed = await adapter.list(target);
-          return listed.files.map((f) => (base && f.startsWith(`${base}/`) ? f.slice(base.length + 1) : f));
+          const stripBase = (p: string) =>
+            base && p.startsWith(`${base}/`) ? p.slice(base.length + 1) : p;
+          return [...listed.folders.map(stripBase), ...listed.files.map(stripBase)];
         } catch {
           return [];
         }
@@ -5406,7 +5408,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         eventCount: sorted.length,
       };
       await this.ledger.writeSm20Matrix({
-        schemaVersion: 1,
+        schemaVersion: 2,
         matrix: snapshotSm20Matrix(matrix),
         baseline: plan.sm20Baseline,
         baselineCursorEventId,

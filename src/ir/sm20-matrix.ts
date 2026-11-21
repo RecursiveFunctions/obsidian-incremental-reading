@@ -14,6 +14,7 @@ import {
   storedDifficultyTo01,
 } from "./sm20-scheduler";
 
+export const SM20_MATRIX_SCHEMA_VERSION = 2;
 export const SM20_MATRIX_DIM = 21;
 export const SM20_MATRIX_STRIDE_D = 441; // 0x1b9
 export const SM20_MATRIX_STRIDE_S = 21; // 0x15
@@ -46,10 +47,15 @@ function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value));
 }
 
+/**
+ * 1-based `(dIdx, sIdx, rIdx)` in `[1..20]^3` -> 0-based flat `[0..9260]` index.
+ * Matches `FUN_00cde2d0` (`0x00cde2d0`) & `0x00cc58d0`:
+ * `(dIdx - 1) * 441 + (sIdx - 1) * 21 + (rIdx - 1)` (slot 20 on each axis is trailing sentinel).
+ */
 export function matrixIndex(dIdx: number, sIdx: number, rIdx: number): number {
-  const d = clamp(Math.trunc(dIdx), 0, 20);
-  const s = clamp(Math.trunc(sIdx), 0, 20);
-  const r = clamp(Math.trunc(rIdx), 0, 20);
+  const d = clamp(Math.trunc(dIdx), 1, 20) - 1;
+  const s = clamp(Math.trunc(sIdx), 1, 20) - 1;
+  const r = clamp(Math.trunc(rIdx), 1, 20) - 1;
   return d * SM20_MATRIX_STRIDE_D + s * SM20_MATRIX_STRIDE_S + r;
 }
 
@@ -185,9 +191,11 @@ export function parseSm20Alg17DatFiles(files: {
 }
 
 /**
- * Empirical forgetting-curve calibration (`FUN_00ce5140` + `FUN_00ce6c80`).
- * Fits a weighted linear regression in log-recall space across `rIdx = 1..20`
- * and blends with `analyticalR` by `totalCases / (totalCases + 3.5)`.
+ * Empirical forgetting-curve calibration (`FUN_00ce5140` + `0x00a8d320` + `FUN_00ce6c80`).
+ * Fits weighted linear regression `Recall = A * R + B` across `rIdx = 1..20`
+ * with weights `round(cases) + 1e-5` (`0x00a8d320`) and empty-bin fallback
+ * `0.64 * x + 0.3` (`0x00ce5140`), blended with `analyticalR` by
+ * `totalCases / (totalCases + 3.5)` (`0x00ce6c80`).
  */
 export function calibrateSm20Retrievability(
   matrix: Sm20Matrix,
@@ -202,19 +210,18 @@ export function calibrateSm20Retrievability(
   }
   if (totalCases === 0) return cleanR;
 
-  // Weighted linear regression (FUN_00a8d320)
+  // ComputeWeightedLinearRegression (0x00a8d320): weight = round(cases) + 1e-5
   let sumW = 0;
   let sumWX = 0;
   let sumWY = 0;
   for (let rIdx = 1; rIdx <= 20; rIdx += 1) {
     const idx = matrixIndex(dIdx, sIdx, rIdx);
     const cases = matrix.recallCases[idx]!;
-    const w = cases > 0 ? cases : 0.25;
+    const w = Math.round(cases) + 1e-5;
     const x = index20ToRetrievabilityAxis(rIdx);
-    const p = cases > 0
-      ? clamp(matrix.recall[idx]! / cases, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX)
-      : clamp(0.64 * x + 0.3, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
-    const y = Math.log(p);
+    const y = cases > 0
+      ? clamp(matrix.recall[idx]! / cases, 0.0, 1.0)
+      : 0.64 * x + 0.3;
     sumW += w;
     sumWX += w * x;
     sumWY += w * y;
@@ -228,19 +235,18 @@ export function calibrateSm20Retrievability(
   for (let rIdx = 1; rIdx <= 20; rIdx += 1) {
     const idx = matrixIndex(dIdx, sIdx, rIdx);
     const cases = matrix.recallCases[idx]!;
-    const w = cases > 0 ? cases : 0.25;
+    const w = Math.round(cases) + 1e-5;
     const x = index20ToRetrievabilityAxis(rIdx);
-    const p = cases > 0
-      ? clamp(matrix.recall[idx]! / cases, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX)
-      : clamp(0.64 * x + 0.3, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
-    const y = Math.log(p);
+    const y = cases > 0
+      ? clamp(matrix.recall[idx]! / cases, 0.0, 1.0)
+      : 0.64 * x + 0.3;
     const dx = x - meanX;
     num += w * dx * (y - meanY);
     den += w * dx * dx;
   }
-  const slope = den > 1e-12 ? num / den : 0;
+  const slope = den > 1e-12 ? num / den : 0.64;
   const intercept = meanY - slope * meanX;
-  const empR = clamp(Math.exp(clamp(slope * cleanR + intercept, -38.0, 38.0)), SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
+  const empR = clamp(slope * cleanR + intercept, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
   const alpha = totalCases / (totalCases + 3.5);
   return clamp(alpha * empR + (1.0 - alpha) * cleanR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
 }
