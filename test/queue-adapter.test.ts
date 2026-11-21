@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dueMsOf, scheduleToTopicState, topicStateToSchedule } from "../src/ir/queue-adapter";
-import type { IrElement, ReadSchedule } from "../src/ir/model";
-import type { ElementId } from "../src/ir/ids";
+import { dueMsOf, laterTodayUndoPayload, scheduleToTopicState, topicStateToSchedule } from "../src/ir/queue-adapter";
+import type { IrElement, IrEvent, ReadSchedule } from "../src/ir/model";
+import type { DeviceId, ElementId, EventId } from "../src/ir/ids";
+import { computeElementHistoryCounts } from "../src/ir/mercy";
 
 function makeElement(overrides: Partial<IrElement> = {}): IrElement {
   return {
@@ -84,4 +85,31 @@ test("topicStateToSchedule + scheduleToTopicState roundtrip", () => {
   const schedule = topicStateToSchedule(original);
   const back = scheduleToTopicState(schedule);
   assert.deepEqual(back, original);
+});
+
+test("laterTodayUndoPayload: undo is excluded from reading reps like its forward event", () => {
+  const schedule = topicStateToSchedule({ dueMs: 42000, interval: 30, aFactor: 3.0 });
+  const events: IrEvent[] = [
+    {
+      id: "ev-forward" as EventId,
+      ts: 1000,
+      lamport: 1,
+      device: "dev" as DeviceId,
+      kind: "topic-advanced",
+      target: "el-1" as ElementId,
+      payload: { schedule, operation: "later-today" },
+    },
+    {
+      id: "ev-undo" as EventId,
+      ts: 2000,
+      lamport: 2,
+      device: "dev" as DeviceId,
+      kind: "topic-advanced",
+      target: "el-1" as ElementId,
+      payload: laterTodayUndoPayload(schedule),
+    },
+  ];
+
+  const counts = computeElementHistoryCounts(events).get("el-1");
+  assert.equal(counts?.readingReps ?? 0, 0);
 });
