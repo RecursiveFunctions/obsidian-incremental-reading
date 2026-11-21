@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   irWorkspaceFabShouldShow,
+  mobileAuxiliaryChromeShouldShow,
   sessionHubKinds,
 } from "../src/ir/mobile-hub";
 
@@ -52,4 +53,11 @@ test("review hub keeps Start review, the tree, and Go neural", () => {
 test("workspace FAB is mobile-only and not gated on an open note", () => {
   assert.equal(irWorkspaceFabShouldShow(true), true);
   assert.equal(irWorkspaceFabShouldShow(false), false);
+});
+
+test("auxiliary mobile overlays hide while Review leaf is active", () => {
+  assert.equal(mobileAuxiliaryChromeShouldShow(true, false), true);
+  assert.equal(mobileAuxiliaryChromeShouldShow(true, true), false);
+  assert.equal(mobileAuxiliaryChromeShouldShow(false, false), false);
+  assert.equal(mobileAuxiliaryChromeShouldShow(false, true), false);
 });

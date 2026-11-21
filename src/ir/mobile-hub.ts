@@ -31,3 +31,14 @@ export function sessionHubKinds(ctx: {
 export function irWorkspaceFabShouldShow(isMobile: boolean): boolean {
   return isMobile;
 }
+
+/**
+ * Auxiliary mobile overlays (Mobile Shell, Capture FAB, Review FAB) yield
+ * while the dedicated Review leaf is active so they never cover `.ir-review-dock`.
+ */
+export function mobileAuxiliaryChromeShouldShow(
+  settingEnabled: boolean,
+  inActiveReview: boolean,
+): boolean {
+  return settingEnabled && !inActiveReview;
+}

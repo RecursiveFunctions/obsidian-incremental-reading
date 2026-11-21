@@ -43,6 +43,37 @@ export function touchStartsInEdgeDeadZone(
 }
 
 /**
+ * When the swipe zone (or a nested scroll container) overflows vertically,
+ * vertical finger drags (`up` / `down`) belong to native scrolling rather than
+ * advancing or grading the card.
+ */
+export function shouldYieldVerticalSwipeToScroll(
+  dir: SwipeDirection,
+  hasVerticalOverflow: boolean,
+): boolean {
+  return hasVerticalOverflow && (dir === "up" || dir === "down");
+}
+
+function swipeTargetHasVerticalOverflow(
+  target: HTMLElement,
+  zone: HTMLElement,
+): boolean {
+  let cur: HTMLElement | null = target;
+  while (cur) {
+    if (cur.scrollHeight > cur.clientHeight + 2) {
+      const style = cur.ownerDocument.defaultView?.getComputedStyle(cur);
+      const oy = style?.overflowY;
+      if (cur === zone || oy === "auto" || oy === "scroll" || oy === "overlay") {
+        return true;
+      }
+    }
+    if (cur === zone) break;
+    cur = cur.parentElement;
+  }
+  return false;
+}
+
+/**
  * Pick the dominant cardinal direction once the finger has moved far enough.
  * Returns null when movement is ambiguous or below the commit threshold.
  */
@@ -140,6 +171,7 @@ export function attachReviewSwipeGestures(
   let startX = 0;
   let startY = 0;
   let locked: SwipeDirection | null = null;
+  let verticalOverflow = false;
 
   const hideHint = () => {
     hintEl.removeClass("is-visible");
@@ -154,6 +186,7 @@ export function attachReviewSwipeGestures(
   const reset = () => {
     pointerId = null;
     locked = null;
+    verticalOverflow = false;
     hideHint();
   };
 
@@ -162,7 +195,8 @@ export function attachReviewSwipeGestures(
     if (evt.pointerType === "mouse" && evt.button !== 0) return;
     if (!evt.isPrimary) return;
     const target = evt.target as HTMLElement | null;
-    if (!target?.closest(".ir-review-swipe-zone")) return;
+    const zone = target?.closest<HTMLElement>(".ir-review-swipe-zone");
+    if (!target || !zone) return;
     if (target.closest(INTERACTIVE_SEL)) return;
     const vw = root.ownerDocument.defaultView?.innerWidth ?? window.innerWidth;
     if (touchStartsInEdgeDeadZone(evt.clientX, vw)) return;
@@ -171,6 +205,7 @@ export function attachReviewSwipeGestures(
     startX = evt.clientX;
     startY = evt.clientY;
     locked = null;
+    verticalOverflow = swipeTargetHasVerticalOverflow(target, zone);
     hideHint();
   };
 
@@ -181,6 +216,10 @@ export function attachReviewSwipeGestures(
     const dir =
       locked ?? classifySwipeDirection(dx, dy);
     if (!dir) return;
+    if (shouldYieldVerticalSwipeToScroll(dir, verticalOverflow)) {
+      reset();
+      return;
+    }
     if (!locked) locked = dir;
     const outcome = swipeOutcomeFor(callbacks.getMode(), dir);
     if (outcome) showHint(outcome);
@@ -191,9 +230,10 @@ export function attachReviewSwipeGestures(
     if (pointerId === null || evt.pointerId !== pointerId) return;
     const dx = evt.clientX - startX;
     const dy = evt.clientY - startY;
+    const hadOverflow = verticalOverflow;
     const dir = locked ?? classifySwipeDirection(dx, dy);
     reset();
-    if (!dir) return;
+    if (!dir || shouldYieldVerticalSwipeToScroll(dir, hadOverflow)) return;
     const outcome = swipeOutcomeFor(callbacks.getMode(), dir);
     if (outcome) callbacks.onOutcome(outcome);
   };

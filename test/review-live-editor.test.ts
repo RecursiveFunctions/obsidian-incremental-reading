@@ -41,9 +41,11 @@ test("reviewEditorState keeps the file path from prev", () => {
   assert.equal(src.mode, "source");
 });
 
-test("canUseReviewLivePreview: desktop markdown only", () => {
+test("canUseReviewLivePreview: desktop and tablet markdown, disabled on phones", () => {
   assert.equal(canUseReviewLivePreview({ extension: "md" }, false), true);
-  assert.equal(canUseReviewLivePreview({ extension: "md" }, true), false);
+  assert.equal(canUseReviewLivePreview({ extension: "md" }, true, false), false);
+  assert.equal(canUseReviewLivePreview({ extension: "md" }, true, true), true);
   assert.equal(canUseReviewLivePreview({ extension: "pdf" }, false), false);
+  assert.equal(canUseReviewLivePreview({ extension: "pdf" }, true, true), false);
   assert.equal(canUseReviewLivePreview(null, false), false);
 });

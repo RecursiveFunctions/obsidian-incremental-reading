@@ -46,3 +46,17 @@ test("styles.css defines display: none for mobile shell and FAB .is-hidden (#48)
     assert.match(css, ruleRe, `Expected ${selector} to have display: none`);
   }
 });
+
+test("styles.css positions mobile capture/review FABs and clears Obsidian bottom nav on mobile shell", () => {
+  const css = readFileSync(resolve(process.cwd(), "styles.css"), "utf8");
+  for (const selector of [".ir-mobile-capture-fab", ".ir-mobile-review-fab"]) {
+    const escaped = selector.replace(/\./g, "\\.");
+    const blockMatch = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, "m"));
+    assert.ok(blockMatch, `Expected CSS block for ${selector}`);
+    assert.match(blockMatch[1], /\bright\s*:/, `${selector} must define horizontal position`);
+    assert.match(blockMatch[1], /\bbottom\s*:/, `${selector} must define vertical position`);
+  }
+  const shellBlock = css.match(/\.ir-mobile-shell\s*\{([^}]*)\}/m);
+  assert.ok(shellBlock, "Expected CSS block for .ir-mobile-shell");
+  assert.match(shellBlock[1], /5rem/, ".ir-mobile-shell must clear Obsidian mobile bottom nav");
+});

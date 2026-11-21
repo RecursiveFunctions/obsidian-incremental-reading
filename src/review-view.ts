@@ -18,7 +18,6 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 import {
-  segmentHue,
   trackLabel,
   trackSegments,
   type DivergenceScale,
@@ -204,7 +203,7 @@ const DEFAULT_CONTEXT_COL_WIDTH_PCT = 38;
 
 /** How the divergence bar sizes its segments. "log" keeps a 5-year and a
  *  47-year proposal both visible; "linear" is proportional but hides the small one. */
-const DIVERGENCE_TRACK_SCALE: DivergenceScale = "linear";
+const DIVERGENCE_TRACK_SCALE: DivergenceScale = "log";
 
 const GRADES: { grade: Grade; label: string; key: string }[] = [
   { grade: "again", label: "Again", key: "1" },
@@ -657,6 +656,9 @@ export class IrReviewView extends ItemView {
     this.attachSelectionAffordances();
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
+      if (Platform.isTablet) {
+        this.contentEl.addClass("ir-review--tablet");
+      }
       this.mobileLayoutCleanup?.();
       this.mobileLayoutCleanup = applyMobileReviewLayout(this.contentEl, {
         layout: this.settings.mobileReviewLayout,
@@ -1004,9 +1006,13 @@ export class IrReviewView extends ItemView {
   }
 
   private syncMobileEditChrome(): void {
-    this.contentEl.toggleClass("ir-review--editing", this.editing);
+    const phoneEdit =
+      this.editing &&
+      Platform.isMobile &&
+      !canUseReviewLivePreview(this.current?.file, Platform.isMobile, Platform.isTablet);
+    this.contentEl.toggleClass("ir-review--editing", phoneEdit);
     if (!Platform.isMobile) return;
-    if (this.editing) {
+    if (phoneEdit) {
       this.layoutMobileEditPane();
     } else {
       this.detachMobileEditResizeObserver();
@@ -1017,7 +1023,14 @@ export class IrReviewView extends ItemView {
 
   /** Size edit UI from layout-root bounds every frame — vv alone lies on Android. */
   private layoutMobileEditPane(): void {
-    if (!Platform.isMobile || !this.editing || !this.cardHostEl) return;
+    if (
+      !Platform.isMobile ||
+      canUseReviewLivePreview(this.current?.file, Platform.isMobile, Platform.isTablet) ||
+      !this.editing ||
+      !this.cardHostEl
+    ) {
+      return;
+    }
 
     applyMobileEditLayout(this.cardHostEl, this.contentEl);
     this.contentEl.toggleClass(
@@ -1632,6 +1645,7 @@ export class IrReviewView extends ItemView {
       const liveOk = canUseReviewLivePreview(
         this.current?.file,
         Platform.isMobile,
+        Platform.isTablet,
       );
       if (this.editing) {
         items.push({
@@ -1714,6 +1728,7 @@ export class IrReviewView extends ItemView {
       const liveOk = canUseReviewLivePreview(
         this.current?.file,
         Platform.isMobile,
+        Platform.isTablet,
       );
       if (this.editing) {
         items.push({
@@ -1766,6 +1781,27 @@ export class IrReviewView extends ItemView {
       items.push({
         label: this.undoLabel(),
         run: () => void this.tryUndoLast(),
+      });
+    }
+    return items;
+  }
+
+  private desktopScheduleOverflowItems(): {
+    label: string;
+    disabled?: boolean;
+    run: () => void;
+  }[] {
+    const items: { label: string; disabled?: boolean; run: () => void }[] = [];
+    if (this.commitJumpInterval) {
+      items.push({
+        label: "Jump interval…",
+        run: () => this.openJumpIntervalBar(),
+      });
+    }
+    if (this.commitAdvance) {
+      items.push({
+        label: "Advance…",
+        run: () => this.openAdvanceBar(),
       });
     }
     return items;
@@ -2473,7 +2509,10 @@ export class IrReviewView extends ItemView {
     const isCloze = !reading && this.isClozeLike(this.currentRaw);
     const maskClozeChrome = !reading && isCloze && !this.revealed;
     const mobileCompactEdit =
-      Platform.isMobile && this.editing && this.canEdit();
+      Platform.isMobile &&
+      !canUseReviewLivePreview(slot.file, Platform.isMobile, Platform.isTablet) &&
+      this.editing &&
+      this.canEdit();
 
     if (
       sourceCtx &&
@@ -2721,6 +2760,7 @@ export class IrReviewView extends ItemView {
             })
             .addEventListener("click", () => void this.tryUndoLast());
         }
+        this.renderOverflowButton(bar, this.desktopScheduleOverflowItems());
       }
       this.restoreBookmark(slot);
       void this.maybeOpenPdfSource(slot).then(() => {
@@ -2839,6 +2879,7 @@ export class IrReviewView extends ItemView {
           })
           .addEventListener("click", () => void this.tryUndoLast());
       }
+      this.renderOverflowButton(bar, this.desktopScheduleOverflowItems());
     }
     this.paintFlash();
     this.ensureFocus();
@@ -4074,7 +4115,7 @@ export class IrReviewView extends ItemView {
   private async renderEditor(parent: HTMLElement) {
     const slot = this.current;
     const file = slot?.file ?? null;
-    if (canUseReviewLivePreview(file, Platform.isMobile) && file) {
+    if (canUseReviewLivePreview(file, Platform.isMobile, Platform.isTablet) && file) {
       const ok = await this.attachLiveEditor(parent, file);
       if (ok) {
         const pending = this.pendingEditSelection;
@@ -4210,7 +4251,7 @@ export class IrReviewView extends ItemView {
     if (!this.canEdit()) return;
     const slot = this.current;
     const reading = !!(slot && this.isReading(slot));
-    const liveOk = canUseReviewLivePreview(slot?.file, Platform.isMobile);
+    const liveOk = canUseReviewLivePreview(slot?.file, Platform.isMobile, Platform.isTablet);
 
     if (this.editing) {
       parent
@@ -5494,9 +5535,10 @@ export class IrReviewView extends ItemView {
     const segments = trackSegments(div.config.members, DIVERGENCE_TRACK_SCALE);
     const track = bar.createDiv({ cls: "ir-divergence-track" });
     for (const [i, seg] of segments.entries()) {
-      const cell = track.createDiv({ cls: "ir-divergence-seg" });
+      const cell = track.createDiv({
+        cls: `ir-divergence-seg ir-divergence-seg--${i % 4}`,
+      });
       cell.style.flexGrow = String(Math.max(seg.share, 0.0001) * 1000);
-      cell.style.background = `hsl(${segmentHue(i, segments.length)} 70% 55% / 0.45)`;
       cell.setAttribute("title", `${seg.id}: ${seg.intervalDays}d (press ${i + 1})`);
       cell.createSpan({
         cls: "ir-divergence-seg-label",

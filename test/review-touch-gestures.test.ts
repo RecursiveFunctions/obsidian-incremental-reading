@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   classifySwipeDirection,
   reviewSwipeMode,
+  shouldYieldVerticalSwipeToScroll,
   swipeHintLabel,
   swipeOutcomeFor,
   touchStartsInEdgeDeadZone,
@@ -87,4 +88,13 @@ test("swipeHintLabel: includes arrow suffix", () => {
     swipeHintLabel({ kind: "nav", action: "reveal" }),
     "Show answer →",
   );
+});
+
+test("shouldYieldVerticalSwipeToScroll: yields up/down on vertically scrollable cards, preserves left/right", () => {
+  assert.equal(shouldYieldVerticalSwipeToScroll("up", true), true);
+  assert.equal(shouldYieldVerticalSwipeToScroll("down", true), true);
+  assert.equal(shouldYieldVerticalSwipeToScroll("left", true), false);
+  assert.equal(shouldYieldVerticalSwipeToScroll("right", true), false);
+  assert.equal(shouldYieldVerticalSwipeToScroll("up", false), false);
+  assert.equal(shouldYieldVerticalSwipeToScroll("down", false), false);
 });

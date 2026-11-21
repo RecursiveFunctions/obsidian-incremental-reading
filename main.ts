@@ -284,7 +284,7 @@ import {
   registerWorkspaceIrFab,
   setWorkspaceIrFabDue,
 } from "./src/ir-mobile-fab";
-import { sessionHubKinds } from "./src/ir/mobile-hub";
+import { mobileAuxiliaryChromeShouldShow, sessionHubKinds } from "./src/ir/mobile-hub";
 import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
 import { registerMobileCapture } from "./src/ir/mobile-capture";
 import { registerMobileReviewFab, applyMobileReviewLayout } from "./src/ir/mobile-review";
@@ -664,31 +664,55 @@ export default class IncrementalReadingPlugin extends Plugin {
       // its badge now rather than leaving it blank until the next mutation.
       void this.refreshStatusBar();
 
+      const inActiveReview = () =>
+        this.app.workspace.activeLeaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE;
+
       // Mobile capture FAB + sheet.
       this.register(
-        registerMobileCapture(this, this.app, {
-          createExtract: (text) => this.mobileCreateExtract(text),
-          createCloze: (text, hint) => this.mobileCreateCloze(text, hint),
-          createTopic: (text, title) => this.mobileCreateTopic(text, title),
-        }, () => this.settings.mobileCaptureFab),
+        registerMobileCapture(
+          this,
+          this.app,
+          {
+            createExtract: (text) => this.mobileCreateExtract(text),
+            createCloze: (text, hint) => this.mobileCreateCloze(text, hint),
+            createTopic: (text, title) => this.mobileCreateTopic(text, title),
+          },
+          () => mobileAuxiliaryChromeShouldShow(this.settings.mobileCaptureFab, inActiveReview()),
+        ),
       );
 
       // Mobile review FAB.
       this.register(
-        registerMobileReviewFab(this, () => void this.startReview(), () => this.settings.mobileReviewFab),
+        registerMobileReviewFab(
+          this,
+          () => void this.startReview(),
+          () => mobileAuxiliaryChromeShouldShow(this.settings.mobileReviewFab, inActiveReview()),
+        ),
       );
 
       // Mobile shell (bottom bar).
       this.register(
-        registerMobileShell(this, {
-          openReview: () => void this.startReview(),
-          openCapture: () => this.mobileOpenCaptureSheet(),
-          openCollection: () => void this.openTreeView(),
-          onCollapseChange: (collapsed) => {
-            this.settings.mobileShellCollapsed = collapsed;
-            void this.saveSettings();
+        registerMobileShell(
+          this,
+          {
+            openReview: () => void this.startReview(),
+            openCapture: () => this.mobileOpenCaptureSheet(),
+            openCollection: () => void this.openTreeView(),
+            onCollapseChange: (collapsed) => {
+              this.settings.mobileShellCollapsed = collapsed;
+              void this.saveSettings();
+            },
           },
-        }, () => this.settings.mobileShell, () => this.settings.mobileShellCollapsed),
+          () => mobileAuxiliaryChromeShouldShow(this.settings.mobileShell, inActiveReview()),
+          () => this.settings.mobileShellCollapsed,
+        ),
+      );
+
+      this.registerEvent(
+        this.app.workspace.on("active-leaf-change", () => this.refreshMobileVisibility()),
+      );
+      this.registerEvent(
+        this.app.workspace.on("layout-change", () => this.refreshMobileVisibility()),
       );
     }
 
@@ -7956,15 +7980,26 @@ export default class IncrementalReadingPlugin extends Plugin {
   /** Apply Mobile Shell / Capture FAB / Review FAB visibility immediately. */
   refreshMobileVisibility(): void {
     if (!Platform.isMobile) return;
+    const inReview =
+      this.app.workspace.activeLeaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE;
     document
       .querySelector<HTMLElement>(".ir-mobile-shell")
-      ?.toggleClass("is-hidden", !this.settings.mobileShell);
+      ?.toggleClass(
+        "is-hidden",
+        !mobileAuxiliaryChromeShouldShow(this.settings.mobileShell, inReview),
+      );
     document
       .querySelector<HTMLElement>(".ir-mobile-capture-fab")
-      ?.toggleClass("is-hidden", !this.settings.mobileCaptureFab);
+      ?.toggleClass(
+        "is-hidden",
+        !mobileAuxiliaryChromeShouldShow(this.settings.mobileCaptureFab, inReview),
+      );
     document
       .querySelector<HTMLElement>(".ir-mobile-review-fab")
-      ?.toggleClass("is-hidden", !this.settings.mobileReviewFab);
+      ?.toggleClass(
+        "is-hidden",
+        !mobileAuxiliaryChromeShouldShow(this.settings.mobileReviewFab, inReview),
+      );
   }
 
   /**
