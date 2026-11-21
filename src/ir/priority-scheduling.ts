@@ -34,5 +34,5 @@ export function effectiveReadingAFactor(
   const value = enabled
     ? interpolatePriorityEndpoint(priority, highPriorityAFactor, lowPriorityAFactor)
     : baseAFactor;
-  return Math.max(1.1, value);
+  return Math.max(1.01, value);
 }

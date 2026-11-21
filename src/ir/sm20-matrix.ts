@@ -433,7 +433,10 @@ export function foldSm20MatrixFromEvents(
 
   const sorted = [...events].sort((a, b) => a.lamport - b.lamport || a.id.localeCompare(b.id));
   const cardState = new Map<string, StoredCard>();
-  let seenAfter = !opts?.afterEventId;
+  const hasCursor = Boolean(
+    opts?.afterEventId && sorted.some((e) => e.id === opts.afterEventId),
+  );
+  let seenAfter = !hasCursor;
 
   for (const ev of sorted) {
     if (ev.kind === "grade-undone" || undone.has(ev.id)) {
@@ -448,24 +451,30 @@ export function foldSm20MatrixFromEvents(
       const resetCard = ev.payload.card as StoredCard | undefined;
       if (resetCard) cardState.set(ev.target, resetCard);
       else cardState.delete(ev.target);
+    } else if (ev.kind === "mercy-postponed" && ev.payload.operation === "manual-reschedule" && ev.payload.card) {
+      cardState.set(ev.target, ev.payload.card as StoredCard);
     } else if (ev.kind === "graded") {
       const nextCard = ev.payload.card as StoredCard | undefined;
       if (nextCard) {
         const prevCard = cardState.get(ev.target);
-        if (seenAfter) {
+        if (
+          seenAfter &&
+          !ev.payload.overridden &&
+          prevCard &&
+          prevCard.reps > 0 &&
+          prevCard.stability > 0
+        ) {
           const rawSmGrade = ev.payload.smGrade;
           const smGrade = typeof rawSmGrade === "number" && Number.isFinite(rawSmGrade)
             ? clamp(Math.round(rawSmGrade), 0, 5)
             : gradeToSmGrade(typeof ev.payload.grade === "number" ? ev.payload.grade : 3);
-          const prevS = prevCard && prevCard.stability > 0 ? prevCard.stability : SM20_STABILITY_MIN;
-          const prevD01 = storedDifficultyTo01(prevCard?.difficulty);
+          const prevS = prevCard.stability;
+          const prevD01 = storedDifficultyTo01(prevCard.difficulty);
           const elapsedDays =
-            prevCard?.lastReview !== undefined && nextCard.lastReview !== undefined
+            prevCard.lastReview !== undefined && nextCard.lastReview !== undefined
               ? Math.max(0, (nextCard.lastReview - prevCard.lastReview) / 86_400_000)
               : Math.max(0, nextCard.elapsedDays ?? 0);
-          const r = prevCard && prevCard.reps > 0
-            ? computeSm20Retrievability(elapsedDays, prevS)
-            : SM20_RETRIEVABILITY_MAX;
+          const r = computeSm20Retrievability(elapsedDays, prevS);
           recordSm20Outcome(matrix, {
             prevDifficulty01: prevD01,
             prevStability: prevS,

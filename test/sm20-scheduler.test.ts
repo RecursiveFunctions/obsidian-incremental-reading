@@ -170,3 +170,45 @@ test("scheduleSm20Item early review dampens stability gain and bypasses 1.1x gro
   assert.ok(onTimeGood.scheduledDays >= 110);
   assert.ok(onTimeGood.stability > earlyGood.stability);
 });
+
+test("scheduleSm20Item infers elapsed days from due & scheduledDays when lastReview is missing", () => {
+  const withoutLastReview = {
+    due: NOW,
+    stability: 10,
+    difficulty: 5,
+    elapsedDays: 0,
+    scheduledDays: 10,
+    reps: 3,
+    lapses: 0,
+    state: 2,
+  };
+  const withLastReview = {
+    ...withoutLastReview,
+    lastReview: NOW - 10 * DAY_MS,
+  };
+  const nextInferred = scheduleSm20Item(withoutLastReview, "good", NOW, 0.9);
+  const nextExplicit = scheduleSm20Item(withLastReview, "good", NOW, 0.9);
+  assert.equal(nextInferred.elapsedDays, 10);
+  assert.equal(nextInferred.scheduledDays, nextExplicit.scheduledDays);
+  assert.ok(Math.abs(nextInferred.stability - nextExplicit.stability) < 1e-9);
+});
+
+test("scheduleSm20Item preserves minimum interval growth floor for on-time reviews when desiredRetention > 0.9", () => {
+  const highDifficultyCard = {
+    due: NOW,
+    stability: 40,
+    difficulty: 9.8,
+    elapsedDays: 19,
+    scheduledDays: 19,
+    reps: 4,
+    lapses: 0,
+    state: 2,
+    // Scheduled for 19d under desiredRetention=0.95 (elapsed 19 < prevS 40, R ≈ 0.951 -> due at 20d)
+    lastReview: NOW - 20 * DAY_MS,
+  };
+  const next = scheduleSm20Item(highDifficultyCard, "hard", NOW, 0.95);
+  assert.ok(
+    next.scheduledDays > highDifficultyCard.scheduledDays,
+    `expected on-time high-retention review to grow interval past ${highDifficultyCard.scheduledDays}d, got ${next.scheduledDays}d`,
+  );
+});

@@ -172,10 +172,17 @@ export function scheduleSm20Item(
   );
   const fiFactor = Math.log(clampedRetention) / Math.log(0.9);
 
-  const elapsedFloat =
-    prevReps > 0 && card?.lastReview !== undefined && Number.isFinite(card.lastReview)
-      ? Math.max(0.0, (nowMs - card.lastReview) / MS_PER_DAY)
-      : 0.0;
+  let elapsedFloat = 0.0;
+  if (prevReps > 0) {
+    if (card?.lastReview !== undefined && Number.isFinite(card.lastReview)) {
+      elapsedFloat = Math.max(0.0, (nowMs - card.lastReview) / MS_PER_DAY);
+    } else if (card?.due !== undefined && Number.isFinite(card.due) && prevScheduledDays > 0) {
+      const inferredLastReview = card.due - prevScheduledDays * MS_PER_DAY;
+      elapsedFloat = Math.max(0.0, (nowMs - inferredLastReview) / MS_PER_DAY);
+    } else {
+      elapsedFloat = Math.max(0.0, card?.elapsedDays || prevScheduledDays);
+    }
+  }
   const elapsedDays = Math.max(0, Math.floor(elapsedFloat));
 
   if (prevReps === 0) {
@@ -256,10 +263,10 @@ export function scheduleSm20Item(
   const rawIv = clamp(nextStability * fiFactor, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
   const candidateIv = clamp(roundHalfToEven(rawIv), 1, SM20_MAX_INTERVAL_DAYS);
   const prevIv = Math.max(1, prevScheduledDays || roundHalfToEven(prevS));
-  const scheduledDays =
-    elapsedFloat < prevS
-      ? candidateIv
-      : enforceMinimumIntervalGrowthFactor(prevIv, candidateIv, nextRepNumber);
+  const isEarlyReview = elapsedFloat < prevS && retrievability > clampedRetention;
+  const scheduledDays = isEarlyReview
+    ? candidateIv
+    : enforceMinimumIntervalGrowthFactor(prevIv, candidateIv, nextRepNumber);
 
   return {
     due: nowMs + scheduledDays * MS_PER_DAY,

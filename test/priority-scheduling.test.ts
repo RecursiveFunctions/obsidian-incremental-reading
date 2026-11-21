@@ -15,6 +15,7 @@ test("priority interpolation is monotonic and clamps priority", () => {
 test("priority scheduling remains disabled until explicitly enabled", () => {
   assert.equal(effectiveItemRetention(0, false, 0.9, 0.99, 0.7), 0.9);
   assert.equal(effectiveReadingAFactor(0, false, 2.2, 1.2, 3), 2.2);
+  assert.equal(effectiveReadingAFactor(0, false, 1.04, 1.2, 3), 1.04);
 });
 
 test("high priority maps to higher retention and lower A-Factor", () => {

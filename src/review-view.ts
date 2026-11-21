@@ -296,6 +296,7 @@ export interface IrReviewViewHost {
     prevCard: import("./ir/model").StoredCard | undefined,
     nextCard: import("./ir/model").StoredCard,
     grade: Grade,
+    overridden?: boolean,
   ) => Promise<void>;
 }
 
@@ -5351,7 +5352,7 @@ export class IrReviewView extends ItemView {
     const prevCard = slot.element.card;
     const eventId = await this.emit("graded", slot.id, payload);
     if (this.onSm20Grade) {
-      await this.onSm20Grade(eventId, prevCard, stored, g).catch((e) => {
+      await this.onSm20Grade(eventId, prevCard, stored, g, intervalOverridden).catch((e) => {
         console.warn("Incremental Reading: could not update SM-20 matrix", e);
       });
     }

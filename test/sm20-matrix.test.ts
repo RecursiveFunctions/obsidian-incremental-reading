@@ -242,3 +242,71 @@ test("computePostReviewStability dampens early-review stability gain proportiona
   assert.ok(Math.abs(earlyVeryHigh - 101.5) < 1e-9);
   assert.equal(earlyLimit, prevS);
 });
+
+test("foldSm20MatrixFromEvents skips unmemorized first rep (prevReps === 0), overridden grades, and handles compacted afterEventId", () => {
+  const elId = newElementId();
+  const rep1Card = scheduleSm20Item(undefined, "good", NOW, 0.9);
+  const rep2Card = scheduleSm20Item(rep1Card, "good", rep1Card.due, 0.9);
+  const rep3Overridden = { ...rep2Card, due: rep1Card.due + 90 * DAY_MS, scheduledDays: 90 };
+
+  const evCreate: IrEvent = {
+    id: newEventId(),
+    ts: NOW - DAY_MS,
+    lamport: 1,
+    device: DEV,
+    kind: "element-created",
+    target: elId,
+    payload: {
+      element: {
+        id: elId,
+        type: "item",
+        priority: 30,
+        parentId: null,
+        dismissed: false,
+        created: NOW - DAY_MS,
+        text: "Q {{c1::A}}",
+        anchorState: "ok",
+      },
+    },
+  };
+  const evFirstRep: IrEvent = {
+    id: newEventId(),
+    ts: NOW,
+    lamport: 2,
+    device: DEV,
+    kind: "graded",
+    target: elId,
+    payload: { card: rep1Card, grade: 3 },
+  };
+  const evSecondRep: IrEvent = {
+    id: newEventId(),
+    ts: rep1Card.due,
+    lamport: 3,
+    device: DEV,
+    kind: "graded",
+    target: elId,
+    payload: { card: rep2Card, grade: 3 },
+  };
+  const evOverridden: IrEvent = {
+    id: newEventId(),
+    ts: rep2Card.due,
+    lamport: 4,
+    device: DEV,
+    kind: "graded",
+    target: elId,
+    payload: { card: rep3Overridden, grade: 3, overridden: true },
+  };
+
+  // Only evSecondRep had a valid memorized prevCard (reps >= 1) without override
+  const matrix = foldSm20MatrixFromEvents([evCreate, evFirstRep, evSecondRep, evOverridden]);
+  const stats = getSm20MatrixStats(matrix);
+  assert.equal(stats.totalSincCases, 1);
+  assert.equal(stats.totalRecallCases, 1);
+
+  // If afterEventId was compacted away and is missing from events, fold all remaining events rather than dropping everything
+  const compacted = foldSm20MatrixFromEvents([evCreate, evFirstRep, evSecondRep], {
+    baseline: snapshotSm20Matrix(createEmptySm20Matrix()),
+    afterEventId: "ev_compacted_away",
+  });
+  assert.equal(getSm20MatrixStats(compacted).totalSincCases, 1);
+});
