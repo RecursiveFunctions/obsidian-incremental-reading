@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2] — 2026-11-21
+
 ### Added
 
 - **Vault-wide duplicate URL & content guard** (`src/ir/bulk-import.ts`, `main.ts`): `bulkImport` and mobile capture now check normalized URLs (ledger `anchor.url` plus Markdown frontmatter `url`/`source`) and content fingerprints (ledger text plus frontmatter-stripped Markdown bodies), surfacing a non-blocking Notice with **Open existing**, **Append as extract**, and **Import anyway** actions.
