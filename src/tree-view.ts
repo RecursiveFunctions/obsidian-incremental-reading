@@ -486,8 +486,6 @@ export class IrTreeView extends ItemView {
       tab.onclick = () => {
         if (this.displayMode === mode) return;
         this.displayMode = mode;
-        this.filterText = "";
-        this.visibleTypes = new Set(["topic", "extract", "item"]);
         this.saveDisplayMode?.(mode);
         void this.render();
       };
@@ -1210,6 +1208,10 @@ export class IrTreeView extends ItemView {
       return;
     }
     this.cancelPendingClick();
+    if (Platform.isMobile) {
+      void this.revealOrOpen(node);
+      return;
+    }
     this.pendingClickTimer = window.setTimeout(() => {
       this.pendingClickTimer = null;
       void this.revealOrOpen(node);

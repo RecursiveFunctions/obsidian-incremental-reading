@@ -1,5 +1,7 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 
+import { promptConfirm } from "./confirm-modal";
+
 import { IrLedger } from "./ir/ledger";
 import type { ElementId } from "./ir/ids";
 import { labelFor } from "./ir/labels";
@@ -825,7 +827,16 @@ export class IrStatsView extends ItemView {
           text: "Forget / Reset",
         });
         resetBtn.addEventListener("click", () => {
-          void this.host.resetElement!(el.id).then(() => this.render());
+          void (async () => {
+            const ok = await promptConfirm(this.app, {
+              title: "Reset card memory?",
+              body: `Clear review interval, stability, and lapses for "${labelFor(el)}" and reschedule it as new?`,
+              ctaText: "Reset",
+            });
+            if (!ok) return;
+            await this.host.resetElement!(el.id);
+            await this.render();
+          })();
         });
       }
       if (this.host.dismissElement) {

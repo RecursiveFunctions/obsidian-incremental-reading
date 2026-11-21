@@ -183,33 +183,35 @@ export class IrSettingTab extends PluginSettingTab {
           this.display();
         }));
 
-    for (const [key, name, description] of [
-      ["readingProportion", "Reading proportion", "Share of mixed sessions reserved for topics and extracts."],
-      ["itemJitter", "Item randomization", "Bounded deterministic SM-20 rank dispersion for recall items."],
-      ["readingJitter", "Reading randomization", "Bounded deterministic SM-20 rank dispersion for topics and extracts."],
-    ] as const) {
-      let previewHost: HTMLElement | null = null;
-      const setting = new Setting(containerEl).setName(name).setDesc(description);
-      if (key === "itemJitter" || key === "readingJitter") {
-        previewHost = setting.controlEl.createDiv({ cls: "ir-repsort-preview" });
-        this.renderRepSortCurvePreview(previewHost, this.plugin.settings.sortingPolicy[key]);
+    if (this.plugin.settings.sortingPolicy.preset === "custom") {
+      for (const [key, name, description] of [
+        ["readingProportion", "Reading proportion", "Share of mixed sessions reserved for topics and extracts."],
+        ["itemJitter", "Item randomization", "Bounded deterministic SM-20 rank dispersion for recall items."],
+        ["readingJitter", "Reading randomization", "Bounded deterministic SM-20 rank dispersion for topics and extracts."],
+      ] as const) {
+        let previewHost: HTMLElement | null = null;
+        const setting = new Setting(containerEl).setName(name).setDesc(description);
+        if (key === "itemJitter" || key === "readingJitter") {
+          previewHost = setting.controlEl.createDiv({ cls: "ir-repsort-preview" });
+          this.renderRepSortCurvePreview(previewHost, this.plugin.settings.sortingPolicy[key]);
+        }
+        setting.addSlider((slider) => slider
+          .setLimits(0, 1, 0.05)
+          .setValue(this.plugin.settings.sortingPolicy[key])
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.sortingPolicy[key] = value;
+            if (key === "readingProportion") {
+              this.plugin.settings.reviewsPerReading =
+                value <= 0 ? 0 : Math.min(10, Math.max(0, Math.round((1 - value) / value)));
+            }
+            if (previewHost) {
+              this.renderRepSortCurvePreview(previewHost, value);
+            }
+            this.plugin.settings.sortingPolicy.preset = "custom";
+            await this.plugin.saveSettings();
+          }));
       }
-      setting.addSlider((slider) => slider
-        .setLimits(0, 1, 0.05)
-        .setValue(this.plugin.settings.sortingPolicy[key])
-        .setDynamicTooltip()
-        .onChange(async (value) => {
-          this.plugin.settings.sortingPolicy[key] = value;
-          if (key === "readingProportion") {
-            this.plugin.settings.reviewsPerReading =
-              value <= 0 ? 0 : Math.min(10, Math.max(0, Math.round((1 - value) / value)));
-          }
-          if (previewHost) {
-            this.renderRepSortCurvePreview(previewHost, value);
-          }
-          this.plugin.settings.sortingPolicy.preset = "custom";
-          await this.plugin.saveSettings();
-        }));
     }
 
     new Setting(containerEl)
@@ -464,22 +466,25 @@ export class IrSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.settings.prioritySchedulingPolicy.enabled = value;
           await this.plugin.saveSettings();
+          this.display();
         }));
 
-    for (const [key, name, min, max, step] of [
-      ["itemHighRetention", "High-priority item retention", 0.7, 0.99, 0.01],
-      ["itemLowRetention", "Low-priority item retention", 0.7, 0.99, 0.01],
-      ["readingHighAFactor", "High-priority reading A-Factor", 1.1, 4, 0.1],
-      ["readingLowAFactor", "Low-priority reading A-Factor", 1.1, 4, 0.1],
-    ] as const) {
-      new Setting(containerEl).setName(name).addSlider((slider) => slider
-        .setLimits(min, max, step)
-        .setValue(this.plugin.settings.prioritySchedulingPolicy[key])
-        .setDynamicTooltip()
-        .onChange(async (value) => {
-          this.plugin.settings.prioritySchedulingPolicy[key] = value;
-          await this.plugin.saveSettings();
-        }));
+    if (this.plugin.settings.prioritySchedulingPolicy.enabled) {
+      for (const [key, name, min, max, step] of [
+        ["itemHighRetention", "High-priority item retention", 0.7, 0.99, 0.01],
+        ["itemLowRetention", "Low-priority item retention", 0.7, 0.99, 0.01],
+        ["readingHighAFactor", "High-priority reading A-Factor", 1.1, 4, 0.1],
+        ["readingLowAFactor", "Low-priority reading A-Factor", 1.1, 4, 0.1],
+      ] as const) {
+        new Setting(containerEl).setName(name).addSlider((slider) => slider
+          .setLimits(min, max, step)
+          .setValue(this.plugin.settings.prioritySchedulingPolicy[key])
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.prioritySchedulingPolicy[key] = value;
+            await this.plugin.saveSettings();
+          }));
+      }
     }
 
     new Setting(containerEl)

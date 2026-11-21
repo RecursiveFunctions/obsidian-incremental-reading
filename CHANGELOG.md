@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **SM-20 early-review stability damping & growth-floor bypass** (`src/ir/sm20-matrix.ts`, `src/ir/sm20-scheduler.ts`): Reviews completed before `prevS` (`elapsedDays < prevS` and `retrievability > desiredRetention`) proportionally scale stability gain by `(1 - R) / (1 - target)` and bypass the `1.1x` minimum interval growth floor.
 
+### Fixed
+
+- **Mobile FAB viewport coordinates, bottom-nav clearance & active-review hiding** (`styles.css`, `src/ir/mobile-hub.ts`, `main.ts`): Added safe-area `right`/`bottom` positioning for `.ir-mobile-capture-fab` and `.ir-mobile-review-fab` (preventing `(0, 0)` header overlap), raised `.ir-mobile-shell` above Obsidian's mobile bottom bar, and auto-hid auxiliary mobile overlays while `IrReviewView` is active so `.ir-review-dock` is never obstructed.
+- **Mobile vertical scroll vs. swipe gesture collision** (`src/ir/review-touch-gestures.ts`): Guarded vertical (`up`/`down`) swipe locking when `.ir-review-swipe-zone` has scrollable vertical overflow so reading or scrolling long cards never triggers accidental advances or grades.
+- **Desktop Review overflow parity & Tablet Live Preview** (`src/review-view.ts`, `src/ir/review-live-preview.ts`, `styles.css`): Exposed `Jump interval…` and SM-20 `Advance…` via the `⋯` overflow menu on desktop, enabled Live Preview editing on tablets (`Platform.isTablet`), and widened the landscape tablet Source column.
+- **Collection mode-switch filter preservation & touch tap responsiveness** (`src/tree-view.ts`): Preserved active search text and type filters when toggling `Priority` ↔ `Sources` and bypassed the 300 ms double-click disambiguation timer on touch devices.
+- **Divergence Picker log scale & theme CSS variables** (`src/review-view.ts`, `styles.css`): Switched `DIVERGENCE_TRACK_SCALE` to `"log"` so long SM-20/SM-2 intervals do not crush short FSRS segments and replaced inline `hsl(...)` fills with Obsidian theme variables.
+- **Conditional Settings sub-sliders & Leech `Forget / Reset` confirmation** (`src/settings.ts`, `src/stats-view.ts`): Hid custom dispersion sliders unless `Priority queue preset` is `Custom`, hid `Priority-aware scheduling` sub-sliders when disabled, and added `promptConfirm` before `Forget / Reset` clears card memory in Stats Leech triage.
+
 ## [0.14.1] — 2026-11-20
 
 ### Fixed
