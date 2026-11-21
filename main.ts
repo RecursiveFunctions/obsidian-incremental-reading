@@ -169,6 +169,7 @@ import {
 import { repetitionDayKey, restoreSessionSnapshot, type SessionMode, type SessionSnapshot } from "./src/ir/session-snapshot";
 import type { DailyPriorityAnalytics } from "./src/ir/priority-analytics";
 import { mergeAnalyticsSessions, priorityProtection } from "./src/ir/priority-analytics";
+import { effectiveItemRetention } from "./src/ir/priority-scheduling";
 import { previewMercy } from "./src/ir/mercy-modal";
 import {
   bodyWithSingleClozeGroup,
@@ -841,6 +842,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrDismissChange(elementId, file, dismissed),
           commitPostpone: (elementId, file, days) =>
             this.applyIrPostponeChange(elementId, file, days),
+          commitPostponeBatch: (ids, days) =>
+            this.applyIrPostponeBatch(ids, days),
           commitReparent: (elementId, newParentId) =>
             this.applyIrReparent(elementId, newParentId),
           commitDelete: (elementId, parentId) =>
@@ -1012,8 +1015,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.refreshActiveNeuralSlots(visitedPrefixIds),
           saveSettings: () => this.saveSettings(),
           getSm20Matrix: () => this.sm20Matrix,
-          onSm20Grade: (eventId, prevCard, nextCard, grade) =>
-            this.recordSm20Grade(eventId, prevCard, nextCard, grade),
+          onSm20Grade: (eventId, prevCard, nextCard, grade, overridden) =>
+            this.recordSm20Grade(eventId, prevCard, nextCard, grade, overridden),
         });
         view.multiSelect = this.multiSelect;
         return view;
@@ -1978,24 +1981,25 @@ export default class IncrementalReadingPlugin extends Plugin {
     prevCard: StoredCard | undefined,
     nextCard: StoredCard,
     grade: Grade,
+    overridden = false,
   ): Promise<void> {
     const matrix = this.sm20Matrix ?? (await this.ensureSm20Matrix());
-    const prevS = prevCard && prevCard.stability > 0 ? prevCard.stability : SM20_STABILITY_MIN;
-    const prevD01 = storedDifficultyTo01(prevCard?.difficulty);
-    const elapsedDays =
-      prevCard?.lastReview !== undefined && nextCard.lastReview !== undefined
-        ? Math.max(0, (nextCard.lastReview - prevCard.lastReview) / 86_400_000)
-        : Math.max(0, nextCard.elapsedDays ?? 0);
-    const r = prevCard && prevCard.reps > 0
-      ? computeSm20Retrievability(elapsedDays, prevS)
-      : SM20_RETRIEVABILITY_MAX;
-    recordSm20Outcome(matrix, {
-      prevDifficulty01: prevD01,
-      prevStability: prevS,
-      retrievability: r,
-      nextStability: nextCard.stability,
-      smGrade: gradeToSmGrade(grade),
-    });
+    if (!overridden && prevCard && prevCard.reps > 0 && prevCard.stability > 0) {
+      const prevS = prevCard.stability;
+      const prevD01 = storedDifficultyTo01(prevCard.difficulty);
+      const elapsedDays =
+        prevCard.lastReview !== undefined && nextCard.lastReview !== undefined
+          ? Math.max(0, (nextCard.lastReview - prevCard.lastReview) / 86_400_000)
+          : Math.max(0, nextCard.elapsedDays ?? 0);
+      const r = computeSm20Retrievability(elapsedDays, prevS);
+      recordSm20Outcome(matrix, {
+        prevDifficulty01: prevD01,
+        prevStability: prevS,
+        retrievability: r,
+        nextStability: nextCard.stability,
+        smGrade: gradeToSmGrade(grade),
+      });
+    }
     if (!this.ledger) return;
     const prevCount = this.sm20MatrixMeta?.eventCount ?? 0;
     const meta: Sm20MatrixFileV1 = {
@@ -4573,35 +4577,79 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async applyIrPostponeChange(
     elementId: ElementId,
-    _file: TFile | null,
+    file: TFile | null,
     days: number,
   ): Promise<void> {
-    if (!this.ledger) return;
+    await this.applyIrPostponeBatch([elementId], days, file);
+  }
+
+  private async applyIrPostponeBatch(
+    ids: readonly ElementId[],
+    days: number,
+    explicitFile?: TFile | null,
+  ): Promise<number> {
+    if (!this.ledger || ids.length === 0) return 0;
     const now = Date.now();
     const state = await this.ledger.load();
-    const el = state.elements.get(elementId);
-    const currentDue = el?.type === "item" ? el.card?.due : el?.schedule?.due;
-    const { previousDue, newDue } = planManualPostpone(currentDue, now, days);
     const device = await this.ledger.getDeviceId();
-    await this.commitLedgerEvents(
-      "postpone",
-      [
-        {
-          kind: "mercy-postponed",
-          target: elementId,
-          payload: {
-            newDue,
-            ...(previousDue !== undefined ? { previousDue } : {}),
-            batchId: `manual-postpone:${device}:${now}`,
-            operation: "manual-postpone",
-          },
+    const batchId = `manual-postpone:${device}:${now}`;
+    const drafts: Array<{
+      kind: "mercy-postponed";
+      target: ElementId;
+      payload: Record<string, unknown>;
+    }> = [];
+    const dueByFile = new Map<TFile, number>();
+    const postponedSet = new Set<ElementId>();
+
+    for (const elementId of ids) {
+      if (postponedSet.has(elementId)) continue;
+      const el = state.elements.get(elementId);
+      if (!el || el.dismissed) continue;
+      const currentDue = el.type === "item" ? el.card?.due : el.schedule?.due;
+      const { previousDue, newDue } = planManualPostpone(currentDue, now, days);
+      postponedSet.add(elementId);
+      drafts.push({
+        kind: "mercy-postponed",
+        target: elementId,
+        payload: {
+          newDue,
+          ...(previousDue !== undefined ? { previousDue } : {}),
+          batchId,
+          operation: "manual-postpone",
         },
-      ],
-      { now },
-    );
-    this.getActiveReviewView()?.removePostponed(new Set([elementId]));
+      });
+      const resolvedFile =
+        ids.length === 1 && explicitFile
+          ? explicitFile
+          : el.notePath
+            ? (() => {
+                const abs = this.app.vault.getAbstractFileByPath(el.notePath);
+                return abs instanceof TFile ? abs : null;
+              })()
+            : null;
+      if (resolvedFile && resolvedFile.extension === "md") {
+        dueByFile.set(resolvedFile, newDue);
+      }
+    }
+
+    if (drafts.length === 0) return 0;
+
+    await this.commitLedgerEvents("postpone", drafts, {
+      now,
+      beforeReconcile: async () => {
+        for (const [targetFile, newDue] of dueByFile) {
+          await quietFrontmatterWrite(async () => {
+            await this.app.fileManager.processFrontMatter(targetFile, (fm) => {
+              fm[IR_KEYS.due] = new Date(newDue).toISOString();
+            });
+          }, "postpone");
+        }
+      },
+    });
+    this.getActiveReviewView()?.removePostponed(postponedSet);
     const tree = this.getTreeView();
     if (tree) void tree.refresh();
+    return drafts.length;
   }
 
   /**
@@ -5624,7 +5672,13 @@ export default class IncrementalReadingPlugin extends Plugin {
         reps: isItem ? (el.card?.reps ?? 0) : (hist?.readingReps ?? 0),
         lapses: el.card?.lapses ?? 0,
         difficulty: el.card?.difficulty,
-        requestedRetention: this.settings.desiredRetention,
+        requestedRetention: effectiveItemRetention(
+          el.priority,
+          this.settings.prioritySchedulingPolicy.enabled,
+          this.settings.desiredRetention,
+          this.settings.prioritySchedulingPolicy.itemHighRetention,
+          this.settings.prioritySchedulingPolicy.itemLowRetention,
+        ),
         aFactor: el.schedule?.aFactor,
         postponeCount: hist?.recentPostponeCount ?? 0,
         totalPostponeCount: hist?.totalPostponeCount ?? 0,
@@ -5733,22 +5787,37 @@ export default class IncrementalReadingPlugin extends Plugin {
       const { entries } = this.buildMercyEntries(state.elements.values(), existing);
       const policy = this.settings.autoPostponePolicy;
       const assignments = policy.advanced
-        ? planAdvancedPostpone(entries, now, {
-            operation: "postpone",
-            includeItems: true,
-            includeReading: true,
-            itemDelayFactor: 1.5,
-            readingDelayFactor: 1.5,
-            minDelayDays: 1,
-            maxDelayDays: 30,
-            skipPriorityAtOrBelow: policy.priorityCutoff,
-            skipPostponeCountAbove: 5,
-            scaleByPriority: true,
-            scaleByRetention: true,
-            scaleByAFactor: true,
-            overdueOnly: true,
-            weights: this.settings.mercyWeights,
-          }).assignments.slice(Math.max(0, Math.floor(policy.keepOverdue)))
+        ? (() => {
+            const todayStart = new Date(now);
+            todayStart.setHours(0, 0, 0, 0);
+            const todayCutoff = todayStart.getTime();
+            const entryById = new Map(entries.map((e) => [e.id, e]));
+            const advPlan = planAdvancedPostpone(entries, now, {
+              operation: "postpone",
+              includeItems: true,
+              includeReading: true,
+              itemDelayFactor: 1.5,
+              readingDelayFactor: 1.5,
+              minDelayDays: 1,
+              maxDelayDays: 30,
+              skipPriorityAtOrBelow: policy.priorityCutoff,
+              skipPostponeCountAbove: 5,
+              scaleByPriority: true,
+              scaleByRetention: true,
+              scaleByAFactor: true,
+              overdueOnly: true,
+              weights: this.settings.mercyWeights,
+            });
+            const overdueProtectedCount = advPlan.protectedIds.filter((id) => {
+              const e = entryById.get(id);
+              return e !== undefined && !e.dismissed && Number.isFinite(e.dueMs) && e.dueMs < todayCutoff;
+            }).length;
+            const remainingToKeep = Math.max(
+              0,
+              Math.floor(policy.keepOverdue) - overdueProtectedCount,
+            );
+            return advPlan.assignments.slice(remainingToKeep);
+          })()
         : planAutoPostpone(entries, now, {
             keepOverdue: policy.keepOverdue,
             priorityCutoff: policy.priorityCutoff,
@@ -5820,17 +5889,21 @@ export default class IncrementalReadingPlugin extends Plugin {
       const device = await this.ledger.getDeviceId();
       let restored = 0;
       let skipped = 0;
+      const restoredDueById = new Map<ElementId, number>();
       for (const target of targets) {
         const laterDueChange = events.some(
           (e) =>
             e.target === target.target &&
             e.lamport > target.lamport &&
-            ["graded", "topic-advanced", "mercy-postponed", "mercy-undone"].includes(e.kind),
+            ["graded", "topic-advanced", "mercy-postponed", "mercy-undone", "card-reset"].includes(
+              e.kind,
+            ),
         );
         if (laterDueChange) {
           skipped += 1;
           continue;
         }
+        const restoredDue = target.payload.previousDue as number;
         await this.ledger.appendEvent({
           id: newEventId(),
           ts: Date.now(),
@@ -5838,8 +5911,9 @@ export default class IncrementalReadingPlugin extends Plugin {
           device,
           kind: "mercy-undone",
           target: target.target,
-          payload: { batchId, newDue: target.payload.previousDue },
+          payload: { batchId, newDue: restoredDue },
         });
+        restoredDueById.set(target.target, restoredDue);
         restored += 1;
       }
       await this.ledger.appendEvent({
@@ -5852,8 +5926,22 @@ export default class IncrementalReadingPlugin extends Plugin {
         payload: { batchId, operation: "complete" },
       });
       await this.ledger.reconcile();
+      const reloaded = await this.ledger.load();
+      for (const [elId, restoredDue] of restoredDueById) {
+        const el = reloaded.elements.get(elId);
+        if (!el?.notePath) continue;
+        const abs = this.app.vault.getAbstractFileByPath(el.notePath);
+        if (!(abs instanceof TFile) || abs.extension !== "md") continue;
+        await quietFrontmatterWrite(async () => {
+          await this.app.fileManager.processFrontMatter(abs, (fm) => {
+            fm[IR_KEYS.due] = new Date(restoredDue).toISOString();
+          });
+        }, "undo-mercy");
+      }
+      this.getActiveReviewView()?.refreshElementsInPlace(reloaded.elements);
       const tree = this.getTreeView();
       if (tree) void tree.refresh();
+      this.refreshAuxiliaryViews();
       void this.refreshStatusBar();
       new Notice(
         `Incremental Reading: restored ${restored}; skipped ${skipped} changed element${skipped === 1 ? "" : "s"}.`,

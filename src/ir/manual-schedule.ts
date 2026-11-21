@@ -64,7 +64,15 @@ export function parseJumpIntervalInput(
     const diffDays = Math.round((target.getTime() - startToday) / MS_PER_DAY);
     if (diffDays < 1) return null;
     const clamped = Math.min(SM20_MAX_INTERVAL_DAYS, diffDays);
-    const due = new Date(year, month, day, nowDate.getHours(), nowDate.getMinutes(), nowDate.getSeconds(), nowDate.getMilliseconds()).getTime();
+    const due = new Date(
+      nowDate.getFullYear(),
+      nowDate.getMonth(),
+      nowDate.getDate() + clamped,
+      nowDate.getHours(),
+      nowDate.getMinutes(),
+      nowDate.getSeconds(),
+      nowDate.getMilliseconds(),
+    ).getTime();
     return { intervalDays: clamped, dueMs: due };
   }
 

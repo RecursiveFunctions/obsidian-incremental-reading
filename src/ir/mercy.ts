@@ -242,7 +242,8 @@ export function computeElementHistoryCounts(
       c.recentPostponeCount = 0;
     } else if (
       ev.kind === "topic-advanced" &&
-      ev.payload.operation !== "extract-parent-decay"
+      ev.payload.operation !== "extract-parent-decay" &&
+      ev.payload.operation !== "later-today"
     ) {
       const c = ensure(ev.target);
       c.readingReps += 1;
@@ -551,7 +552,7 @@ export function planAdvancedPostpone(
   const todayStart = new Date(actionMs);
   todayStart.setHours(0, 0, 0, 0);
   const todayCutoff = todayStart.getTime();
-  for (const entry of sortByMercyImportance(entries, actionMs, policy.weights)) {
+  for (const entry of sortByMercyImportance(entries, actionMs, policy.weights, Math.max(1, maxDelay))) {
     const isItem = entry.type === "item";
     if ((isItem && !policy.includeItems) || (!isItem && !policy.includeReading)) {
       skippedIds.push(entry.id);
@@ -579,8 +580,14 @@ export function planAdvancedPostpone(
       maxDelay,
     );
     const delay = Math.min(elementMaxDelay, Math.max(minDelay, Math.round(base * factor)));
-    const signedDelay = policy.operation === "advance" ? -delay : delay;
-    const newDue = combineLocalDate(addLocalDays(actionMs, signedDelay), entry.dueMs, actionMs);
+    let targetDayMs: number;
+    if (policy.operation === "advance") {
+      targetDayMs = Math.max(actionMs, addLocalDays(entry.dueMs, -delay));
+    } else {
+      const anchorMs = Math.max(entry.dueMs, actionMs);
+      targetDayMs = addLocalDays(anchorMs, delay);
+    }
+    const newDue = combineLocalDate(targetDayMs, entry.dueMs, actionMs);
     assignments.push({ id: entry.id, previousDue: entry.dueMs, newDue,
       targetLocalDate: localDateKey(newDue) });
   }

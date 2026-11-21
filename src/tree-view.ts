@@ -114,6 +114,7 @@ export interface IrTreeViewHost {
   commitPriority?: CommitIrPriorityFn;
   commitDismiss?: CommitIrDismissFn;
   commitPostpone?: CommitIrPostponeFn;
+  commitPostponeBatch?: (ids: readonly ElementId[], days: number) => Promise<number>;
   commitReparent?: CommitIrReparentFn;
   commitDelete?: CommitIrDeleteFn;
   commitPromote?: CommitIrPromoteFn;
@@ -253,6 +254,7 @@ export class IrTreeView extends ItemView {
   private readonly commitPriority?: CommitIrPriorityFn;
   private readonly commitDismiss?: CommitIrDismissFn;
   private readonly commitPostpone?: CommitIrPostponeFn;
+  private readonly commitPostponeBatch?: IrTreeViewHost["commitPostponeBatch"];
   private readonly commitReparent?: CommitIrReparentFn;
   private readonly commitDelete?: CommitIrDeleteFn;
   private readonly commitPromote?: CommitIrPromoteFn;
@@ -281,6 +283,7 @@ export class IrTreeView extends ItemView {
     this.commitPriority = host.commitPriority;
     this.commitDismiss = host.commitDismiss;
     this.commitPostpone = host.commitPostpone;
+    this.commitPostponeBatch = host.commitPostponeBatch;
     this.commitReparent = host.commitReparent;
     this.commitDelete = host.commitDelete;
     this.commitPromote = host.commitPromote;
@@ -1828,6 +1831,19 @@ export class IrTreeView extends ItemView {
   }
 
   private async bulkPostpone(days: number, ids: ElementId[]): Promise<void> {
+    if (this.commitPostponeBatch) {
+      try {
+        const changed = await this.commitPostponeBatch(ids, days);
+        new Notice(this.bulkSummary(`Postponed ${days}d`, changed, 0));
+        this.selectedIds.clear();
+        this.selectionAnchorId = null;
+        void this.render();
+      } catch (err) {
+        console.error("Incremental Reading: bulk postpone failed", err);
+        new Notice(this.bulkSummary(`Postponed ${days}d`, 0, ids.length));
+      }
+      return;
+    }
     const commitPostpone = this.commitPostpone;
     if (!commitPostpone) return;
     await this.runBulkSelectionAction(

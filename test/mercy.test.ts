@@ -489,3 +489,52 @@ test("planAdvancedPostpone with overdueOnly keeps items newly due today (#58)", 
   assert.deepEqual(plan.assignments.map((a) => a.id), ["overdue"]);
   assert.deepEqual(plan.protectedIds, ["today"]);
 });
+
+test("computeElementHistoryCounts ignores later-today topic-advanced events for readingReps and recentPostponeCount", () => {
+  const counts = computeElementHistoryCounts([
+    { id: "e1", lamport: 1, kind: "mercy-postponed", target: "topic1", payload: { batchId: "b1" } },
+    { id: "e2", lamport: 2, kind: "topic-advanced", target: "topic1", payload: { operation: "later-today" } },
+  ]);
+  assert.deepEqual(counts.get("topic1"), {
+    readingReps: 0,
+    totalPostponeCount: 1,
+    recentPostponeCount: 1,
+  });
+});
+
+test("planAdvancedPostpone dilute never pulls future-due items backwards and advance pulls earlier clamped to now", () => {
+  const now = new Date(2026, 0, 10, 12, 0).getTime();
+  const future60 = addLocalDays(now, 60);
+  const future20 = addLocalDays(now, 20);
+
+  const diluted = planAdvancedPostpone(
+    [{ id: "fut", type: "item", priority: 50, dueMs: future60, interval: 10 }],
+    now,
+    {
+      operation: "dilute",
+      includeItems: true,
+      includeReading: true,
+      itemDelayFactor: 1.5,
+      readingDelayFactor: 1.5,
+      minDelayDays: 1,
+      maxDelayDays: 30,
+    },
+  );
+  assert.ok(diluted.assignments[0]!.newDue > future60, "dilute must push future due date forward, not backwards");
+
+  const advanced = planAdvancedPostpone(
+    [{ id: "adv", type: "item", priority: 50, dueMs: future20, interval: 10 }],
+    now,
+    {
+      operation: "advance",
+      includeItems: true,
+      includeReading: true,
+      itemDelayFactor: 0.5,
+      readingDelayFactor: 0.5,
+      minDelayDays: 1,
+      maxDelayDays: 30,
+    },
+  );
+  assert.ok(advanced.assignments[0]!.newDue >= now, "advance must not schedule into the past");
+  assert.ok(advanced.assignments[0]!.newDue < future20, "advance must pull future due date earlier");
+});

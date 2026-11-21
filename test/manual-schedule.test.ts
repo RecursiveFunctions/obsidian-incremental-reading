@@ -45,6 +45,12 @@ test("parseJumpIntervalInput parses day counts and YYYY-MM-DD dates", () => {
   assert.equal(parseJumpIntervalInput("0", now), null);
   assert.equal(parseJumpIntervalInput("2026-11-18", now), null);
   assert.equal(parseJumpIntervalInput("not-a-date", now), null);
+
+  const farFuture = parseJumpIntervalInput("9999-12-31", now);
+  assert.ok(farFuture);
+  assert.equal(farFuture.intervalDays, SM20_MAX_INTERVAL_DAYS);
+  const maxExpectedYear = new Date(now).getFullYear() + Math.ceil(SM20_MAX_INTERVAL_DAYS / 365) + 1;
+  assert.ok(new Date(farFuture.dueMs).getFullYear() <= maxExpectedYear);
 });
 
 test("JumpInterval adjusts topic A-Factor via adjustTopicAFactor and optionally disperses", () => {

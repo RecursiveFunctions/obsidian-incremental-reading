@@ -245,6 +245,7 @@ test("activityHeatmap counts graded + reading topic-advanced and excludes undone
     { id: "u1", ts: today + 2500, lamport: 3, device: "d", kind: "grade-undone", target: "e1", payload: { eventId: "g2" } },
     { id: "r1", ts: today - DAY + 1000, lamport: 4, device: "d", kind: "topic-advanced", target: "t1", payload: {} },
     { id: "r2", ts: today - DAY + 2000, lamport: 5, device: "d", kind: "topic-advanced", target: "t1", payload: { operation: "extract-parent-decay" } },
+    { id: "r3", ts: today - DAY + 3000, lamport: 6, device: "d", kind: "topic-advanced", target: "t1", payload: { operation: "later-today" } },
   ];
 
   const hm = m.activityHeatmap(events, now, 26);

@@ -105,7 +105,7 @@ export class MercyModal extends Modal {
 
     new Setting(controlsEl)
       .setName("Multi-factor ranking")
-      .setDesc("Weight by priority, lateness, difficulty, and reps")
+      .setDesc("Weight by priority, lateness, lapses, and reps")
       .addToggle((toggle) =>
         toggle
           .setValue(((this.currentWeights.mode ?? 3) & 1) === 1)
