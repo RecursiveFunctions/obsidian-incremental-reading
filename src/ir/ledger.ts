@@ -206,6 +206,11 @@ export interface VaultFs {
   remove?(path: string): Promise<void>;
 }
 
+export interface BookmarkLoadResult {
+  ok: boolean;
+  bookmarks: BookmarkMap;
+}
+
 /** Recursively sort object keys so JSON.stringify is stable across key insertion order. */
 function sortKeysDeep(value: unknown): unknown {
   if (value === null || typeof value !== "object") {
@@ -1212,13 +1217,24 @@ export class IrLedger {
   }
 
   async loadBookmarks(): Promise<BookmarkMap> {
+    return (await this.loadBookmarksResult()).bookmarks;
+  }
+
+  /**
+   * Load bookmarks with a failure signal. A missing file is a valid empty
+   * load; a read or parse failure is not, because callers persist the result
+   * back to the only copy.
+   */
+  async loadBookmarksResult(): Promise<BookmarkLoadResult> {
     const { bookmarks } = await this.paths();
-    if (!(await this.fs.exists(bookmarks))) return {};
+    if (!(await this.fs.exists(bookmarks))) {
+      return { ok: true, bookmarks: {} };
+    }
     try {
       const raw = await this.fs.read(bookmarks);
-      return JSON.parse(raw) as BookmarkMap;
+      return { ok: true, bookmarks: JSON.parse(raw) as BookmarkMap };
     } catch {
-      return {};
+      return { ok: false, bookmarks: {} };
     }
   }
 
