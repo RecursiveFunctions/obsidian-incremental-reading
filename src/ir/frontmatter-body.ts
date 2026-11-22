@@ -162,3 +162,84 @@ export async function saveBody(app: App, file: TFile, newBody: string): Promise<
   const prefix = fm ? fm[0] : "";
   await app.vault.modify(file, prefix + newBody.trimEnd() + "\n");
 }
+
+function stripLoneSurrogates(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i += 1) {
+    const code = s.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += s[i]! + s[i + 1]!;
+        i += 1;
+      } else {
+        out += "\ufffd";
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      out += "\ufffd";
+    } else {
+      out += s[i]!;
+    }
+  }
+  return out;
+}
+
+function formatYamlScalar(value: unknown): string | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : null;
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  if (typeof value === "string") {
+    return JSON.stringify(stripLoneSurrogates(value)).replace(
+      /[\x7f-\x9f\u2028\u2029\ufffe\uffff]/g,
+      (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    );
+  }
+  return null;
+}
+
+function formatYamlKey(key: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : (formatYamlScalar(key) ?? JSON.stringify(key));
+}
+
+/**
+ * Serialize a brand-new Markdown note with YAML frontmatter in one pass so bulk
+ * importers (`SM`, `EPUB`, `HTML`) can call `vault.create` once without a second
+ * `fileManager.processFrontMatter` read-parse-write round-trip.
+ */
+export function serializeInitialNoteWithFrontmatter(
+  frontmatter: Readonly<Record<string, unknown>>,
+  markdown: string,
+): string {
+  const lines: string[] = ["---"];
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (!key || value === undefined || value === null) continue;
+    const yamlKey = formatYamlKey(key);
+    if (Array.isArray(value)) {
+      const items = value
+        .map((item) => formatYamlScalar(item))
+        .filter((s): s is string => s !== null);
+      if (items.length === 0) {
+        lines.push(`${yamlKey}: []`);
+      } else {
+        lines.push(`${yamlKey}:`);
+        for (const item of items) {
+          lines.push(`  - ${item}`);
+        }
+      }
+      continue;
+    }
+    const scalar = formatYamlScalar(value);
+    if (scalar !== null) {
+      lines.push(`${yamlKey}: ${scalar}`);
+    }
+  }
+  const cleanBody = markdown.replace(/^\uFEFF/, "").trim();
+  if (lines.length === 1) {
+    return cleanBody ? `${cleanBody}\n` : "";
+  }
+  lines.push("---");
+  return cleanBody ? `${lines.join("\n")}\n\n${cleanBody}\n` : `${lines.join("\n")}\n`;
+}

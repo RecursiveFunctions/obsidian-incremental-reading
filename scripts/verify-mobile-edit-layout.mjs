@@ -186,7 +186,84 @@ async function main() {
     assert.ok(collection.minTarget >= 44, `collection: mobile target too short (${collection.minTarget}px)`);
     assert.ok(collection.rowHeight >= 55, `collection: priority row too short (${collection.rowHeight}px)`);
 
-    console.log("OK: mobile review and Collection layouts verified in browser");
+    // Verify Touch Selection Bar in bottom dock (0 overlap with prose) + multi-tier Source/Stats (#62-#65)
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.setContent(`<!doctype html><style>body{margin:0}:root{--radius-s:4px;--radius-m:8px;--radius-l:12px;--font-ui-small:14px;--font-ui-smaller:12px;--font-ui-medium:15px;--font-ui-large:18px;--text-normal:#ddd;--text-muted:#aaa;--text-faint:#777;--text-accent:#7aa2f7;--text-on-accent:#fff;--background-primary:#222;--background-secondary:#2a2a2a;--background-secondary-alt:#303030;--background-modifier-border:#444;--background-modifier-hover:#383838;--interactive-accent:#7aa2f7;--color-orange:#e0af68}</style>
+      <div class="ir-review-modal" data-ir-tier="compact" data-ir-pointer="coarse" style="height:812px;display:flex;flex-direction:column">
+        <div class="ir-review-card-host" style="flex:1;display:flex;flex-direction:column;min-height:0">
+          <div class="ir-review-columns ir-review-columns--compact" style="flex:1;min-height:0">
+            <div class="ir-review-context-col ir-review-context-col--sheet">Source excerpt</div>
+            <div class="ir-review-main-col" style="flex:1"><p id="sel-target">Selected paragraph in review card</p></div>
+          </div>
+          <div class="ir-review-dock">
+            <div class="ir-telemetry-drawer ir-telemetry-drawer--sheet">
+              <div class="ir-telemetry-grid"><div class="ir-telemetry-cell"><div class="ir-telemetry-cell-label">R</div><div class="ir-telemetry-cell-value">91.4%</div></div></div>
+            </div>
+            <div class="ir-review-touch-sel-bar">
+              <button class="ir-review-touch-sel-btn mod-cta">Extract</button>
+              <button class="ir-review-touch-sel-btn">Cloze</button>
+              <button class="ir-review-touch-sel-btn">+ Hold span</button>
+            </div>
+          </div>
+        </div>
+      </div>`);
+    await page.addStyleTag({ path: stylesPath });
+    const phoneDock = await page.evaluate(() => {
+      const prose = document.getElementById("sel-target").getBoundingClientRect();
+      const bar = document.querySelector(".ir-review-touch-sel-bar").getBoundingClientRect();
+      const btns = [...document.querySelectorAll(".ir-review-touch-sel-btn")];
+      return {
+        noOverlap: bar.top >= prose.bottom,
+        minBtnHeight: Math.min(...btns.map((b) => b.getBoundingClientRect().height)),
+      };
+    });
+    assert.ok(phoneDock.noOverlap, "phone touch selection bar must sit below prose in bottom dock");
+    assert.ok(phoneDock.minBtnHeight >= 44, `touch selection buttons must be >=44px (${phoneDock.minBtnHeight}px)`);
+
+    // Portrait tablet (820x1180): medium collapsible rail sits side-by-side without horizontal overflow
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await page.setContent(`<!doctype html><style>body{margin:0}</style>
+      <div class="ir-review-modal" data-ir-tier="medium" data-ir-pointer="coarse" style="width:820px">
+        <div class="ir-review-columns ir-review-columns--medium">
+          <div class="ir-review-context-col ir-review-context-col--collapsible-rail">Source rail</div>
+          <div class="ir-review-main-col" style="flex:1">Main reading column</div>
+        </div>
+      </div>`);
+    await page.addStyleTag({ path: stylesPath });
+    const tabletRail = await page.evaluate(() => {
+      const root = document.querySelector(".ir-review-modal");
+      const rail = document.querySelector(".ir-review-context-col--collapsible-rail").getBoundingClientRect();
+      const main = document.querySelector(".ir-review-main-col").getBoundingClientRect();
+      return {
+        overflow: root.scrollWidth - root.clientWidth,
+        sideBySide: Math.abs(rail.top - main.top) < 2 && main.left >= rail.right - 1,
+        railWidth: rail.width,
+      };
+    });
+    assert.ok(tabletRail.overflow <= 1, `tablet medium rail overflow ${tabletRail.overflow}px`);
+    assert.ok(tabletRail.sideBySide, "tablet medium rail must sit beside main column");
+    assert.ok(tabletRail.railWidth >= 220 && tabletRail.railWidth <= 345, `unexpected rail width ${tabletRail.railWidth}px`);
+
+    // Narrow 320px desktop sidebar: segmented Stats + scrollable 26w heatmap never overflows outer view
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.setContent(`<!doctype html><style>body{margin:0}</style>
+      <div class="ir-stats-view" data-ir-tier="compact" data-ir-pointer="fine" style="width:320px;overflow-x:hidden">
+        <div class="ir-stats-tabs"><button class="ir-stats-tab is-active">Overview</button><button class="ir-stats-tab">Triage</button><button class="ir-stats-tab">Models & SM-20</button></div>
+        <div class="ir-stats-heatmap-scroll"><div class="ir-stats-heatmap-grid" style="width:420px;height:80px"></div></div>
+      </div>`);
+    await page.addStyleTag({ path: stylesPath });
+    const narrowStats = await page.evaluate(() => {
+      const view = document.querySelector(".ir-stats-view");
+      const scroll = document.querySelector(".ir-stats-heatmap-scroll");
+      return {
+        viewOverflow: view.scrollWidth - view.clientWidth,
+        innerScrollable: scroll.scrollWidth > scroll.clientWidth,
+      };
+    });
+    assert.ok(narrowStats.viewOverflow <= 1, `narrow stats view overflow ${narrowStats.viewOverflow}px`);
+    assert.ok(narrowStats.innerScrollable, "26w heatmap must scroll inside .ir-stats-heatmap-scroll");
+
+    console.log("OK: phone, tablet, narrow desktop split, and Collection layouts verified in browser");
   } finally {
     await browser.close();
   }

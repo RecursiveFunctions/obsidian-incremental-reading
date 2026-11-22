@@ -104,6 +104,7 @@ import { planOrphanRecoveries } from "./src/ir/orphan-notes";
 import { isOcclusionItem, toAnkiTsv } from "./src/ir/anki-export";
 import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath, tombstonesOwnedBy } from "./src/ir/deletion";
 import {
+  assertVaultRelativePath,
   basenameOf,
   inferPrefixRewrite,
   pathIsUnder,
@@ -117,7 +118,7 @@ import {
   extractRevlog,
   formatDataReport,
 } from "./src/ir/optimizer/revlog";
-import { mostRecentBookmark, setBookmark } from "./src/ir/bookmark";
+import { mostRecentBookmark, type BookmarkMap } from "./src/ir/bookmark";
 import {
   cardToStored,
   configureEngine,
@@ -251,6 +252,7 @@ import {
   bodyOffsetsFromFullOffsets,
   fullOffsetsFromBodyOffsets,
   saveBody,
+  serializeInitialNoteWithFrontmatter,
   stripFrontmatter,
 } from "./src/ir/frontmatter-body";
 import {
@@ -281,15 +283,16 @@ import {
   type IrHubEntry,
 } from "./src/ir-actions-radial";
 import {
+  getWorkspaceIrFabDue,
   notifyWorkspaceFabSync,
   registerWorkspaceIrFab,
   setWorkspaceIrFabDue,
 } from "./src/ir-mobile-fab";
 import { mobileAuxiliaryChromeShouldShow, sessionHubKinds } from "./src/ir/mobile-hub";
 import { radialAnchorCenterBottom } from "./src/ir/mobile-viewport";
-import { registerMobileCapture } from "./src/ir/mobile-capture";
-import { registerMobileReviewFab, applyMobileReviewLayout } from "./src/ir/mobile-review";
-import { registerMobileShell } from "./src/ir/mobile-shell";
+import { openMobileCaptureSheet } from "./src/ir/mobile-capture";
+import { openMobileHubSheet } from "./src/ui/mobile-hub-sheet";
+import { resolveUnifiedMobileHubEnabled } from "./src/ir/viewport-tiers";
 
 /**
  * The bulk-extract commands ask for confirmation above this many candidate
@@ -659,62 +662,11 @@ export default class IncrementalReadingPlugin extends Plugin {
         registerWorkspaceIrFab(this, {
           prepareOpenHub: () => this.captureHubEditorSelection(),
           openHub: () => void this.openIrActionsHub(),
+          onLongPress: () => this.mobileOpenCaptureSheet(),
+          isEnabled: () => resolveUnifiedMobileHubEnabled(this.settings),
         }),
       );
-      // The FAB is built after the first status-bar refresh fired, so paint
-      // its badge now rather than leaving it blank until the next mutation.
       void this.refreshStatusBar();
-
-      const inActiveReview = () =>
-        this.app.workspace.activeLeaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE;
-
-      // Mobile capture FAB + sheet.
-      this.register(
-        registerMobileCapture(
-          this,
-          this.app,
-          {
-            createExtract: (text) => this.mobileCreateExtract(text),
-            createCloze: (text, hint) => this.mobileCreateCloze(text, hint),
-            createTopic: (text, title) => this.mobileCreateTopic(text, title),
-          },
-          () => mobileAuxiliaryChromeShouldShow(this.settings.mobileCaptureFab, inActiveReview()),
-        ),
-      );
-
-      // Mobile review FAB.
-      this.register(
-        registerMobileReviewFab(
-          this,
-          () => void this.startReview(),
-          () => mobileAuxiliaryChromeShouldShow(this.settings.mobileReviewFab, inActiveReview()),
-        ),
-      );
-
-      // Mobile shell (bottom bar).
-      this.register(
-        registerMobileShell(
-          this,
-          {
-            openReview: () => void this.startReview(),
-            openCapture: () => this.mobileOpenCaptureSheet(),
-            openCollection: () => void this.openTreeView(),
-            onCollapseChange: (collapsed) => {
-              this.settings.mobileShellCollapsed = collapsed;
-              void this.saveSettings();
-            },
-          },
-          () => mobileAuxiliaryChromeShouldShow(this.settings.mobileShell, inActiveReview()),
-          () => this.settings.mobileShellCollapsed,
-        ),
-      );
-
-      this.registerEvent(
-        this.app.workspace.on("active-leaf-change", () => this.refreshMobileVisibility()),
-      );
-      this.registerEvent(
-        this.app.workspace.on("layout-change", () => this.refreshMobileVisibility()),
-      );
     }
 
     this.addRibbonIcon("brain-circuit", "Start IR review", () => {
@@ -945,7 +897,10 @@ export default class IncrementalReadingPlugin extends Plugin {
             await this.applyIrReset(elementId, file);
           },
           startSubsetReview: (ids, includeFuture) =>
-            this.startSubsetReview(ids, includeFuture ?? false, "subset"),
+            this.startSubsetReview(ids as ElementId[], includeFuture ?? false, "subset"),
+          getSm20Matrix: () => this.getSm20Matrix(),
+          rebuildSm20Matrix: () => this.rebuildSm20MatrixFromHistory(true),
+          refreshSchedulerViews: () => this.refreshSchedulerViews(),
         });
       },
     );
@@ -4786,7 +4741,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
-  private async openStatsView(): Promise<void> {
+  async openStatsView(tab?: "overview" | "triage" | "models"): Promise<void> {
     if (!this.ledger) {
       new Notice("Incremental Reading: ledger is not ready.");
       return;
@@ -4796,12 +4751,18 @@ export default class IncrementalReadingPlugin extends Plugin {
       const leaf = existing[0];
       this.app.workspace.revealLeaf(leaf);
       const view = leaf.view;
-      if (view instanceof IrStatsView) void view.refresh();
+      if (view instanceof IrStatsView) {
+        if (tab) view.setTab(tab);
+        void view.refresh();
+      }
       return;
     }
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: IR_STATS_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
+    if (tab && leaf.view instanceof IrStatsView) {
+      leaf.view.setTab(tab);
+    }
   }
 
   /**
@@ -4861,12 +4822,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
   }
 
-  /** Open the mobile capture sheet programmatically (from the shell). */
+  /** Open the mobile capture sheet programmatically (#65). */
   private mobileOpenCaptureSheet(): void {
-    // The capture FAB's click handler opens the sheet; for the shell we
-    // dispatch a click on the FAB element.
-    const fab = document.querySelector(".ir-mobile-capture-fab");
-    if (fab) fab.dispatchEvent(new Event("click"));
+    openMobileCaptureSheet({
+      createExtract: (text) => this.mobileCreateExtract(text),
+      createCloze: (text, hint) => this.mobileCreateCloze(text, hint),
+      createTopic: (text, title) => this.mobileCreateTopic(text, title),
+    });
   }
 
   /** Create an extract from mobile capture text. */
@@ -5241,21 +5203,58 @@ export default class IncrementalReadingPlugin extends Plugin {
             const fsPromises = req("fs/promises") as {
               readdir: (p: string) => Promise<string[]>;
               readFile: (p: string) => Promise<Uint8Array>;
+              realpath: (p: string) => Promise<string>;
+              lstat: (p: string) => Promise<{ isSymbolicLink(): boolean; isFile(): boolean }>;
             };
-            const pathMod = req("path") as { join: (...parts: string[]) => string };
+            const pathMod = req("path") as {
+              resolve: (...parts: string[]) => string;
+              sep: string;
+            };
+            const rootReal = await fsPromises.realpath(rootDir);
+            const resolveConfinedPath = async (rel: string): Promise<string | null> => {
+              if (rel.includes("\0") || rel.includes(":")) return null;
+              const norm = rel.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+              if (norm && norm.split("/").some((seg) => !seg || seg === "." || seg === "..")) {
+                return null;
+              }
+              const candidate = norm ? pathMod.resolve(rootReal, norm) : rootReal;
+              if (candidate !== rootReal && !candidate.startsWith(rootReal + pathMod.sep)) {
+                return null;
+              }
+              const st = await fsPromises.lstat(candidate);
+              if (st.isSymbolicLink()) return null;
+              const real = await fsPromises.realpath(candidate);
+              if (real !== rootReal && !real.startsWith(rootReal + pathMod.sep)) {
+                return null;
+              }
+              return real;
+            };
             return {
               async listDir(relDir: string): Promise<string[]> {
                 try {
-                  const full = relDir ? pathMod.join(rootDir, relDir) : rootDir;
+                  const full = await resolveConfinedPath(relDir);
+                  if (!full) return [];
                   const entries = await fsPromises.readdir(full);
-                  return entries.map((name) => (relDir ? `${relDir}/${name}` : name));
+                  const out: string[] = [];
+                  for (const name of entries) {
+                    if (name === "." || name === ".." || name.includes("\0")) continue;
+                    const childRel = relDir ? `${relDir}/${name}` : name;
+                    if (await resolveConfinedPath(childRel)) {
+                      out.push(childRel);
+                    }
+                  }
+                  return out;
                 } catch {
                   return [];
                 }
               },
               async readBinary(relPath: string): Promise<Uint8Array | null> {
                 try {
-                  const buf = await fsPromises.readFile(pathMod.join(rootDir, relPath));
+                  const full = await resolveConfinedPath(relPath);
+                  if (!full) return null;
+                  const st = await fsPromises.lstat(full);
+                  if (!st.isFile()) return null;
+                  const buf = await fsPromises.readFile(full);
                   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
                 } catch {
                   return null;
@@ -5343,14 +5342,18 @@ export default class IncrementalReadingPlugin extends Plugin {
         targetFolder,
         attachmentFolder,
         existingElements: state.elements,
+        extractCreatesStandaloneNote: this.settings.extractCreatesStandaloneNote,
       });
     } catch (e) {
       console.error("Incremental Reading: SuperMemo collection import failed", e);
-      new Notice("Incremental Reading: could not parse SuperMemo collection (missing or invalid info/ElementInfo.dat).");
+      const detail = e instanceof Error ? e.message : String(e);
+      new Notice(`Incremental Reading: could not parse SuperMemo collection (${detail}).`);
       return;
     }
 
     const ensureFolder = async (dirPath: string) => {
+      if (!dirPath) return;
+      assertVaultRelativePath(dirPath);
       const parts = dirPath.split("/").filter(Boolean);
       let acc = "";
       for (const part of parts) {
@@ -5364,7 +5367,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (plan.attachments.length > 0) {
       await ensureFolder(attachmentFolder);
       for (const att of plan.attachments) {
-        const attPath = `${attachmentFolder}/${att.targetFileName}`;
+        const attPath = assertVaultRelativePath(`${attachmentFolder}/${att.targetFileName}`);
         if (!this.app.vault.getAbstractFileByPath(attPath)) {
           await this.app.vault.createBinary(attPath, att.bytes.buffer.slice(att.bytes.byteOffset, att.bytes.byteOffset + att.bytes.byteLength) as ArrayBuffer);
         }
@@ -5372,15 +5375,22 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
 
     if (plan.notes.length > 0) {
-      await ensureFolder(targetFolder);
+      const uniqueDirs = new Set<string>([targetFolder]);
       for (const note of plan.notes) {
-        if (this.app.vault.getAbstractFileByPath(note.relPath)) continue;
-        const file = await this.app.vault.create(note.relPath, note.markdown + "\n");
-        await quietFrontmatterWrite(async () => {
-          await this.app.fileManager.processFrontMatter(file, (fm) => {
-            for (const [k, v] of Object.entries(note.frontmatter)) fm[k] = v;
-          });
-        }, "sm-import");
+        const safeRelPath = assertVaultRelativePath(note.relPath);
+        const slash = safeRelPath.lastIndexOf("/");
+        if (slash > 0) uniqueDirs.add(safeRelPath.slice(0, slash));
+      }
+      for (const dir of uniqueDirs) {
+        await ensureFolder(dir);
+      }
+      for (const note of plan.notes) {
+        const safeRelPath = assertVaultRelativePath(note.relPath);
+        if (this.app.vault.getAbstractFileByPath(safeRelPath)) continue;
+        await this.app.vault.create(
+          safeRelPath,
+          serializeInitialNoteWithFrontmatter(note.frontmatter, note.markdown),
+        );
       }
     }
 
@@ -5388,7 +5398,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       let lamport = Math.max(nowMs, await this.ledger.nextLamport());
       const stampedEvents = plan.events.map((ev) => ({ ...ev, lamport: lamport++ }));
       await this.ledger.appendEvents(stampedEvents);
-      await this.ledger.reconcile();
+      const newElementIds = new Set(plan.elements.map((el) => el.id));
+      await this.ledger.reconcileNew(newElementIds);
     }
 
     if (plan.sm20Baseline) {
@@ -5417,24 +5428,31 @@ export default class IncrementalReadingPlugin extends Plugin {
       });
     }
 
+    let savedBookmarkCount = plan.stats.bookmarks;
+    let bookmarkWarnSuffix = "";
     if (plan.bookmarks.length > 0) {
-      const bookmarkLoad = await this.ledger.loadBookmarksResult();
-      if (!bookmarkLoad.ok) {
-        new Notice("Incremental Reading: imported bookmarks were not saved because existing bookmarks could not be read.");
+      const bmLoad = await this.ledger.loadBookmarksResult();
+      if (!bmLoad.ok) {
+        savedBookmarkCount = 0;
+        bookmarkWarnSuffix = " (bookmarks skipped: existing bookmarks.json could not be read)";
+        console.warn(
+          "Incremental Reading: could not read existing bookmarks.json; skipping imported bookmark write to avoid overwriting saved positions.",
+        );
       } else {
-        let bm = bookmarkLoad.bookmarks;
+        const mergedBm: BookmarkMap = { ...bmLoad.bookmarks };
         for (const b of plan.bookmarks) {
-          bm = setBookmark(bm, b);
+          mergedBm[b.elementId] = b;
         }
-        await this.ledger.saveBookmarks(bm);
+        await this.ledger.saveBookmarks(mergedBm);
       }
     }
 
     await this.getTreeView()?.refresh();
     void this.refreshStatusBar();
     const s = plan.stats;
-    const summary = `Imported SM collection: ${s.topics} topics, ${s.ledgerExtracts + s.noteExtracts} extracts, ${s.items} items, ${s.attachments} attachments, ${s.bookmarks} bookmarks` +
-      (s.skippedDuplicates > 0 ? ` (${s.skippedDuplicates} duplicates skipped)` : "");
+    const summary = `Imported SM collection: ${s.topics} topics, ${s.ledgerExtracts + s.noteExtracts} extracts, ${s.items} items, ${s.attachments} attachments, ${savedBookmarkCount} bookmarks` +
+      (s.skippedDuplicates > 0 ? ` (${s.skippedDuplicates} duplicates skipped)` : "") +
+      bookmarkWarnSuffix;
     console.info(`Incremental Reading: ${summary}`);
     new Notice(`Incremental Reading: ${summary}`);
   }
@@ -5509,6 +5527,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   }
 
   private async ensureVaultFoldersForFile(filePath: string): Promise<void> {
+    assertVaultRelativePath(filePath);
     const slash = filePath.lastIndexOf("/");
     if (slash <= 0) return;
     const dir = filePath.slice(0, slash);
@@ -5570,9 +5589,21 @@ export default class IncrementalReadingPlugin extends Plugin {
         return;
       }
 
+      const ensuredFolders = new Set<string>();
+      const ensureParentOnce = async (filePath: string) => {
+        assertVaultRelativePath(filePath);
+        const slash = filePath.lastIndexOf("/");
+        if (slash <= 0) return;
+        const dir = filePath.slice(0, slash);
+        if (ensuredFolders.has(dir)) return;
+        await this.ensureVaultFoldersForFile(filePath);
+        ensuredFolders.add(dir);
+      };
+
       for (const att of plan.attachments) {
+        assertVaultRelativePath(att.vaultPath);
         if (this.app.vault.getAbstractFileByPath(att.vaultPath)) continue;
-        await this.ensureVaultFoldersForFile(att.vaultPath);
+        await ensureParentOnce(att.vaultPath);
         const ab = att.bytes.buffer.slice(
           att.bytes.byteOffset,
           att.bytes.byteOffset + att.bytes.byteLength,
@@ -5581,20 +5612,19 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
 
       for (const note of plan.notes) {
+        assertVaultRelativePath(note.path);
         if (this.app.vault.getAbstractFileByPath(note.path)) continue;
-        await this.ensureVaultFoldersForFile(note.path);
-        const created = await this.app.vault.create(note.path, note.markdown + "\n");
-        await quietFrontmatterWrite(async () => {
-          await this.app.fileManager.processFrontMatter(created, (fm) => {
-            for (const [k, v] of Object.entries(note.frontmatter)) fm[k] = v;
-          });
-        }, "epub-import");
+        await ensureParentOnce(note.path);
+        await this.app.vault.create(
+          note.path,
+          serializeInitialNoteWithFrontmatter(note.frontmatter, note.markdown),
+        );
       }
 
       let lamport = Math.max(now, await this.ledger.nextLamport());
       const stamped = plan.events.map((ev) => ({ ...ev, lamport: lamport++ }));
       await this.ledger.appendEvents(stamped);
-      await this.ledger.reconcile();
+      await this.ledger.reconcileNew(new Set(plan.notes.map((n) => n.elementId)));
       await this.getTreeView()?.refresh();
       void this.refreshStatusBar();
 
@@ -5608,26 +5638,34 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
 
     const html = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    const plan = planHtmlImport({
-      html,
-      fileName: docName,
-      extractFolder,
-      defaultPriority: this.settings.defaultPriority,
-      now,
-      deviceId,
-      existingPaths,
-    });
-    await this.ensureVaultFoldersForFile(plan.path);
-    const created = await this.app.vault.create(plan.path, (plan.markdown || "") + "\n");
-    await quietFrontmatterWrite(async () => {
-      await this.app.fileManager.processFrontMatter(created, (fm) => {
-        for (const [k, v] of Object.entries(plan.frontmatter)) fm[k] = v;
+    let plan;
+    try {
+      plan = planHtmlImport({
+        html,
+        fileName: docName,
+        extractFolder,
+        defaultPriority: this.settings.defaultPriority,
+        now,
+        deviceId,
+        existingPaths,
       });
-    }, "html-import");
+    } catch (e) {
+      console.error("Incremental Reading: HTML import failed", e);
+      new Notice(
+        `Incremental Reading: HTML import failed (${e instanceof Error ? e.message : String(e)}).`,
+      );
+      return;
+    }
+    assertVaultRelativePath(plan.path);
+    await this.ensureVaultFoldersForFile(plan.path);
+    const created = await this.app.vault.create(
+      plan.path,
+      serializeInitialNoteWithFrontmatter(plan.frontmatter, plan.markdown || ""),
+    );
 
     const lamport = Math.max(now, await this.ledger.nextLamport());
     await this.ledger.appendEvents([{ ...plan.event, lamport }]);
-    await this.ledger.reconcile();
+    await this.ledger.reconcileNew(new Set([plan.elementId]));
     await this.getTreeView()?.refresh();
     void this.refreshStatusBar();
     new Notice(`Imported "${plan.title}" as an IR topic.`);
@@ -6658,7 +6696,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     })();
   }
 
-  /** Command palette / ribbon / review: contextual IR actions as a radial wheel. */
+  /** Command palette / ribbon / review / mobile FAB: contextual IR actions. */
   private async openIrActionsHub(): Promise<void> {
     if (!this.hubSelectionSnapshot) this.captureHubEditorSelection();
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -6666,6 +6704,17 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.restoreHubSelection(mv.file, mv.editor);
     }
     const entries = await this.buildIrHubEntries();
+    const coarse =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches;
+    if (Platform.isMobile || coarse || window.innerWidth < 640) {
+      openMobileHubSheet(entries, {
+        dueCount: getWorkspaceIrFabDue(),
+        onQuickCapture: () => this.mobileOpenCaptureSheet(),
+      });
+      return;
+    }
     openIrRadialQuickMenu(this.app, entries, this.irRadialAnchor());
   }
 
@@ -6751,8 +6800,23 @@ export default class IncrementalReadingPlugin extends Plugin {
           }
         }
       }
-      return out;
-    }
+    out.push(
+      {
+        title: "Show IR stats",
+        description: "Workload forecast, leech triage, and SM-20 / FSRS models.",
+        icon: "bar-chart-3",
+        run: () => this.openStatsView(),
+      },
+      {
+        title: "Postpone overdue (Mercy)",
+        description: "Spread excess overdue cards across upcoming days.",
+        icon: "clock",
+        run: () => this.runMercy(),
+      },
+    );
+
+    return out;
+  }
 
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     const file = mv?.file ?? this.app.workspace.getActiveFile();
@@ -8072,9 +8136,10 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  /** Apply Mobile Shell / Capture FAB / Review FAB visibility immediately. */
+  /** Apply unified Workspace FAB + legacy mobile chrome visibility immediately. */
   refreshMobileVisibility(): void {
     if (!Platform.isMobile) return;
+    notifyWorkspaceFabSync();
     const inReview =
       this.app.workspace.activeLeaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE;
     document

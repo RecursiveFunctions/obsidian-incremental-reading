@@ -224,7 +224,8 @@ export function activityHeatmap(
     const isRead =
       ev.kind === "topic-advanced" &&
       ev.payload.operation !== "extract-parent-decay" &&
-      ev.payload.operation !== "later-today";
+      ev.payload.operation !== "later-today" &&
+      ev.payload.operation !== "a-factor-edit";
     if (!isGrade && !isRead) continue;
 
     const bucketIdx = Math.floor((startOfLocalDayMs(ev.ts) - start) / dayMs);

@@ -20,6 +20,32 @@ export function basenameOf(path: string): string {
   return i === -1 ? path : path.slice(i + 1);
 }
 
+/**
+ * True when `path` is a non-empty, strictly vault-relative path with no
+ * leading/trailing `/`, backslashes, drive colons, NUL bytes, or `.` / `..`
+ * traversal segments.
+ */
+export function isSafeVaultRelativePath(path: string): boolean {
+  if (typeof path !== "string" || path.length === 0) return false;
+  if (path.includes("\0") || path.includes("\\") || path.includes(":")) return false;
+  if (path.startsWith("/") || path.endsWith("/")) return false;
+  const segments = path.split("/");
+  for (const seg of segments) {
+    if (!seg || seg === "." || seg === "..") return false;
+  }
+  return true;
+}
+
+/**
+ * Throw when `path` is not a safe vault-relative path; otherwise return `path`.
+ */
+export function assertVaultRelativePath(path: string): string {
+  if (!isSafeVaultRelativePath(path)) {
+    throw new Error(`Unsafe vault-relative path rejected: "${path}"`);
+  }
+  return path;
+}
+
 /** True when `path` is `folder` or a file/folder inside it. */
 export function pathIsUnder(path: string, folder: string): boolean {
   if (folder === "" || folder === "/") return true;

@@ -9,6 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BOOKMARKS, IrLedger, META, type VaultFs } from "../src/ir/ledger";
+import { ObsidianVaultFs, type ObsidianDataAdapter } from "../src/ir/obsidian-vault-fs";
 import type { IrEvent } from "../src/ir/model";
 import { newElement } from "../src/ir/model";
 import { newElementId, newEventId, newDeviceId, type ElementId } from "../src/ir/ids";
@@ -690,4 +691,201 @@ test("topic-advanced event applies SM20 topic priority drift and placement", asy
   state = await ledger.load();
   assert.equal(state.elements.get(idB)?.priority, 0);
   assert.equal(state.elements.get(idA)?.priority, 100);
+});
+
+test("loadBookmarksResult (#75): distinguishes missing file from corrupt/unreadable bookmarks.json", async () => {
+  const fs = memFs();
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+
+  // Missing bookmarks.json is a valid empty state.
+  assert.deepEqual(await ledger.loadBookmarksResult(), { ok: true, bookmarks: {} });
+
+  // Truncated / corrupt JSON returns ok: false and leaves raw bytes intact when caller guards saveBookmarks.
+  const corruptRaw = '{"el_1":{"elementId":"el_1","line":12';
+  await fs.write(".ir/bookmarks.json", corruptRaw);
+  const corruptRes = await ledger.loadBookmarksResult();
+  assert.deepEqual(corruptRes, { ok: false, bookmarks: {} });
+  if (corruptRes.ok) {
+    await ledger.saveBookmarks(corruptRes.bookmarks);
+  }
+  assert.equal(fs.dump().get(".ir/bookmarks.json"), corruptRaw);
+
+  // Non-object JSON (e.g. array) returns ok: false.
+  await fs.write(".ir/bookmarks.json", "[]");
+  assert.deepEqual(await ledger.loadBookmarksResult(), { ok: false, bookmarks: {} });
+
+  // Read I/O error returns ok: false.
+  const origRead = fs.read.bind(fs);
+  fs.read = async (p) => {
+    if (p.endsWith("bookmarks.json")) throw new Error("EIO: disk read failed");
+    return origRead(p);
+  };
+  assert.deepEqual(await ledger.loadBookmarksResult(), { ok: false, bookmarks: {} });
+});
+
+test("reconcileNew (#85) writes new element state files with O(1) ancestor checks and zero per-file exists/read/list calls", async () => {
+  const files = new Map<string, string>();
+  const folders = new Set<string>();
+  const adapterCalls: string[] = [];
+  const adapter: ObsidianDataAdapter = {
+    async exists(p) {
+      adapterCalls.push(`exists:${p}`);
+      return files.has(p) || folders.has(p);
+    },
+    async read(p) {
+      adapterCalls.push(`read:${p}`);
+      const v = files.get(p);
+      if (v === undefined) throw new Error(`ENOENT ${p}`);
+      return v;
+    },
+    async write(p, data) {
+      adapterCalls.push(`write:${p}`);
+      files.set(p, data);
+    },
+    async append(p, data) {
+      adapterCalls.push(`append:${p}`);
+      files.set(p, (files.get(p) ?? "") + data);
+    },
+    async list(p) {
+      adapterCalls.push(`list:${p}`);
+      if (!folders.has(p)) throw new Error(`ENOENT ${p}`);
+      const pre = p + "/";
+      const f = [...files.keys()].filter((k) => k.startsWith(pre) && !k.slice(pre.length).includes("/"));
+      return { files: f, folders: [] };
+    },
+    async remove(p) {
+      files.delete(p);
+    },
+    async mkdir(p) {
+      adapterCalls.push(`mkdir:${p}`);
+      folders.add(p);
+    },
+    async rmdir(p) {
+      folders.delete(p);
+    },
+  };
+
+  const fs = new ObsidianVaultFs(adapter);
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+
+  const ids: ElementId[] = [];
+  const events: IrEvent[] = [];
+  for (let i = 0; i < 200; i += 1) {
+    const id = newElementId();
+    ids.push(id);
+    events.push(createEvent(id, i + 1));
+  }
+  await ledger.appendEvents(events);
+
+  adapterCalls.length = 0;
+  const state = await ledger.reconcileNew(new Set(ids));
+  assert.equal(state.elements.size, 200);
+  for (const id of ids) {
+    assert.equal(files.has(`.ir/state/${id}.json`), true);
+  }
+
+  // Zero per-state-file exists/read calls and zero list(.ir/state) scans; only .ir and .ir/state checked once!
+  const stateFileExistsCalls = adapterCalls.filter((c) => c.startsWith("exists:.ir/state/") && c.endsWith(".json"));
+  const stateDirListCalls = adapterCalls.filter((c) => c === "list:.ir/state");
+  const ancestorExistsCalls = adapterCalls.filter((c) => c === "exists:.ir" || c === "exists:.ir/state");
+  assert.equal(stateFileExistsCalls.length, 0);
+  assert.equal(stateDirListCalls.length, 0);
+  assert.equal(ancestorExistsCalls.length, 2);
+
+  // Capacitor/iCloud ENOENT on missing .ir/state in adapter.exists is handled cleanly via ObsidianVaultFs.exists
+  folders.delete(".ir/state");
+  const origExists = adapter.exists.bind(adapter);
+  adapter.exists = async (p) => {
+    if (!files.has(p) && !folders.has(p)) {
+      throw Object.assign(new Error(`ENOENT: no such file or directory, stat '${p}'`), { code: "ENOENT" });
+    }
+    return origExists(p);
+  };
+  const extraId = newElementId();
+  await ledger.appendEvent(createEvent(extraId, 999));
+  await assert.doesNotReject(ledger.reconcileNew(new Set([extraId])));
+  assert.equal(files.has(`.ir/state/${extraId}.json`), true);
+});
+
+test("reconcileIds updates only dirty elements and removes specified stale state files without scanning .ir/state", async () => {
+  const files = new Map<string, string>();
+  const folders = new Set<string>();
+  const adapterCalls: string[] = [];
+  const adapter: ObsidianDataAdapter = {
+    async exists(p) {
+      adapterCalls.push(`exists:${p}`);
+      return files.has(p) || folders.has(p);
+    },
+    async read(p) {
+      adapterCalls.push(`read:${p}`);
+      const v = files.get(p);
+      if (v === undefined) throw new Error(`ENOENT ${p}`);
+      return v;
+    },
+    async write(p, data) {
+      adapterCalls.push(`write:${p}`);
+      files.set(p, data);
+    },
+    async append(p, data) {
+      adapterCalls.push(`append:${p}`);
+      files.set(p, (files.get(p) ?? "") + data);
+    },
+    async list(p) {
+      adapterCalls.push(`list:${p}`);
+      if (!folders.has(p)) throw new Error(`ENOENT ${p}`);
+      const pre = p + "/";
+      const f = [...files.keys()].filter((k) => k.startsWith(pre) && !k.slice(pre.length).includes("/"));
+      return { files: f, folders: [] };
+    },
+    async remove(p) {
+      adapterCalls.push(`remove:${p}`);
+      files.delete(p);
+    },
+    async mkdir(p) {
+      adapterCalls.push(`mkdir:${p}`);
+      folders.add(p);
+    },
+    async rmdir(p) {
+      folders.delete(p);
+    },
+  };
+
+  const fs = new ObsidianVaultFs(adapter);
+  const ledger = new IrLedger(fs);
+  await ledger.init();
+
+  const ids: ElementId[] = [];
+  const events: IrEvent[] = [];
+  for (let i = 0; i < 50; i += 1) {
+    const id = newElementId();
+    ids.push(id);
+    events.push(createEvent(id, i + 1));
+  }
+  await ledger.appendEvents(events);
+  await ledger.reconcileNew(new Set(ids));
+
+  const dirtyId = ids[0]!;
+  const staleId = newElementId();
+  files.set(`.ir/state/${staleId}.json`, "{}");
+
+  const baseEv = createEvent(dirtyId, 100);
+  await ledger.appendEvent({
+    ...baseEv,
+    id: `${baseEv.id}_dismiss` as typeof baseEv.id,
+    kind: "dismiss-set",
+    target: dirtyId,
+    payload: { dismissed: true },
+  });
+
+  adapterCalls.length = 0;
+  const state = await ledger.reconcileIds(new Set([dirtyId, staleId]));
+  assert.equal(state.elements.get(dirtyId)?.dismissed, true);
+  assert.equal(JSON.parse(files.get(`.ir/state/${dirtyId}.json`)!).dismissed, true);
+  assert.equal(files.has(`.ir/state/${staleId}.json`), false);
+
+  assert.equal(adapterCalls.some((c) => c === "list:.ir/state"), false);
+  const stateWrites = adapterCalls.filter((c) => c.startsWith("write:.ir/state/"));
+  assert.deepEqual(stateWrites, [`write:.ir/state/${dirtyId}.json`]);
 });

@@ -14,13 +14,19 @@ import { layoutWorkspaceFab } from "./ir/mobile-viewport";
 
 const FAB_CLASS = "ir-workspace-fab";
 const BADGE_CLASS = "ir-workspace-fab-badge";
+const LONG_PRESS_MS = 450;
 
 let workspaceFabSync: (() => void) | null = null;
 let workspaceFabBadge: ((due: number) => void) | null = null;
+let lastWorkspaceDueCount = 0;
 
-/** Call after review edit-mode toggles so the FAB repositions immediately. */
+/** Call after review edit-mode toggles or setting updates so the FAB syncs immediately. */
 export function notifyWorkspaceFabSync(): void {
   workspaceFabSync?.();
+}
+
+export function getWorkspaceIrFabDue(): number {
+  return lastWorkspaceDueCount;
 }
 
 /**
@@ -36,6 +42,7 @@ export function notifyWorkspaceFabSync(): void {
  * No-op on desktop, where no FAB exists.
  */
 export function setWorkspaceIrFabDue(due: number): void {
+  lastWorkspaceDueCount = Math.max(0, due);
   workspaceFabBadge?.(due);
 }
 
@@ -45,6 +52,10 @@ export function registerWorkspaceIrFab(
     /** Run before focus leaves the editor (pointerdown / touchstart). */
     prepareOpenHub: () => void;
     openHub: () => void;
+    /** Optional long-press action (450 ms) — opens Quick Capture (#65). */
+    onLongPress?: () => void;
+    /** Optional setting gate (#65). Defaults to true. */
+    isEnabled?: () => boolean;
   },
 ): () => void {
   if (!Platform.isMobile) return () => {};
@@ -79,15 +90,46 @@ export function registerWorkspaceIrFab(
   paintBadge(lastDue);
 
   const prepare = () => hooks.prepareOpenHub();
+  let longPressTimer: number | null = null;
+  let longPressFired = false;
+  let downX = 0;
+  let downY = 0;
+
+  const clearLongPress = () => {
+    if (longPressTimer !== null) {
+      window.clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  };
+
   fab.addEventListener(
     "pointerdown",
     (ev) => {
       if (ev.pointerType === "mouse" && ev.button !== 0) return;
       prepare();
+      longPressFired = false;
+      downX = ev.clientX;
+      downY = ev.clientY;
+      clearLongPress();
+      if (hooks.onLongPress) {
+        longPressTimer = window.setTimeout(() => {
+          longPressTimer = null;
+          longPressFired = true;
+          hooks.onLongPress?.();
+        }, LONG_PRESS_MS);
+      }
       ev.preventDefault();
     },
     { capture: true },
   );
+  fab.addEventListener("pointermove", (ev) => {
+    if (longPressTimer === null) return;
+    if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 10) {
+      clearLongPress();
+    }
+  });
+  fab.addEventListener("pointerup", clearLongPress);
+  fab.addEventListener("pointercancel", clearLongPress);
   fab.addEventListener(
     "touchstart",
     () => {
@@ -97,11 +139,17 @@ export function registerWorkspaceIrFab(
   );
   fab.addEventListener("click", (ev) => {
     ev.stopPropagation();
+    clearLongPress();
+    if (longPressFired) {
+      longPressFired = false;
+      return;
+    }
     hooks.openHub();
   });
 
   const sync = () => {
-    const ctx = fabLayoutContext(plugin.app);
+    const enabled = hooks.isEnabled ? hooks.isEnabled() : true;
+    const ctx = fabLayoutContext(plugin.app, enabled);
     if (ctx.show) {
       fab.removeClass("is-hidden");
       fab.toggleClass("ir-workspace-fab--review", ctx.review);
@@ -142,29 +190,21 @@ export function registerWorkspaceIrFab(
   };
 }
 
-function fabLayoutContext(app: App): {
+function fabLayoutContext(
+  app: App,
+  enabled = true,
+): {
   show: boolean;
   review: boolean;
   reviewDock: boolean;
   layoutRoot?: HTMLElement;
 } {
-  if (!irWorkspaceFabShouldShow(Platform.isMobile)) {
-    return { show: false, review: false, reviewDock: false };
-  }
-
   const leaf = app.workspace.activeLeaf;
-  if (leaf?.view instanceof IrReviewView) {
-    return {
-      show: true,
-      review: true,
-      reviewDock: leaf.view.mobileFabAboveDock(),
-      layoutRoot: leaf.view.mobileFabLayoutRoot(),
-    };
-  }
-
-  const vt = leaf?.view.getViewType();
-  if (vt === IR_REVIEW_VIEW_TYPE) {
-    return { show: true, review: true, reviewDock: true };
+  const inReview =
+    leaf?.view instanceof IrReviewView ||
+    leaf?.view.getViewType() === IR_REVIEW_VIEW_TYPE;
+  if (!irWorkspaceFabShouldShow(Platform.isMobile, inReview, enabled)) {
+    return { show: false, review: inReview, reviewDock: false };
   }
 
   return { show: true, review: false, reviewDock: false };

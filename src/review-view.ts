@@ -104,6 +104,7 @@ import { neuralViaLabel } from "./ir/neural";
 import { shouldShowReanchorBanner } from "./ir/tree-nav";
 import type { ReviewSlot, SessionBarPhase } from "./review";
 import {
+  buildReversibleUndoEvent,
   computeSessionTrackSegments,
   contextSourceParentId,
   drillReviewQueue,
@@ -186,6 +187,21 @@ import {
 import { isPdfPath } from "./ir/pdf-fragment";
 import { DropWhileBusyGate } from "./ir/action-gate";
 import { getPdfPageForPath, openPdfAt } from "./ir/pdf-view";
+import {
+  resolveViewportCapability,
+  type ViewportCapability,
+} from "./ir/viewport-tiers";
+import {
+  attachLeafCapabilityController,
+  type LeafCapabilityHandle,
+} from "./ui/leaf-capability";
+import {
+  TouchSelectionModel,
+  type SelectionSurface,
+  type TouchSelectionSnapshot,
+} from "./ir/touch-selection";
+import { computeElementTelemetry } from "./ir/element-telemetry";
+import { renderElementTelemetryDrawer } from "./ui/telemetry-drawer";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
 
@@ -341,8 +357,35 @@ export class IrReviewView extends ItemView {
   /** Open the PDF viewer once per slot so re-renders do not steal focus. */
   private pendingPdfOpen = false;
 
-  /** Mobile-only: parent source panel is open (default collapsed = zero layout space). */
+  /** Compact-tier: parent source panel is open (default collapsed = zero layout space). */
   private mobileSourceExpanded = false;
+  /** Medium/Expanded-tier: parent source side rail / split is open (default open). */
+  private desktopSourceExpanded = true;
+  /** On-demand Element Info (`I`) telemetry drawer open state (#62). */
+  private telemetryOpen = false;
+  /** Dirty element IDs mutated during this review session for incremental reconcileIds(). */
+  private readonly dirtyElementIds = new Set<ElementId>();
+  /** Container width + pointer + hardware-keyboard capability tracker (#65). */
+  private leafCapHandle?: LeafCapabilityHandle;
+  /** Touch selection snapshot & multi-span hold state machine (#65). */
+  private readonly touchSelection = new TouchSelectionModel();
+  private touchSelectionBarEl?: HTMLElement;
+  private currentSourceMeta: {
+    raw: string;
+    path: string;
+    parentId: ElementId;
+  } | null = null;
+
+  private get capability(): ViewportCapability {
+    return (
+      this.leafCapHandle?.getCapability() ??
+      resolveViewportCapability({
+        inlineWidthPx: this.contentEl?.clientWidth || 800,
+        coarsePointer: Platform.isMobile,
+        latchedHardwareKeyboard: false,
+      })
+    );
+  }
 
   /** Mobile-only: dismiss swipe coaching once the user has actually swiped.
    * Persisted in localStorage so the one-time Notice does not repeat. */
@@ -356,8 +399,10 @@ export class IrReviewView extends ItemView {
 
   /** Reading-position bookmarks loaded once on open, saved incrementally. */
   private bookmarks: BookmarkMap = {};
-  /** False until loadBookmarks succeeds — onClose must not persist {}. */
+  /** False until loadBookmarksResult() succeeds — persistBookmarks must not clobber .ir/bookmarks.json. */
   private bookmarksLoaded = false;
+  /** True once onOpen has finished initializing the review session. */
+  private sessionOpened = false;
   /** In-dock success line; survives the next renderCard until it fades. */
   private pendingFlash: string | null = null;
   private flashClearTimer: number | null = null;
@@ -633,8 +678,11 @@ export class IrReviewView extends ItemView {
     const bookmarkLoad = await this.ledger.loadBookmarksResult();
     this.bookmarks = bookmarkLoad.bookmarks;
     this.bookmarksLoaded = bookmarkLoad.ok;
+    this.sessionOpened = true;
     if (!bookmarkLoad.ok) {
-      new Notice("Incremental Reading: could not load reading bookmarks; changes will not be saved.");
+      new Notice(
+        "Incremental Reading: could not read saved reading positions; bookmark updates are paused for this session to avoid overwriting .ir/bookmarks.json.",
+      );
     }
     this.sessionSeedLabel = this.queue[0]
       ? labelFor(this.queue[0].element)
@@ -658,6 +706,10 @@ export class IrReviewView extends ItemView {
       cls: "ir-review-selection-pill is-hidden",
     });
     this.cardHostEl = this.contentEl.createDiv({ cls: "ir-review-card-host" });
+    this.leafCapHandle?.destroy();
+    this.leafCapHandle = attachLeafCapabilityController(this.contentEl, () => {
+      if (this.sessionOpened) void this.renderCard();
+    });
     this.attachSelectionAffordances();
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
@@ -826,6 +878,21 @@ export class IrReviewView extends ItemView {
         return;
       }
 
+      // I: toggle on-demand Element Info telemetry drawer (#62).
+      if (
+        (evt.key === "i" || evt.key === "I") &&
+        !evt.ctrlKey &&
+        !evt.metaKey &&
+        !evt.altKey
+      ) {
+        if (this.current && !this.sessionComplete && !typing) {
+          evt.preventDefault();
+          this.telemetryOpen = !this.telemetryOpen;
+          void this.renderCard();
+        }
+        return;
+      }
+
       // 1-4 grade keys: work on revealed cloze items even when editing, since
       // grading is the primary action and typing digits in the source during
       // review is not the expected flow.
@@ -870,6 +937,11 @@ export class IrReviewView extends ItemView {
       this.divergenceKeyCleanup = null;
       this.selectionChangeCleanup?.();
       this.selectionChangeCleanup = undefined;
+      this.leafCapHandle?.destroy();
+      this.leafCapHandle = undefined;
+      this.touchSelection.clearAll();
+      this.touchSelectionBarEl = undefined;
+      this.currentSourceMeta = null;
       this.splitterDragCleanup?.();
       this.splitterDragCleanup = undefined;
       this.teardownLiveEditorSync();
@@ -888,11 +960,13 @@ export class IrReviewView extends ItemView {
       this.cardHostEl = undefined;
       this.contentEl.empty();
       this.onSlotChange?.(null);
-      if (!this.bookmarksLoaded) {
+      if (!this.sessionOpened) {
         this.onChange?.();
       } else {
+        const dirty = new Set(this.dirtyElementIds);
+        this.dirtyElementIds.clear();
         void this.persistBookmarks()
-          .then(() => this.ledger.reconcile())
+          .then(() => (dirty.size > 0 ? this.ledger.reconcileIds(dirty) : undefined))
           .catch((e) => {
             console.error("Incremental Reading: reconcile after review failed", e);
           })
@@ -1344,17 +1418,22 @@ export class IrReviewView extends ItemView {
       applyPct(curPct + (e.key === "ArrowRight" ? 3 : -3), true);
     });
     let detachMove: (() => void) | null = null;
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
       e.preventDefault();
       splitter.addClass("is-dragging");
-      const onMove = (moveEvt: MouseEvent) => {
+      try {
+        splitter.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore unsupported pointer capture */
+      }
+      const onMove = (moveEvt: PointerEvent) => {
         const rect = columns.getBoundingClientRect();
         if (rect.width <= 0) return;
         const pct = ((moveEvt.clientX - rect.left) / rect.width) * 100;
         applyPct(pct, false);
       };
-      const onUp = (upEvt: MouseEvent) => {
+      const onUp = (upEvt: PointerEvent) => {
         splitter.removeClass("is-dragging");
         const rect = columns.getBoundingClientRect();
         if (rect.width > 0) {
@@ -1364,14 +1443,16 @@ export class IrReviewView extends ItemView {
         detachMove?.();
         detachMove = null;
       };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
       detachMove = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
       };
     };
-    splitter.addEventListener("mousedown", onMouseDown);
+    splitter.addEventListener("pointerdown", onPointerDown);
     this.splitterDragCleanup = () => {
       detachMove?.();
       detachMove = null;
@@ -1382,7 +1463,9 @@ export class IrReviewView extends ItemView {
     this.selectionChangeCleanup?.();
     const doc = this.contentEl.ownerDocument;
     const onSelectionChange = () => {
+      this.captureTouchSelectionSnapshot();
       this.updateSelectionPill();
+      this.updateTouchSelectionBar();
       this.updateHeldSpanBadge();
     };
     doc.addEventListener("selectionchange", onSelectionChange);
@@ -1391,10 +1474,290 @@ export class IrReviewView extends ItemView {
     };
   }
 
+  private captureTouchSelectionSnapshot(): void {
+    const slot = this.current;
+    const now = Date.now();
+    if (!slot || this.sessionComplete || !this.capability.touchTargets) {
+      this.touchSelection.notifySelectionCollapsed(now);
+      return;
+    }
+    const doc = this.contentEl.ownerDocument;
+    const sel = doc.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !sel.toString().trim()) {
+      this.touchSelection.notifySelectionCollapsed(now);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    const anc = range.commonAncestorContainer;
+    const ancEl = anc instanceof HTMLElement ? anc : anc.parentElement;
+    if (!ancEl || !this.contentEl.contains(ancEl)) {
+      this.touchSelection.notifySelectionCollapsed(now);
+      return;
+    }
+    const mainBody = ancEl.closest<HTMLElement>(".ir-review-main-body");
+    const ctxBody = ancEl.closest<HTMLElement>(".ir-review-context-markdown");
+    if (!mainBody && !ctxBody) {
+      this.touchSelection.notifySelectionCollapsed(now);
+      return;
+    }
+    const surface: SelectionSurface = mainBody ? "main" : "context";
+    const container = (mainBody ?? ctxBody)!;
+    const targetRaw =
+      surface === "main" ? this.currentRaw : (this.currentSourceMeta?.raw ?? "");
+    const mapped = targetRaw
+      ? mapRenderedSelectionToRaw(targetRaw, container, range)
+      : null;
+    const fallbackLocated =
+      !mapped && targetRaw ? fuzzyLocateInBody(targetRaw, sel.toString()) : null;
+    const resolved = mapped ?? fallbackLocated;
+    this.touchSelection.updateLiveSelection({
+      slotId: slot.id,
+      surface,
+      text: resolved?.text ?? sel.toString().trim(),
+      offsets: resolved ? { start: resolved.start, end: resolved.end } : null,
+      sourcePath:
+        surface === "context"
+          ? this.currentSourceMeta?.path ?? null
+          : slot.file?.path ?? this.resolveProvenanceSourcePath(slot),
+      parentId:
+        surface === "context" ? (this.currentSourceMeta?.parentId ?? slot.id) : slot.id,
+      capturedAtMs: now,
+    });
+  }
+
+  private updateTouchSelectionBar(): void {
+    const bar = this.touchSelectionBarEl;
+    if (!bar) return;
+    const slot = this.current;
+    if (!slot || this.sessionComplete || !this.capability.touchTargets) {
+      bar.empty();
+      bar.addClass("is-hidden");
+      return;
+    }
+    const now = Date.now();
+    const doc = this.contentEl.ownerDocument;
+    const sel = doc.getSelection();
+    const liveActive = Boolean(
+      sel && !sel.isCollapsed && sel.rangeCount > 0 && sel.toString().trim(),
+    );
+    const snap = liveActive ? this.touchSelection.getActiveSnapshot(slot.id, now) : null;
+    const heldCount = this.touchSelection.getHeldCount(slot.id);
+    if (!snap && heldCount === 0) {
+      bar.empty();
+      bar.addClass("is-hidden");
+      return;
+    }
+
+    bar.empty();
+    bar.removeClass("is-hidden");
+
+    const bindTouchBtn = (
+      btn: HTMLButtonElement,
+      handler: () => void,
+    ) => {
+      btn.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+      });
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handler();
+      });
+    };
+
+    const heldMeta = this.touchSelection.getHeldContextMeta(slot.id);
+    const activeSurface: SelectionSurface =
+      snap?.surface ?? heldMeta.surface ?? "main";
+    const canExt = activeSurface === "context" || this.canMakeChild();
+    const canClz =
+      activeSurface === "main" && heldCount === 0 && Boolean(snap) && this.canMakeClozeChild();
+
+    if (canExt) {
+      const totalSpans = heldCount + (snap ? 1 : 0);
+      const extBtn = bar.createEl("button", {
+        cls: "ir-review-touch-sel-btn mod-cta",
+        type: "button",
+        text: totalSpans > 1 ? `Extract (${totalSpans} spans)` : "Extract",
+      });
+      bindTouchBtn(extBtn, () => void this.handleTouchExtract());
+    }
+
+    if (canClz) {
+      const clzBtn = bar.createEl("button", {
+        cls: "ir-review-touch-sel-btn",
+        type: "button",
+        text: "Cloze",
+      });
+      bindTouchBtn(clzBtn, () => void this.handleTouchCloze());
+    }
+
+    if (snap && canExt) {
+      const holdCheck = this.touchSelection.canHoldSnapshot(snap);
+      const holdBtn = bar.createEl("button", {
+        cls: "ir-review-touch-sel-btn",
+        type: "button",
+        text: heldCount > 0 ? `+ Hold (${heldCount})` : "+ Hold span",
+      });
+      if (!holdCheck.ok) {
+        holdBtn.disabled = true;
+        if (holdCheck.reason) holdBtn.title = holdCheck.reason;
+      }
+      bindTouchBtn(holdBtn, () => {
+        const curSnap = this.touchSelection.resolveForAction(
+          slot.id,
+          Date.now(),
+          Boolean(doc.getSelection()?.isCollapsed ?? true),
+        );
+        if (!curSnap) return;
+        if (this.touchSelection.holdSnapshot(curSnap)) {
+          doc.getSelection()?.removeAllRanges();
+          this.updateTouchSelectionBar();
+        }
+      });
+    }
+
+    const clearBtn = bar.createEl("button", {
+      cls: "ir-review-touch-sel-btn ir-review-touch-sel-clear",
+      type: "button",
+      text: heldCount > 0 ? `× Clear (${heldCount})` : "×",
+      attr: { "aria-label": "Clear selection and held spans" },
+    });
+    bindTouchBtn(clearBtn, () => {
+      this.touchSelection.clearAll();
+      doc.getSelection()?.removeAllRanges();
+      this.updateTouchSelectionBar();
+    });
+  }
+
+  private async handleTouchExtract(): Promise<void> {
+    const slot = this.current;
+    if (!slot) return;
+    const doc = this.contentEl.ownerDocument;
+    const liveCollapsed = Boolean(doc.getSelection()?.isCollapsed ?? true);
+    const snap = this.touchSelection.resolveForAction(slot.id, Date.now(), liveCollapsed);
+    const heldMeta = this.touchSelection.getHeldContextMeta(slot.id);
+    if (!snap && heldMeta.spans.length === 0) return;
+
+    const surface: SelectionSurface = snap?.surface ?? heldMeta.surface ?? "main";
+    const spans = [...heldMeta.spans];
+    if (snap?.offsets) {
+      const { start, end } = snap.offsets;
+      if (!spans.some((s) => s.start === start && s.end === end)) {
+        spans.push({ text: snap.text, start, end });
+        spans.sort((a, b) => a.start - b.start || a.end - b.end);
+      }
+    }
+
+    const sourceRaw =
+      surface === "context" ? (this.currentSourceMeta?.raw ?? "") : this.currentRaw;
+    const sourcePath =
+      surface === "context"
+        ? (snap?.sourcePath ?? heldMeta.sourcePath ?? this.currentSourceMeta?.path ?? null)
+        : (slot.file?.path ?? this.resolveProvenanceSourcePath(slot));
+    const parentId =
+      surface === "context"
+        ? (snap?.parentId ?? heldMeta.parentId ?? this.currentSourceMeta?.parentId ?? slot.id)
+        : slot.id;
+
+    if (spans.length === 0 && snap?.text.trim() && sourceRaw) {
+      const located = fuzzyLocateInBody(sourceRaw, snap.text);
+      if (located) spans.push(located);
+    }
+    if (spans.length === 0 || !sourcePath || !sourceRaw) {
+      new Notice("Incremental Reading: could not resolve selection offsets in source text.");
+      return;
+    }
+
+    await this.runAction(async () => {
+      if (surface === "main" && !(await this.flushEdits())) return;
+      const now = Date.now();
+      const elementId = newElementId();
+      const first = spans[0]!;
+      const textOverride =
+        spans.length > 1 ? joinSelectionTexts(spans.map((s) => s.text)) : undefined;
+      const extractText = textOverride ?? sourceRaw.slice(first.start, first.end);
+      const parentSlotEl = this.elementsById.get(parentId) ?? slot.element;
+      const { childSchedule, childPriority, parentAFactorAfter } =
+        this.prepareExtractScheduleAndPriority(
+          { ...slot, id: parentId, element: parentSlotEl },
+          extractText.length,
+          now,
+        );
+      const ev = buildExtractEvent({
+        sourcePath,
+        sourceText: sourceRaw,
+        selStart: first.start,
+        selEnd: first.end,
+        textOverride,
+        spans: spans.map((sp) => ({ start: sp.start, end: sp.end })),
+        parentId,
+        priority: childPriority,
+        elementId,
+        eventId: newEventId(),
+        device: await this.ledger.getDeviceId(),
+        lamport: now,
+        now,
+        schedule: childSchedule,
+        placement: buildPriorityPlacement(
+          this.elementsById.values(),
+          elementId,
+          childPriority,
+        ),
+      });
+      await this.ledger.appendEvent(ev);
+      const created = ev.payload.element as IrElement;
+      this.dirtyElementIds.add(created.id);
+      this.elementsById.set(created.id, created);
+      if (parentId === slot.id) {
+        await this.decaySlotParentAFactor(slot, parentAFactorAfter);
+      }
+      if (this.settings.extractCreatesStandaloneNote && this.commitPromoteExtract) {
+        await this.commitPromoteExtract(created.id, created);
+      }
+      this.adoptElement(created);
+      this.touchSelection.clearAll();
+      doc.getSelection()?.removeAllRanges();
+      this.flash(
+        spans.length > 1
+          ? `Extracted ${spans.length} spans · ${this.remainingInSession()} left`
+          : `Extracted · ${this.remainingInSession()} left`,
+      );
+      this.onChange?.();
+      await this.reloadCurrentRaw();
+      await this.refreshDecorations?.();
+      await this.renderCard();
+    });
+  }
+
+  private async handleTouchCloze(): Promise<void> {
+    const slot = this.current;
+    if (!slot || !this.canMakeClozeChild()) return;
+    const doc = this.contentEl.ownerDocument;
+    const liveCollapsed = Boolean(doc.getSelection()?.isCollapsed ?? true);
+    const snap = this.touchSelection.resolveForAction(slot.id, Date.now(), liveCollapsed);
+    if (!snap || snap.surface !== "main" || !snap.offsets) {
+      await this.handleCloze();
+      return;
+    }
+    const dock = this.contentEl.querySelector(".ir-review-dock");
+    if (!(dock instanceof HTMLElement)) return;
+    const sel = {
+      text: snap.text,
+      start: snap.offsets.start,
+      end: snap.offsets.end,
+    };
+    this.touchSelection.clearAll();
+    doc.getSelection()?.removeAllRanges();
+    this.updateTouchSelectionBar();
+    const hintR = await promptClozeHintInline(dock);
+    if (!hintR.ok) return;
+    await this.runAction(() => this.commitCloze(slot, sel, hintR.hint));
+  }
+
   private updateSelectionPill(): void {
     const pill = this.selectionPillEl;
     if (!pill) return;
-    if (Platform.isMobile || this.sessionComplete || !this.current) {
+    if (this.capability.touchTargets || this.sessionComplete || !this.current) {
       pill.empty();
       pill.addClass("is-hidden");
       return;
@@ -1514,6 +1877,7 @@ export class IrReviewView extends ItemView {
     target: ElementId,
     payload: Record<string, unknown>,
   ): Promise<string> {
+    this.dirtyElementIds.add(target);
     const id = newEventId();
     await this.ledger.appendEvent({
       id,
@@ -1530,11 +1894,11 @@ export class IrReviewView extends ItemView {
   }
 
   /**
-   * Button copy: desktop keeps hotkey hints; mobile omits them (no hardware
-   * keyboard by default, and labels stay readable on narrow screens).
+   * Button copy: shows hotkey hints when a fine pointer is active OR when a
+   * physical hardware keyboard has been observed on a touch/tablet device (#65).
    */
   private labelWithHotkey(base: string, hint: string): string {
-    return Platform.isMobile ? base : `${base} (${hint})`;
+    return this.capability.showHotkeys ? `${base} (${hint})` : base;
   }
 
   /** Hide hub when Extract/Cloze already sit in the dock, or on mobile (FAB). */
@@ -1820,15 +2184,11 @@ export class IrReviewView extends ItemView {
         type: "button",
       });
       const rank = [...this.elementsById.values()]
+        .filter((e) => !e.dismissed)
         .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
         .findIndex((element) => element.id === slot.id) + 1;
-      const parts = [`#${rank} · Priority ${formatPriority(slot.element.priority)}`];
-      if (this.isReading(slot) && slot.element.schedule) {
-        const a = Math.round(slot.element.schedule.aFactor * 100) / 100;
-        parts.push(`A-Factor ${a}`);
-      }
-      chip.setText(parts.join(" · "));
-      chip.setAttr("aria-label", "Edit collection priority and schedule");
+      chip.setText(`#${Math.max(1, rank)} · Priority ${formatPriority(slot.element.priority)}`);
+      chip.setAttr("aria-label", "Edit collection priority");
       chip.addEventListener("click", () => this.openPriorityEditor(chip, parent, slot));
       return;
     }
@@ -1934,7 +2294,10 @@ export class IrReviewView extends ItemView {
       const currentSched = slot.element.schedule ?? sched;
       const clamped = Math.min(10, Math.max(1.1, n));
       const newSchedule = { ...currentSched, aFactor: clamped };
-      await this.emit("topic-advanced", slot.id, { schedule: newSchedule });
+      await this.emit("topic-advanced", slot.id, {
+        schedule: newSchedule,
+        operation: "a-factor-edit",
+      });
       slot.element = {
         ...slot.element,
         schedule: newSchedule,
@@ -2293,6 +2656,7 @@ export class IrReviewView extends ItemView {
   }
 
   private async persistBookmarks(): Promise<void> {
+    if (!this.bookmarksLoaded) return;
     try {
       await this.ledger.saveBookmarks(this.bookmarks);
     } catch (e) {
@@ -2408,6 +2772,7 @@ export class IrReviewView extends ItemView {
           now,
         });
         await this.ledger.appendEvent(ev);
+        this.dirtyElementIds.add(slot.id);
         const updated = { ...slot.element, text: this.currentRaw };
         slot.element = updated;
         this.elementsById.set(slot.id, updated);
@@ -2494,14 +2859,28 @@ export class IrReviewView extends ItemView {
       return;
     }
     this.announceSlot(slot);
+    this.touchSelection.resetForSlot(slot.id);
 
     const sourceCtx = await this.loadSourceContext(slot);
     this.hasSourceContext = !!sourceCtx;
+    this.currentSourceMeta =
+      sourceCtx && !sourceCtx.pdf
+        ? {
+            raw: sourceCtx.raw,
+            path: sourceCtx.path,
+            parentId:
+              contextSourceParentId(slot.element, this.elementsById) ?? slot.id,
+          }
+        : null;
     this.paintSessionBar();
     if (sourceCtx) this.contentEl.addClass("ir-review-has-context");
     else this.contentEl.removeClass("ir-review-has-context");
 
-    const columns = host.createDiv({ cls: "ir-review-columns" });
+    const cap = this.capability;
+    const compactDock = cap.tier === "compact";
+    const columns = host.createDiv({
+      cls: `ir-review-columns ir-review-columns--${cap.tier}`,
+    });
     if (Platform.isMobile) {
       this.mobileLayoutCleanup?.();
       this.mobileLayoutCleanup = applyMobileReviewLayout(this.contentEl, {
@@ -2519,36 +2898,45 @@ export class IrReviewView extends ItemView {
       this.editing &&
       this.canEdit();
 
-    if (
-      sourceCtx &&
-      (!Platform.isMobile ||
-        (this.mobileSourceExpanded && this.settings.mobileReviewLayout !== "minimal"))
-    ) {
-      const ctxCol = columns.createDiv({ cls: "ir-review-context-col" });
-      if (!Platform.isMobile) {
+    const sourceExpanded =
+      cap.sourceLayout === "sheet"
+        ? this.mobileSourceExpanded && this.settings.mobileReviewLayout !== "minimal"
+        : this.desktopSourceExpanded;
+
+    if (sourceCtx && sourceExpanded) {
+      const ctxCol = columns.createDiv({
+        cls: `ir-review-context-col ir-review-context-col--${cap.sourceLayout}`,
+      });
+      if (cap.sourceLayout === "resizable-split") {
         this.applySavedContextColWidth(ctxCol);
       }
       const sourceHeaderText = maskClozeChrome
         ? "Source (hidden until reveal)"
         : `Source · ${sourceCtx.title}`;
-      const header = ctxCol.createEl(Platform.isMobile ? "button" : "div", {
-        cls: "ir-review-context-header",
-      });
+      const header = ctxCol.createEl(
+        cap.sourceLayout === "sheet" || cap.sourceLayout === "collapsible-rail"
+          ? "button"
+          : "div",
+        {
+          cls: "ir-review-context-header",
+        },
+      );
       header.createEl("span", {
         cls: "ir-review-context-header-label",
         text: sourceHeaderText,
       });
-      if (Platform.isMobile) {
+      if (cap.sourceLayout === "sheet" || cap.sourceLayout === "collapsible-rail") {
         header.setAttr("type", "button");
         header.setAttr("aria-label", "Hide source");
         header.setAttr("aria-expanded", "true");
         const chevron = header.createSpan({
           cls: "ir-review-context-header-chevron",
         });
-        setIcon(chevron, "chevron-up");
+        setIcon(chevron, cap.sourceLayout === "sheet" ? "chevron-up" : "panel-left-close");
         header.addEventListener("click", (ev) => {
           ev.preventDefault();
-          this.mobileSourceExpanded = false;
+          if (cap.sourceLayout === "sheet") this.mobileSourceExpanded = false;
+          else this.desktopSourceExpanded = false;
           void this.renderCard();
         });
       }
@@ -2630,7 +3018,7 @@ export class IrReviewView extends ItemView {
           });
         }
       }
-      if (!Platform.isMobile) {
+      if (cap.sourceLayout === "resizable-split") {
         this.mountContextSplitter(columns, ctxCol);
       }
     }
@@ -2705,6 +3093,13 @@ export class IrReviewView extends ItemView {
     }
 
     const dock = host.createDiv({ cls: "ir-review-dock" });
+    if (this.telemetryOpen && !maskClozeChrome) {
+      this.renderTelemetrySurface(dock, slot, cap.tier);
+    }
+    this.touchSelectionBarEl = dock.createDiv({
+      cls: "ir-review-touch-sel-bar is-hidden",
+    });
+    this.updateTouchSelectionBar();
     const controls = dock.createEl("div", { cls: "ir-review-controls" });
     this.renderEditSaveRecovery(controls);
 
@@ -2715,12 +3110,12 @@ export class IrReviewView extends ItemView {
     if (reading) {
       this.renderPriorityRow(controls, slot);
       const bar = controls.createEl("div", {
-        cls: Platform.isMobile
+        cls: compactDock
           ? "ir-review-buttons ir-review-buttons--reading-primary"
           : "ir-review-buttons",
       });
       this.renderChildButtons(bar);
-      if (Platform.isMobile) {
+      if (compactDock) {
         const nextBtn = bar.createEl("button", {
           cls: "mod-cta ir-review-grade-btn",
         });
@@ -2777,11 +3172,11 @@ export class IrReviewView extends ItemView {
 
     if (isCloze && !this.revealed) {
       const preBar = controls.createEl("div", {
-        cls: Platform.isMobile
+        cls: compactDock
           ? "ir-review-buttons ir-review-buttons--cloze-reveal"
           : "ir-review-buttons",
       });
-      if (Platform.isMobile) {
+      if (compactDock) {
         preBar
           .createEl("button", {
             text: "Show answer",
@@ -2824,11 +3219,11 @@ export class IrReviewView extends ItemView {
     // grade-preview.ts). Empty when the element has no card yet.
     const gradePreview = this.itemGradePreview(slot);
     const bar = controls.createEl("div", {
-      cls: Platform.isMobile
+      cls: compactDock
         ? "ir-review-buttons ir-review-buttons--grade"
         : "ir-review-buttons",
     });
-    if (Platform.isMobile) {
+    if (compactDock) {
       for (const { grade, label: gLabel } of GRADES) {
         const btn = bar.createEl("button", {
           cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
@@ -2855,10 +3250,10 @@ export class IrReviewView extends ItemView {
           ? this.settings.spaceAfterReveal
           : "good";
         const spaceHint =
-          !Platform.isMobile && spaceGrade === grade ? ", Space" : "";
-        const text = Platform.isMobile
-          ? gLabel
-          : `${gLabel} (${key}${spaceHint})`;
+          cap.showHotkeys && spaceGrade === grade ? ", Space" : "";
+        const text = cap.showHotkeys
+          ? `${gLabel} (${key}${spaceHint})`
+          : gLabel;
         const btn = bar.createEl("button", {
           cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
         });
@@ -3089,9 +3484,7 @@ export class IrReviewView extends ItemView {
     this.captureBookmark();
     await this.flushEdits();
     if (this.bookmarksLoaded) {
-      void this.persistBookmarks().catch((e) => {
-        console.error("Incremental Reading: persist bookmarks before session swap failed", e);
-      });
+      await this.persistBookmarks();
     }
     this.teardownLiveEditorSync();
     this.queue = session.queue;
@@ -3124,7 +3517,9 @@ export class IrReviewView extends ItemView {
     this.bookmarks = bookmarkLoad.bookmarks;
     this.bookmarksLoaded = bookmarkLoad.ok;
     if (!bookmarkLoad.ok) {
-      new Notice("Incremental Reading: could not load reading bookmarks; changes will not be saved.");
+      new Notice(
+        "Incremental Reading: could not read saved reading positions; bookmark updates are paused for this session to avoid overwriting .ir/bookmarks.json.",
+      );
     }
     this.contentEl.focus();
     await this.renderCard();
@@ -3246,22 +3641,42 @@ export class IrReviewView extends ItemView {
             phase: this.sessionPhase,
           }),
     );
-    if (
-      Platform.isMobile &&
-      this.hasSourceContext &&
-      !this.sessionComplete
-    ) {
-      const btn = row.createEl("button", {
-        cls: "ir-review-session-source",
+    const cap = this.capability;
+    if (this.hasSourceContext && !this.sessionComplete) {
+      const isOpen =
+        cap.sourceLayout === "sheet"
+          ? this.mobileSourceExpanded
+          : this.desktopSourceExpanded;
+      if (cap.sourceLayout !== "resizable-split" || !isOpen) {
+        const btn = row.createEl("button", {
+          cls: "ir-review-session-source",
+          type: "button",
+          text: isOpen ? "Hide source" : "Source",
+        });
+        btn.setAttr("aria-expanded", isOpen ? "true" : "false");
+        btn.addEventListener("click", () => {
+          if (cap.sourceLayout === "sheet") {
+            this.mobileSourceExpanded = !this.mobileSourceExpanded;
+          } else {
+            this.desktopSourceExpanded = !this.desktopSourceExpanded;
+          }
+          void this.renderCard();
+        });
+      }
+    }
+
+    if (this.current && !this.sessionComplete) {
+      const infoBtn = row.createEl("button", {
+        cls: `ir-review-session-info${this.telemetryOpen ? " is-active" : ""}`,
         type: "button",
-        text: this.mobileSourceExpanded ? "Hide source" : "Source",
+        text: this.labelWithHotkey("Info", "I"),
+        attr: {
+          "aria-expanded": this.telemetryOpen ? "true" : "false",
+          "aria-label": "Toggle element scheduling telemetry (I)",
+        },
       });
-      btn.setAttr(
-        "aria-expanded",
-        this.mobileSourceExpanded ? "true" : "false",
-      );
-      btn.addEventListener("click", () => {
-        this.mobileSourceExpanded = !this.mobileSourceExpanded;
+      infoBtn.addEventListener("click", () => {
+        this.telemetryOpen = !this.telemetryOpen;
         void this.renderCard();
       });
     }
@@ -3766,7 +4181,8 @@ export class IrReviewView extends ItemView {
 
     try {
       if (undo.kind === "dismiss") {
-        await this.emit("dismiss-set", undo.slotId, { dismissed: false });
+        const undoEv = buildReversibleUndoEvent("dismiss", restored);
+        await this.emit(undoEv.kind, undo.slotId, undoEv.payload);
         if (file) {
           await quietFrontmatterWrite(
             () => setDismissed(this.app, file, false).then(() => undefined),
@@ -3775,7 +4191,8 @@ export class IrReviewView extends ItemView {
         }
       } else {
         const prior = scheduleToTopicState(restored.schedule);
-        await this.emit("topic-advanced", undo.slotId, laterTodayUndoPayload(restored.schedule!));
+        const undoEv = buildReversibleUndoEvent("later", restored);
+        await this.emit(undoEv.kind, undo.slotId, undoEv.payload);
         if (file && prior) {
           await quietFrontmatterWrite(async () => {
             await this.app.fileManager.processFrontMatter(file, (f) => {
@@ -4228,6 +4645,89 @@ export class IrReviewView extends ItemView {
    * immediately detach in the same keypress.
    */
   private escapeHandling = false;
+  private renderTelemetrySurface(
+    parent: HTMLElement,
+    slot: ReviewSlot,
+    tier: ViewportCapability["tier"],
+  ): void {
+    const now = Date.now();
+    const policy = this.settings.prioritySchedulingPolicy;
+    const retention = effectiveItemRetention(
+      slot.element.priority,
+      policy.enabled,
+      this.settings.desiredRetention,
+      policy.itemHighRetention,
+      policy.itemLowRetention,
+    );
+    const topicAdvance = this.isReading(slot)
+      ? this.resolveActiveTopicAdvance(slot, now)
+      : undefined;
+    const telemetry = computeElementTelemetry({
+      element: slot.element,
+      allElements: this.elementsById.values(),
+      nowMs: now,
+      rawBodyText: this.currentRaw,
+      activeScheduler: this.activePrimaryScheduler(),
+      requestRetention: retention,
+      sm20Matrix: this.getSm20Matrix?.(),
+      nextReadingIntervalDays: topicAdvance?.interval,
+      effectiveAFactor: topicAdvance?.effectiveAFactor,
+      defaultAFactor: this.settings.topicAFactor,
+    });
+    renderElementTelemetryDrawer(parent, telemetry, tier, {
+      onClose: () => {
+        this.telemetryOpen = false;
+        void this.renderCard();
+      },
+      onChangePriority: (newPrio) => {
+        void (async () => {
+          const clamped = clampPriority(newPrio);
+          if (this.commitPriority) {
+            await this.commitPriority(slot.id, slot.file, clamped);
+          } else {
+            await this.emit("priority-set", slot.id, { priority: clamped });
+          }
+          slot.element = { ...slot.element, priority: clamped };
+          this.elementsById.set(slot.id, slot.element);
+          await this.renderCard();
+        })();
+      },
+      onOpenRelativePriority: (trigger) => {
+        this.openPriorityEditor(trigger, parent, slot);
+      },
+      onChangeAFactor: this.isReading(slot)
+        ? (newAFactor) => {
+            void (async () => {
+              const curSched = slot.element.schedule ?? {
+                due: now,
+                interval: 1,
+                aFactor: newAFactor,
+              };
+              const newSchedule = { ...curSched, aFactor: newAFactor };
+              await this.emit("topic-advanced", slot.id, {
+                schedule: newSchedule,
+                operation: "a-factor-edit",
+              });
+              slot.element = { ...slot.element, schedule: newSchedule };
+              this.elementsById.set(slot.id, slot.element);
+              if (slot.file) {
+                const topicState = scheduleToTopicState(newSchedule);
+                if (topicState) {
+                  await quietFrontmatterWrite(async () => {
+                    await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
+                      writeTopicToFrontmatter(f, topicState);
+                    });
+                  }, "a-factor");
+                }
+              }
+              this.onChange?.();
+              await this.renderCard();
+            })();
+          }
+        : undefined,
+    });
+  }
+
   private handleEscapeKey(): void {
     if (this.escapeHandling) return;
     this.escapeHandling = true;
@@ -4237,7 +4737,13 @@ export class IrReviewView extends ItemView {
         emptyVault: this.emptyVault,
         editing: this.editing,
         isNeural: this.isNeural,
+        telemetryOpen: this.telemetryOpen,
       });
+      if (action.kind === "close-telemetry") {
+        this.telemetryOpen = false;
+        void this.renderCard();
+        return;
+      }
       if (action.kind === "exit-edit") {
         this.exitEdit();
         return;
@@ -4555,6 +5061,7 @@ export class IrReviewView extends ItemView {
       });
       await this.ledger.appendEvent(ev);
       created = ev.payload.element as IrElement;
+      this.dirtyElementIds.add(created.id);
       this.elementsById.set(created.id, created);
       await this.decaySlotParentAFactor(slot, parentAFactorAfter);
       const promote =
@@ -4818,6 +5325,7 @@ export class IrReviewView extends ItemView {
       });
       await this.ledger.appendEvent(ev);
       const created = ev.payload.element as IrElement;
+      this.dirtyElementIds.add(created.id);
       this.elementsById.set(created.id, created);
       await this.decaySlotParentAFactor(slot, parentAFactorAfter);
       this.adoptElement(created);
@@ -5019,6 +5527,7 @@ export class IrReviewView extends ItemView {
           };
         }
         await this.ledger.appendEvent(ev);
+        this.dirtyElementIds.add(ev.target);
         if (ev.kind === "element-created") {
           created = ev.payload.element as IrElement;
           this.elementsById.set(created.id, created);

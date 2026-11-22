@@ -3774,3 +3774,488 @@ img.ir-source-image.ir-cloze-source {
   color: var(--text-muted);
   font-style: italic;
 }
+
+/* ============================================================================
+ * Cross-Device UX & Progressive Telemetry Revamp (#62–#65)
+ * Uses Obsidian theme CSS variables exclusively (UI Commitment #3).
+ * ========================================================================= */
+
+.ir-review-modal,
+.ir-stats-view,
+.ir-collection-container {
+  container-type: inline-size;
+}
+
+/* Coarse-pointer 44x44 minimum hit targets (#65) */
+[data-ir-pointer="coarse"] .ir-review-buttons button,
+[data-ir-pointer="coarse"] .ir-review-session-source,
+[data-ir-pointer="coarse"] .ir-review-session-info,
+[data-ir-pointer="coarse"] .ir-tree-row-menu-btn,
+[data-ir-pointer="coarse"] .ir-collection-filter-button,
+[data-ir-pointer="coarse"] .ir-collection-icon-button,
+[data-ir-pointer="coarse"] .ir-stats-tab,
+[data-ir-pointer="coarse"] .ir-stats-triage-btn {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Container-tier Source layout (#65): sheet (<640px), rail (640-960px), split (>960px) */
+.ir-review-columns--compact {
+  display: flex;
+  flex-direction: column;
+}
+
+.ir-review-context-col--sheet {
+  width: 100% !important;
+  max-height: 42vh;
+  overflow-y: auto;
+  border-right: none;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ir-review-columns--medium {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.ir-review-context-col--collapsible-rail {
+  flex: 0 0 clamp(220px, 34%, 320px);
+  max-width: 42%;
+  border-right: 1px solid var(--background-modifier-border);
+  overflow-y: auto;
+}
+
+.ir-review-columns--expanded {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.ir-review-session-info {
+  margin-left: 4px;
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+}
+
+.ir-review-session-info.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* On-demand Element Info (`I`) telemetry drawer (#62) */
+.ir-telemetry-drawer {
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ir-telemetry-drawer--sheet {
+  border-top: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+  max-height: 48vh;
+  overflow-y: auto;
+}
+
+.ir-telemetry-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ir-telemetry-title {
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ir-telemetry-close {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+}
+
+.ir-telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+}
+
+.ir-telemetry-cell {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ir-telemetry-cell-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ir-telemetry-cell-value {
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-normal);
+}
+
+.ir-telemetry-cell-sub {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ir-telemetry-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.ir-telemetry-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ir-telemetry-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+/* Thumb-zone Touch Selection Bar in `.ir-review-dock` (#65) */
+.ir-review-touch-sel-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--background-secondary-alt);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ir-review-touch-sel-bar.is-hidden {
+  display: none !important;
+}
+
+.ir-review-touch-sel-btn {
+  min-height: 44px;
+  padding: 6px 12px;
+  font-size: var(--font-ui-small);
+  flex: 1 1 auto;
+}
+
+.ir-review-touch-sel-clear {
+  flex: 0 0 auto;
+}
+
+/* Unified Mobile Bottom Sheet Hub (#65) */
+.ir-mobile-hub-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--background-modifier-cover);
+  z-index: calc(var(--layer-modal) - 1);
+}
+
+.ir-mobile-hub-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--layer-modal);
+  background: var(--background-primary);
+  border-top: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  padding: 8px 12px calc(16px + env(safe-area-inset-bottom, 0px));
+  max-height: 78vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-s);
+}
+
+.ir-mobile-hub-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border-hover);
+  margin: 2px auto 10px;
+}
+
+.ir-mobile-hub-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ir-mobile-hub-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ir-mobile-hub-title {
+  font-weight: 600;
+  font-size: var(--font-ui-medium);
+}
+
+.ir-mobile-hub-due-pill {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+  border-radius: var(--radius-l);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-mobile-hub-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ir-mobile-hub-capture-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+}
+
+.ir-mobile-hub-close {
+  min-width: 40px;
+  min-height: 40px;
+  font-size: var(--font-ui-large);
+}
+
+.ir-mobile-hub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+}
+
+.ir-mobile-hub-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-m);
+  justify-content: flex-start;
+}
+
+.ir-mobile-hub-row:hover,
+.ir-mobile-hub-row:focus-visible {
+  background: var(--background-modifier-hover);
+}
+
+.ir-mobile-hub-row-icon {
+  flex: 0 0 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.ir-mobile-hub-row-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ir-mobile-hub-row-title {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.ir-mobile-hub-row-desc {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+/* Touch Collection multi-select & row menu (#65) */
+.ir-collection-filter-button.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ir-tree-select-checkbox {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+}
+
+.ir-tree-row-menu-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+}
+
+/* Segmented Stats tabs, KPI grid, heatmap scroll & actionable Priority FI (#63) */
+.ir-stats-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-wrap: wrap;
+}
+
+.ir-stats-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: var(--font-ui-small);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.ir-stats-tab.is-active {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  font-weight: 600;
+}
+
+.ir-stats-tab-badge {
+  font-size: var(--font-ui-smaller);
+  padding: 1px 6px;
+  border-radius: var(--radius-l);
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-stats-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ir-stats-kpi-card {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ir-stats-kpi-value {
+  font-size: var(--font-ui-large);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-normal);
+}
+
+.ir-stats-kpi-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ir-stats-kpi-sub {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+.ir-stats-heatmap-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  padding-bottom: 4px;
+}
+
+.ir-stats-thresholds {
+  margin-bottom: 8px;
+}
+
+.ir-stats-thresholds-summary {
+  cursor: pointer;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  user-select: none;
+  padding: 4px 0;
+}
+
+.ir-stats-scheduler-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: var(--font-ui-small);
+}
+
+.ir-stats-priority-fi-track {
+  position: relative;
+}
+
+.ir-stats-priority-fi-target {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--text-accent);
+  pointer-events: none;
+}
+
+.ir-stats-priority-fi-fill--elevated {
+  background: var(--color-orange);
+}
+
+.ir-stats-priority-fi-row.is-actionable {
+  cursor: pointer;
+  border-radius: var(--radius-s);
+  padding: 2px 4px;
+}
+
+.ir-stats-priority-fi-row.is-actionable:hover,
+.ir-stats-priority-fi-row.is-actionable:focus-visible {
+  background: var(--background-modifier-hover);
+}
+
+/* Progressive Settings disclosure (#64) */
+.ir-settings-advanced {
+  margin: 12px 0 18px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 4px 12px;
+  background: var(--background-secondary);
+}
+
+.ir-settings-advanced-summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-weight: 600;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  user-select: none;
+}
+
+.ir-settings-advanced-body {
+  padding-top: 4px;
+  border-top: 1px solid var(--background-modifier-border);
+}

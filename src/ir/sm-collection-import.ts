@@ -2,7 +2,8 @@ import { newElementId, newEventId, type DeviceId, type ElementId } from "./ids";
 import { clampPriority, type IrElement, type IrEvent, type IrType, type ReadSchedule, type StoredCard } from "./model";
 import type { Bookmark } from "./bookmark";
 import { normalizeUrlForDedupe, contentFingerprint } from "./bulk-import";
-import { htmlToMarkdown as sharedHtmlToMarkdown } from "./html-to-markdown";
+import { decodeHtmlEntities, htmlToMarkdown as sharedHtmlToMarkdown } from "./html-to-markdown";
+import { assertVaultRelativePath, isSafeVaultRelativePath } from "./source-paths";
 import {
   parseContents,
   parseElementInfo,
@@ -22,6 +23,7 @@ import {
 
 const MS_PER_DAY = 86_400_000;
 const DELPHI_EPOCH_MS = Date.UTC(1899, 11, 30);
+const MAX_VALID_EPOCH_MS = 8_640_000_000_000_000;
 const COMPON_MARKER = 0xd431;
 const COMPON_HEADER_SIZE = 4;
 const COMPON_ELEMENT_NUMBER_OFFSET = 4;
@@ -29,6 +31,10 @@ const COMPON_COMPONENT_COUNT_OFFSET = 8;
 const COMPON_ELEMENT_PARAM_SIZE_OFFSET = 9;
 const COMPON_ELEMENT_PARAMETERS_OFFSET = 11;
 const COMPON_PARAM_SIZE = 0x2b;
+const BINARY_IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|avif)$/i;
+const TEXT_BACKING_EXT_RE = /\.(?:x?html?|htm|txt)$/i;
+const HTML_MARKUP_SNIFF_RE =
+  /<\/?(?:html|head|body|div|span|p|br|hr|h[1-6]|b|i|u|s|em|strong|font|a|img|ul|ol|li|dl|dt|dd|table|thead|tbody|tr|th|td|blockquote|pre|code|sup|sub|center|small|big)\b[^>]*>/i;
 
 export const SM_REGISTRY_KINDS = [
   "comment",
@@ -100,6 +106,7 @@ export interface SmCollectionImportOptions {
   attachmentFolder?: string;
   existingElements?: ReadonlyMap<ElementId, IrElement>;
   htmlToMarkdown?: (html: string) => string;
+  extractCreatesStandaloneNote?: boolean;
 }
 
 export interface SmCollectionImportPlan {
@@ -125,7 +132,9 @@ export interface SmCollectionImportPlan {
 
 export function delphiDateToEpochMs(tDateTime: number): number | null {
   if (!Number.isFinite(tDateTime) || tDateTime <= 1) return null;
-  return DELPHI_EPOCH_MS + Math.round(tDateTime * MS_PER_DAY);
+  const ms = DELPHI_EPOCH_MS + Math.round(tDateTime * MS_PER_DAY);
+  if (!Number.isFinite(ms) || Math.abs(ms) > MAX_VALID_EPOCH_MS) return null;
+  return ms;
 }
 
 function decodeWindows1252(bytes: Uint8Array): string {
@@ -140,16 +149,95 @@ function decodeWindows1252(bytes: Uint8Array): string {
   }
 }
 
+function decodeSmTextBytes(bytes: Uint8Array): string {
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(3));
+  }
+  const win = decodeWindows1252(bytes);
+  if (/charset\s*=\s*["']?utf-?8/i.test(win.slice(0, 1024))) {
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  }
+  return win;
+}
+
 export function defaultHtmlToMarkdown(html: string): string {
   return sharedHtmlToMarkdown(html);
 }
 
+/**
+ * Normalize an `<img src>` from SuperMemo HTML into a lowercase relative key under `elements/`.
+ * Handles `file:///[PrimaryStorage]...`, `[SecondaryStorage]...`, `file:///.../elements/...`,
+ * and relative paths like `../10\102.jpg` or `42_files/6081.jpg` without remote scheme literals.
+ */
+function resolveSmAssetKeyUnderElements(
+  rawSrc: string,
+  backingDirUnderElements: string,
+  filesByRelKey: ReadonlyMap<string, string>,
+): string | null {
+  let s = rawSrc.trim();
+  if (!s) return null;
+  const qIdx = s.search(/[?#]/);
+  if (qIdx >= 0) s = s.slice(0, qIdx);
+  try {
+    s = decodeURIComponent(s);
+  } catch {
+    // Keep raw string when percent-decoding fails
+  }
+  s = s.replace(/\\/g, "/").trim();
+  if (!s) return null;
+
+  if (/^(?:data|blob|javascript|mailto|about):/i.test(s)) return null;
+  const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(s);
+  if (hasScheme && !/^file:/i.test(s)) return null;
+
+  const normalizeParts = (relCandidate: string): string | null => {
+    const stack: string[] = [];
+    for (const part of relCandidate.split("/")) {
+      if (!part || part === ".") continue;
+      if (part === "..") {
+        if (stack.length === 0) return null;
+        stack.pop();
+      } else {
+        stack.push(part);
+      }
+    }
+    return stack.length > 0 ? stack.join("/").toLowerCase() : null;
+  };
+
+  if (hasScheme || /^\[(?:Primary|Secondary)Storage\]/i.test(s)) {
+    const strippedFile = s.replace(/^file:\/*/i, "");
+    const storageMatch = /^(?:.*\/)?\[(?:Primary|Secondary)Storage\]\/*(.*)$/i.exec(strippedFile);
+    if (storageMatch) {
+      const key = normalizeParts(storageMatch[1]!);
+      return key && filesByRelKey.has(key) ? key : null;
+    }
+    const lower = strippedFile.toLowerCase();
+    const elemMarker = "/elements/";
+    const elemIdx = lower.lastIndexOf(elemMarker);
+    if (elemIdx >= 0) {
+      const key = normalizeParts(strippedFile.slice(elemIdx + elemMarker.length));
+      return key && filesByRelKey.has(key) ? key : null;
+    }
+    return null;
+  }
+
+  const combined = backingDirUnderElements ? `${backingDirUnderElements}/${s}` : s;
+  const directKey = normalizeParts(combined);
+  if (directKey && filesByRelKey.has(directKey)) return directKey;
+
+  // Fallback when relative `../bucket/file` was stored on an element without a nested bucket dir
+  const strippedLeadingUp = s.replace(/^(?:\.\.\/)+/, "");
+  const fallbackKey = normalizeParts(strippedLeadingUp);
+  return fallbackKey && filesByRelKey.has(fallbackKey) ? fallbackKey : null;
+}
+
 function sanitizeNoteStem(raw: string, fallback: string): string {
-  const cleaned = raw
-    .replace(/[\\/:*?"<>|#^[\]]/g, " ")
+  const cleaned = decodeHtmlEntities(raw)
+    .replace(/[\\/:*?"<>|#^[\]\0]/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 72);
+    .replace(/^(?:\.|\s)+|(?:\.|\s)+$/g, "")
+    .slice(0, 72)
+    .replace(/^(?:\.|\s)+|(?:\.|\s)+$/g, "");
   return cleaned || fallback;
 }
 
@@ -269,8 +357,8 @@ async function readCaseInsensitive(
 
 /**
  * Resolve a `.ptr` + `.mem` + `.rtx` registry class (and `elements/` filespace slots)
- * using `.ptr` liveness and `.mem` offsets (`0x0a`, `0x0e`, `0x12`), safe against SM20
- * reused `.rtx` free-space pools.
+ * using `.ptr` liveness and `.mem` offsets (`0x0a`, `0x0e`, `0x16`), safe against SM20
+ * reused `.rtx` free-space pools and `.mem` `0x12` `list_value` pointers.
  */
 export async function resolveRichRegistryKind(
   fs: SmSourceFs,
@@ -298,7 +386,7 @@ export async function resolveRichRegistryKind(
     const base = (memberNumber - 1) * 30;
     const position = memView.getUint32(base + 0x0a, true);
     const length = memView.getUint32(base + 0x0e, true);
-    const filespaceSlot = memView.getUint32(base + 0x12, true);
+    const filespaceSlot = memView.getUint32(base + 0x16, true);
     let text = "";
     if (position > 0 && length > 6) {
       const start = position - 1;
@@ -313,34 +401,82 @@ export async function resolveRichRegistryKind(
   return out;
 }
 
-async function scanElementsFilespace(fs: SmSourceFs): Promise<Map<number, string[]>> {
-  const map = new Map<number, string[]>();
+interface ScannedElementsFilespace {
+  slotToFiles: Map<number, string[]>;
+  filesByRelKey: Map<string, string>;
+}
+
+async function scanElementsFilespace(fs: SmSourceFs): Promise<ScannedElementsFilespace> {
+  const slotToFiles = new Map<number, string[]>();
+  const filesByRelKey = new Map<string, string>();
   const visited = new Set<string>();
-  const walk = async (dir: string, depth: number): Promise<void> => {
-    if (depth > 5 || visited.has(dir)) return;
+  const walk = async (dir: string, depth: number, inAssetSubdir: boolean): Promise<void> => {
+    if (depth > 6 || visited.has(dir)) return;
     visited.add(dir);
     const entries = await fs.listDir(dir);
     for (const rawEntry of entries) {
-      const norm = rawEntry.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-      const leaf = norm.split("/").pop() ?? norm;
-      if (!leaf || leaf.toLowerCase().endsWith(".del")) continue;
-      if (leaf.toLowerCase().endsWith("_files")) continue;
-      const rel = norm.startsWith(`${dir}/`) ? norm : `${dir}/${leaf}`;
-      if (/^\d+$/.test(leaf)) {
-        await walk(rel, depth + 1);
+      if (rawEntry.includes("\0") || rawEntry.includes(":")) continue;
+      const trimmedEntry = rawEntry.trim();
+      if (!trimmedEntry || /^(?:\/|\\)/.test(trimmedEntry)) continue;
+      const norm = trimmedEntry.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+      if (!norm) continue;
+      const normSegs = norm.split("/");
+      if (normSegs.some((seg) => !seg || seg === "." || seg === "..")) continue;
+      const rel = norm.startsWith(`${dir}/`) ? norm : `${dir}/${norm}`;
+      if (!isSafeVaultRelativePath(rel) || !/^elements\//i.test(rel)) continue;
+      const rest = rel.slice(dir.length + 1);
+      if (!rest) continue;
+
+      // Support both flat-key SmSourceFs implementations (returning full paths under `dir/`)
+      // and directory-by-directory `readdir` implementations (returning immediate child entries).
+      if (rest.includes("/")) {
+        const subSegs = rest.split("/");
+        const leaf = subSegs[subSegs.length - 1]!;
+        if (!leaf || leaf.toLowerCase().endsWith(".del")) continue;
+        const underElements = rel.replace(/^elements\/+/i, "");
+        if (underElements) filesByRelKey.set(underElements.toLowerCase(), rel);
+        const insideFilesDir = inAssetSubdir || subSegs.slice(0, -1).some((seg) => seg.toLowerCase().endsWith("_files"));
+        if (!insideFilesDir) {
+          const match = /^(\d+)\.(.+)$/.exec(leaf);
+          if (match) {
+            const slot = Number.parseInt(match[1]!, 10);
+            if (Number.isFinite(slot) && slot > 0) {
+              const list = slotToFiles.get(slot);
+              if (list) {
+                if (!list.includes(rel)) list.push(rel);
+              } else {
+                slotToFiles.set(slot, [rel]);
+              }
+            }
+          }
+        }
         continue;
       }
+
+      const leaf = rest;
+      if (leaf.toLowerCase().endsWith(".del")) continue;
+      if (/^\d+$/.test(leaf)) {
+        await walk(rel, depth + 1, inAssetSubdir);
+        continue;
+      }
+      if (leaf.toLowerCase().endsWith("_files") || (!leaf.includes(".") && inAssetSubdir)) {
+        await walk(rel, depth + 1, true);
+        continue;
+      }
+      const underElements = rel.replace(/^elements\/+/i, "");
+      if (underElements) filesByRelKey.set(underElements.toLowerCase(), rel);
+      if (inAssetSubdir) continue;
       const match = /^(\d+)\.(.+)$/.exec(leaf);
       if (!match) continue;
       const slot = Number.parseInt(match[1]!, 10);
       if (!Number.isFinite(slot) || slot <= 0) continue;
-      const list = map.get(slot);
+      const list = slotToFiles.get(slot);
       if (list) list.push(rel);
-      else map.set(slot, [rel]);
+      else slotToFiles.set(slot, [rel]);
     }
   };
-  await walk("elements", 0);
-  return map;
+  await walk("elements", 0, false);
+  return { slotToFiles, filesByRelKey };
 }
 
 function synthesizeItemClozeText(texts: Array<{ text: string; displayAt: number }>): string {
@@ -378,7 +514,6 @@ export async function planSmCollectionImport(
   opts: SmCollectionImportOptions,
 ): Promise<SmCollectionImportPlan> {
   const { fs, nowMs, deviceId } = opts;
-  const htmlToMarkdown = opts.htmlToMarkdown ?? defaultHtmlToMarkdown;
   const targetFolder = opts.targetFolder.trim().replace(/^\/+|\/+$/g, "");
   const attachmentFolder = (opts.attachmentFolder ?? `${targetFolder}/attachments`).replace(/^\/+|\/+$/g, "");
 
@@ -431,7 +566,7 @@ export async function planSmCollectionImport(
     }
   }
 
-  const slotToFiles = await scanElementsFilespace(fs);
+  const { slotToFiles, filesByRelKey } = await scanElementsFilespace(fs);
   const textReg = await resolveRichRegistryKind(fs, "text", slotToFiles);
   const imageReg = await resolveRichRegistryKind(fs, "image", slotToFiles);
   const conceptReg = await resolveRichRegistryKind(fs, "concept", slotToFiles);
@@ -463,8 +598,112 @@ export async function planSmCollectionImport(
   const attachments: SmImportedAttachment[] = [];
   const bookmarks: Bookmark[] = [];
   const usedNotePaths = new Set<string>();
-  const stemHints = new Map<string, number>();
+  const nextNoteSuffixByStem = new Map<string, number>();
   const copiedAttachmentNames = new Set<string>();
+  const nextAttachmentSuffixByStem = new Map<string, number>();
+  const attachmentNameBySource = new Map<string, string>();
+  const materializedAttachmentSources = new Set<string>();
+
+  const reserveAttachmentFileName = (sourceRelPath: string, preferredName: string): string => {
+    const existing = attachmentNameBySource.get(sourceRelPath);
+    if (existing) return existing;
+    const safePreferred =
+      preferredName
+        .replace(/[\\/:*?"<>|#^[\]\0]/g, "_")
+        .replace(/^(?:\.|\s)+|(?:\.|\s)+$/g, "") || "image.png";
+    let candidate = safePreferred;
+    if (copiedAttachmentNames.has(candidate)) {
+      const dot = safePreferred.lastIndexOf(".");
+      const stem = dot > 0 ? safePreferred.slice(0, dot) : safePreferred;
+      const ext = dot > 0 ? safePreferred.slice(dot) : "";
+      const key = `${stem}\0${ext}`;
+      let n = nextAttachmentSuffixByStem.get(key) ?? 2;
+      while (copiedAttachmentNames.has(`${stem}-${n}${ext}`)) {
+        n += 1;
+      }
+      nextAttachmentSuffixByStem.set(key, n + 1);
+      candidate = `${stem}-${n}${ext}`;
+    }
+    copiedAttachmentNames.add(candidate);
+    attachmentNameBySource.set(sourceRelPath, candidate);
+    return candidate;
+  };
+
+  const materializeAttachment = async (sourceRelPath: string, targetFileName: string): Promise<boolean> => {
+    if (materializedAttachmentSources.has(sourceRelPath)) return true;
+    const bytes = await fs.readBinary(sourceRelPath);
+    if (!bytes) return false;
+    materializedAttachmentSources.add(sourceRelPath);
+    assertVaultRelativePath(attachmentFolder ? `${attachmentFolder}/${targetFileName}` : targetFileName);
+    attachments.push({ sourceRelPath, targetFileName, bytes });
+    stats.attachments += 1;
+    return true;
+  };
+
+  const convertSmHtml = async (
+    rawHtml: string,
+    smId: number,
+    backingFileRelPath?: string,
+  ): Promise<string> => {
+    if (opts.htmlToMarkdown) {
+      return opts.htmlToMarkdown(rawHtml);
+    }
+    let backingDirUnderElements = "";
+    if (backingFileRelPath) {
+      const under = backingFileRelPath.replace(/\\/g, "/").replace(/^elements\/+/i, "");
+      const slash = under.lastIndexOf("/");
+      backingDirUnderElements = slash > 0 ? under.slice(0, slash) : "";
+    }
+    const newlyReferenced = new Map<string, string>();
+    const md = sharedHtmlToMarkdown(rawHtml, {
+      resolveAssetPath: (rawSrc) => {
+        const relKey = resolveSmAssetKeyUnderElements(rawSrc, backingDirUnderElements, filesByRelKey);
+        if (!relKey) return null;
+        const sourceRelPath = filesByRelKey.get(relKey);
+        if (!sourceRelPath || !BINARY_IMAGE_EXT_RE.test(sourceRelPath)) return null;
+        const leaf = sourceRelPath.split("/").pop() ?? `asset-${smId}.png`;
+        const targetFileName = reserveAttachmentFileName(sourceRelPath, `sm-asset-${leaf}`);
+        newlyReferenced.set(sourceRelPath, targetFileName);
+        return attachmentFolder ? `${attachmentFolder}/${targetFileName}` : targetFileName;
+      },
+    });
+    let finalMd = md;
+    for (const [sourceRelPath, targetFileName] of newlyReferenced) {
+      const ok = await materializeAttachment(sourceRelPath, targetFileName);
+      if (!ok) {
+        const embedPath = attachmentFolder ? `${attachmentFolder}/${targetFileName}` : targetFileName;
+        finalMd = finalMd.split(`![[${embedPath}]]`).join("").replace(/\n{3,}/g, "\n\n").trim();
+      }
+    }
+    return finalMd;
+  };
+
+  const resolveTextMemberMarkdown = async (
+    txtMember: SmRegistryMember | undefined,
+    smId: number,
+    forceHtml: boolean,
+  ): Promise<string> => {
+    if (!txtMember) return "";
+    let rawText = "";
+    let backingFileUsed: string | undefined;
+    const textBacking = txtMember.backingFiles.find((f) => TEXT_BACKING_EXT_RE.test(f));
+    if (textBacking) {
+      const rawFile = await fs.readBinary(textBacking);
+      if (rawFile) {
+        rawText = decodeSmTextBytes(rawFile);
+        backingFileUsed = textBacking;
+      }
+    }
+    if (!rawText) {
+      rawText = txtMember.text;
+    }
+    if (!rawText) return "";
+    const isHtmlBacking = Boolean(backingFileUsed && /\.x?html?$/i.test(backingFileUsed));
+    const isPlainTxtBacking = Boolean(backingFileUsed && /\.txt$/i.test(backingFileUsed));
+    return forceHtml || isHtmlBacking || (!isPlainTxtBacking && HTML_MARKUP_SNIFF_RE.test(rawText))
+      ? await convertSmHtml(rawText, smId, backingFileUsed)
+      : rawText.trim();
+  };
 
   const stats = {
     topics: 0,
@@ -498,7 +737,7 @@ export async function planSmCollectionImport(
     );
 
     const isItem = rec.element_type === 1;
-    const isExtract = !isItem && (rec.source_article !== 0 || rec.extraction_date > 1);
+    const isExtract = !isItem && rec.source_article !== 0;
     const irType: IrType = isItem ? "item" : isExtract ? "extract" : "topic";
 
     const compon = componByElement.get(smId);
@@ -512,16 +751,16 @@ export async function planSmCollectionImport(
           const imgMember = imageReg.get(comp.registryMember);
           if (imgMember) {
             for (const relPath of imgMember.backingFiles) {
-              const bytes = await fs.readBinary(relPath);
-              if (!bytes) continue;
-              const ext = relPath.split(".").pop() ?? "png";
-              const targetFileName = `sm-${smId}-${comp.registryMember}.${ext}`;
-              if (!copiedAttachmentNames.has(targetFileName)) {
-                copiedAttachmentNames.add(targetFileName);
-                attachments.push({ sourceRelPath: relPath, targetFileName, bytes });
-                stats.attachments += 1;
-              }
-              imageLinks.push(`![[${attachmentFolder}/${targetFileName}]]`);
+              if (!BINARY_IMAGE_EXT_RE.test(relPath)) continue;
+              const ext = (relPath.split(".").pop() ?? "png").toLowerCase();
+              const targetFileName = reserveAttachmentFileName(
+                relPath,
+                `sm-${smId}-${comp.registryMember}.${ext}`,
+              );
+              const ok = await materializeAttachment(relPath, targetFileName);
+              if (!ok) continue;
+              const embedPath = attachmentFolder ? `${attachmentFolder}/${targetFileName}` : targetFileName;
+              imageLinks.push(`![[${embedPath}]]`);
             }
           }
         } else if (
@@ -533,27 +772,20 @@ export async function planSmCollectionImport(
         ) {
           seenTextMembers.add(comp.registryMember);
           const txtMember = textReg.get(comp.registryMember);
-          let rawText = txtMember?.text ?? "";
-          if (!rawText && txtMember && txtMember.backingFiles.length > 0) {
-            const rawFile = await fs.readBinary(txtMember.backingFiles[0]!);
-            if (rawFile) rawText = decodeWindows1252(rawFile);
-          }
-          if (rawText) {
-            const md =
-              comp.componentType === 13 || comp.componentType === 16 || /<[a-z][^>]*>/i.test(rawText)
-                ? htmlToMarkdown(rawText)
-                : rawText.trim();
-            if (md) textParts.push({ text: md, displayAt: comp.displayAt });
-          }
+          const md = await resolveTextMemberMarkdown(
+            txtMember,
+            smId,
+            comp.componentType === 13 || comp.componentType === 16,
+          );
+          if (md) textParts.push({ text: md, displayAt: comp.displayAt });
         }
       }
     }
 
     if (textParts.length === 0 && rec.text_registry_member > 0 && !seenTextMembers.has(rec.text_registry_member)) {
       const txtMember = textReg.get(rec.text_registry_member);
-      if (txtMember?.text) {
-        textParts.push({ text: htmlToMarkdown(txtMember.text), displayAt: 0xff });
-      }
+      const md = await resolveTextMemberMarkdown(txtMember, smId, false);
+      if (md) textParts.push({ text: md, displayAt: 0xff });
     }
 
     const titleText = textReg.get(rec.text_registry_member)?.text?.trim() || `SM Element ${smId}`;
@@ -582,10 +814,12 @@ export async function planSmCollectionImport(
     let dueMs: number;
     if (rec.element_status === 1) {
       const baseMs = lastRepMs ?? nowMs;
-      dueMs = baseMs + Math.max(1, rec.interval_days) * MS_PER_DAY;
+      const rawDue = baseMs + Math.max(1, rec.interval_days) * MS_PER_DAY;
+      dueMs = Number.isFinite(rawDue) && Math.abs(rawDue) <= MAX_VALID_EPOCH_MS ? rawDue : nowMs;
     } else if (rec.element_status === 0) {
       const staggeredDays = priorityScaledFirstInterval(priority, totalPriorityCount, 1);
-      dueMs = nowMs + staggeredDays * MS_PER_DAY;
+      const rawDue = nowMs + staggeredDays * MS_PER_DAY;
+      dueMs = Number.isFinite(rawDue) && Math.abs(rawDue) <= MAX_VALID_EPOCH_MS ? rawDue : nowMs;
     } else {
       dueMs = nowMs;
     }
@@ -611,20 +845,23 @@ export async function planSmCollectionImport(
           }
         : undefined;
 
-    const shouldWriteNote = irType !== "extract" || imageLinks.length > 0;
+    const shouldWriteNote =
+      irType !== "extract" || imageLinks.length > 0 || Boolean(opts.extractCreatesStandaloneNote);
     let notePath: string | undefined;
     if (shouldWriteNote) {
       const stem = sanitizeNoteStem(titleText, `sm-${smId}`);
       const dirPrefix = targetFolder ? `${targetFolder}/` : "";
-      const hintKey = `${dirPrefix}${stem}`;
-      let index = (stemHints.get(hintKey) ?? 0) + 1;
-      let candidate = index === 1 ? `${dirPrefix}${stem}.md` : `${dirPrefix}${stem} ${index}.md`;
-      while (usedNotePaths.has(candidate)) {
-        index += 1;
-        candidate = `${dirPrefix}${stem} ${index}.md`;
+      const baseStem = `${dirPrefix}${stem}`;
+      let candidate = `${baseStem}.md`;
+      if (usedNotePaths.has(candidate)) {
+        let suffix = nextNoteSuffixByStem.get(baseStem) ?? 2;
+        while (usedNotePaths.has(`${baseStem} ${suffix}.md`)) {
+          suffix += 1;
+        }
+        nextNoteSuffixByStem.set(baseStem, suffix + 1);
+        candidate = `${baseStem} ${suffix}.md`;
       }
-      stemHints.set(hintKey, index);
-      usedNotePaths.add(candidate);
+      usedNotePaths.add(assertVaultRelativePath(candidate));
       notePath = candidate;
 
       const conceptTag = rec.concept_group_member > 0
@@ -752,7 +989,7 @@ export async function planSmCollectionImport(
             lastReview: authoritativeCard.lastReview ?? repMs,
           }
         : {
-            due: repMs + nextScheduledDays * MS_PER_DAY,
+            due: Math.min(MAX_VALID_EPOCH_MS, repMs + nextScheduledDays * MS_PER_DAY),
             stability: Math.max(0.7, nextScheduledDays),
             difficulty: histDifficulty,
             elapsedDays,

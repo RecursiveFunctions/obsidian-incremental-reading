@@ -1,4 +1,12 @@
 import type { VaultFs } from "./ledger";
+import { isSafeVaultRelativePath } from "./source-paths";
+
+export function assertIrInternalPath(p: string): string {
+  if (p === ".ir" || (isSafeVaultRelativePath(p) && p.startsWith(".ir/"))) {
+    return p;
+  }
+  throw new Error(`ObsidianVaultFs: path escapes .ir/ boundary: "${p}"`);
+}
 
 export interface ObsidianDataAdapter {
   exists(path: string): Promise<boolean>;
@@ -57,6 +65,7 @@ export class ObsidianVaultFs implements VaultFs {
   constructor(private adapter: ObsidianDataAdapter) {}
 
   async exists(p: string): Promise<boolean> {
+    assertIrInternalPath(p);
     try {
       return await this.adapter.exists(p);
     } catch (error) {
@@ -68,20 +77,62 @@ export class ObsidianVaultFs implements VaultFs {
   }
 
   read(p: string): Promise<string> {
+    assertIrInternalPath(p);
     return this.adapter.read(p);
   }
 
   async write(p: string, data: string): Promise<void> {
+    assertIrInternalPath(p);
     await ensureAncestors(this.adapter, p);
     await this.adapter.write(p, data);
   }
 
+  async writeBatch(
+    entries: ReadonlyArray<{ path: string; data: string }>,
+  ): Promise<Array<{ path: string; error: unknown }>> {
+    if (entries.length === 0) return [];
+    for (const entry of entries) {
+      assertIrInternalPath(entry.path);
+    }
+    if (typeof this.adapter.mkdir === "function") {
+      const uniqueAncestors = new Set<string>();
+      for (const entry of entries) {
+        for (const folder of ancestorFolders(entry.path)) {
+          uniqueAncestors.add(folder);
+        }
+      }
+      const ordered = [...uniqueAncestors].sort(
+        (a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b),
+      );
+      for (const folder of ordered) {
+        if (!(await this.exists(folder))) {
+          try {
+            await this.adapter.mkdir(folder);
+          } catch (error) {
+            if (!isAlreadyExists(error)) throw error;
+          }
+        }
+      }
+    }
+    const failures: Array<{ path: string; error: unknown }> = [];
+    for (const entry of entries) {
+      try {
+        await this.adapter.write(entry.path, entry.data);
+      } catch (error) {
+        failures.push({ path: entry.path, error });
+      }
+    }
+    return failures;
+  }
+
   async append(p: string, data: string): Promise<void> {
+    assertIrInternalPath(p);
     await ensureAncestors(this.adapter, p);
     await this.adapter.append(p, data);
   }
 
   async list(dir: string): Promise<string[]> {
+    assertIrInternalPath(dir);
     try {
       const { files } = await this.adapter.list(dir);
       return files;
@@ -92,6 +143,7 @@ export class ObsidianVaultFs implements VaultFs {
   }
 
   async remove(p: string): Promise<void> {
+    assertIrInternalPath(p);
     if (typeof this.adapter.remove !== "function") return;
     try {
       await this.adapter.remove(p);

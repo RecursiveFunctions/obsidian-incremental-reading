@@ -30,6 +30,7 @@ import {
   type IrEvent,
   type ReadSchedule,
 } from "./model";
+import { assertVaultRelativePath } from "./source-paths";
 
 export interface PlanEpubImportInput {
   zipEntries: Map<string, Uint8Array>;
@@ -91,24 +92,32 @@ export interface HtmlImportPlan {
 
 function sanitizeStem(raw: string, fallback: string): string {
   const cleaned = decodeHtmlEntities(raw)
-    .replace(/[\\/:*?"<>|#^[\]]/g, " ")
+    .replace(/[\\/:*?"<>|#^[\]\0]/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 72);
-  if (/^\.+$/.test(cleaned)) return fallback;
+    .replace(/^(?:\.|\s)+|(?:\.|\s)+$/g, "")
+    .slice(0, 72)
+    .replace(/^(?:\.|\s)+|(?:\.|\s)+$/g, "");
   return cleaned || fallback;
 }
 
-function uniqueVaultPath(desiredPath: string, used: Set<string>): string {
+function uniqueVaultPath(
+  desiredPath: string,
+  used: Set<string>,
+  nextSuffixByBase?: Map<string, number>,
+): string {
   if (!used.has(desiredPath)) {
     used.add(desiredPath);
     return desiredPath;
   }
   const dot = desiredPath.lastIndexOf(".");
-  const stem = dot >= 0 ? desiredPath.slice(0, dot) : desiredPath;
-  const ext = dot >= 0 ? desiredPath.slice(dot) : "";
-  let n = 2;
+  const slash = desiredPath.lastIndexOf("/");
+  const hasExt = dot > slash;
+  const stem = hasExt ? desiredPath.slice(0, dot) : desiredPath;
+  const ext = hasExt ? desiredPath.slice(dot) : "";
+  const key = `${stem}\0${ext}`;
+  let n = nextSuffixByBase?.get(key) ?? 2;
   while (used.has(`${stem} ${n}${ext}`)) n += 1;
+  nextSuffixByBase?.set(key, n + 1);
   const unique = `${stem} ${n}${ext}`;
   used.add(unique);
   return unique;
@@ -133,8 +142,9 @@ export function planEpubImport(input: PlanEpubImportInput): EpubImportPlan {
   if (!opfEntry) throw new Error(`Invalid EPUB archive: package file "${opfPath}" not found.`);
 
   const opf = parseOpf(decodeUtf8(opfEntry.bytes), opfEntry.path);
-  const baseHint = input.fileNameHint ? input.fileNameHint.replace(/\.epub$/i, "") : "Untitled EPUB";
-  const bookTitle = sanitizeStem(opf.title || baseHint, "Untitled EPUB");
+  const baseHint = input.fileNameHint ? input.fileNameHint.replace(/\.epub$/i, "") : "";
+  const fallbackBookTitle = sanitizeStem(baseHint, "Untitled EPUB");
+  const bookTitle = sanitizeStem(opf.title || baseHint, fallbackBookTitle);
 
   const tocTitles = new Map<string, string>();
   for (const item of opf.manifestById.values()) {
@@ -165,12 +175,15 @@ export function planEpubImport(input: PlanEpubImportInput): EpubImportPlan {
   }
 
   const usedPaths = new Set<string>(input.existingPaths ?? []);
+  const nextSuffixByBase = new Map<string, number>();
   const cleanExtractDir = input.extractFolder.trim().replace(/^\/+|\/+$/g, "");
   const cleanAttachDir = (input.attachmentFolder ?? `${cleanExtractDir || "IR"}/attachments`)
     .trim()
     .replace(/^\/+|\/+$/g, "");
   const bookFolder = cleanExtractDir ? `${cleanExtractDir}/${bookTitle}` : bookTitle;
-  const bookPath = uniqueVaultPath(`${bookFolder}/${bookTitle}.md`, usedPaths);
+  const bookPath = assertVaultRelativePath(
+    uniqueVaultPath(`${bookFolder}/${bookTitle}.md`, usedPaths, nextSuffixByBase),
+  );
   const bookElementId = elementIdForPath(bookPath);
   const bookPriority = clampPriority(input.defaultPriority);
 
@@ -201,7 +214,9 @@ export function planEpubImport(input: PlanEpubImportInput): EpubImportPlan {
       `Chapter ${i + 1}`;
     const fileStem = sanitizeStem(rawTitle || `Chapter ${i + 1}`, `Chapter ${i + 1}`);
     const prefix = String(chapterMeta.length + 1).padStart(padWidth, "0");
-    const vaultPath = uniqueVaultPath(`${bookFolder}/${prefix} - ${fileStem}.md`, usedPaths);
+    const vaultPath = assertVaultRelativePath(
+      uniqueVaultPath(`${bookFolder}/${prefix} - ${fileStem}.md`, usedPaths, nextSuffixByBase),
+    );
     chapterMeta.push({ item, html, title: displayTitle, vaultPath });
     chapterPathByZipPath.set(item.fullPath, vaultPath);
   }
@@ -216,14 +231,19 @@ export function planEpubImport(input: PlanEpubImportInput): EpubImportPlan {
       resolveAssetPath: (rawSrc) => {
         if (/^data:/i.test(rawSrc) || /^[a-z][a-z0-9+.-]*:/i.test(rawSrc)) return null;
         const zipAssetPath = resolveArchiveRelative(chapterDir, rawSrc);
-        if (!zipAssetPath) return null;
+        if (!zipAssetPath || /\.svgz?$/i.test(zipAssetPath)) return null;
         const existing = plannedAttachmentByZipPath.get(zipAssetPath);
         if (existing) return existing;
         const assetEntry = lookupZipEntry(input.zipEntries, zipAssetPath);
         if (!assetEntry) return null;
         const baseName = zipAssetPath.split("/").pop() || "image.bin";
-        const safeName = baseName.replace(/[\\/:*?"<>|#^[\]]/g, "_");
-        const vaultPath = uniqueVaultPath(`${cleanAttachDir}/${bookTitle}/${safeName}`, usedPaths);
+        const safeName =
+          baseName
+            .replace(/[\\/:*?"<>|#^[\]\0]/g, "_")
+            .replace(/^(?:\.|\s)+|(?:\.|\s)+$/g, "") || "image.bin";
+        const vaultPath = assertVaultRelativePath(
+          uniqueVaultPath(`${cleanAttachDir}/${bookTitle}/${safeName}`, usedPaths, nextSuffixByBase),
+        );
         plannedAttachmentByZipPath.set(zipAssetPath, vaultPath);
         attachments.push({ vaultPath, bytes: assetEntry.bytes });
         return vaultPath;
@@ -339,7 +359,9 @@ export function planHtmlImport(input: PlanHtmlImportInput): HtmlImportPlan {
   const markdown = htmlToMarkdown(input.html).trim();
   const cleanDir = input.extractFolder.trim().replace(/^\/+|\/+$/g, "");
   const used = new Set<string>(input.existingPaths ?? []);
-  const path = uniqueVaultPath(cleanDir ? `${cleanDir}/${title}.md` : `${title}.md`, used);
+  const path = assertVaultRelativePath(
+    uniqueVaultPath(cleanDir ? `${cleanDir}/${title}.md` : `${title}.md`, used),
+  );
   const elementId = elementIdForPath(path);
   const priority = clampPriority(input.defaultPriority);
   const af = computeTopicAFactorFromTextLength(markdown.length);

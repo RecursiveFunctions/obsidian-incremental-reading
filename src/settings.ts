@@ -17,6 +17,8 @@ import {
   isSpaceAfterReveal,
   SPACE_AFTER_REVEAL_OPTIONS,
 } from "./ir/review-keys";
+import { formatReviewsPerReadingSummary } from "./ir/stats-presenter";
+import { resolveUnifiedMobileHubEnabled } from "./ir/viewport-tiers";
 
 export type { IrSettings } from "./ir/settings-data";
 export { cloneDefaultSettings, DEFAULT_SETTINGS } from "./ir/settings-data";
@@ -51,7 +53,14 @@ export class IrSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Primary item scheduler")
       .setDesc(
-        "SM-20 uses SuperMemo 20's analytical SInc surface. FSRS-6 uses ts-fsrs (with optional personalized weight fitting in IR stats). Switching requires no card migration.",
+        "SM-20 uses SuperMemo 20's analytical SInc surface. FSRS-6 uses ts-fsrs. Calibrate FSRS weights and inspect forgetting index curves in IR stats.",
+      )
+      .addButton((btn) =>
+        btn
+          .setButtonText("Models & FI in IR stats")
+          .onClick(() => {
+            void this.plugin.openStatsView("models");
+          }),
       )
       .addDropdown((dropdown) =>
         dropdown
@@ -66,22 +75,29 @@ export class IrSettingTab extends PluginSettingTab {
           }),
       );
 
-    const matrix = this.plugin.getSm20Matrix();
-    const matrixStats = matrix ? getSm20MatrixStats(matrix) : null;
-    const obsSummary = matrixStats
-      ? `Learned observations: ${matrixStats.totalSincCases} SInc, ${matrixStats.totalRecallCases} Recall`
-      : "Learned observations: not yet loaded";
-    new Setting(containerEl)
-      .setName("SM-20 optimization matrix")
-      .setDesc(obsSummary)
-      .addButton((btn) =>
-        btn
-          .setButtonText("Rebuild SM-20 matrix from history")
-          .onClick(async () => {
-            await this.plugin.rebuildSm20MatrixFromHistory(true);
-            this.display();
-          }),
-      );
+    const mixSummary = formatReviewsPerReadingSummary(
+      this.plugin.settings.reviewsPerReading,
+      this.plugin.settings.sortingPolicy,
+    );
+    const mixSetting = new Setting(containerEl)
+      .setName("Reviews per reading")
+      .setDesc(mixSummary.description);
+    mixSetting.addSlider((slider) =>
+      slider
+        .setLimits(0, 10, 1)
+        .setValue(this.plugin.settings.reviewsPerReading)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.reviewsPerReading = value;
+          this.plugin.settings.sortingPolicy.readingProportion =
+            value <= 0 ? 0 : 1 / (value + 1);
+          mixSetting.setDesc(
+            formatReviewsPerReadingSummary(value, this.plugin.settings.sortingPolicy)
+              .description,
+          );
+          await this.plugin.saveSettings();
+        }),
+    );
 
     new Setting(containerEl)
       .setName("Final Drill")
@@ -97,136 +113,6 @@ export class IrSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.finalDrillMode =
               value === "again" || value === "off" ? value : "again-and-hard";
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Randomize Final Drill")
-      .setDesc("Shuffle items when entering Final Drill instead of keeping first-seen order.")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.randomizeDrill)
-          .onChange(async (value) => {
-            this.plugin.settings.randomizeDrill = value;
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Reviews per reading")
-      .setDesc(
-        "How many review items to show between each reading element in a " +
-          "session. Set to 0 to review items only.",
-      )
-      .addSlider((slider) =>
-        slider
-          .setLimits(0, 10, 1)
-          .setValue(this.plugin.settings.reviewsPerReading)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.reviewsPerReading = value;
-            this.plugin.settings.sortingPolicy.readingProportion =
-              value <= 0 ? 0 : 1 / (value + 1);
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Interleave items of similar priority")
-      .setDesc(
-        "For imported or malformed tied priorities, shuffle the tied order " +
-          "so positional memory doesn't help you recall. Seeded by the " +
-          "calendar day, so a paused session keeps its order when you " +
-          "resume the same day. Off restores priority + due-time order.",
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.interleaveSimilarPriority)
-          .onChange(async (value) => {
-            this.plugin.settings.interleaveSimilarPriority = value;
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Priority queue preset")
-      .setDesc("Strict follows global priority. Balanced and Discovery add deterministic, day-seeded variety without changing stored priorities.")
-      .addDropdown((dropdown) => dropdown
-        .addOption("strict", "Strict priority")
-        .addOption("balanced", "Balanced")
-        .addOption("discovery", "Discovery")
-        .addOption("custom", "Custom")
-        .setValue(this.plugin.settings.sortingPolicy.preset)
-        .onChange(async (value) => {
-          const policy = this.plugin.settings.sortingPolicy;
-          policy.preset = value === "strict" || value === "discovery" || value === "custom"
-            ? value : "balanced";
-          if (policy.preset === "strict") {
-            policy.traversal = "priority";
-            policy.itemJitter = 0;
-            policy.readingJitter = 0;
-          } else if (policy.preset === "balanced") {
-            policy.traversal = "mixed";
-            policy.readingProportion = 0.25;
-            this.plugin.settings.reviewsPerReading = 3;
-            policy.itemJitter = 0.2;
-            policy.readingJitter = 0.3;
-          } else if (policy.preset === "discovery") {
-            policy.traversal = "mixed";
-            policy.readingProportion = 0.4;
-            this.plugin.settings.reviewsPerReading = Math.round((1 - 0.4) / 0.4);
-            policy.itemJitter = 0.75;
-            policy.readingJitter = 1;
-          }
-          await this.plugin.saveSettings();
-          this.display();
-        }));
-
-    if (this.plugin.settings.sortingPolicy.preset === "custom") {
-      for (const [key, name, description] of [
-        ["readingProportion", "Reading proportion", "Share of mixed sessions reserved for topics and extracts."],
-        ["itemJitter", "Item randomization", "Bounded deterministic SM-20 rank dispersion for recall items."],
-        ["readingJitter", "Reading randomization", "Bounded deterministic SM-20 rank dispersion for topics and extracts."],
-      ] as const) {
-        let previewHost: HTMLElement | null = null;
-        const setting = new Setting(containerEl).setName(name).setDesc(description);
-        if (key === "itemJitter" || key === "readingJitter") {
-          previewHost = setting.controlEl.createDiv({ cls: "ir-repsort-preview" });
-          this.renderRepSortCurvePreview(previewHost, this.plugin.settings.sortingPolicy[key]);
-        }
-        setting.addSlider((slider) => slider
-          .setLimits(0, 1, 0.05)
-          .setValue(this.plugin.settings.sortingPolicy[key])
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.sortingPolicy[key] = value;
-            if (key === "readingProportion") {
-              this.plugin.settings.reviewsPerReading =
-                value <= 0 ? 0 : Math.min(10, Math.max(0, Math.round((1 - value) / value)));
-            }
-            if (previewHost) {
-              this.renderRepSortCurvePreview(previewHost, value);
-            }
-            this.plugin.settings.sortingPolicy.preset = "custom";
-            await this.plugin.saveSettings();
-          }));
-      }
-    }
-
-    new Setting(containerEl)
-      .setName("Show scheduler divergence picker")
-      .setDesc(
-        "Off (default for new vaults): grades follow your primary scheduler with no extra " +
-          "prompt. On: when SM-20, FSRS-6, DSR, and SM-2 disagree enough on the next " +
-          "interval, an inline picker lets you choose. Existing installs " +
-          "keep this on until you turn it off.",
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showDivergencePicker)
-          .onChange(async (value) => {
-            this.plugin.settings.showDivergencePicker = value;
             await this.plugin.saveSettings();
           }),
       );
@@ -252,6 +138,159 @@ export class IrSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName("Priority queue preset")
+      .setDesc(
+        "Strict follows global priority. Balanced and Discovery add deterministic, day-seeded variety without changing stored priorities.",
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("strict", "Strict priority")
+          .addOption("balanced", "Balanced")
+          .addOption("discovery", "Discovery")
+          .addOption("custom", "Custom")
+          .setValue(this.plugin.settings.sortingPolicy.preset)
+          .onChange(async (value) => {
+            const policy = this.plugin.settings.sortingPolicy;
+            policy.preset =
+              value === "strict" || value === "discovery" || value === "custom"
+                ? value
+                : "balanced";
+            if (policy.preset === "strict") {
+              policy.traversal = "priority";
+              policy.itemJitter = 0;
+              policy.readingJitter = 0;
+            } else if (policy.preset === "balanced") {
+              policy.traversal = "mixed";
+              policy.readingProportion = 0.25;
+              this.plugin.settings.reviewsPerReading = 3;
+              policy.itemJitter = 0.2;
+              policy.readingJitter = 0.3;
+            } else if (policy.preset === "discovery") {
+              policy.traversal = "mixed";
+              policy.readingProportion = 0.4;
+              this.plugin.settings.reviewsPerReading = Math.round((1 - 0.4) / 0.4);
+              policy.itemJitter = 0.75;
+              policy.readingJitter = 1;
+            }
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+
+    const advReview = containerEl.createEl("details", {
+      cls: "ir-settings-advanced",
+    });
+    if (this.plugin.settings.sortingPolicy.preset === "custom") {
+      advReview.open = true;
+    }
+    advReview.createEl("summary", {
+      cls: "ir-settings-advanced-summary",
+      text: "Advanced scheduling & SM-20",
+    });
+    const advBody = advReview.createDiv({ cls: "ir-settings-advanced-body" });
+
+    const matrix = this.plugin.getSm20Matrix();
+    const matrixStats = matrix ? getSm20MatrixStats(matrix) : null;
+    const obsSummary = matrixStats
+      ? `Learned observations: ${matrixStats.totalSincCases} SInc, ${matrixStats.totalRecallCases} Recall`
+      : "Learned observations: not yet loaded";
+    new Setting(advBody)
+      .setName("SM-20 optimization matrix")
+      .setDesc(obsSummary)
+      .addButton((btn) =>
+        btn
+          .setButtonText("Rebuild SM-20 matrix from history")
+          .onClick(async () => {
+            await this.plugin.rebuildSm20MatrixFromHistory(true);
+            this.display();
+          }),
+      );
+
+    new Setting(advBody)
+      .setName("Randomize Final Drill")
+      .setDesc("Shuffle items when entering Final Drill instead of keeping first-seen order.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.randomizeDrill)
+          .onChange(async (value) => {
+            this.plugin.settings.randomizeDrill = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(advBody)
+      .setName("Interleave items of similar priority")
+      .setDesc(
+        "For imported or malformed tied priorities, shuffle the tied order " +
+          "so positional memory doesn't help you recall. Seeded by the " +
+          "calendar day, so a paused session keeps its order when you " +
+          "resume the same day. Off restores priority + due-time order.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.interleaveSimilarPriority)
+          .onChange(async (value) => {
+            this.plugin.settings.interleaveSimilarPriority = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    if (this.plugin.settings.sortingPolicy.preset === "custom") {
+      for (const [key, name, description] of [
+        ["readingProportion", "Custom reading proportion", "Fine-grained share of mixed sessions reserved for topics and extracts."],
+        ["itemJitter", "Item randomization", "Bounded deterministic SM-20 rank dispersion for recall items."],
+        ["readingJitter", "Reading randomization", "Bounded deterministic SM-20 rank dispersion for topics and extracts."],
+      ] as const) {
+        let previewHost: HTMLElement | null = null;
+        const setting = new Setting(advBody).setName(name).setDesc(description);
+        if (key === "itemJitter" || key === "readingJitter") {
+          previewHost = setting.controlEl.createDiv({ cls: "ir-repsort-preview" });
+          this.renderRepSortCurvePreview(previewHost, this.plugin.settings.sortingPolicy[key]);
+        }
+        setting.addSlider((slider) =>
+          slider
+            .setLimits(0, 1, 0.05)
+            .setValue(this.plugin.settings.sortingPolicy[key])
+            .setDynamicTooltip()
+            .onChange(async (value) => {
+              this.plugin.settings.sortingPolicy[key] = value;
+              if (key === "readingProportion") {
+                this.plugin.settings.reviewsPerReading =
+                  value <= 0 ? 0 : Math.min(10, Math.max(0, Math.round((1 - value) / value)));
+                mixSetting.setDesc(
+                  formatReviewsPerReadingSummary(
+                    this.plugin.settings.reviewsPerReading,
+                    this.plugin.settings.sortingPolicy,
+                  ).description,
+                );
+              }
+              if (previewHost) {
+                this.renderRepSortCurvePreview(previewHost, value);
+              }
+              this.plugin.settings.sortingPolicy.preset = "custom";
+              await this.plugin.saveSettings();
+            }),
+        );
+      }
+    }
+
+    new Setting(advBody)
+      .setName("Show scheduler divergence picker")
+      .setDesc(
+        "Off (default for new vaults): grades follow your primary scheduler with no extra " +
+          "prompt. On: when SM-20, FSRS-6, DSR, and SM-2 disagree enough on the next " +
+          "interval, an inline picker lets you choose.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showDivergencePicker)
+          .onChange(async (value) => {
+            this.plugin.settings.showDivergencePicker = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(advBody)
       .setName("Neural Queue: lexical & title-mention links")
       .setDesc(
         "Connect unlinked note-title/alias mentions and shared rare terms during Neural Queue spreading activation.",
@@ -562,41 +601,20 @@ export class IrSettingTab extends PluginSettingTab {
       }
     }
 
-    containerEl.createEl("h3", { text: "Mobile" });
+    containerEl.createEl("h3", { text: "Mobile & touch" });
 
     new Setting(containerEl)
-      .setName("Capture FAB")
-      .setDesc("Show the mobile capture button on the workspace.")
+      .setName("Floating IR button & hub")
+      .setDesc(
+        "Show the due-badged workspace button outside review. Tap to open the Incremental Reading hub; long-press for Quick Capture.",
+      )
       .addToggle((toggle) =>
         toggle
-          .setValue(this.plugin.settings.mobileCaptureFab)
+          .setValue(resolveUnifiedMobileHubEnabled(this.plugin.settings))
           .onChange(async (value) => {
+            this.plugin.settings.mobileWorkspaceFab = value;
             this.plugin.settings.mobileCaptureFab = value;
-            await this.plugin.saveSettings();
-            this.plugin.refreshMobileVisibility();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Review FAB")
-      .setDesc("Show the mobile review button on the workspace.")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.mobileReviewFab)
-          .onChange(async (value) => {
             this.plugin.settings.mobileReviewFab = value;
-            await this.plugin.saveSettings();
-            this.plugin.refreshMobileVisibility();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Mobile shell")
-      .setDesc("Show the persistent bottom bar with Review, Capture, and Collection.")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.mobileShell)
-          .onChange(async (value) => {
             this.plugin.settings.mobileShell = value;
             await this.plugin.saveSettings();
             this.plugin.refreshMobileVisibility();

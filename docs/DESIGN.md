@@ -6,12 +6,13 @@ These are locked for v1 unless a decision explicitly says otherwise.
 ## Current v1 invariants
 
 - Topics, cloze items, and image-occlusion items are Markdown notes; PDF topics and anchored extracts may be ledger-only.
-- The ledger under `.ir/` is authoritative for scheduling, review history, bookmarks, tombstones, and anchor state. `ir-` frontmatter remains a migration fallback and compatibility copy, not the queue's source of truth.
+- The ledger under `.ir/` is authoritative for scheduling, review history, bookmarks, tombstones, anchor state, generation-scoped sidecars (`drill.json`, `neural.json`, `sm20-matrix.json`), and root-level runtime state (`session.json`, `auto-postpone.json`, `analytics/`). `ir-` frontmatter remains a migration fallback and compatibility copy, not the queue's source of truth.
+- New vaults default to **SM-20** (`primaryScheduler: "sm20"`) for items, while existing vaults grandfather to **FSRS-6** (`"fsrs"`) with a one-time upgrade offer modal (`Sm20SchedulerOfferModal`). Both schedulers share `StoredCard` state and can be switched losslessly in Settings. Topics and extracts use SM-20's decompiled reading and priority algorithms.
 - Each completed migration, reset, and nuke uses generation metadata to isolate its live logs from stale root or prior-generation data.
-- The live plugin folds concurrent event streams in clock order; there is no user-facing setting that switches it to conservative scheduling.
+- The live plugin folds concurrent event streams in clock order (using per-device fold checkpoints when the stream exceeds 250 events); there is no user-facing setting that switches it to conservative scheduling.
 - Compaction writes and verifies a complete transaction archive before rewriting its live shard. A matching archive can recover only the validated prefix before an interrupted final JSONL event.
 - Source notes are never rewritten to paint extract or cloze highlights.
-- Anchored extracts become files only when explicitly promoted. Image-region extracts and image occlusion are shipped workflows.
+- Anchored extracts become files only when explicitly promoted. Image-region extracts (`Alt+Shift+I` on PDFs, right-click crop on embedded images) and image occlusion (`Alt+Shift+O` / `Alt+O`) are shipped workflows.
 - Anki export is one-way and omits image-occlusion items it cannot import, reporting the skipped count.
 - Reading-view highlights use a formatting-tolerant fallback that crosses inline formatting boundaries.
 - Historical notes below explain how these decisions evolved; when they conflict, this section is current.
@@ -26,11 +27,15 @@ while the code is unshipped. Two sub-questions it raises are still open, see
 and sync shape) are both resolved. The storage substrate (feature branch #1)
 is now unblocked.
 
+*(Superseded in part: the storage substrate, Q1, and Q2 are all shipped, and per the vault-reality note in Section 1, IR items remain Markdown notes while `.ir/` holds authoritative scheduling and review state.)*
+
 **Decision 2026-08-14:** Obsidian's Graph view is not a product goal and not
 a storage constraint. Incremental reading does not run on that picture.
 See section 3.
 
 ## 1. Storage model
+
+*(Historical 2026-05-18 rationale — superseded for item files by the vault-reality note below; `.ir/` is authoritative for scheduling, anchors, and runtime sidecars.)*
 
 Items and cloze state live as **structured plugin data**, never as markdown
 files, and never as inline HTML comments.
@@ -48,11 +53,13 @@ A third reason in the original write-up — Graph hygiene: markdown file ⇒
 graph node, so items and raw extracts must not be files — is **withdrawn**
 (2026-08-14). See section 3.
 
-**Note (vault reality, 0.0.10):** IR *items* are still stored as normal
-Markdown notes so they remain portable (plain files, Anki-style cloze markup,
-other plugins can see them); FSRS state lives in frontmatter / the structured
-ledger. Cloze *markup* in the note body uses Anki-style `{{cN::answer}}` with
-optional `{{cN::answer::hint}}` for SuperMemo-style hints during review.
+**Note (vault reality, 0.0.10+):** IR *items* (clozes and image occlusions)
+are stored as normal Markdown notes so they remain portable (plain files,
+Anki-style cloze markup, other plugins can see them); scheduling state lives
+in the structured `.ir/` ledger (with `ir-` frontmatter dual-written as a
+compatibility copy). Cloze *markup* in the note body uses Anki-style
+`{{cN::answer}}` with optional `{{cN::answer::hint}}` for SuperMemo-style
+hints during review.
 
 ## 2. Extracts
 
@@ -95,10 +102,12 @@ mutated (same §Q3 contract as markdown). Highlights are painted onto the
 built-in pdf.js text layer from the ledger.
 
 Cloze stays markdown-only: extract first, then cloze the extract. Scanned
-PDFs with no text layer cannot be extracted. Cross-page selection, OCR,
-area snapshots, and embedding a second pdf.js in the review leaf are out
-of v1. PDF++ is not required; a promoted extract's note body includes the
-wikilink fragment so PDF++ can see it if installed.
+PDFs with no text layer cannot be extracted. *(Historical note: cross-page
+selection and area snapshots were originally deferred from v1, but both
+subsequently shipped under Decision 2026-08-26 below via `pdf.segments`
+and `pdf-rect-select.ts`; OCR and embedding a second pdf.js in the review
+leaf remain out of v1.)* PDF++ is not required; a promoted extract's note
+body includes the wikilink fragment so PDF++ can see it if installed.
 
 Private viewer APIs (`view.viewer.child.getTextSelectionRangeStr`) are
 fenced in `src/ir/pdf-view.ts`. Obsidian updates can break that path; a
@@ -170,16 +179,27 @@ What we still keep separate:
 
 ## 4. Scheduler
 
-SM-20 is the primary **item** scheduler for new vaults; FSRS-6 remains available and is grandfathered for existing vaults. **SuperMemo 20's
-decompiled reading and priority algorithms** (`src/sm18-ir-mechanics.ts` &
-`src/topic.ts`) govern topics, extracts, and priority drift. The plugin **owns
-the IR queue** (priority, topics, items, postpone, interleaving), because
-nothing in the Obsidian ecosystem provides an IR queue and the queue is the
-core of the product.
+Item scheduling runs through a unified dispatcher (`src/ir/item-scheduler.ts`)
+supporting **SM-20** (`src/ir/sm20-scheduler.ts`, `src/ir/sm20-matrix.ts`) and
+**FSRS-6** via `ts-fsrs` (`src/fsrs.ts`). New vaults default to **SM-20**, while
+existing vaults grandfather to **FSRS-6** with a one-time upgrade offer modal
+(`src/sm20-offer-modal.ts`); both operate on the same `StoredCard` state so
+users can switch losslessly in Settings at any time. **SuperMemo 20's decompiled
+reading and priority algorithms** (`src/sm18-ir-mechanics.ts` & `src/topic.ts`)
+govern topics, extracts, and priority drift. The plugin **owns the IR queue**
+(priority, topics, items, postpone, interleaving, and `sliderToRepSortFactor`
+dispersion), because nothing in the Obsidian ecosystem provides an IR queue and
+the queue is the core of the product.
 
-Rationale: FSRS descends from SuperMemo's own DSR model (SM-17 lineage). For
-ungraded reading elements (topics and extracts) and priority dynamics, we use
-the exact formulas recovered from SuperMemo 20 (`sm20.exe`):
+Rationale: SM-20 and FSRS-6 share the DSR lineage (SM-17 -> FSRS-6 / SM-20).
+For items under SM-20, stability updates use the 21x21x21 `SInc` and recall
+matrices (`sm20-matrix.json`, schema v2) with analytical priors, bankers-rounded
+1..20 difficulty/stability/repetition axis transforms, early-review R damping
+(bypassing the `1.1x` minimum interval growth floor when `elapsedDays < prevS`
+and `retrievability > desiredRetention`), and `round(cases) + 1e-5` weighted
+retrievability calibration. For ungraded reading elements (topics and extracts)
+and priority dynamics, we use the exact formulas recovered from SuperMemo 20
+(`sm20.exe`):
 
 - **Length-based Topic A-Factor (`0x00cfee40`):** `1.25 + 150 / (L + 200)` from
   character length `L` (`1.3` for image/crop extracts at `0x00bcb0a0`).
@@ -195,80 +215,112 @@ the exact formulas recovered from SuperMemo 20 (`sm20.exe`):
   New extracts spread around parent priority `P` within `[0.7*P, exp(1.7*P^0.2)]`
   weighted by `L / (L + 100)`, and passing item grades (`Hard/Good/Easy`) nudge
   item priority by `+0.05 / +0.15 / +0.30`.
-- Review log persisted **from day one**. Required for personal optimization and
-  for the ensemble in section 5 to be meaningful.
-- Interop: **Anki export** for the item layer as an optional, one-directional
-  escape hatch. No runtime coupling to the obsidian-spaced-repetition plugin
-  (it still runs SM-2, not FSRS, and has no IR queue).
+- **Review log & local FSRS optimizer (`src/ir/optimizer/`):** Review grades
+  and ratings (`1..4`, plus `overridden` flags) are persisted from day one.
+  `fit.ts` runs seeded, deterministic Adam optimization over binary
+  cross-entropy on the 21 FSRS-6 weights with a 20% held-out split; a
+  candidate that fails to beat defaults on held-out log-loss cannot be applied,
+  and `card-reset` events exclude pre-reset reviews from optimizer fitting and
+  post-reset fail-rate calculations.
+- **Interop:** **Anki export** for the item layer as an optional,
+  one-directional escape hatch (omitting image-occlusion items). No runtime
+  coupling to the `obsidian-spaced-repetition` plugin.
 
 ## 5. Multi-scheduler picker
 
-Replicates SuperMemo's divergence-triggered algorithm chooser as an ensemble
-plus manual override.
+Replicates SuperMemo's divergence-triggered algorithm chooser as a 4-model
+parallel ensemble (`src/ir/grade-divergence.ts`) plus manual override.
 
-- Ensemble members: SM-20, FSRS (default or user-optimized), DSR, classic SM-2. The
-  informative pair is default-FSRS vs user-optimized-FSRS: large divergence
-  signals model uncertainty or thin review history, and FSRS can expose the
-  confidence behind it. SM showed two numbers; we can show why they differ.
-- Architecture: a `Scheduler` interface
-  (`predict(cardState, grade) -> {interval, due, nextState, confidence?}`).
-  One **primary** scheduler is authoritative and owns card state. Others run as
-  **shadows**: computed in parallel, never mutate state unless chosen.
-- Divergence metric: interval **ratio**, not day count.
-  `max(intervals) / min(intervals) > k`, k configurable, ~1.5 to start.
-  Optionally gated by an absolute interval floor so short intervals never nag.
-- UX: the picker is **opt-in expert mode, off by default**. Default behavior is
-  silent auto-follow of the primary scheduler (SM-20 for new vaults, FSRS-6 for
-  grandfathered vaults). Settings → **Show scheduler divergence picker** arms
-  the inline four-model chooser when intervals diverge past the threshold. A prompt in the queue every few cards
-  would destroy IR throughput, which is the entire point of IR.
+- **Ensemble members:** `SM-20` (adaptive SInc matrix), `FSRS` (FSRS-6 with
+  user-fitted or default weights), `DSR` (power-law SM-18/20 analytical
+  baseline), and `SM-2` (classic ease-factor baseline).
+- **Architecture:** One **primary** scheduler (`sm20` or `fsrs`) is
+  authoritative and owns card state. The remaining members run as **shadows**
+  in parallel and never mutate state unless chosen in the Divergence Picker.
+- **Divergence metric & display:** Interval **ratio** (`max(intervals) /
+  min(intervals) > k`, default `1.5`, gated by an absolute floor of 7 days).
+  The inline picker plots intervals on a logarithmic track
+  (`DIVERGENCE_TRACK_SCALE = "log"`) using theme CSS variables so multi-year
+  SM-20 intervals do not crush short FSRS segments.
+- **UX:** The picker is **opt-in expert mode, off by default**. Default behavior
+  silently follows the primary scheduler. Settings -> **Show scheduler
+  divergence picker** arms the inline chooser when intervals diverge past the
+  threshold; overridden choices are recorded on the `graded` event
+  (`overridden: true`) so the FSRS optimizer and SM-20 matrix updates can
+  account for them.
   **Migration (2026-08-13):** new vaults get off. Existing installs that
   already had the always-on picker are grandfathered to on so their workflow
   does not silently change; they can turn it off in Settings.
 
-## 6. Mercy / Postpone
+## 6. Mercy / Postpone, Manual Rescheduling & Leeches
 
 Overload handling via **queue redistribution only**.
 
 The critical rule: postpone moves a card's position in the queue. It never
 tells the scheduler the card was reviewed. The scheduler state stays pristine.
 
-- Trigger: outstanding load (due topics plus items) exceeds a configurable
-  daily ceiling.
-- Mechanic: push lowest-priority overflow forward, preserve relative order,
-  apply slight decay so it cannot snowball, never postpone above a priority
-  cutoff.
-- Reversible and visible (a "postponed: N" indicator). Silent queue mutation is
-  how users lose trust in a scheduler.
+- **5-dimension Mercy (`src/ir/mercy.ts`, `src/ir/mercy-modal.ts`):** When due
+  load exceeds the daily ceiling, Mercy ranks overflow across five weighted
+  dimensions (*Importance*, *Lateness*, *Easiness*, *Investment*, *Recency*)
+  paired with the 400-point `TYPICAL_INTERVAL_TABLE` growth curve, caps
+  postponement by priority (`postponeCeilingForPriority`), and previews the
+  14-day redistribution in an interactive stacked bar chart (`Alt+M`).
+- **Manual rescheduling (`src/ir/manual-schedule.ts`):** `Jump interval...`
+  reschedules by day count or `YYYY-MM-DD` date (with optional topic A-Factor
+  adjustment and dispersion), and SM-20 `Advance` spreads selected elements in
+  priority order across `[0..horizonDays]` via undoable `manual-reschedule`
+  events without touching Mercy counters or `recentPostponeCount`.
+- **Bounded leech triage (`src/ir/leech.ts`):** Multi-criteria leech
+  diagnostics flag items by lapse count (`<= maxLapseIntervalDays`),
+  high-difficulty short-interval stagnation, chronic postpones, and post-reset
+  `failRate`, with `Leeches only` Collection filtering and confirmation-guarded
+  `Forget / Reset schedule` (`card-reset`) in Stats.
+- **Reversible & visible:** Status bar (and mobile FAB badge) expose due,
+  postponed, and 7-day inflow counts. Mercy batches and manual reschedules
+  carry `batchId` / `previousDue` metadata for undo.
 
 ## Positioning
 
-Not a SuperMemo clone. The honest pitch: the SuperMemo incremental reading
-workflow, on the open descendant of SM-17's algorithm, with data in plain
-files. The element tree, postpone-that-does-not-lie, and a phone that can
-run a session are the differences. Obsidian Graph view is not.
+Not a SuperMemo clone. The honest pitch: the SuperMemo 20 incremental reading
+workflow — length-based A-Factors, priority-aware queues, SM-20 SInc / FSRS-6
+item scheduling, Mercy overload control, and spreading-activation neural
+review — vault-native in plain Markdown and `.ir/` JSON, on desktop and mobile.
+Obsidian Graph view is not.
 
-## Neural review
+## Neural review, Final Drill & Semantic Passes
 
 `Learn : Go neural` (`Alt+N`) is a **second session builder**, not a
-scheduler change. FSRS / A-factor run as in outstanding review; only the
-sequence differs.
+scheduler change. SM-20 / FSRS / A-factor run as in outstanding review; only
+the sequence differs.
 
-- Seed for `Alt+N`: current review card, else the active note if it is
-  already in the collection. Go neural does not auto-mark a plain note.
-  A tree row is a separate action (row context menu), not `Alt+N`.
-- Graph: `parentId` tree (child 0.16, sibling 0.26–0.5, root parent 0.40)
-  plus vault wikilinks/backlinks (0.05) and shared tags (0.01, skipped
-  when a tag has more than 40 IR members). Unmarked notes may relay once
-  so A → Bridge.md → B still connects. Ledger-only extracts have no note
-  path, so they enter the walk only via the tree (not as wikilink targets).
-- Walk: SuperMemo CombinePriority, a few layers, cap 200, wikilink degree
-  12 at expansion time. Per-session RNG shuffles each layer by weight
-  `(1-P)`.
-- Eligibility: not dismissed, reviewable body. **Due date is not a gate.**
-  Grading is a real repetition. No `reviewsPerReading` interleave.
-- No concept registry and no new `IrType`. Closing the review tab ends
-  neural; `Alt+R` is the outstanding queue.
+- **Seed & persistence (`src/ir/neural.ts`, `neural.json`):** Seeds from the
+  current review card, else the active IR note, or a tree row action. The
+  active neural frontier persists per-generation in `neural.json` (`Resume
+  Neural Queue`), dynamically exciting neighbors on review/extract/cloze/edit
+  actions with recency cooldown (`NEURAL_COOLDOWN_MS`), `NEURAL_EXPAND_THRESHOLD`
+  (`< 50`) incremental expansion, and capacity eviction (`NEURAL_MAX_QUEUE = 200`).
+- **Graph (`src/ir/neural-graph.ts`):** `parentId` tree (`child`/`parent`
+  0.16, `sibling` 0.26–0.5, `rootParent` 0.40), vault wikilinks/backlinks
+  (0.05, degree cap 12, single unmarked-note relay), shared tags (0.01,
+  skipped above 40 IR members), and optional `titleMention` (0.20) / `lexical`
+  (0.35) edges. Ledger-only extracts enter via the tree.
+- **Walk & `Due today` filter:** Uses SuperMemo `CombinePriority(P, GroupP)`
+  across up to 3 layers with `(1-P)` weighted shuffling. An inline `Due today`
+  toggle (`neuralDueOnly`) filters candidate/popped slots to elements due
+  today while keeping unvisited seeds and associative bridges intact.
+- **Eligibility:** Not dismissed, reviewable body. **Due date is not a gate**
+  unless `Due today` is enabled. Grading is a real repetition; no
+  `reviewsPerReading` interleave. Closing or escaping ends neural and offers
+  `Alt+R`.
+- **Persisted Final Drill (`src/ir/drill.ts`, `drill.json`):** Recall items
+  graded below Good (configurable: `again-and-hard`, `again`, or `off`)
+  automatically enter a generation-scoped daily `drill.json` queue and re-test
+  at the end of the session (or via `Start Final Drill`) until passed, without
+  mutating long-term stability or appending duplicate ledger grades.
+- **Semantic review passes:** `Review branch (due / all)`, Collection
+  multi-select / `Review filtered`, and `Review Obsidian search results (due /
+  all)` (`via branch`, `via subset`, `via search`) build scoped sessions over
+  the same single review surface.
 
 ## Open design questions (decide before implementation)
 
@@ -402,7 +454,11 @@ Sub-decisions:
    forces a rebuild from the archives, which are retained as the rebuild
    source.
 
-## Integration (storage substrate to live plugin)
+## Integration (storage substrate to live plugin — Shipped)
+
+*(Historical integration plan — shipped in v0.6.x–v0.14.x: `ObsidianVaultFs`,
+`migrateNotes`, and the guarded migration controller with `metadataCache`
+readiness checks are all live.)*
 
 The substrate (log, fold, compaction, reconcile, ledger) is complete and
 pure. Bringing it into the running plugin splits into three parts on a
@@ -522,12 +578,18 @@ Reading-view behavior and limitations:
 
 ## Open items
 
-- RESOLVED: the SuperMemo chooser is an accuracy-weighted parallel ensemble
-  (SM-17 through SM-20 lineage; SM-20's `sinc_model_v2/v4/v6`, `initial_sinc_prior`,
-  and 21-bin forgetting-curve blend `w = cases / (cases + 3.5)` are now fully
-  decompiled). Section 5 ships a 4-model divergence display (`SM-20`, `FSRS-6`,
-  `DSR`, `SM-2`) for IR throughput.
-- Image occlusion: SHIPPED (see "Multi-selection, image regions, and
-  occlusion"). Incremental video and audio: planned in Phase 3 of
-  `docs/FUTURE-PLANS.md` (`{ resume, start, stop }` timestamp model).
-- Sleep/circadian and Plan/day-structure subsystems: deliberately not pursued.
+- **SM-20 & 4-model ensemble:** SHIPPED. SM-20 (`SInc` 21x21x21 matrix,
+  early-review R damping, priority-scaled intervals) is the default item
+  scheduler for new vaults alongside FSRS-6 with the local parameter
+  optimizer (`src/ir/optimizer/`), and Section 5 ships the 4-model divergence
+  picker (`SM-20`, `FSRS`, `DSR`, `SM-2`).
+- **Phase 1 & Phase 2 (`docs/FUTURE-PLANS.md`):** SHIPPED — rich SM18/SM20
+  collection import (`src/ir/sm-collection-import.ts`), EPUB/HTML import
+  (`src/ir/epub-import.ts`), duplicate URL/content guards, persisted Final
+  Drill (`drill.json`), dynamic Neural Queue (`neural.json`), `Advance` /
+  `JumpInterval`, bounded leech triage, and 26-week/rolling retention Stats.
+- **Phase 3 (`docs/FUTURE-PLANS.md`):** Planned — timestamp-anchored
+  incremental video and audio (`{ resume, start, stop }` model), companion
+  browser capture extension, and Obsidian Community Plugins directory release.
+- **Deliberately not pursued:** Day-planner/tasklist, sleep/circadian,
+  propagating reference registry, and streak/guilt mechanics.

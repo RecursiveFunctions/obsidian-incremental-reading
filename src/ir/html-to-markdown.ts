@@ -249,7 +249,7 @@ export function htmlToMarkdown(
       }
     }
     if (!href || href.startsWith("#")) return label;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return `[${label}](${href})`;
+    if (/^(?:mailto:|https?:)/i.test(href)) return `[${label}](${href})`;
     return label;
   });
 
@@ -278,7 +278,7 @@ export function htmlToMarkdown(
     .replace(/<\/li>/gi, "\n")
     .replace(/<[^>]+>/g, "");
 
-  s = decodeHtmlEntities(s);
+  s = decodeHtmlEntities(s).replace(/</g, "&lt;");
 
   // Restore stashed code blocks / inline code
   s = s.replace(/\uE000IRCODE(\d+)\uE001/g, (_, idx: string) => codeTokens[Number(idx)] ?? "");

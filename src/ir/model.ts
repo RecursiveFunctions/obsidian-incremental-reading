@@ -239,6 +239,12 @@ function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+export const SAFE_LEDGER_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function isSafeLedgerId(value: unknown): value is string {
+  return typeof value === "string" && SAFE_LEDGER_ID_RE.test(value);
+}
+
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
@@ -317,11 +323,11 @@ function validSchedule(value: unknown): boolean {
 
 function validElement(value: unknown): value is IrElement {
   const element = record(value);
-  return !!element && nonEmptyString(element.id) &&
+  return !!element && isSafeLedgerId(element.id) &&
     (element.type === "topic" || element.type === "extract" || element.type === "item") &&
     finite(element.priority) && (element.priority as number) >= PRIORITY_MIN &&
     (element.priority as number) <= PRIORITY_MAX &&
-    (element.parentId === null || nonEmptyString(element.parentId)) &&
+    (element.parentId === null || isSafeLedgerId(element.parentId)) &&
     typeof element.dismissed === "boolean" && finite(element.created) &&
     typeof element.text === "string" &&
     (element.anchorState === "ok" || element.anchorState === "needs-reanchor" || element.anchorState === "detached") &&
@@ -344,11 +350,14 @@ export function validateIrEvent(value: unknown): string | null {
   const event = record(value);
   if (!event) return "event must be an object";
   if (typeof event.id !== "string" || !event.id) return "id must be a non-empty string";
+  if (!isSafeLedgerId(event.id)) return "id must be a safe ledger identifier";
   if (!finite(event.ts)) return "ts must be finite";
   if (!Number.isInteger(event.lamport) || (event.lamport as number) < 0) return "lamport must be a non-negative integer";
   if (typeof event.device !== "string" || !event.device) return "device must be a non-empty string";
+  if (!isSafeLedgerId(event.device)) return "device must be a safe ledger identifier";
   if (!IR_EVENT_KINDS.has(event.kind as IrEventKind)) return "kind is unsupported";
   if (typeof event.target !== "string" || !event.target) return "target must be a non-empty string";
+  if (!isSafeLedgerId(event.target)) return "target must be a safe ledger identifier";
   const payload = record(event.payload);
   if (!payload) return "payload must be an object";
 

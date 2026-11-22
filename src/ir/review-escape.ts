@@ -4,6 +4,7 @@
 
 export type EscapeReviewAction =
   | { kind: "detach" }
+  | { kind: "close-telemetry" }
   | { kind: "exit-edit" }
   | { kind: "end-neural" };
 
@@ -12,7 +13,9 @@ export function escapeReviewAction(state: {
   emptyVault: boolean;
   editing: boolean;
   isNeural: boolean;
+  telemetryOpen?: boolean;
 }): EscapeReviewAction {
+  if (state.telemetryOpen) return { kind: "close-telemetry" };
   if (state.sessionComplete || state.emptyVault) return { kind: "detach" };
   if (state.editing) return { kind: "exit-edit" };
   if (state.isNeural) return { kind: "end-neural" };

@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Menu, WorkspaceLeaf, setIcon } from "obsidian";
 
 import { promptConfirm } from "./confirm-modal";
 
@@ -31,7 +31,16 @@ import {
   startOfLocalDayMs,
   type GradeEvent,
 } from "./ir/stats";
-import { forgettingIndexByPriority, type PriorityGrade } from "./ir/priority-analytics";
+import { type PriorityGrade } from "./ir/priority-analytics";
+import { getSm20MatrixStats, type Sm20Matrix } from "./ir/sm20-matrix";
+import {
+  buildActionablePriorityFiBuckets,
+  type StatsTabId,
+} from "./ir/stats-presenter";
+import {
+  attachLeafCapabilityController,
+  type LeafCapabilityHandle,
+} from "./ui/leaf-capability";
 
 export const IR_STATS_VIEW_TYPE = "ir-stats-view";
 
@@ -53,6 +62,9 @@ export interface SchedulerHost {
   dismissElement?(elementId: ElementId, dismissed: boolean): Promise<void>;
   resetElement?(elementId: ElementId): Promise<void>;
   startSubsetReview?(ids: readonly ElementId[], includeFuture?: boolean): void | Promise<void>;
+  getSm20Matrix?(): Sm20Matrix | undefined;
+  rebuildSm20Matrix?(): Promise<void>;
+  refreshSchedulerViews?(): void;
 }
 
 /** Fixed fit seed: same log in, same parameters out, every run. */
@@ -82,15 +94,30 @@ export class IrStatsView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    this.leafCapHandle?.destroy();
+    this.leafCapHandle = attachLeafCapabilityController(this.contentEl);
     await this.render();
   }
 
   async onClose(): Promise<void> {
     this.fitCancelled = true;
+    this.leafCapHandle?.destroy();
+    this.leafCapHandle = undefined;
+    this.cachedSnapshot = null;
+  }
+
+  setTab(tab: StatsTabId): void {
+    this.activeTab = tab;
+    if (this.cachedSnapshot) {
+      this.renderFromSnapshot(this.cachedSnapshot.state, this.cachedSnapshot.events);
+    } else {
+      void this.render();
+    }
   }
 
   /** Re-render from the ledger. Safe to call from the host plugin onChange. */
   refresh(): Promise<void> {
+    this.cachedSnapshot = null;
     return this.render();
   }
 
@@ -98,28 +125,37 @@ export class IrStatsView extends ItemView {
   private leechMinLapses = DEFAULT_LEECH_CRITERIA.minLapses;
   private leechMaxInterval = DEFAULT_LEECH_CRITERIA.maxLapseIntervalDays;
   private leechMaxPostpones = DEFAULT_LEECH_CRITERIA.maxPostpones;
+  private activeTab: StatsTabId = "overview";
+  private cachedSnapshot: { state: LogState; events: IrEvent[] } | null = null;
+  private leafCapHandle?: LeafCapabilityHandle;
 
   private async render(): Promise<void> {
     const token = ++this.renderToken;
+    this.fitCancelled = true;
+    const container = this.contentEl;
+    if (!this.cachedSnapshot) {
+      container.empty();
+      container.addClass("ir-stats-view");
+      const header = container.createDiv({ cls: "ir-stats-header" });
+      header.createEl("h4", { text: "IR stats" });
+      const body = container.createDiv({ cls: "ir-stats-body" });
+      body.createEl("p", { cls: "ir-stats-empty", text: "Loading..." });
+
+      const [events, state] = await Promise.all([
+        this.ledger.loadEvents(),
+        this.ledger.load(),
+      ]);
+      if (token !== this.renderToken) return;
+      this.cachedSnapshot = { state, events };
+    }
+    this.renderFromSnapshot(this.cachedSnapshot.state, this.cachedSnapshot.events);
+  }
+
+  private renderFromSnapshot(state: LogState, events: IrEvent[]): void {
     const container = this.contentEl;
     container.empty();
     container.addClass("ir-stats-view");
 
-    const header = container.createDiv({ cls: "ir-stats-header" });
-    header.createEl("h4", { text: "IR stats" });
-    const refresh = header.createEl("button", {
-      cls: "ir-stats-refresh",
-      attr: { "aria-label": "Refresh stats", title: "Refresh stats" },
-    });
-    setIcon(refresh, "refresh-cw");
-    refresh.addEventListener("click", () => void this.render());
-
-    const body = container.createDiv({ cls: "ir-stats-body" });
-    body.createEl("p", { cls: "ir-stats-empty", text: "Loading..." });
-
-    const events = await this.ledger.loadEvents();
-    const state = await this.ledger.load();
-    if (token !== this.renderToken) return;
     const now = Date.now();
     const undoneEventIds = new Set<string>();
     for (const ev of events) {
@@ -149,8 +185,48 @@ export class IrStatsView extends ItemView {
     const elements = Array.from(state.elements.values());
     const windowStart = now - WINDOW_DAYS * DAY_MS;
     const stats = computeStats(elements, grades, now, windowStart);
+    const leeches: LeechDiagnosis[] = findLeeches(state, events, {
+      minLapses: this.leechMinLapses,
+      maxLapseIntervalDays: this.leechMaxInterval,
+      maxPostpones: this.leechMaxPostpones,
+    });
 
-    body.empty();
+    const header = container.createDiv({ cls: "ir-stats-header" });
+    header.createEl("h4", { text: "IR stats" });
+    const refresh = header.createEl("button", {
+      cls: "ir-stats-refresh",
+      type: "button",
+      attr: { "aria-label": "Refresh stats", title: "Refresh stats" },
+    });
+    setIcon(refresh, "refresh-cw");
+    refresh.addEventListener("click", () => void this.refresh());
+
+    const tabBar = container.createDiv({
+      cls: "ir-stats-tabs",
+      attr: { role: "tablist", "aria-label": "IR stats views" },
+    });
+    const tabDefs: Array<{ id: StatsTabId; label: string; badge?: number }> = [
+      { id: "overview", label: "Overview" },
+      { id: "triage", label: "Triage", badge: leeches.length > 0 ? leeches.length : undefined },
+      { id: "models", label: "Models & SM-20" },
+    ];
+    for (const def of tabDefs) {
+      const btn = tabBar.createEl("button", {
+        cls: `ir-stats-tab${this.activeTab === def.id ? " is-active" : ""}`,
+        type: "button",
+        attr: {
+          role: "tab",
+          "aria-selected": String(this.activeTab === def.id),
+        },
+      });
+      btn.createSpan({ text: def.label });
+      if (def.badge !== undefined) {
+        btn.createSpan({ cls: "ir-stats-tab-badge", text: String(def.badge) });
+      }
+      btn.addEventListener("click", () => this.setTab(def.id));
+    }
+
+    const body = container.createDiv({ cls: "ir-stats-body" });
     if (stats.total === 0) {
       body.createEl("p", {
         cls: "ir-stats-empty",
@@ -159,14 +235,18 @@ export class IrStatsView extends ItemView {
       return;
     }
 
-    this.renderCounts(body, elements, stats, now);
-    this.renderForecast(body, elements, now);
-    this.renderReviewHistory(body, grades, stats, windowStart, now);
-    this.renderActivityHeatmap(body, events, now);
-    this.renderTrueRetentionTrend(body, events, now);
-    this.renderLeechTriage(body, state, events);
-    this.renderPriorityForgettingIndex(body, priorityGrades);
-    this.renderScheduler(body, events, state);
+    if (this.activeTab === "overview") {
+      this.renderCounts(body, elements, stats, now);
+      this.renderForecast(body, elements, now);
+      this.renderActivityHeatmap(body, events, now);
+      this.renderReviewHistory(body, grades, stats, windowStart, now);
+    } else if (this.activeTab === "triage") {
+      this.renderTrueRetentionTrend(body, events, now);
+      this.renderLeechTriage(body, state, leeches);
+    } else {
+      this.renderScheduler(body, events, state);
+      this.renderPriorityForgettingIndex(body, priorityGrades, elements);
+    }
   }
 
   // --- Scheduler parameters (PLAN-OPTIMIZER.md stage 3) -------------------
@@ -178,12 +258,38 @@ export class IrStatsView extends ItemView {
   ): void {
     const s = this.host.settings;
     const section = body.createDiv({ cls: "ir-stats-section" });
-    section.createDiv({ cls: "ir-stats-section-title", text: "Scheduler" });
+    section.createDiv({ cls: "ir-stats-section-title", text: "Scheduler & calibration" });
 
-    const activeSchedulerLabel =
-      s.primaryScheduler === "fsrs" ? "FSRS-6" : "SM-20 (analytical SInc)";
+    const schedRow = section.createDiv({ cls: "ir-stats-scheduler-switch" });
+    schedRow.createSpan({ text: "Primary item scheduler" });
+    const select = schedRow.createEl("select", {
+      cls: "dropdown",
+      attr: { "aria-label": "Primary item scheduler" },
+    });
+    select.createEl("option", { value: "sm20", text: "SM-20 (analytical SInc)" });
+    select.createEl("option", { value: "fsrs", text: "FSRS-6" });
+    select.value = s.primaryScheduler === "fsrs" ? "fsrs" : "sm20";
+    select.addEventListener("change", () => {
+      s.primaryScheduler = select.value === "fsrs" ? "fsrs" : "sm20";
+      s.notices.sm20SchedulerOffer = true;
+      void this.host.saveSettings().then(() => {
+        this.host.applyEngineConfig();
+        this.host.refreshSchedulerViews?.();
+        if (this.cachedSnapshot) {
+          this.renderFromSnapshot(this.cachedSnapshot.state, this.cachedSnapshot.events);
+        }
+      });
+    });
+
+    const matrix = this.host.getSm20Matrix?.();
+    const matrixStats = matrix ? getSm20MatrixStats(matrix) : null;
     const rows: Array<[string, string]> = [
-      ["Active scheduler", activeSchedulerLabel],
+      [
+        "SM-20 matrix",
+        matrixStats
+          ? `${matrixStats.totalSincCases} SInc · ${matrixStats.totalRecallCases} Recall`
+          : "analytical priors",
+      ],
       [
         "FSRS-6 parameters",
         s.fsrsParams
@@ -202,6 +308,22 @@ export class IrStatsView extends ItemView {
       ]);
     }
     this.table(section, rows);
+    if (this.host.rebuildSm20Matrix) {
+      const smActions = section.createDiv({ cls: "ir-opt-actions" });
+      const rebuildBtn = smActions.createEl("button", {
+        type: "button",
+        text: "Rebuild SM-20 matrix",
+      });
+      rebuildBtn.addEventListener("click", () => {
+        rebuildBtn.disabled = true;
+        void this.host
+          .rebuildSm20Matrix!()
+          .then(() => this.refresh())
+          .finally(() => {
+            rebuildBtn.disabled = false;
+          });
+      });
+    }
     if (s.primaryScheduler !== "fsrs") {
       section.createEl("p", {
         cls: "setting-item-description",
@@ -436,18 +558,27 @@ export class IrStatsView extends ItemView {
     now: number,
   ): void {
     const byType = dueByType(elements, now);
-    const rows: Array<[string, string]> = [
-      ["Total elements", String(stats.total)],
-      ["Scheduled", String(stats.queueSize)],
-      ["Due now", String(stats.dueCount)],
-    ];
-    if (stats.dueCount > 0) {
-      rows.push([
-        "Due by type",
-        `${byType.topic} topic · ${byType.extract} extract · ${byType.item} item`,
-      ]);
-    }
-    this.table(body, rows);
+    const kpiGrid = body.createDiv({ cls: "ir-stats-kpi-grid" });
+    const addKpi = (label: string, value: string, sub?: string) => {
+      const card = kpiGrid.createDiv({ cls: "ir-stats-kpi-card" });
+      card.createDiv({ cls: "ir-stats-kpi-value", text: value });
+      card.createDiv({ cls: "ir-stats-kpi-label", text: label });
+      if (sub) card.createDiv({ cls: "ir-stats-kpi-sub", text: sub });
+    };
+    addKpi(
+      "Due now",
+      String(stats.dueCount),
+      stats.dueCount > 0
+        ? `${byType.topic}T · ${byType.extract}E · ${byType.item}I`
+        : "All caught up",
+    );
+    addKpi("Scheduled", String(stats.queueSize));
+    addKpi(
+      "30d Retention",
+      stats.reviewsInWindow === 0 ? "—" : `${(stats.retention * 100).toFixed(1)}%`,
+      `${stats.reviewsInWindow} reviews`,
+    );
+    addKpi("Total elements", String(stats.total));
   }
 
   /**
@@ -635,7 +766,8 @@ export class IrStatsView extends ItemView {
       cls: "ir-stats-section-title",
       text: `Activity · 26 weeks (${hm.totalCount} actions · ${hm.activeDays} active days)`,
     });
-    const grid = section.createDiv({ cls: "ir-stats-heatmap-grid" });
+    const scrollWrap = section.createDiv({ cls: "ir-stats-heatmap-scroll" });
+    const grid = scrollWrap.createDiv({ cls: "ir-stats-heatmap-grid" });
     for (let w = 0; w < 26; w += 1) {
       const weekCol = grid.createDiv({ cls: "ir-stats-heatmap-week" });
       for (let d = 0; d < 7; d += 1) {
@@ -675,6 +807,16 @@ export class IrStatsView extends ItemView {
       cls: "ir-stats-section-title",
       text: `True retention · 7d rolling (${summary})`,
     });
+    const targetPct = Math.round(this.host.settings.desiredRetention * 100);
+    const statusNote =
+      trend.overallRetention === null
+        ? ""
+        : trend.overallRetention + 0.02 >= this.host.settings.desiredRetention
+          ? `On target (goal ${targetPct}%)`
+          : `Below ${targetPct}% target — consider splitting leeches below or adjusting desired retention`;
+    if (statusNote) {
+      section.createDiv({ cls: "ir-stats-note", text: statusNote });
+    }
     const valid = trend.points
       .map((pt, idx) => ({ pt, idx }))
       .filter((x) => x.pt.retention !== null);
@@ -720,20 +862,22 @@ export class IrStatsView extends ItemView {
   private renderLeechTriage(
     body: HTMLElement,
     state: LogState,
-    events: readonly IrEvent[],
+    leeches: readonly LeechDiagnosis[],
   ): void {
-    const leeches: LeechDiagnosis[] = findLeeches(state, events, {
-      minLapses: this.leechMinLapses,
-      maxLapseIntervalDays: this.leechMaxInterval,
-      maxPostpones: this.leechMaxPostpones,
-    });
     const section = body.createDiv({ cls: "ir-stats-section ir-stats-leech-section" });
     section.createDiv({
       cls: "ir-stats-section-title",
       text: `Leech & High-Lapse (${leeches.length})`,
     });
 
-    const controls = section.createDiv({ cls: "ir-stats-leech-controls" });
+    const thresholdDetails = section.createEl("details", {
+      cls: "ir-stats-thresholds",
+    });
+    thresholdDetails.createEl("summary", {
+      cls: "ir-stats-thresholds-summary",
+      text: `Thresholds (≥${this.leechMinLapses} lapses · ≤${this.leechMaxInterval}d · ≥${this.leechMaxPostpones} postpones)`,
+    });
+    const controls = thresholdDetails.createDiv({ cls: "ir-stats-leech-controls" });
     const addThreshold = (
       label: string,
       value: number,
@@ -749,7 +893,11 @@ export class IrStatsView extends ItemView {
         const n = Number.parseInt(input.value, 10);
         if (Number.isFinite(n) && n >= min) {
           onChange(n);
-          void this.render();
+          if (this.cachedSnapshot) {
+            this.renderFromSnapshot(this.cachedSnapshot.state, this.cachedSnapshot.events);
+          } else {
+            void this.render();
+          }
         }
       });
     };
@@ -800,53 +948,68 @@ export class IrStatsView extends ItemView {
           void this.host.openElement!(el.id, path);
         });
       }
-      if (this.host.postponeElement) {
-        const postBtn = actionsTd.createEl("button", {
-          cls: "ir-stats-triage-btn",
-          type: "button",
-          text: "Postpone",
-        });
-        postBtn.addEventListener("click", () => {
-          void this.host.postponeElement!(el.id, 7).then(() => this.render());
-        });
-      }
       if (this.host.duplicateOrSplitElement && (el.type === "item" || el.type === "extract")) {
         const dupBtn = actionsTd.createEl("button", {
           cls: "ir-stats-triage-btn",
           type: "button",
-          text: "Duplicate/Split",
+          text: "Split",
         });
         dupBtn.addEventListener("click", () => {
-          void this.host.duplicateOrSplitElement!(el.id).then(() => this.render());
+          void this.host.duplicateOrSplitElement!(el.id).then(() => this.refresh());
         });
       }
-      if (this.host.resetElement) {
-        const resetBtn = actionsTd.createEl("button", {
+      if (this.host.postponeElement || this.host.resetElement || this.host.dismissElement) {
+        const triageBtn = actionsTd.createEl("button", {
           cls: "ir-stats-triage-btn",
           type: "button",
-          text: "Forget / Reset",
+          text: "Triage ▾",
+          attr: { "aria-label": `Triage actions for ${labelFor(el)}` },
         });
-        resetBtn.addEventListener("click", () => {
-          void (async () => {
-            const ok = await promptConfirm(this.app, {
-              title: "Reset card memory?",
-              body: `Clear review interval, stability, and lapses for "${labelFor(el)}" and reschedule it as new?`,
-              ctaText: "Reset",
-            });
-            if (!ok) return;
-            await this.host.resetElement!(el.id);
-            await this.render();
-          })();
-        });
-      }
-      if (this.host.dismissElement) {
-        const disBtn = actionsTd.createEl("button", {
-          cls: "ir-stats-triage-btn",
-          type: "button",
-          text: "Dismiss",
-        });
-        disBtn.addEventListener("click", () => {
-          void this.host.dismissElement!(el.id, true).then(() => this.render());
+        triageBtn.addEventListener("click", (ev) => {
+          const menu = new Menu();
+          if (this.host.postponeElement) {
+            for (const days of [3, 7, 14]) {
+              menu.addItem((item) =>
+                item
+                  .setTitle(`Postpone ${days} days`)
+                  .setIcon("clock")
+                  .onClick(() => {
+                    void this.host.postponeElement!(el.id, days).then(() => this.refresh());
+                  }),
+              );
+            }
+          }
+          if (this.host.resetElement) {
+            menu.addItem((item) =>
+              item
+                .setTitle("Forget / Reset schedule…")
+                .setIcon("rotate-ccw")
+                .onClick(() => {
+                  void (async () => {
+                    const ok = await promptConfirm(this.app, {
+                      title: "Reset card memory?",
+                      body: `Clear review interval, stability, and lapses for "${labelFor(el)}" and reschedule it as new?`,
+                      ctaText: "Reset",
+                    });
+                    if (!ok) return;
+                    await this.host.resetElement!(el.id);
+                    await this.refresh();
+                  })();
+                }),
+            );
+          }
+          if (this.host.dismissElement) {
+            menu.addSeparator();
+            menu.addItem((item) =>
+              item
+                .setTitle("Dismiss")
+                .setIcon("eye-off")
+                .onClick(() => {
+                  void this.host.dismissElement!(el.id, true).then(() => this.refresh());
+                }),
+            );
+          }
+          menu.showAtMouseEvent(ev);
         });
       }
     }
@@ -855,31 +1018,70 @@ export class IrStatsView extends ItemView {
   private renderPriorityForgettingIndex(
     body: HTMLElement,
     priorityGrades: readonly PriorityGrade[],
+    elements: readonly IrElement[],
   ): void {
-    const buckets = forgettingIndexByPriority(priorityGrades, 5);
+    const buckets = buildActionablePriorityFiBuckets(
+      priorityGrades,
+      elements,
+      this.host.settings.desiredRetention,
+      5,
+    );
     if (buckets.length === 0) return;
 
+    const targetFiPct = Math.round((1 - this.host.settings.desiredRetention) * 100);
     const section = body.createDiv({ cls: "ir-stats-section" });
     section.createDiv({
       cls: "ir-stats-section-title",
       text: "Forgetting index by priority · 20 categories",
     });
+    section.createDiv({
+      cls: "ir-stats-note",
+      text: `Target FI: ${targetFiPct}% (from ${(this.host.settings.desiredRetention * 100).toFixed(0)}% desired retention). Click any active priority band to review its items.`,
+    });
 
     const list = section.createDiv({ cls: "ir-stats-priority-fi" });
     for (const bucket of buckets) {
       const pct = bucket.rate * 100;
-      const row = list.createDiv({ cls: "ir-stats-priority-fi-row" });
+      const actionable = Boolean(this.host.startSubsetReview && bucket.activeItemIds.length > 0);
+      const row = list.createDiv({
+        cls:
+          `ir-stats-priority-fi-row ir-stats-priority-fi-row--${bucket.status}` +
+          (actionable ? " is-actionable" : ""),
+      });
       row.createSpan({
         cls: "ir-stats-priority-fi-label",
         text: `${bucket.start}–${bucket.end}%`,
       });
       const track = row.createDiv({ cls: "ir-stats-priority-fi-track" });
-      const fill = track.createDiv({ cls: "ir-stats-priority-fi-fill" });
+      const fill = track.createDiv({
+        cls: `ir-stats-priority-fi-fill ir-stats-priority-fi-fill--${bucket.status}`,
+      });
       fill.style.setProperty("width", `${Math.min(100, pct)}%`);
+      const targetLine = track.createDiv({ cls: "ir-stats-priority-fi-target" });
+      targetLine.style.setProperty("left", `${Math.min(100, Math.max(0, targetFiPct))}%`);
+      const statusSuffix = bucket.status === "elevated" ? " · High FI" : "";
       row.createSpan({
         cls: "ir-stats-priority-fi-value",
-        text: `${pct.toFixed(0)}% (${bucket.failures}/${bucket.samples})`,
+        text: `${pct.toFixed(0)}% (${bucket.failures}/${bucket.samples})${statusSuffix}`,
       });
+      if (actionable) {
+        row.setAttr("role", "button");
+        row.setAttr("tabindex", "0");
+        row.setAttr(
+          "title",
+          `Review ${bucket.activeItemIds.length} active item${bucket.activeItemIds.length === 1 ? "" : "s"} in priority ${bucket.start}–${bucket.end}%`,
+        );
+        const launch = () => {
+          void this.host.startSubsetReview!(bucket.activeItemIds, true);
+        };
+        row.addEventListener("click", launch);
+        row.addEventListener("keydown", (ke: KeyboardEvent) => {
+          if (ke.key === "Enter" || ke.key === " ") {
+            ke.preventDefault();
+            launch();
+          }
+        });
+      }
     }
   }
 

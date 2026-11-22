@@ -81,6 +81,169 @@ function tokenizeRareTerms(text: string): string[] {
   return out;
 }
 
+function isAsciiWordCode(code: number): boolean {
+  return (
+    (code >= 0x61 && code <= 0x7a) ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x30 && code <= 0x39) ||
+    code === 0x5f
+  );
+}
+
+/**
+ * 1-to-1 UTF-16 code-unit case folding matching ECMA-262 non-Unicode RegExp `/i`
+ * `Canonicalize`, preserving exact string length and ASCII word-character class.
+ */
+function foldCharCodeCaseInsensitive(code: number): number {
+  if (code >= 0x41 && code <= 0x5a) return code + 32;
+  if (code < 0x80) return code;
+  const ch = String.fromCharCode(code);
+  const up = ch.toUpperCase();
+  if (up.length !== 1) return code;
+  const upCode = up.charCodeAt(0);
+  return upCode < 0x80 ? code : upCode;
+}
+
+interface TitlePatternEntry {
+  label: string;
+  ownerId: string;
+}
+
+interface AcNode {
+  next: Map<number, number>;
+  fail: number;
+  dictSuffix: number;
+  len: number;
+  startIsWord: boolean;
+  endIsWord: boolean;
+  patternIds: number[];
+}
+
+class TitleMentionAutomaton {
+  private readonly nodes: AcNode[];
+  readonly patterns: readonly TitlePatternEntry[];
+
+  constructor(patterns: readonly TitlePatternEntry[]) {
+    this.patterns = patterns;
+    this.nodes = [
+      {
+        next: new Map(),
+        fail: 0,
+        dictSuffix: 0,
+        len: 0,
+        startIsWord: false,
+        endIsWord: false,
+        patternIds: [],
+      },
+    ];
+
+    for (let patIdx = 0; patIdx < patterns.length; patIdx += 1) {
+      const { label } = patterns[patIdx]!;
+      const len = label.length;
+      if (len === 0) continue;
+      let cur = 0;
+      for (let i = 0; i < len; i += 1) {
+        const code = foldCharCodeCaseInsensitive(label.charCodeAt(i));
+        let nxt = this.nodes[cur]!.next.get(code);
+        if (nxt === undefined) {
+          nxt = this.nodes.length;
+          this.nodes.push({
+            next: new Map(),
+            fail: 0,
+            dictSuffix: 0,
+            len: i + 1,
+            startIsWord: false,
+            endIsWord: false,
+            patternIds: [],
+          });
+          this.nodes[cur]!.next.set(code, nxt);
+        }
+        cur = nxt;
+      }
+      const leaf = this.nodes[cur]!;
+      if (leaf.patternIds.length === 0) {
+        leaf.startIsWord = isAsciiWordCode(label.charCodeAt(0));
+        leaf.endIsWord = isAsciiWordCode(label.charCodeAt(len - 1));
+      }
+      leaf.patternIds.push(patIdx);
+    }
+
+    // BFS failure links + dictionary suffix links
+    const queue: number[] = [];
+    for (const child of this.nodes[0]!.next.values()) {
+      this.nodes[child]!.fail = 0;
+      this.nodes[child]!.dictSuffix = 0;
+      queue.push(child);
+    }
+    for (let qHead = 0; qHead < queue.length; qHead += 1) {
+      const u = queue[qHead]!;
+      const uNode = this.nodes[u]!;
+      for (const [code, v] of uNode.next.entries()) {
+        let f = uNode.fail;
+        while (f !== 0 && !this.nodes[f]!.next.has(code)) {
+          f = this.nodes[f]!.fail;
+        }
+        const failTarget = this.nodes[f]!.next.get(code) ?? 0;
+        const vNode = this.nodes[v]!;
+        vNode.fail = failTarget;
+        const failNode = this.nodes[failTarget]!;
+        vNode.dictSuffix = failNode.patternIds.length > 0 ? failTarget : failNode.dictSuffix;
+        queue.push(v);
+      }
+    }
+  }
+
+  /**
+   * Scan `body` in O(|body| + matches) and return winning pattern indices
+   * (earliest registered pattern per distinct `ownerId`) sorted in registration order.
+   */
+  findMatchingPatternIndices(
+    body: string,
+    selfId: string,
+    alreadyLinked?: ReadonlySet<string>,
+  ): number[] {
+    const bodyLen = body.length;
+    if (bodyLen === 0 || this.patterns.length === 0) return [];
+    const bestPatByOwner = new Map<string, number>();
+    let state = 0;
+
+    for (let i = 0; i < bodyLen; i += 1) {
+      const code = foldCharCodeCaseInsensitive(body.charCodeAt(i));
+      while (state !== 0 && !this.nodes[state]!.next.has(code)) {
+        state = this.nodes[state]!.fail;
+      }
+      state = this.nodes[state]!.next.get(code) ?? 0;
+      if (state === 0) continue;
+
+      const curNode = this.nodes[state]!;
+      let hit = curNode.patternIds.length > 0 ? state : curNode.dictSuffix;
+      while (hit !== 0) {
+        const hitNode = this.nodes[hit]!;
+        const start = i + 1 - hitNode.len;
+        const prevIsWord = start > 0 && isAsciiWordCode(body.charCodeAt(start - 1));
+        const nextIsWord = i + 1 < bodyLen && isAsciiWordCode(body.charCodeAt(i + 1));
+        if (prevIsWord !== hitNode.startIsWord && nextIsWord !== hitNode.endIsWord) {
+          for (let k = 0; k < hitNode.patternIds.length; k += 1) {
+            const patIdx = hitNode.patternIds[k]!;
+            const ownerId = this.patterns[patIdx]!.ownerId;
+            if (ownerId === selfId || alreadyLinked?.has(ownerId)) continue;
+            const prevIdx = bestPatByOwner.get(ownerId);
+            if (prevIdx === undefined || patIdx < prevIdx) {
+              bestPatByOwner.set(ownerId, patIdx);
+            }
+          }
+        }
+        hit = hitNode.dictSuffix;
+      }
+    }
+
+    if (bestPatByOwner.size === 0) return [];
+    const indices = [...bestPatByOwner.values()];
+    indices.sort((a, b) => a - b);
+    return indices;
+  }
+}
+
 export function buildNeuralAdjacency(
   state: LogState,
   links: NoteLinkIndex,
@@ -91,7 +254,7 @@ export function buildNeuralAdjacency(
     lexicalDegreeCap?: number;
   },
 ): NeuralAdjacency {
-  const adj: NeuralAdjacency = new Map();
+  const adjBuilder = new Map<string, Map<string, NeuralNeighbor>>();
   const add = (
     from: string,
     to: string,
@@ -100,8 +263,12 @@ export function buildNeuralAdjacency(
     extra?: { tag?: string; term?: string },
   ) => {
     if (from === to) return;
-    const list = adj.get(from) ?? [];
-    const existing = list.find((n) => n.id === to);
+    let neighbors = adjBuilder.get(from);
+    if (!neighbors) {
+      neighbors = new Map<string, NeuralNeighbor>();
+      adjBuilder.set(from, neighbors);
+    }
+    const existing = neighbors.get(to);
     if (existing) {
       if (groupP < existing.groupP) {
         existing.groupP = groupP;
@@ -116,8 +283,7 @@ export function buildNeuralAdjacency(
     const n: NeuralNeighbor = { id: to, groupP, kind };
     if (extra?.tag) n.tag = extra.tag;
     if (extra?.term) n.term = extra.term;
-    list.push(n);
-    adj.set(from, list);
+    neighbors.set(to, n);
   };
   const addUndirected = (
     a: string,
@@ -222,12 +388,12 @@ export function buildNeuralAdjacency(
     const lexicalCap = Math.max(1, opts.lexicalDegreeCap ?? 10);
     const active = elements.filter((e) => !e.dismissed);
     const existingEdges = new Map<string, Set<string>>();
-    for (const [k, list] of adj.entries()) {
-      existingEdges.set(k, new Set(list.map((n) => n.id)));
+    for (const [k, map] of adjBuilder.entries()) {
+      existingEdges.set(k, new Set(map.keys()));
     }
 
     // 1. Unlinked note-title / frontmatter-alias mentions (groupP = 0.20)
-    const titlePatterns: Array<{ label: string; regex: RegExp; ownerId: string }> = [];
+    const titlePatterns: TitlePatternEntry[] = [];
     for (const el of active) {
       if (!el.notePath) continue;
       const candidates = new Set<string>();
@@ -242,26 +408,21 @@ export function buildNeuralAdjacency(
         }
       }
       for (const label of candidates) {
-        const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        titlePatterns.push({
-          label,
-          regex: new RegExp(`\\b${escaped}\\b`, "i"),
-          ownerId: el.id,
-        });
+        titlePatterns.push({ label, ownerId: el.id });
       }
     }
     if (titlePatterns.length > 0) {
+      const matcher = new TitleMentionAutomaton(titlePatterns);
       for (const el of active) {
         const body = el.text ?? "";
         if (!body) continue;
         const linked = existingEdges.get(el.id);
-        for (const pat of titlePatterns) {
-          if (pat.ownerId === el.id || linked?.has(pat.ownerId)) continue;
-          if (pat.regex.test(body)) {
-            addUndirected(el.id, pat.ownerId, GROUP_P.titleMention, "titleMention", {
-              term: pat.label,
-            });
-          }
+        const matchedIndices = matcher.findMatchingPatternIndices(body, el.id, linked);
+        for (let i = 0; i < matchedIndices.length; i += 1) {
+          const pat = titlePatterns[matchedIndices[i]!]!;
+          addUndirected(el.id, pat.ownerId, GROUP_P.titleMention, "titleMention", {
+            term: pat.label,
+          });
         }
       }
     }
@@ -288,7 +449,7 @@ export function buildNeuralAdjacency(
           const b = docs[j]!;
           if ((lexicalDegree.get(b.id) ?? 0) >= lexicalCap) continue;
           if (existingEdges.get(a.id)?.has(b.id)) continue;
-          const prevA = adj.get(a.id)?.some((n) => n.id === b.id) ?? false;
+          const prevA = adjBuilder.get(a.id)?.has(b.id) ?? false;
           if (prevA) continue;
           addUndirected(a.id, b.id, GROUP_P.lexical, "lexical", { term });
           lexicalDegree.set(a.id, (lexicalDegree.get(a.id) ?? 0) + 1);
@@ -299,6 +460,10 @@ export function buildNeuralAdjacency(
     }
   }
 
+  const adj: NeuralAdjacency = new Map();
+  for (const [k, map] of adjBuilder.entries()) {
+    adj.set(k, [...map.values()]);
+  }
   return adj;
 }
 

@@ -874,3 +874,100 @@ test("neuralDueOnly filters popNextNeuralElement and neuralSlotsFromQueueState w
   assert.equal(resolveSettings(undefined).neuralDueOnly, false);
   assert.equal(resolveSettings({ neuralDueOnly: true }).neuralDueOnly, true);
 });
+
+test("buildNeuralAdjacency (#77) Aho-Corasick titleMention matches reference regex oracle across punctuation, overlaps, aliases, and Unicode", () => {
+  const notesWithAliases: Record<string, string[]> = {
+    "Notes/Graph.md": ["Network"],
+    "Notes/Graph Theory.md": ["Combinatorics"],
+    "Notes/SM-20.md": ["Alg-17"],
+    "Notes/C+++.md": ["PlusPlus"],
+    "Notes/.ir-meta.md": [],
+    "Notes/Übermensch.md": ["Nietzschean"],
+  };
+  const elements: IrElement[] = [
+    el("e_graph", { type: "topic", notePath: "Notes/Graph.md", text: "Intro to SM-20 and PlusPlus." }),
+    el("e_gt", { type: "topic", notePath: "Notes/Graph Theory.md", text: "Subgraph vs Graph Theory and NETWORKS vs network!" }),
+    el("e_sm20", { type: "topic", notePath: "Notes/SM-20.md", text: "Testing C+++ vs C+++2 and word.ir-meta vs .ir-meta." }),
+    el("e_cpp", { type: "topic", notePath: "Notes/C+++.md", text: "Mentions Combinatorics and Graph in reverse registration order." }),
+    el("e_dot", { type: "topic", notePath: "Notes/.ir-meta.md", text: "Mentions übermensch and xÜbermensch and alg-17." }),
+    el("e_uni", { type: "topic", notePath: "Notes/Übermensch.md", text: "Mentions nietzschean? No self-edge allowed; mentions sm-20." }),
+  ];
+
+  const links: NoteLinkIndex = {
+    outgoing: () => [],
+    incoming: () => [],
+    tags: () => [],
+    aliases: (p) => notesWithAliases[p] ?? [],
+  };
+
+  // Reference oracle using exact RegExp(`\\b${escaped}\\b`, "i")
+  const patterns: Array<{ label: string; regex: RegExp; ownerId: string }> = [];
+  for (const e of elements) {
+    if (!e.notePath) continue;
+    const base = e.notePath.split("/").pop()!.replace(/\.md$/, "");
+    const cands = new Set<string>();
+    if (base.length >= 4) cands.add(base);
+    for (const a of notesWithAliases[e.notePath] ?? []) {
+      if (a.trim().length >= 4) cands.add(a.trim());
+    }
+    for (const label of cands) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      patterns.push({ label, regex: new RegExp(`\\b${escaped}\\b`, "i"), ownerId: e.id });
+    }
+  }
+
+  const expectedTitleMentions = new Map<string, Map<string, string>>();
+  const recordExpected = (a: string, b: string, term: string) => {
+    let m = expectedTitleMentions.get(a);
+    if (!m) {
+      m = new Map();
+      expectedTitleMentions.set(a, m);
+    }
+    if (!m.has(b)) m.set(b, term);
+  };
+  for (const e of elements) {
+    const body = e.text ?? "";
+    for (const pat of patterns) {
+      if (pat.ownerId === e.id) continue;
+      if (pat.regex.test(body)) {
+        recordExpected(e.id, pat.ownerId, pat.label);
+        recordExpected(pat.ownerId, e.id, pat.label);
+      }
+    }
+  }
+
+  const adj = buildNeuralAdjacency(state(elements), links, { useLexical: true, lexicalDegreeCap: 10 });
+  for (const e of elements) {
+    const actual = new Map(
+      (adj.get(e.id) ?? [])
+        .filter((n) => n.kind === "titleMention")
+        .map((n) => [n.id, n.term ?? ""]),
+    );
+    const exp = expectedTitleMentions.get(e.id) ?? new Map<string, string>();
+    assert.deepEqual(actual, exp, `mismatch on element ${e.id}`);
+  }
+});
+
+test("buildNeuralAdjacency (#77) scales to 1,000 active notes with useLexical: true well under 250ms", () => {
+  const count = 1_000;
+  const elements: IrElement[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const nextIdx = (i + 7) % count;
+    elements.push(
+      el(`n_${i}`, {
+        type: "topic",
+        notePath: `Vault/ConceptTopic_${i}.md`,
+        text: `Detailed incremental reading paragraph ${i} referencing ConceptTopic_${nextIdx} and specialized vocabulary token_${i % 500}.`,
+      }),
+    );
+  }
+  const s = state(elements);
+  const t0 = performance.now();
+  const adj = buildNeuralAdjacency(s, emptyLinkIndex(), { useLexical: true, lexicalDegreeCap: 10 });
+  const elapsedMs = performance.now() - t0;
+
+  assert.equal(adj.size, count);
+  const n0 = adj.get("n_0") ?? [];
+  assert.ok(n0.some((n) => n.id === "n_7" && n.kind === "titleMention"));
+  assert.ok(elapsedMs < 250, `expected < 250ms for 1,000 lexical elements, took ${elapsedMs.toFixed(1)}ms`);
+});

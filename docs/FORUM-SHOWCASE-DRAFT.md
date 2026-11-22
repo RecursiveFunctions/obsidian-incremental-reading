@@ -29,7 +29,7 @@ When the queue runs away, Mercy (`Alt+M`) previews a fix before applying it: it 
 - Mercy with load visibility: due, postponed, and seven-day inflow in the status bar
 - Desktop and mobile sessions, including a mobile capture button with a due-count badge
 - PDF topics and extracts, image extracts, and image-occlusion cards
-- FSRS-6 scheduling with a local parameter optimizer that fits to your own review log
+- SM-20 default item scheduling alongside FSRS-6 with a local parameter optimizer that fits to your own review log, plus same-day Final Drill and SM18/SM20 & EPUB/HTML import
 - Offline operation: no network calls, no telemetry, one runtime dependency
 
 ## Honest limitations

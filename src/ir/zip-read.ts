@@ -10,12 +10,18 @@ export interface ZipReadOptions {
   maxEntryBytes?: number;
   /** Maximum total uncompressed bytes allowed across all entries (default 256 MB). */
   maxTotalBytes?: number;
+  /** Maximum number of Central Directory entries allowed (default 4096). */
+  maxEntries?: number;
+  /** Maximum entry path length in UTF-8 bytes/characters (default 512). */
+  maxPathLength?: number;
   /** Optional custom raw-deflate decompressor (mainly for deterministic tests). */
   inflateRaw?: (compressed: Uint8Array, maxBytes: number) => Promise<Uint8Array>;
 }
 
 export const DEFAULT_MAX_ZIP_ENTRY_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_MAX_ZIP_TOTAL_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_MAX_ZIP_ENTRIES = 4096;
+export const DEFAULT_MAX_ZIP_PATH_LENGTH = 512;
 
 const EOCD_SIG = 0x06054b50;
 const CD_SIG = 0x02014b50;
@@ -146,6 +152,8 @@ export async function readZipEntries(
 ): Promise<Map<string, Uint8Array>> {
   const maxEntryBytes = options.maxEntryBytes ?? DEFAULT_MAX_ZIP_ENTRY_BYTES;
   const maxTotalBytes = options.maxTotalBytes ?? DEFAULT_MAX_ZIP_TOTAL_BYTES;
+  const maxEntries = options.maxEntries ?? DEFAULT_MAX_ZIP_ENTRIES;
+  const maxPathLength = options.maxPathLength ?? DEFAULT_MAX_ZIP_PATH_LENGTH;
   if (bytes.byteLength < 22) {
     throw new Error("Invalid ZIP archive: file is smaller than EOCD header.");
   }
@@ -161,6 +169,11 @@ export async function readZipEntries(
   const cdOffset = view.getUint32(eocdOffset + 16, true);
   if (entryCount === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
     throw new Error("Unsupported ZIP64 archive.");
+  }
+  if (entryCount > maxEntries) {
+    throw new Error(
+      `ZIP archive declares ${entryCount} entries, exceeding limit ${maxEntries}.`,
+    );
   }
   if (cdOffset + cdSize > eocdOffset) {
     throw new Error("Invalid ZIP archive: Central Directory extends past EOCD.");
@@ -192,6 +205,11 @@ export async function readZipEntries(
       throw new Error("Invalid ZIP archive: Central Directory name overflows bounds.");
     }
 
+    if (nameLen > maxPathLength) {
+      throw new Error(
+        `ZIP entry path length ${nameLen} exceeds limit ${maxPathLength}.`,
+      );
+    }
     const rawName = decoder.decode(bytes.subarray(nameStart, nameStart + nameLen));
     const normalizedName = rawName.replace(/\\/g, "/").replace(/^\/+/, "");
     cursor = nextCursor;

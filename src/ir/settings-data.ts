@@ -95,11 +95,13 @@ export interface IrSettings {
    * Apply has happened yet (no revert offered).
    */
   fsrsPreviousParams?: FittedParams | null;
-  /** Mobile capture FAB visibility. */
+  /** Unified mobile floating IR button + Bottom Sheet Hub visibility (#65). */
+  mobileWorkspaceFab?: boolean;
+  /** Mobile capture FAB visibility (legacy; migrated to mobileWorkspaceFab). */
   mobileCaptureFab: boolean;
-  /** Mobile review FAB visibility. */
+  /** Mobile review FAB visibility (legacy; migrated to mobileWorkspaceFab). */
   mobileReviewFab: boolean;
-  /** Mobile shell (bottom bar) visibility. */
+  /** Mobile shell (bottom bar) visibility (legacy; migrated to mobileWorkspaceFab). */
   mobileShell: boolean;
   /** Whether the mobile shell is collapsed to a pill. */
   mobileShellCollapsed: boolean;
@@ -243,6 +245,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   spaceAfterReveal: "good",
   occlusionDefaultMode: "hide-all",
   desiredRetention: 0.9,
+  mobileWorkspaceFab: true,
   mobileCaptureFab: true,
   mobileReviewFab: true,
   mobileShell: true,

@@ -23,9 +23,122 @@ export interface MobileCaptureHooks {
 const SHEET_CLASS = "ir-mobile-capture-sheet";
 const SHEET_BACKDROP = "ir-mobile-capture-backdrop";
 
+let activeCaptureClose: (() => void) | null = null;
+
+/**
+ * Open the thumb-friendly Quick Capture bottom sheet directly (invoked by
+ * long-pressing the unified Workspace FAB or tapping Capture in the Mobile Hub, #65).
+ */
+export function openMobileCaptureSheet(hooks: MobileCaptureHooks): () => void {
+  if (activeCaptureClose) return activeCaptureClose;
+  const backdrop = document.body.createDiv({ cls: SHEET_BACKDROP });
+  const sheet = document.body.createDiv({ cls: SHEET_CLASS });
+
+  let closed = false;
+  const closeSheet = () => {
+    if (closed) return;
+    closed = true;
+    if (activeCaptureClose === closeSheet) activeCaptureClose = null;
+    sheet.remove();
+    backdrop.remove();
+  };
+  activeCaptureClose = closeSheet;
+  backdrop.addEventListener("click", closeSheet);
+
+  const header = sheet.createDiv({ cls: "ir-mobile-capture-header" });
+  header.createSpan({ text: "Quick capture" });
+  const closeBtn = header.createEl("button", { cls: "ir-mobile-capture-close", type: "button" });
+  closeBtn.setText("×");
+  closeBtn.addEventListener("click", closeSheet);
+
+  const textarea = sheet.createEl("textarea", {
+    cls: "ir-mobile-capture-textarea",
+    attr: { placeholder: "Paste or type text to capture…" },
+  });
+
+  const modeRow = sheet.createDiv({ cls: "ir-mobile-capture-modes" });
+  let mode: CaptureMode = "extract" as CaptureMode;
+  const modeBtns: Record<CaptureMode, HTMLElement> = {} as Record<CaptureMode, HTMLElement>;
+
+  for (const m of ["extract", "cloze", "topic"] as CaptureMode[]) {
+    const btn = modeRow.createEl("button", {
+      cls: `ir-mobile-capture-mode-btn${m === mode ? " is-active" : ""}`,
+      type: "button",
+      text: m === "extract" ? "Extract" : m === "cloze" ? "Cloze" : "Topic",
+    });
+    modeBtns[m] = btn;
+    btn.addEventListener("click", () => {
+      mode = m;
+      for (const k of Object.keys(modeBtns) as CaptureMode[]) {
+        modeBtns[k].toggleClass("is-active", k === m);
+      }
+      hintInput.style.display = mode === "cloze" ? "" : "none";
+      titleInput.style.display = mode === "topic" ? "" : "none";
+    });
+  }
+
+  const hintInput = sheet.createEl("input", {
+    cls: "ir-mobile-capture-hint",
+    attr: { placeholder: "Hint (optional, cloze only)" },
+  });
+  hintInput.style.display = mode === "cloze" ? "" : "none";
+
+  const titleInput = sheet.createEl("input", {
+    cls: "ir-mobile-capture-title",
+    attr: { placeholder: "Title (topic only)" },
+  });
+  titleInput.style.display = mode === "topic" ? "" : "none";
+
+  const saveBtn = sheet.createEl("button", {
+    cls: "ir-mobile-capture-save",
+    type: "button",
+    text: "Save",
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    const text = textarea.value;
+    const result = validateCapture({
+      text,
+      mode,
+      clozedBody: mode === "cloze" ? buildClozedBody(text, 0, text.length, hintInput.value) : undefined,
+      hint: mode === "cloze" ? hintInput.value : undefined,
+      title: mode === "topic" ? titleInput.value : undefined,
+    });
+    if (!result.valid) {
+      new Notice(`Incremental Reading: ${result.error}`);
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.setText("Saving…");
+    try {
+      let id: ElementId | null = null;
+      if (mode === "extract") {
+        id = await hooks.createExtract(result.text);
+      } else if (mode === "cloze") {
+        id = await hooks.createCloze(result.text, result.hint);
+      } else {
+        id = await hooks.createTopic(result.text, result.title!);
+      }
+      if (id) {
+        new Notice(`Incremental Reading: ${mode} captured.`);
+        closeSheet();
+      }
+    } catch (e) {
+      console.error("Incremental Reading: mobile capture failed", e);
+      new Notice("Incremental Reading: capture failed.");
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.setText("Save");
+    }
+  });
+
+  window.setTimeout(() => textarea.focus(), 100);
+  return closeSheet;
+}
+
 export function registerMobileCapture(
   plugin: Plugin,
-  app: App,
+  _app: App,
   hooks: MobileCaptureHooks,
   isEnabled: () => boolean,
 ): () => void {
@@ -37,115 +150,11 @@ export function registerMobileCapture(
   fab.setAttr("title", "IR Capture");
   setIcon(fab, "plus-circle");
 
-  let sheet: HTMLElement | null = null;
-  let backdrop: HTMLElement | null = null;
-
-  const closeSheet = () => {
-    sheet?.remove();
-    backdrop?.remove();
-    sheet = null;
-    backdrop = null;
-  };
-
-  const openSheet = () => {
-    if (sheet) return;
-    backdrop = document.body.createDiv({ cls: SHEET_BACKDROP });
-    backdrop.addEventListener("click", closeSheet);
-
-    sheet = document.body.createDiv({ cls: SHEET_CLASS });
-    const header = sheet.createDiv({ cls: "ir-mobile-capture-header" });
-    header.createSpan({ text: "Capture" });
-    const closeBtn = header.createEl("button", { cls: "ir-mobile-capture-close" });
-    closeBtn.setText("×");
-    closeBtn.addEventListener("click", closeSheet);
-
-    const textarea = sheet.createEl("textarea", {
-      cls: "ir-mobile-capture-textarea",
-      attr: { placeholder: "Paste or type text to capture…" },
-    });
-
-    const modeRow = sheet.createDiv({ cls: "ir-mobile-capture-modes" });
-    let mode: CaptureMode = "extract" as CaptureMode;
-    const modeBtns: Record<CaptureMode, HTMLElement> = {} as Record<CaptureMode, HTMLElement>;
-
-    for (const m of ["extract", "cloze", "topic"] as CaptureMode[]) {
-      const btn = modeRow.createEl("button", {
-        cls: `ir-mobile-capture-mode-btn${m === mode ? " is-active" : ""}`,
-        text: m === "extract" ? "Extract" : m === "cloze" ? "Cloze" : "Topic",
-      });
-      modeBtns[m] = btn;
-      btn.addEventListener("click", () => {
-        mode = m;
-        for (const k of Object.keys(modeBtns) as CaptureMode[]) {
-          modeBtns[k].toggleClass("is-active", k === m);
-        }
-        hintInput.style.display = mode === "cloze" ? "" : "none";
-        titleInput.style.display = mode === "topic" ? "" : "none";
-      });
-    }
-
-    const hintInput = sheet.createEl("input", {
-      cls: "ir-mobile-capture-hint",
-      attr: { placeholder: "Hint (optional, cloze only)" },
-    });
-    hintInput.style.display = mode === "cloze" ? "" : "none";
-
-    const titleInput = sheet.createEl("input", {
-      cls: "ir-mobile-capture-title",
-      attr: { placeholder: "Title (topic only)" },
-    });
-    titleInput.style.display = mode === "topic" ? "" : "none";
-
-    const saveBtn = sheet.createEl("button", {
-      cls: "ir-mobile-capture-save",
-      text: "Save",
-    });
-
-    saveBtn.addEventListener("click", async () => {
-      const text = textarea.value;
-      const result = validateCapture({
-        text,
-        mode,
-        clozedBody: mode === "cloze" ? buildClozedBody(text, 0, text.length, hintInput.value) : undefined,
-        hint: mode === "cloze" ? hintInput.value : undefined,
-        title: mode === "topic" ? titleInput.value : undefined,
-      });
-      if (!result.valid) {
-        new Notice(`Incremental Reading: ${result.error}`);
-        return;
-      }
-      saveBtn.disabled = true;
-      saveBtn.setText("Saving…");
-      try {
-        let id: ElementId | null = null;
-        if (mode === "extract") {
-          id = await hooks.createExtract(result.text);
-        } else if (mode === "cloze") {
-          id = await hooks.createCloze(result.text, result.hint);
-        } else {
-          id = await hooks.createTopic(result.text, result.title!);
-        }
-        if (id) {
-          new Notice(`Incremental Reading: ${mode} captured.`);
-          closeSheet();
-        }
-      } catch (e) {
-        console.error("Incremental Reading: mobile capture failed", e);
-        new Notice("Incremental Reading: capture failed.");
-      } finally {
-        saveBtn.disabled = false;
-        saveBtn.setText("Save");
-      }
-    });
-
-    // Focus the textarea after a short delay so the keyboard opens.
-    window.setTimeout(() => textarea.focus(), 100);
-  };
-
+  let closeActive: (() => void) | null = null;
   fab.addEventListener("click", (ev) => {
     ev.stopPropagation();
     if (!isEnabled()) return;
-    openSheet();
+    closeActive = openMobileCaptureSheet(hooks);
   });
 
   const sync = () => {
@@ -155,7 +164,7 @@ export function registerMobileCapture(
   sync();
 
   return () => {
-    closeSheet();
+    closeActive?.();
     fab.remove();
   };
 }

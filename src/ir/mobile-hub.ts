@@ -27,9 +27,16 @@ export function sessionHubKinds(ctx: {
   return out;
 }
 
-/** Workspace FAB is always on while the plugin is loaded on mobile. */
-export function irWorkspaceFabShouldShow(isMobile: boolean): boolean {
-  return isMobile;
+/**
+ * Workspace FAB shows on mobile when enabled and outside active Review (#65).
+ * Default optional arguments preserve backward-compatible `irWorkspaceFabShouldShow(true)` calls.
+ */
+export function irWorkspaceFabShouldShow(
+  isMobile: boolean,
+  inActiveReview = false,
+  settingEnabled = true,
+): boolean {
+  return isMobile && settingEnabled && !inActiveReview;
 }
 
 /**

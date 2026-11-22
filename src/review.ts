@@ -474,3 +474,29 @@ export function contextSourceParentId(
   }
   return fallback;
 }
+
+/**
+ * Event emitted when undoing a reversible session action (`Later today` or
+ * `Dismiss`). Undoing `Later today` carries `operation: "later-today"` so it is
+ * excluded from `readingReps`, activity heatmaps, and leech postpone-streak resets.
+ */
+export function buildReversibleUndoEvent(
+  kind: "later" | "dismiss",
+  restored: IrElement,
+):
+  | { kind: "dismiss-set"; payload: { dismissed: false } }
+  | {
+      kind: "topic-advanced";
+      payload: { schedule: IrElement["schedule"]; operation: "later-today" };
+    } {
+  if (kind === "dismiss") {
+    return { kind: "dismiss-set", payload: { dismissed: false } };
+  }
+  return {
+    kind: "topic-advanced",
+    payload: {
+      schedule: restored.schedule,
+      operation: "later-today",
+    },
+  };
+}

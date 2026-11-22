@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   decodeRichCompon,
+  delphiDateToEpochMs,
   planSmCollectionImport,
   type SmSourceFs,
 } from "../src/ir/sm-collection-import";
@@ -15,7 +16,7 @@ import {
 } from "../src/ir/sm20-matrix";
 import { fold } from "../src/ir/log";
 import type { DeviceId, ElementId } from "../src/ir/ids";
-import type { IrElement } from "../src/ir/model";
+import { validateIrEvent, type IrElement } from "../src/ir/model";
 
 const NOW = 1_760_000_000_000;
 const DEV = "dev_test" as DeviceId;
@@ -26,12 +27,13 @@ function epochMsToDelphi(ms: number): number {
   return (ms - DELPHI_EPOCH_MS) / DAY_MS;
 }
 
-function makeMemRecord(position: number, length: number, slot = 0): Uint8Array {
+function makeMemRecord(position: number, length: number, slot = 0, listValue = 0): Uint8Array {
   const buf = new Uint8Array(30);
   const view = new DataView(buf.buffer);
   view.setUint32(0x0a, position, true);
   view.setUint32(0x0e, length, true);
-  view.setUint32(0x12, slot, true);
+  view.setUint32(0x12, listValue, true);
+  view.setUint32(0x16, slot, true);
   return buf;
 }
 
@@ -515,4 +517,290 @@ test("planSmCollectionImport scans nested TFileSpace elements/<bucket>/ dirs, ig
   const foldedItem = folded.elements.get(itemEl.id)!;
   assert.equal(foldedItem.card?.scheduledDays, 30, "ElementInfo scheduledDays must survive RepetitionHistory fold");
   assert.equal(foldedItem.card?.due, (NOW - 2 * DAY_MS) + 30 * DAY_MS);
+});
+
+test("delphiDateToEpochMs and planSmCollectionImport (#84) clamp overflowing Delphi TDateTime values to finite valid dates", async () => {
+  assert.equal(delphiDateToEpochMs(2.1e300), null);
+  assert.equal(delphiDateToEpochMs(1e305), null);
+  assert.equal(delphiDateToEpochMs(Number.POSITIVE_INFINITY), null);
+  assert.equal(delphiDateToEpochMs(Number.NaN), null);
+  assert.equal(delphiDateToEpochMs(2e8), null); // > ±8.64e15 ms JS Date range
+
+  const topicSpan = makeRtxSpan("Topic With Corrupt Date", 1);
+  const itemSpan = makeRtxSpan("Item With Corrupt Date", 2);
+  const rtx = concatBytes(topicSpan, itemSpan);
+  const mem = concatBytes(
+    makeMemRecord(1, topicSpan.length),
+    makeMemRecord(1 + topicSpan.length, itemSpan.length),
+  );
+
+  const recTopic = makeElementInfo({ type: 0, status: 1, textMember: 1, reps: 2, interval: 10 });
+  new DataView(recTopic.buffer).setFloat64(20, 2.1e300, true);
+  new DataView(recTopic.buffer).setFloat64(77, 1e305, true);
+
+  const recItem = makeElementInfo({ type: 1, status: 1, textMember: 2, reps: 3, interval: 7 });
+  new DataView(recItem.buffer).setFloat64(20, 2.1e300, true);
+  new DataView(recItem.buffer).setFloat64(77, 1e305, true);
+
+  const repHist = makeRepHistory([
+    { elementId: 2, rep: 1, lapses: 0, iv: 7, dateMs: NOW - DAY_MS, grade: 4 },
+  ]);
+  // Add a second RepetitionHistory row with an overflowing Delphi float
+  const badHistRow = new Uint8Array(39);
+  const badHistView = new DataView(badHistRow.buffer);
+  badHistView.setUint32(0x00, 2, true);
+  badHistView.setUint16(0x04, 2, true);
+  badHistView.setFloat64(0x0a, 2.1e300, true);
+  badHistView.setInt8(0x18, 4);
+
+  const fs = memSourceFs({
+    "info/ElementInfo.dat": concatBytes(recTopic, recItem),
+    "info/RepetitionHistory.dat": concatBytes(repHist, badHistRow),
+    "registry/text.mem": mem,
+    "registry/text.ptr": makeSub([1, 2]),
+    "registry/text.rtx": rtx,
+  });
+
+  const plan = await planSmCollectionImport({
+    fs,
+    nowMs: NOW,
+    deviceId: DEV,
+    targetFolder: "SM Import",
+  });
+
+  assert.equal(plan.elements.length, 2);
+  for (const el of plan.elements) {
+    assert.ok(Number.isFinite(el.created));
+    if (el.schedule) assert.ok(Number.isFinite(el.schedule.due));
+    if (el.card) assert.ok(Number.isFinite(el.card.due));
+  }
+  for (const ev of plan.events) {
+    assert.equal(validateIrEvent(ev), null);
+  }
+  for (const n of plan.notes) {
+    assert.ok(Number.isFinite(n.frontmatter["ir-due"] as number));
+  }
+});
+
+test("planSmCollectionImport (#82) resolves 500 colliding 72-char title prefixes in linear time with exact suffix order", async () => {
+  const sharedPrefix = "A".repeat(72);
+  const count = 500;
+  const spans: Uint8Array[] = [];
+  const mems: Uint8Array[] = [];
+  const infos: Uint8Array[] = [];
+  const componRecs: Uint8Array[] = [];
+  const ptrIds: number[] = [];
+
+  // Also append ["Cross", "Cross 2", "Cross"] to verify cross-stem suffix preservation
+  const extraTitles = ["Cross", "Cross 2", "Cross"];
+  const totalElements = count + extraTitles.length;
+  let pos = 1;
+
+  for (let i = 1; i <= totalElements; i += 1) {
+    const title = i <= count ? `${sharedPrefix} extra-${i}` : extraTitles[i - count - 1]!;
+    const body = `${title} — unique body payload #${i}`;
+    const titleSpan = makeRtxSpan(title, i * 2 - 1);
+    const bodySpan = makeRtxSpan(body, i * 2);
+    spans.push(titleSpan, bodySpan);
+    mems.push(makeMemRecord(pos, titleSpan.length));
+    pos += titleSpan.length;
+    mems.push(makeMemRecord(pos, bodySpan.length));
+    pos += bodySpan.length;
+    ptrIds.push(i * 2 - 1, i * 2);
+    infos.push(makeElementInfo({ type: 0, status: 1, textMember: i * 2 - 1, reps: 1, interval: 5, lastRepMs: NOW - DAY_MS }));
+    componRecs.push(makeComponRecord({ elementNumber: i, components: [{ type: 0, displayAt: 0xff, member: i * 2 }] }));
+  }
+
+  const fs = memSourceFs({
+    "info/ElementInfo.dat": concatBytes(...infos),
+    "info/compon.dat": concatBytes(...componRecs),
+    "registry/text.mem": concatBytes(...mems),
+    "registry/text.ptr": makeSub(ptrIds),
+    "registry/text.rtx": concatBytes(...spans),
+  });
+
+  const t0 = performance.now();
+  const plan = await planSmCollectionImport({
+    fs,
+    nowMs: NOW,
+    deviceId: DEV,
+    targetFolder: "SM Import",
+  });
+  const elapsedMs = performance.now() - t0;
+
+  assert.equal(plan.notes.length, totalElements);
+  assert.equal(plan.notes[0]!.relPath, `SM Import/${sharedPrefix}.md`);
+  assert.equal(plan.notes[1]!.relPath, `SM Import/${sharedPrefix} 2.md`);
+  assert.equal(plan.notes[count - 1]!.relPath, `SM Import/${sharedPrefix} ${count}.md`);
+  assert.equal(plan.notes[count]!.relPath, "SM Import/Cross.md");
+  assert.equal(plan.notes[count + 1]!.relPath, "SM Import/Cross 2.md");
+  assert.equal(plan.notes[count + 2]!.relPath, "SM Import/Cross 3.md");
+  assert.ok(elapsedMs < 1_000, `expected fast linear planning, took ${elapsedMs.toFixed(1)}ms`);
+});
+
+test("planSmCollectionImport (#83) reads image.mem filespace_slot at 0x16, ignores .HTM non-images, resolves PrimaryStorage/relative HTML images, and keeps inline-image extracts ledger-only", async () => {
+  const enc = new TextEncoder();
+  const sTopic = makeRtxSpan("Plain stripped topic summary", 1);
+  const sExtract = makeRtxSpan("Plain stripped extract summary", 2);
+  const textRtx = concatBytes(sTopic, sExtract);
+  // Topic member 1 has list_value=42 at 0x12 and real HTML slot=65 at 0x16.
+  // Extract member 2 has HTML slot=42 at 0x16.
+  const textMem = concatBytes(
+    makeMemRecord(1, sTopic.length, 65, 42),
+    makeMemRecord(1 + sTopic.length, sExtract.length, 42, 0),
+  );
+
+  // Image member 1 has list_value=65 (pointing to 65.HTM!) at 0x12, and real binary image slot=8 at 0x16.
+  // Image member 2 has slot=65 (.HTM) at 0x16 -> must be rejected by binary image extension filter.
+  const imgRtx = concatBytes(makeRtxSpan("icon", 1), makeRtxSpan("bogus-htm", 2));
+  const imgMem = concatBytes(
+    makeMemRecord(1, 10, 8, 65),
+    makeMemRecord(11, 15, 65, 0),
+  );
+
+  const elementInfo = concatBytes(
+    // 1: Topic with creation timestamp in extraction_date (42501.0) and source_article=0 -> MUST be "topic", not "extract"
+    makeElementInfo({ type: 0, status: 1, textMember: 1, reps: 1, interval: 7, lastRepMs: NOW - DAY_MS, extractionMs: NOW - 10 * DAY_MS, sourceArticle: 0 }),
+    // 2: Extract with source_article=1 and HTML backing file containing relative ../10\102.jpg + bogus .HTM componentType=2
+    makeElementInfo({ type: 0, status: 0, textMember: 2, sourceArticle: 1, extractionMs: NOW - DAY_MS }),
+  );
+  const contents = concatBytes(makeContents(0), makeContents(1));
+  const compon = concatBytes(
+    makeComponRecord({
+      elementNumber: 1,
+      components: [
+        { type: 13, displayAt: 0xff, member: 1 },
+        { type: 2, displayAt: 0xff, member: 1 },
+      ],
+    }),
+    makeComponRecord({
+      elementNumber: 2,
+      components: [
+        { type: 13, displayAt: 0xff, member: 2 },
+        { type: 2, displayAt: 0xff, member: 2 },
+      ],
+    }),
+  );
+
+  const gifBytes = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
+  const jpgBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+  const fs = memSourceFs({
+    "info/ElementInfo.dat": elementInfo,
+    "info/contents.dat": contents,
+    "info/compon.dat": compon,
+    "registry/text.mem": textMem,
+    "registry/text.ptr": makeSub([1, 2]),
+    "registry/text.rtx": textRtx,
+    "registry/image.mem": imgMem,
+    "registry/image.ptr": makeSub([1, 2]),
+    "registry/image.rtx": imgRtx,
+    "elements/6/65.HTM": enc.encode(
+      '<p>Return with <img src="file:///[PrimaryStorage]3/39.gif"> and <img src="65_files/extra.jpg"></p>',
+    ),
+    "elements/6/65_files/extra.jpg": jpgBytes,
+    "elements/4/42.HTM": enc.encode(
+      '<p>Extract body with <IMG src="../10\\102.jpg"> inline.</p>',
+    ),
+    "elements/8.png": pngBytes,
+    "elements/3/39.gif": gifBytes,
+    "elements/10/102.jpg": jpgBytes,
+  });
+
+  const plan = await planSmCollectionImport({
+    fs,
+    nowMs: NOW,
+    deviceId: DEV,
+    targetFolder: "SM Import",
+  });
+
+  // Zero .HTM attachments
+  for (const att of plan.attachments) {
+    assert.equal(/\.htm/i.test(att.targetFileName), false, `unexpected HTM attachment: ${att.targetFileName}`);
+    assert.equal(/\.htm/i.test(att.sourceRelPath), false, `unexpected HTM source: ${att.sourceRelPath}`);
+  }
+  // Expected binary attachments: 39.gif, extra.jpg, 8.png, 102.jpg
+  assert.equal(plan.attachments.length, 4);
+
+  const topicEl = plan.elements.find((e) => e.type === "topic")!;
+  const extractEl = plan.elements.find((e) => e.type === "extract")!;
+
+  assert.ok(topicEl.text.includes("![[SM Import/attachments/sm-asset-39.gif]]"));
+  assert.ok(topicEl.text.includes("![[SM Import/attachments/sm-asset-extra.jpg]]"));
+  assert.ok(topicEl.text.includes("![[SM Import/attachments/sm-1-1.png]]"));
+
+  // Inline HTML image on extract is preserved in element.text, while extract stays ledger-only by default!
+  assert.ok(extractEl.text.includes("![[SM Import/attachments/sm-asset-102.jpg]]"));
+  assert.equal(extractEl.notePath, undefined);
+  assert.equal(plan.stats.ledgerExtracts, 1);
+  assert.equal(plan.stats.noteExtracts, 0);
+
+  // Opting in via extractCreatesStandaloneNote materializes the extract note too
+  const standalonePlan = await planSmCollectionImport({
+    fs,
+    nowMs: NOW,
+    deviceId: DEV,
+    targetFolder: "SM Import",
+    extractCreatesStandaloneNote: true,
+  });
+  assert.equal(standalonePlan.stats.noteExtracts, 1);
+  assert.equal(standalonePlan.stats.ledgerExtracts, 0);
+});
+
+test("planSmCollectionImport rejects source-tree traversal entries in elements/ and preserves <angle> tokens in plain fallback text", async () => {
+  const enc = new TextEncoder();
+  const s1 = makeRtxSpan("Vector<int> & Map<string, number>", 1);
+  const textMem = makeMemRecord(1, s1.length, 1, 0);
+  const imgRtx = makeRtxSpan("secret", 1);
+  const imgMem = makeMemRecord(1, imgRtx.length, 9, 0);
+
+  const elementInfo = makeElementInfo({
+    type: 0,
+    status: 1,
+    textMember: 1,
+    reps: 1,
+    interval: 5,
+    lastRepMs: NOW - DAY_MS,
+  });
+  const compon = makeComponRecord({
+    elementNumber: 1,
+    components: [{ type: 2, displayAt: 0xff, member: 1 }],
+  });
+
+  const readPaths: string[] = [];
+  const fs: SmSourceFs = {
+    async listDir(rel) {
+      if (rel === "info") return ["ElementInfo.dat", "compon.dat"];
+      if (rel === "registry") return ["text.mem", "text.ptr", "text.rtx", "image.mem", "image.ptr", "image.rtx"];
+      if (rel === "elements") return ["..\\..\\secret\\9.png", "../outside/9.png", "1.txt"];
+      return [];
+    },
+    async readBinary(rel) {
+      readPaths.push(rel);
+      const map: Record<string, Uint8Array> = {
+        "info/ElementInfo.dat": elementInfo,
+        "info/compon.dat": compon,
+        "registry/text.mem": textMem,
+        "registry/text.ptr": makeSub([1]),
+        "registry/text.rtx": s1,
+        "registry/image.mem": imgMem,
+        "registry/image.ptr": makeSub([1]),
+        "registry/image.rtx": imgRtx,
+        "elements/1.txt": enc.encode("Plain note with <T> generic parameter"),
+      };
+      return map[rel] ?? null;
+    },
+  };
+
+  const plan = await planSmCollectionImport({
+    fs,
+    nowMs: NOW,
+    deviceId: DEV,
+    targetFolder: "SM Import",
+  });
+
+  assert.equal(plan.attachments.length, 0);
+  assert.equal(readPaths.some((p) => p.includes("..") || p.includes("secret") || p.includes("outside")), false);
+  assert.equal(plan.elements[0]!.text, "Plain note with <T> generic parameter");
 });

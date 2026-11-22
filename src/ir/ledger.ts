@@ -204,6 +204,10 @@ export interface VaultFs {
   list(dir: string): Promise<string[]>;
   /** Whole-file delete; required when calling {@link IrLedger.reconcile}. */
   remove?(path: string): Promise<void>;
+  /** Optional bulk writer that deduplicates ancestor directory checks across many new files. */
+  writeBatch?(
+    entries: ReadonlyArray<{ path: string; data: string }>,
+  ): Promise<Array<{ path: string; error: unknown }>>;
 }
 
 export interface BookmarkLoadResult {
@@ -301,7 +305,28 @@ function assertNoConflictingEvents(
   }
 }
 
+const SAFE_LEDGER_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const FORBIDDEN_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+function sanitizeRecord<T>(raw: unknown): Record<string, T> {
+  const out: Record<string, T> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [k, v] of Object.entries(raw as Record<string, T>)) {
+    if (FORBIDDEN_RECORD_KEYS.has(k)) continue;
+    Object.defineProperty(out, k, {
+      value: v,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return out;
+}
+
 function elementStatePath(id: string): string {
+  if (!SAFE_LEDGER_ID_RE.test(id)) {
+    throw new Error(`IrLedger: unsafe element id "${id}"`);
+  }
   return `${STATEDIR}/${id}.json`;
 }
 
@@ -323,6 +348,11 @@ function parseElementStateId(fullPath: string): ElementId | null {
 
 export interface StoreOptions {
   conflict?: "conservative" | "clock-order";
+}
+
+export interface BookmarkLoadResult {
+  ok: boolean;
+  bookmarks: BookmarkMap;
 }
 
 export class IrLedger {
@@ -461,7 +491,7 @@ export class IrLedger {
       throw new Error("IrLedger: invalid reset status");
     }
     if (meta.generation !== undefined &&
-        (typeof meta.generation !== "string" || meta.generation.length === 0)) {
+        (typeof meta.generation !== "string" || !SAFE_LEDGER_ID_RE.test(meta.generation))) {
       throw new Error("IrLedger: invalid generation");
     }
     return meta as unknown as LedgerMetaV1;
@@ -511,9 +541,14 @@ export class IrLedger {
           devices?: Record<string, string>;
           deviceId?: string;
         };
-        if (parsed.devices && typeof parsed.devices === "object") {
-          devices = parsed.devices;
-        } else if (typeof parsed.deviceId === "string" && parsed.deviceId) {
+        if (parsed.devices && typeof parsed.devices === "object" && !Array.isArray(parsed.devices)) {
+          const clean = sanitizeRecord<string>(parsed.devices);
+          for (const [host, devId] of Object.entries(clean)) {
+            if (typeof devId === "string" && SAFE_LEDGER_ID_RE.test(devId)) {
+              devices[host] = devId;
+            }
+          }
+        } else if (typeof parsed.deviceId === "string" && SAFE_LEDGER_ID_RE.test(parsed.deviceId)) {
           // Single-id file → claim the id for this host. The next load on a
           // DIFFERENT host will see the new schema, miss its own hostname,
           // and generate a fresh id, which is exactly what we want.
@@ -523,8 +558,8 @@ export class IrLedger {
         devices = {};
       }
     }
-    let id = devices[hostname];
-    if (!id) {
+    let id = !FORBIDDEN_RECORD_KEYS.has(hostname) ? devices[hostname] : undefined;
+    if (!id || !SAFE_LEDGER_ID_RE.test(id)) {
       id = newDeviceId();
       devices[hostname] = id;
     }
@@ -1216,26 +1251,29 @@ export class IrLedger {
     };
   }
 
-  async loadBookmarks(): Promise<BookmarkMap> {
-    return (await this.loadBookmarksResult()).bookmarks;
-  }
-
-  /**
-   * Load bookmarks with a failure signal. A missing file is a valid empty
-   * load; a read or parse failure is not, because callers persist the result
-   * back to the only copy.
-   */
   async loadBookmarksResult(): Promise<BookmarkLoadResult> {
     const { bookmarks } = await this.paths();
-    if (!(await this.fs.exists(bookmarks))) {
-      return { ok: true, bookmarks: {} };
-    }
+    let exists: boolean;
     try {
-      const raw = await this.fs.read(bookmarks);
-      return { ok: true, bookmarks: JSON.parse(raw) as BookmarkMap };
+      exists = await this.fs.exists(bookmarks);
     } catch {
       return { ok: false, bookmarks: {} };
     }
+    if (!exists) return { ok: true, bookmarks: {} };
+    try {
+      const raw = await this.fs.read(bookmarks);
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return { ok: false, bookmarks: {} };
+      }
+      return { ok: true, bookmarks: sanitizeRecord(parsed) as BookmarkMap };
+    } catch {
+      return { ok: false, bookmarks: {} };
+    }
+  }
+
+  async loadBookmarks(): Promise<BookmarkMap> {
+    return (await this.loadBookmarksResult()).bookmarks;
   }
 
   async saveBookmarks(bm: BookmarkMap): Promise<void> {
@@ -1426,6 +1464,141 @@ export class IrLedger {
       }
       if (!state.elements.has(id) && (await this.fs.exists(fullPath))) {
         await rm(fullPath);
+      }
+    }
+
+    return state;
+  }
+
+  /**
+   * Fast-path state materialization for newly imported elements (`#85`).
+   * Folds once via `load()`, writes `.ir/state/<id>.json` directly for `newIds`
+   * without per-file `exists()`/`read()` checks or `list(STATEDIR)` scans, and
+   * deduplicates ancestor directory checks when `VaultFs.writeBatch` is available.
+   */
+  async reconcileNew(newIds: ReadonlySet<ElementId>): Promise<LogState> {
+    const state = await this.load();
+    if (newIds.size === 0) return state;
+
+    const batch: Array<{ id: ElementId; path: string; data: string }> = [];
+    for (const id of newIds) {
+      const element = state.elements.get(id);
+      if (!element) continue;
+      batch.push({
+        id,
+        path: elementStatePath(id),
+        data: deterministicJsonStringify(element),
+      });
+    }
+    if (batch.length === 0) return state;
+
+    if (this.fs.writeBatch) {
+      const idByPath = new Map(batch.map((b) => [b.path, b.id] as const));
+      try {
+        const failures = await this.fs.writeBatch(batch);
+        for (const { path, error } of failures) {
+          const failedId = idByPath.get(path) ?? path;
+          if (!this.writeFailureLogged.has(failedId)) {
+            this.writeFailureLogged.add(failedId);
+            console.warn(
+              `Incremental Reading: skipping state file write for ${failedId}: ${(error as Error)?.message ?? error}`,
+            );
+          }
+        }
+      } catch (e) {
+        console.warn(
+          `Incremental Reading: skipping batch state cache write: ${(e as Error)?.message ?? e}`,
+        );
+      }
+      return state;
+    }
+
+    for (const entry of batch) {
+      try {
+        await this.fs.write(entry.path, entry.data);
+      } catch (e) {
+        if (!this.writeFailureLogged.has(entry.id)) {
+          this.writeFailureLogged.add(entry.id);
+          console.warn(
+            `Incremental Reading: skipping state file write for ${entry.id}: ${(e as Error)?.message ?? e}`,
+          );
+        }
+      }
+    }
+    return state;
+  }
+
+  /**
+   * Incremental state cache sync for a specific set of dirty/removed element IDs.
+   * Avoids full `.ir/state/` directory listings and unchanged-file reads on hot
+   * review paths while keeping derived state files up to date for touched IDs.
+   */
+  async reconcileIds(ids: ReadonlySet<ElementId>): Promise<LogState> {
+    const state = await this.load();
+    if (ids.size === 0) return state;
+
+    const batch: Array<{ id: ElementId; path: string; data: string }> = [];
+    const removedPaths: string[] = [];
+    for (const id of ids) {
+      const element = state.elements.get(id);
+      const path = elementStatePath(id);
+      if (element) {
+        batch.push({
+          id,
+          path,
+          data: deterministicJsonStringify(element),
+        });
+      } else {
+        removedPaths.push(path);
+      }
+    }
+
+    if (batch.length > 0) {
+      if (this.fs.writeBatch) {
+        const idByPath = new Map(batch.map((b) => [b.path, b.id] as const));
+        try {
+          const failures = await this.fs.writeBatch(batch);
+          for (const { path, error } of failures) {
+            const failedId = idByPath.get(path) ?? path;
+            if (!this.writeFailureLogged.has(failedId)) {
+              this.writeFailureLogged.add(failedId);
+              console.warn(
+                `Incremental Reading: skipping state file write for ${failedId}: ${(error as Error)?.message ?? error}`,
+              );
+            }
+          }
+        } catch (e) {
+          console.warn(
+            `Incremental Reading: skipping batch state cache write: ${(e as Error)?.message ?? e}`,
+          );
+        }
+      } else {
+        for (const entry of batch) {
+          try {
+            await this.fs.write(entry.path, entry.data);
+          } catch (e) {
+            if (!this.writeFailureLogged.has(entry.id)) {
+              this.writeFailureLogged.add(entry.id);
+              console.warn(
+                `Incremental Reading: skipping state file write for ${entry.id}: ${(e as Error)?.message ?? e}`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    if (this.fs.remove && removedPaths.length > 0) {
+      for (const path of removedPaths) {
+        try {
+          if (await this.fs.exists(path)) {
+            await this.fs.remove(path);
+          }
+        } catch (e) {
+          console.warn(
+            `Incremental Reading: skipping stale state file removal for ${path}: ${(e as Error)?.message ?? e}`,
+          );
+        }
       }
     }
 

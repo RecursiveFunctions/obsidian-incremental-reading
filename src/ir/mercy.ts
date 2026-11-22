@@ -243,7 +243,8 @@ export function computeElementHistoryCounts(
     } else if (
       ev.kind === "topic-advanced" &&
       ev.payload.operation !== "extract-parent-decay" &&
-      ev.payload.operation !== "later-today"
+      ev.payload.operation !== "later-today" &&
+      ev.payload.operation !== "a-factor-edit"
     ) {
       const c = ensure(ev.target);
       c.readingReps += 1;

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildReversibleUndoEvent,
   computeSessionTrackSegments,
   contextSourceParentId,
   EMPTY_COLLECTION_COPY,
@@ -9,8 +10,12 @@ import {
   refreshQueuedSlot,
   type ReviewSlot,
 } from "../src/review";
-import type { IrElement } from "../src/ir/model";
-import type { ElementId } from "../src/ir/ids";
+import { findLeeches } from "../src/ir/leech";
+import { fold } from "../src/ir/log";
+import { computeElementHistoryCounts } from "../src/ir/mercy";
+import { activityHeatmap } from "../src/ir/stats";
+import type { IrElement, IrEvent } from "../src/ir/model";
+import type { DeviceId, ElementId, EventId } from "../src/ir/ids";
 
 function el(
   id: string,
@@ -147,4 +152,73 @@ test("contextSourceParentId: item whose parent is a topic stays on the topic", (
     [item.id, item],
   ]);
   assert.equal(contextSourceParentId(item, map), topic.id);
+});
+
+test("buildReversibleUndoEvent (#74): undoing later-today preserves readingReps=0, postpone streak, leech status, and zero heatmap reads", () => {
+  const now = 1_760_000_000_000;
+  const dayMs = 86_400_000;
+  const dev = "dev_test" as DeviceId;
+  const restored: IrElement = {
+    ...el("topic_leech", "topic"),
+    schedule: { due: now - 1_000, interval: 2, aFactor: 1.5 },
+  };
+  const deferredSchedule = { due: now + 3_600_000, interval: 2, aFactor: 1.5 };
+  const undoEv = buildReversibleUndoEvent("later", restored);
+  assert.equal(undoEv.kind, "topic-advanced");
+  assert.equal(undoEv.payload.operation, "later-today");
+
+  const events: IrEvent[] = [
+    {
+      id: "ev_create" as EventId,
+      ts: now - 10 * dayMs,
+      lamport: 1,
+      device: dev,
+      kind: "element-created",
+      target: restored.id,
+      payload: { element: restored },
+    },
+    ...Array.from({ length: 8 }, (_, i) => ({
+      id: `ev_post_${i}` as EventId,
+      ts: now - (8 - i) * dayMs,
+      lamport: 2 + i,
+      device: dev,
+      kind: "mercy-postponed" as const,
+      target: restored.id,
+      payload: { newDue: now - (7 - i) * dayMs, batchId: `batch_${i}` },
+    })),
+    {
+      id: "ev_later" as EventId,
+      ts: now - 2_000,
+      lamport: 20,
+      device: dev,
+      kind: "topic-advanced",
+      target: restored.id,
+      payload: { schedule: deferredSchedule, operation: "later-today" },
+    },
+    {
+      id: "ev_later_undo" as EventId,
+      ts: now - 1_000,
+      lamport: 21,
+      device: dev,
+      kind: undoEv.kind,
+      target: restored.id,
+      payload: undoEv.payload,
+    },
+  ];
+
+  const counts = computeElementHistoryCounts(events).get(restored.id);
+  assert.deepEqual(counts, {
+    readingReps: 0,
+    totalPostponeCount: 8,
+    recentPostponeCount: 8,
+  });
+
+  const state = fold(events);
+  const leeches = findLeeches(state, events);
+  assert.equal(leeches.length, 1);
+  assert.equal(leeches[0]!.elementId, restored.id);
+  assert.ok(leeches[0]!.reasons.includes("chronic-postpones"));
+
+  const heatmap = activityHeatmap(events, now, 26);
+  assert.equal(heatmap.totalCount, 0);
 });

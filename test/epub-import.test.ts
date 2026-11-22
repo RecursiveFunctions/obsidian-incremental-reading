@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { deflateRawSync } from "node:zlib";
 import { readZipEntries } from "../src/ir/zip-read";
 import { planEpubImport, planHtmlImport } from "../src/ir/epub-import";
+import { serializeInitialNoteWithFrontmatter, stripFrontmatter } from "../src/ir/frontmatter-body";
+import { assertVaultRelativePath, isSafeVaultRelativePath } from "../src/ir/source-paths";
 import type { DeviceId } from "../src/ir/ids";
 
 function buildZipFromStrings(files: Record<string, string | Uint8Array>): Uint8Array {
@@ -200,45 +202,97 @@ test("planHtmlImport converts standalone HTML into a topic note and ledger event
   assert.equal(plan.event.target, plan.elementId);
 });
 
-test("planEpubImport does not emit parent-directory paths for a dot-only title", async () => {
-  const epubBytes = buildZipFromStrings({
-    "META-INF/container.xml": `<?xml version="1.0"?>
-      <container version="1.0">
-        <rootfiles>
-          <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
-        </rootfiles>
-      </container>`,
-    "content.opf": `<package version="3.0">
-      <metadata><dc:title>..</dc:title></metadata>
-      <manifest>
-        <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
-      </manifest>
-      <spine><itemref idref="ch1"/></spine>
-    </package>`,
-    "ch1.xhtml": `<html><body><h1>Chapter One</h1></body></html>`,
-  });
+test("dot-only titles and traversal segments (#76) are sanitized and strictly contained inside vault root", () => {
+  const enc = new TextEncoder();
+  for (const maliciousTitle of [".", "..", "...", ". . .", "&#46;&#46;"]) {
+    const entries = new Map<string, Uint8Array>([
+      [
+        "META-INF/container.xml",
+        enc.encode('<container><rootfiles><rootfile full-path="package.opf"/></rootfiles></container>'),
+      ],
+      [
+        "package.opf",
+        enc.encode(`<package version="3.0">
+          <metadata><dc:title>${maliciousTitle}</dc:title></metadata>
+          <manifest>
+            <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+            <item id="img" href=".." media-type="image/png"/>
+          </manifest>
+          <spine><itemref idref="c1"/></spine>
+        </package>`),
+      ],
+      [
+        "c1.xhtml",
+        enc.encode('<html><body><h1>..</h1><p>Chapter text <img src=".."/></p></body></html>'),
+      ],
+    ]);
 
-  const plan = planEpubImport({
-    zipEntries: await readZipEntries(epubBytes),
+    const plan = planEpubImport({
+      zipEntries: entries,
+      extractFolder: "",
+      defaultPriority: 30,
+      now: NOW,
+      deviceId: DEVICE,
+      fileNameHint: "..",
+    });
+
+    assert.equal(plan.bookTitle, "Untitled EPUB");
+    assert.equal(plan.bookPath, "Untitled EPUB/Untitled EPUB.md");
+    assert.equal(plan.notes[1]!.path, "Untitled EPUB/01 - Chapter 1.md");
+    for (const n of plan.notes) {
+      assert.equal(isSafeVaultRelativePath(n.path), true);
+    }
+    for (const a of plan.attachments) {
+      assert.equal(isSafeVaultRelativePath(a.vaultPath), true);
+    }
+  }
+
+  const htmlPlan = planHtmlImport({
+    html: "<html><head><title>..</title></head><body><p>Hello</p></body></html>",
+    fileName: "....html",
     extractFolder: "",
     defaultPriority: 50,
     now: NOW,
     deviceId: DEVICE,
   });
+  assert.equal(htmlPlan.title, "HTML Import");
+  assert.equal(htmlPlan.path, "HTML Import.md");
 
-  assert.equal(plan.bookPath, "Untitled EPUB/Untitled EPUB.md");
-  assert.ok(plan.notes.every((note) => !note.path.split("/").includes("..")));
+  assert.throws(() => assertVaultRelativePath("../escape.md"), /Unsafe vault-relative path/);
+  assert.throws(() => assertVaultRelativePath("Reading/../escape.md"), /Unsafe vault-relative path/);
+  assert.throws(() => assertVaultRelativePath("./escape.md"), /Unsafe vault-relative path/);
+  assert.throws(() => assertVaultRelativePath("/abs/escape.md"), /Unsafe vault-relative path/);
+  assert.throws(() => assertVaultRelativePath("C:/escape.md"), /Unsafe vault-relative path/);
+  assert.throws(() => assertVaultRelativePath("Reading\\escape.md"), /Unsafe vault-relative path/);
 });
 
-test("planHtmlImport does not emit a parent-directory path for a dot-only title", () => {
-  const plan = planHtmlImport({
-    html: "<html><head><title>..</title></head><body><p>Body.</p></body></html>",
-    fileName: "page.html",
-    extractFolder: "",
-    defaultPriority: 50,
-    now: NOW,
-    deviceId: DEVICE,
-  });
+test("serializeInitialNoteWithFrontmatter (#85) quotes special YAML strings and round-trips through stripFrontmatter", () => {
+  const full = serializeInitialNoteWithFrontmatter(
+    {
+      "ir-type": "topic",
+      "ir-priority": 33.5,
+      "ir-due": 1_760_000_000_000,
+      author: 'O\'Reilly: "Deep" #1 [Edition]',
+      tags: ["sm-20", "colon:tag"],
+    },
+    "# Heading\n\nBody text.",
+  );
 
-  assert.equal(plan.path, "HTML Import.md");
+  assert.match(full, /^---\n/);
+  assert.ok(full.includes('author: "O\'Reilly: \\"Deep\\" #1 [Edition]"'));
+  assert.ok(full.includes('tags:\n  - "sm-20"\n  - "colon:tag"'));
+  assert.equal(stripFrontmatter(full), "# Heading\n\nBody text.");
+
+  // Preserves bodies starting with `<hr>` (`---`) followed by another `---` without truncation
+  const hrBody = "---\n\nImportant chapter prose between rules\n\n---\n\nFooter";
+  const withHr = serializeInitialNoteWithFrontmatter({ "ir-type": "topic" }, hrBody);
+  assert.equal(stripFrontmatter(withHr), hrBody);
+
+  // Escapes YAML-non-printable C1 / line-separator code points while omitting empty frontmatter
+  const c1 = serializeInitialNoteWithFrontmatter(
+    { author: "Bad\x81Char\u2028Line\ufffe" },
+    "Body",
+  );
+  assert.ok(c1.includes('author: "Bad\\u0081Char\\u2028Line\\ufffe"'));
+  assert.equal(serializeInitialNoteWithFrontmatter({}, "Plain body"), "Plain body\n");
 });

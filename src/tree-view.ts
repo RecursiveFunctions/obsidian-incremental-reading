@@ -48,6 +48,14 @@ import { dueMsOf } from "./ir/queue-adapter";
 import { findExtractEditorPosition } from "./ir/extract-range";
 import { saveBody, stripFrontmatter } from "./ir/frontmatter-body";
 import { hasCloze, listClozeGroups, setClozeHint } from "./cloze";
+import {
+  resolveViewportCapability,
+  type ViewportCapability,
+} from "./ir/viewport-tiers";
+import {
+  attachLeafCapabilityController,
+  type LeafCapabilityHandle,
+} from "./ui/leaf-capability";
 import { findLeeches, type LeechDiagnosis } from "./ir/leech";
 
 export const IR_TREE_VIEW_TYPE = "ir-tree-view";
@@ -224,12 +232,31 @@ export class IrTreeView extends ItemView {
   private filterRenderTimer: number | null = null;
   private selectedIds: Set<string> = new Set();
   private selectionAnchorId: string | null = null;
+  /** Explicit touch-friendly multi-select checkbox mode (#65). */
+  private selectMode = false;
+  private leafCapHandle?: LeafCapabilityHandle;
+
+  private get capability(): ViewportCapability {
+    return (
+      this.leafCapHandle?.getCapability() ??
+      resolveViewportCapability({
+        inlineWidthPx: this.contentEl?.clientWidth || 400,
+        coarsePointer: Platform.isMobile,
+        latchedHardwareKeyboard: false,
+      })
+    );
+  }
 
   /** Element id currently being dragged (session-only). */
   private dragSourceId: string | null = null;
 
   /** Last loaded ledger snapshot, keyed by id. Used by the Promote command. */
   private elementsById = new Map<string, IrElement>();
+  /** Cached ledger snapshot across UI-only re-renders (invalidated on refresh/onClose). */
+  private cachedSnapshot: {
+    state: Awaited<ReturnType<IrLedger["load"]>>;
+    events: Awaited<ReturnType<IrLedger["loadEvents"]>>;
+  } | null = null;
   /** Precomputed 1-based global priority rank per element id for O(1) row lookup. */
   private rankById = new Map<string, number>();
   /** Monotonic render generation token to cancel stale chunked renders. */
@@ -329,6 +356,10 @@ export class IrTreeView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    this.leafCapHandle?.destroy();
+    this.leafCapHandle = attachLeafCapabilityController(this.contentEl, () => {
+      void this.render();
+    });
     this.registerDomEvent(this.contentEl, "keydown", (evt: KeyboardEvent) => {
       this.onTreeKey(evt);
     });
@@ -337,6 +368,9 @@ export class IrTreeView extends ItemView {
 
   async onClose(): Promise<void> {
     this.renderToken += 1;
+    this.cachedSnapshot = null;
+    this.leafCapHandle?.destroy();
+    this.leafCapHandle = undefined;
     this.cancelPendingClick();
     if (this.chunkRafId !== null) {
       cancelAnimationFrame(this.chunkRafId);
@@ -434,6 +468,7 @@ export class IrTreeView extends ItemView {
 
   /** Reload the tree from the ledger. Safe to call from the host plugin. */
   refresh(): Promise<void> {
+    this.cachedSnapshot = null;
     return this.render();
   }
 
@@ -495,6 +530,23 @@ export class IrTreeView extends ItemView {
     }
 
     const actions = controls.createDiv({ cls: "ir-collection-actions" });
+    const selectBtn = actions.createEl("button", {
+      cls: `ir-collection-filter-button${this.selectMode ? " is-active" : ""}`,
+      text: this.selectMode ? "Done" : "Select",
+      attr: {
+        type: "button",
+        "aria-pressed": String(this.selectMode),
+        "aria-label": this.selectMode ? "Exit selection mode" : "Select multiple elements",
+      },
+    });
+    selectBtn.onclick = () => {
+      this.selectMode = !this.selectMode;
+      if (!this.selectMode) {
+        this.selectedIds.clear();
+        this.selectionAnchorId = null;
+      }
+      void this.render();
+    };
     const activeFilterCount = (3 - this.visibleTypes.size) +
       (3 - this.visibleStates.size) + (this.showDismissed ? 1 : 0) +
       (this.leechesOnly ? 1 : 0);
@@ -583,23 +635,29 @@ export class IrTreeView extends ItemView {
 
     const body = container.createDiv({ cls: "ir-tree-body" });
 
-    let state;
+    let state: Awaited<ReturnType<IrLedger["load"]>>;
     let events: Awaited<ReturnType<IrLedger["loadEvents"]>> = [];
-    try {
-      [state, events] = await Promise.all([
-        this.ledger.load(),
-        this.ledger.loadEvents(),
-      ]);
-    } catch (e) {
+    if (this.cachedSnapshot) {
+      state = this.cachedSnapshot.state;
+      events = this.cachedSnapshot.events;
+    } else {
+      try {
+        [state, events] = await Promise.all([
+          this.ledger.load(),
+          this.ledger.loadEvents(),
+        ]);
+      } catch (e) {
+        if (token !== this.renderToken) return;
+        console.error("Incremental Reading: tree view load failed", e);
+        body.createEl("p", {
+          text:
+            "Could not load the IR ledger. See the developer console.",
+        });
+        return;
+      }
       if (token !== this.renderToken) return;
-      console.error("Incremental Reading: tree view load failed", e);
-      body.createEl("p", {
-        text:
-          "Could not load the IR ledger. See the developer console.",
-      });
-      return;
+      this.cachedSnapshot = { state, events };
     }
-    if (token !== this.renderToken) return;
 
     if (this.currentElementId) {
       let cur = state.elements.get(this.currentElementId);
@@ -690,6 +748,12 @@ export class IrTreeView extends ItemView {
       this.renderMoveBanner(body);
     } else if (this.selectedIds.size > 0) {
       this.renderSelectionToolbar(body, state);
+    } else if (this.selectMode) {
+      const hintBar = body.createDiv({ cls: "ir-tree-selection-bar" });
+      hintBar.createSpan({
+        cls: "ir-tree-selection-bar-count",
+        text: "Tap rows to select multiple elements",
+      });
     }
 
     if (this.displayMode === "sources" && this.commitReparent) {
@@ -1185,6 +1249,15 @@ export class IrTreeView extends ItemView {
     node: TreeNode,
     titleTarget: string | null,
   ): void {
+    if (this.selectMode) {
+      e.preventDefault();
+      this.cancelPendingClick();
+      if (e.shiftKey) this.extendRowSelectionTo(node.id);
+      else this.toggleRowSelection(node.id);
+      this.focusedId = node.id;
+      void this.render();
+      return;
+    }
     const kind = treeClickKind({
       metaKey: e.metaKey,
       ctrlKey: e.ctrlKey,
@@ -1584,6 +1657,17 @@ export class IrTreeView extends ItemView {
         void this.render();
       }
     };
+    if (this.displayMode === "priority" && this.commitReparent) {
+      const reparentBtn = actions.createEl("button", {
+        cls: "ir-tree-selection-bar-btn",
+        text: "Move to…",
+      });
+      reparentBtn.onclick = () => {
+        this.displayMode = "sources";
+        this.moveSourceIds = ids.slice();
+        void this.render();
+      };
+    }
     if (this.displayMode === "priority" && this.commitPriorityPlan && ids.length > 1) {
       const distribute = actions.createEl("button", { cls: "ir-tree-selection-bar-btn", text: "Distribute" });
       distribute.onclick = (event) => {
@@ -2126,6 +2210,20 @@ export class IrTreeView extends ItemView {
       row.setAttribute("aria-expanded", String(!isCollapsed));
     }
 
+    if (this.selectMode) {
+      const cb = row.createEl("input", {
+        cls: "ir-tree-select-checkbox",
+        attr: { type: "checkbox", tabindex: "-1", "aria-hidden": "true" },
+      });
+      cb.checked = this.selectedIds.has(node.id);
+      cb.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.toggleRowSelection(node.id);
+        this.focusedId = node.id;
+        void this.render();
+      });
+    }
+
     if (hasChildren) {
       const toggle = row.createSpan({ cls: "ir-tree-toggle" });
       setIcon(toggle, isCollapsed ? "chevron-right" : "chevron-down");
@@ -2212,7 +2310,51 @@ export class IrTreeView extends ItemView {
       row.createSpan({ cls: "ir-tree-reviewing", text: "reviewing" });
     }
 
+    let suppressClickFromLongPress = false;
+    if (this.capability.touchTargets && !this.selectMode && !this.moveSourceIds) {
+      let lpTimer: number | null = null;
+      let startX = 0;
+      let startY = 0;
+      const clearLp = () => {
+        if (lpTimer !== null) {
+          window.clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+      };
+      row.addEventListener("pointerdown", (pe: PointerEvent) => {
+        if (pe.pointerType === "mouse") return;
+        const t = pe.target as HTMLElement | null;
+        if (t?.closest("button, input")) return;
+        suppressClickFromLongPress = false;
+        startX = pe.clientX;
+        startY = pe.clientY;
+        clearLp();
+        lpTimer = window.setTimeout(() => {
+          lpTimer = null;
+          suppressClickFromLongPress = true;
+          this.selectMode = true;
+          this.selectedIds.add(node.id);
+          this.selectionAnchorId = node.id;
+          this.focusedId = node.id;
+          void this.render();
+        }, 450);
+      });
+      row.addEventListener("pointermove", (pe: PointerEvent) => {
+        if (lpTimer !== null && Math.hypot(pe.clientX - startX, pe.clientY - startY) > 10) {
+          clearLp();
+        }
+      });
+      row.addEventListener("pointerup", clearLp);
+      row.addEventListener("pointercancel", clearLp);
+    }
+
     row.addEventListener("click", (e) => {
+      if (suppressClickFromLongPress) {
+        suppressClickFromLongPress = false;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       this.onRowClick(e, node, titleTarget);
     });
     row.addEventListener("dblclick", (e) => {
@@ -2347,6 +2489,20 @@ export class IrTreeView extends ItemView {
       if (sources.includes(node.id)) {
         row.addClass("ir-tree-row--moving");
       }
+    }
+
+    if (this.capability.touchTargets && !this.selectMode && !this.moveSourceIds) {
+      const moreBtn = row.createEl("button", {
+        cls: "ir-tree-row-menu-btn",
+        type: "button",
+        attr: { "aria-label": `Actions for ${label}` },
+      });
+      setIcon(moreBtn, "ellipsis");
+      moreBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.showRowContextMenu(e, node, file, li);
+      });
     }
 
     row.addEventListener("contextmenu", (e) => {

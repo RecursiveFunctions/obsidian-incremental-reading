@@ -104,7 +104,7 @@ That block renders as the masked image anywhere Obsidian renders markdown. In re
 
 ## Neural review
 
-`Alt+N` starts a session from the card you are reviewing or the IR note you have open, then walks related material through children, wikilinks, and tags. Grades still count. A muted line on each card says how it got there: `via wikilink`, `via child of`, or `via tag`. Escape ends the neural pass and offers to start today's due queue.
+`Alt+N` starts a session from the card you are reviewing or the IR note you have open, then walks related material through children, wikilinks, tags, and optional lexical/title-mention links. The active frontier persists in `.ir/` (`Resume Neural Queue`) and expands dynamically as you review, extract, or cloze; an inline **Due today** toggle filters review slots to due elements while keeping the seed and associative bridges intact. Grades still count. A muted line on each card says how it got there: `via wikilink`, `via child of`, or `via tag`. Escape ends the neural pass and offers to start today's due queue.
 
 ## Views
 
@@ -114,7 +114,7 @@ Move elements by dragging, or without a mouse: `x` picks up the focused element 
 
 Click a row to locate it in an open review; double-click opens the note. The card under review keeps a chip.
 
-**Stats** (`Alt+S`) shows total elements, how many are scheduled, what is due now split by type, and a seven-day forecast of what lands each day. Overdue is counted separately from the daily bars. Below that: reviews over the last thirty days, retention, the grade spread, and a fourteen-day sparkline. Retention counts Hard or better as a recall, and the panel says so.
+**Stats** (`Alt+S`) shows total elements, how many are scheduled, what is due now split by type, and a seven-day forecast of what lands each day. Overdue is counted separately from the daily bars. Below that: a 26-week activity heatmap, 30-day rolling 7-day true retention, the grade spread, a 20-category forgetting-index breakdown by priority, bounded leech triage with `Forget / Reset`, and the local FSRS-6 parameter optimizer. Retention counts Hard or better as a recall, and the panel says so.
 
 **Session log** (`Alt+L`) is the current pass, stamped when you start it. Click a row to jump to that card or open the note.
 
@@ -151,7 +151,7 @@ Commands with a default binding:
 | `Alt+B` | Import clipboard text as a topic |
 | `Alt+Shift+U` | Quick actions wheel |
 
-More commands ship with no default binding, including resume last read topic, undo last grade, split cloze into separate notes, mark folder notes as topics, import EPUB/HTML or SuperMemo collections, jump interval, start Final Drill, and search reviews. The Help panel lists every registered command; assign keys under Settings, Hotkeys.
+Additional commands ship with no default binding: `Resume Neural Queue`, `Start Final Drill`, `Start random review (reschedules items)`, `Sort current review queue now`, `Jump interval…`, `Advance element / selection…`, `Review Obsidian search results (due)` / `(all)`, `Duplicate element as sibling`, `Resume last read topic`, `Undo last grade`, `Undo last mercy`, `Split cloze into separate IR item notes`, `Mark folder notes as IR topics`, `Import SuperMemo collection (SM18 / SM20)`, `Import EPUB or HTML document`, `Copy optimizer data report`, `Rebuild SM-20 optimization matrix`, and the bulk extract commands (paragraph at cursor, heading section, every blockquote, every list item, every paragraph). Assign keys under Settings, Hotkeys.
 
 Inside the review tab: `Space` advances a reading card, reveals a cloze, and then grades Good by default. `1` to `4` grade a revealed cloze. `[` goes back, `L` is later today, `D` dismisses, `Ctrl+Enter` advances a reading card while the editor is focused, `Escape` leaves.
 
@@ -185,7 +185,7 @@ Built to work offline. Full threat model, verification commands and reproducible
 
 ## Roadmap
 
-Shipped: topics with length-based SM20 A-Factors, anchored extracts and standalone notes with SM20 A-Factor inheritance, parent A-Factor decay, and priority spreading, clozes with hints, FSRS-6 scheduling with post-grade priority drift and a local parameter optimizer, 4-model scheduler divergence (`SM-20` / `FSRS-6` / `DSR` / `SM-2`), SM20 topic commit (`a^3` first interval, log-uniform dispersion, ease adjustment) and priority-scaled first intervals, interleaved due review, neural sessions, deterministic priority queue policies, 5-dimension Mercy scoring and interactive postpone preview (`Alt+M`), Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile capture/review FAB, and undo for grades, Mercy, later, and dismiss.
+Shipped: topics with length-based SM20 A-Factors, anchored extracts and standalone notes with SM20 A-Factor inheritance, parent A-Factor decay, and priority spreading, clozes with hints, SM-20 default item scheduling (`SInc` matrix, early-review R damping) alongside FSRS-6 with post-grade priority drift and a local parameter optimizer, 4-model scheduler divergence (`SM-20` / `FSRS-6` / `DSR` / `SM-2`), SM20 topic commit (`a^3` first interval, log-uniform dispersion, ease adjustment) and priority-scaled first intervals, persisted same-day Final Drill, interleaved due review, semantic passes (`via branch`, `via subset`, `via search`), `Advance` and `Jump interval…`, dynamic Neural Queue (`neural.json`, `Due today` toggle), deterministic priority queue policies, 5-dimension Mercy scoring and interactive postpone preview (`Alt+M`), bounded leech triage, SM18/SM20 and EPUB/HTML import with vault-wide duplicate guards, Collection with global Priority and nested Sources modes, status bar, stats with forecast/heatmap/rolling retention, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile capture/review FAB, and undo for grades, Mercy, manual reschedules, later, and dismiss.
 
 PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be extracted, and cloze is markdown-only: extract from the PDF first, then cloze the extract.
 
@@ -201,15 +201,15 @@ Under consideration: a one-way structure export for external collections.
 
 If you're interested in the architecture and full roadmap, check [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md).
 
-## Recent changes
+## Recent changes (0.14.2)
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full version history. The latest release adds the EPUB/HTML importer, Advance and search review sessions, the neural Due today toggle, and the stats heatmap.
 
-- **Mobile shell & FAB toggles take effect right away:** Turning off the mobile bottom bar, Capture button, or Review button in Settings now hides them immediately (#48).
-- **Edit-mode extract and cloze buttons keep your selection:** Clicking **Extract**, **Cloze**, or **Cloze\*** while editing a card in Review no longer drops your text selection (#49).
-- **Windows (CRLF) and UTF-8 BOM note support:** Notes saved with Windows line endings or a UTF-8 byte-order mark now strip YAML frontmatter and align extract highlights and jump positions cleanly (#47).
-- **Safer first-run migration & faster startup on large vaults:** First-run migration waits for Obsidian's metadata cache to finish indexing before scanning notes (#44), and startup orphan recovery is indexed so large vaults load in milliseconds (#45).
-- **Obsidian 1.7.2 compatibility:** Minimum Obsidian version updated to 1.7.2 with safe fallbacks for file trashing, attachment paths, and vault adapter operations (#46).
+- **Zero-dependency EPUB & HTML import + duplicate guard:** `Import EPUB or HTML document` turns `.epub`/`.html` files into a Book parent topic with ordered Chapter child topics, wikilink TOC, and attachments; `bulkImport` and mobile capture check vault-wide URL and content fingerprints before importing.
+- **SM-20 `Advance`, `via search` & early-review damping:** Priority-ordered `Advance` rescheduling across `[0..horizonDays]`, `Review Obsidian search results (due / all)` / Collection `Review filtered`, and proportional stability damping for early SM-20 reviews (`elapsedDays < prevS`).
+- **Neural `Due today` toggle:** Filter Neural Queue review slots to elements due today while keeping unvisited seeds and associative bridges intact.
+- **Stats 26-week heatmap, rolling retention & bounded leech triage:** Added a 26-week activity heatmap, 30-day rolling 7-day true retention curve, interval-bounded leech detection with `Forget / Reset`, and dispersion curve preview in Settings.
+- **Mobile, SM-20 matrix & Mercy/Postpone fixes:** Fixed mobile FAB safe-area positioning and review scroll-vs-swipe collisions, aligned 0-based `alg17` matrix indexing and `TFileSpace` collection import, and tightened `Later today` / `dilute` / `advance` / `bulkPostpone` consistency.
 
 ## Installation
 
