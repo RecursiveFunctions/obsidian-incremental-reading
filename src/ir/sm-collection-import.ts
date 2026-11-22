@@ -20,6 +20,10 @@ import {
   snapshotSm20Matrix,
   type Sm20MatrixSnapshot,
 } from "./sm20-matrix";
+import {
+  hasWrongRepetitionGradeAndLapsesMatch,
+  repairNonPositiveIntervalDays,
+} from "./sm-history-repair";
 
 const MS_PER_DAY = 86_400_000;
 const DELPHI_EPOCH_MS = Date.UTC(1899, 11, 30);
@@ -127,6 +131,8 @@ export interface SmCollectionImportPlan {
     skippedDeleted: number;
     skippedDuplicates: number;
     historyEvents: number;
+    historyIntervalRepairs: number;
+    historyGradeLapseMismatches: number;
   };
 }
 
@@ -715,6 +721,8 @@ export async function planSmCollectionImport(
     skippedDeleted: 0,
     skippedDuplicates: 0,
     historyEvents: 0,
+    historyIntervalRepairs: 0,
+    historyGradeLapseMismatches: 0,
   };
 
   let lamport = nowMs;
@@ -984,16 +992,41 @@ export async function planSmCollectionImport(
       const nextRow = idx + 1 < rows.length ? rows[idx + 1] : undefined;
       const isFinal = idx === rows.length - 1;
 
+      const repaired = repairNonPositiveIntervalDays(rep.interval_days);
+      if (repaired.repaired) stats.historyIntervalRepairs += 1;
+      const intervalDays = repaired.intervalDays;
+
+      if (
+        hasWrongRepetitionGradeAndLapsesMatch(
+          prevRow
+            ? {
+                reps: prevRow.rep.repetition_number,
+                lapses: prevRow.rep.lapse_count,
+              }
+            : null,
+          {
+            reps: rep.repetition_number,
+            lapses: rep.lapse_count,
+            grade: rep.grade,
+          },
+        )
+      ) {
+        stats.historyGradeLapseMismatches += 1;
+      }
+
       const histDifficulty =
         rawDifficultyI16 >= 0 && rawDifficultyI16 <= 10_000
           ? 1 + (rawDifficultyI16 / 10_000) * 9
           : (authoritativeCard?.difficulty ?? 5.0);
       const elapsedDays = prevRow
-        ? Math.max(0, Math.floor((repMs - prevRow.repMs) / MS_PER_DAY))
-        : Math.max(0, rep.interval_days);
+        ? Math.max(
+            intervalDays,
+            Math.max(0, Math.floor((repMs - prevRow.repMs) / MS_PER_DAY)),
+          )
+        : Math.max(0, intervalDays);
       const nextScheduledDays = nextRow
         ? Math.max(1, Math.round((nextRow.repMs - repMs) / MS_PER_DAY))
-        : Math.max(1, authoritativeCard?.scheduledDays || rep.interval_days || 1);
+        : Math.max(1, authoritativeCard?.scheduledDays || intervalDays || 1);
 
       const card: StoredCard = isFinal && authoritativeCard
         ? {

@@ -1,6 +1,10 @@
 import type { Grade } from "../fsrs";
 import type { StoredCard } from "./model";
-import { roundHalfToEven, SM20_MAX_INTERVAL_DAYS } from "../sm18-ir-mechanics";
+import {
+  rationalSaturationZeroGuarded,
+  roundHalfToEven,
+  SM20_MAX_INTERVAL_DAYS,
+} from "../sm18-ir-mechanics";
 import {
   calibrateSm20Retrievability,
   computePostLapseStability,
@@ -35,6 +39,59 @@ export function computeSm20Retrievability(elapsedDays: number, stability: number
   const raw = Math.exp(expArg);
   if (!Number.isFinite(raw)) return SM20_RETRIEVABILITY_MAX;
   return clamp(raw, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
+}
+
+/**
+ * Placeholder FSRS curve weights for `ComputeBlendedForgettingCurveRetention`
+ * (`0x00cad6a0`) pending a dump of `PTR_DAT_011a5bd0+0xc8..0x110`.
+ */
+const BLENDED_FC_WEIGHTS = {
+  wC8: 0.8,
+  wD0: 0.5,
+  wD8: 0.2,
+  wE0: 0.5,
+  wE8: 0.5,
+  wF0: 1.0,
+  wF8: 0.1,
+  w100: 0.5,
+  w108: 0.1,
+  w110: 0.05,
+} as const;
+
+/**
+ * `ComputeBlendedForgettingCurveRetention` (`0x00cad6a0`).
+ * Binary returns a stability product; keep DSR `computeSm20Retrievability`
+ * for R and use this on the pass-grade stability path.
+ */
+export function computeBlendedForgettingCurveRetention(
+  difficulty01: number,
+  stability: number,
+  elapsedScale: number,
+  expectedIv: number,
+  grade: number,
+): number {
+  const W = BLENDED_FC_WEIGHTS;
+  const d = clamp(Number.isFinite(difficulty01) ? difficulty01 : DEFAULT_DIFFICULTY_01, 0.0, 1.0);
+  let S = Number.isFinite(stability) ? stability : SM20_STABILITY_MIN;
+  const expected = Number.isFinite(expectedIv) ? Math.max(0.0, expectedIv) : 0.0;
+  let ratio = 1.0;
+  if (expected < S && S > 0) {
+    const t = rationalSaturationZeroGuarded(expected / S, W.wF0);
+    ratio = W.wE0 + W.wE8 * t;
+  }
+  S = Math.max(S, expected);
+  const powTerm = S > 0 ? Math.pow(S, W.wF8) : 0.0;
+  const expArg = -(W.w100 * (1.0 - d) + W.w108) * Math.max(0.0, elapsedScale);
+  const expTerm = Math.exp(clamp(expArg, -SM20_EXP_ARG_CLAMP, SM20_EXP_ARG_CLAMP));
+  const gradeFactor = (grade - 4) * W.w110 + 1.0;
+  const blendBase = W.wD0 + (1.0 - d) * (W.wC8 - W.wD0);
+  const product =
+    S * ratio * (W.wD8 + (blendBase - W.wD8) * powTerm * expTerm * gradeFactor);
+  return clamp(
+    Number.isFinite(product) ? product : SM20_STABILITY_MIN,
+    SM20_STABILITY_MIN,
+    SM20_STABILITY_MAX,
+  );
 }
 
 /** `FUN_00cf4e00` (`0x00cf4e00`). */
@@ -228,7 +285,11 @@ export function scheduleSm20Item(
   );
 
   if (grade === "again") {
-    const postLapseStability = computePostLapseStability(prevS, prevLapses + 1);
+    const postLapseStability = computePostLapseStability(
+      prevS,
+      prevLapses + 1,
+      prevD01,
+    );
     return {
       due: nowMs + MS_PER_DAY,
       stability: postLapseStability,

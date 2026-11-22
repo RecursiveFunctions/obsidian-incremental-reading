@@ -210,6 +210,21 @@ export function calibrateSm20Retrievability(
   }
   if (totalCases === 0) return cleanR;
 
+  const rawY: number[] = [];
+  for (let rIdx = 1; rIdx <= 20; rIdx += 1) {
+    const idx = matrixIndex(dIdx, sIdx, rIdx);
+    const cases = matrix.recallCases[idx]!;
+    const x = index20ToRetrievabilityAxis(rIdx);
+    rawY.push(
+      cases > 0
+        ? clamp(matrix.recall[idx]! / cases, 0.0, 1.0)
+        : 0.64 * x + 0.3,
+    );
+  }
+  // ReconcileRetentionMatrixColumnDiffs (0x00c243f0): smooth outlier bins
+  // before weighted regression so sparse single-lapse cells do not skew A,B.
+  const yVals = reconcileRetentionMatrixOutliers(rawY);
+
   // ComputeWeightedLinearRegression (0x00a8d320): weight = round(cases) + 1e-5
   let sumW = 0;
   let sumWX = 0;
@@ -219,9 +234,7 @@ export function calibrateSm20Retrievability(
     const cases = matrix.recallCases[idx]!;
     const w = Math.round(cases) + 1e-5;
     const x = index20ToRetrievabilityAxis(rIdx);
-    const y = cases > 0
-      ? clamp(matrix.recall[idx]! / cases, 0.0, 1.0)
-      : 0.64 * x + 0.3;
+    const y = yVals[rIdx - 1]!;
     sumW += w;
     sumWX += w * x;
     sumWY += w * y;
@@ -237,9 +250,7 @@ export function calibrateSm20Retrievability(
     const cases = matrix.recallCases[idx]!;
     const w = Math.round(cases) + 1e-5;
     const x = index20ToRetrievabilityAxis(rIdx);
-    const y = cases > 0
-      ? clamp(matrix.recall[idx]! / cases, 0.0, 1.0)
-      : 0.64 * x + 0.3;
+    const y = yVals[rIdx - 1]!;
     const dx = x - meanX;
     num += w * dx * (y - meanY);
     den += w * dx * dx;
@@ -358,11 +369,110 @@ export function computeBlendedNextStability(
   return computePostReviewStability(prevS, sinc, elapsedDays, smGrade, retrievability, desiredRetention);
 }
 
-/** `0x00ce0460` / `0x00ce0600`: post-lapse stability. */
-export function computePostLapseStability(prevS: number, lapses: number): number {
-  const safeS = clamp(prevS, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
-  const factor = lapses > 1 ? 0.25 : 0.3;
-  return clamp(Math.min(safeS * factor, 2.0), SM20_STABILITY_MIN, SM20_STABILITY_MAX);
+/**
+ * `ComputeInitialRepetitionStabilityFactor` (`0x00ce0600`).
+ * Difficulty-and-lapse-aware baseline post-lapse stability (days).
+ */
+export function computeInitialRepetitionStabilityFactor(
+  lapseIndex: number,
+  difficultyFrac: number,
+): number {
+  const L = Math.max(1, Math.trunc(Number.isFinite(lapseIndex) ? lapseIndex : 1));
+  const d = clamp(Number.isFinite(difficultyFrac) ? difficultyFrac : (5 - 1) / 9, 0.0, 1.0);
+  return 3.5 * Math.pow(d, 1.8) * Math.exp(-0.27 * L) + 0.6;
+}
+
+/**
+ * `ComputeBlendedRepetitionStability` (`0x00ce0460`) / post-lapse path.
+ * Uses the ce0600 baseline; optional empirical blend when cases are supplied.
+ */
+export function computePostLapseStability(
+  prevS: number,
+  lapses: number,
+  difficulty01?: number,
+  empiricalS?: number,
+  empiricalCases?: number,
+): number {
+  void prevS;
+  const baseline = computeInitialRepetitionStabilityFactor(
+    Math.max(1, Math.trunc(lapses)),
+    difficulty01 ?? (5 - 1) / 9,
+  );
+  const cases = empiricalCases ?? 0;
+  if (
+    empiricalS === undefined ||
+    !Number.isFinite(empiricalS) ||
+    cases <= 0
+  ) {
+    return clamp(baseline, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
+  }
+  const w = rationalSaturationZeroGuarded(cases, 10.0);
+  return clamp(
+    (1.0 - w) * baseline + w * empiricalS,
+    SM20_STABILITY_MIN,
+    SM20_STABILITY_MAX,
+  );
+}
+
+/**
+ * `ReconcileRetentionMatrixColumnDiffs` (`0x00c243f0`).
+ * When adjacent retention bins jump by more than 0.5 and a cell is < 0.5,
+ * replace the outlier with the midpoint of its neighbors.
+ */
+export function reconcileRetentionMatrixOutliers(values: readonly number[]): number[] {
+  const out = values.map((v) => clamp(Number.isFinite(v) ? v : 0.5, 0.0, 1.0));
+  const n = out.length;
+  if (n < 2) return out;
+  for (let c = 0; c < n; c += 1) {
+    const prev = c === 0 ? out[n - 1]! : out[c - 1]!;
+    const curr = out[c]!;
+    const delta = c === 0 ? (1.0 - prev) + curr : curr - prev;
+    if (!(delta > 0.5)) continue;
+    if (curr < 0.5) {
+      const next = c + 1 < n ? out[c + 1]! : prev;
+      out[c] = clamp((prev + next) / 2.0, 0.0, 1.0);
+    }
+    if (c > 0 && out[c - 1]! < 0.5) {
+      const before = c >= 2 ? out[c - 2]! : out[c]!;
+      out[c - 1] = clamp((before + out[c]!) / 2.0, 0.0, 1.0);
+    }
+  }
+  return out;
+}
+
+/**
+ * `Smooth3DMatrixCubeByMode` / `Smooth3DMatrixCellWithNeighborCube`
+ * (`0x00a93480` / `0x00a93510`, mode 1 = SInc doubles).
+ * Neighbor average: (self + sum) / (weight + 1) over the 3×3×3 neighborhood.
+ */
+export function smoothSm20SincCube(matrix: Sm20Matrix): void {
+  const next = new Float64Array(matrix.sinc);
+  for (let d = 1; d <= 20; d += 1) {
+    for (let s = 1; s <= 20; s += 1) {
+      for (let r = 1; r <= 20; r += 1) {
+        let sum = 0;
+        let weight = 0;
+        for (let dd = -1; dd <= 1; dd += 1) {
+          const nd = d + dd;
+          if (nd < 1 || nd > 20) continue;
+          for (let ds = -1; ds <= 1; ds += 1) {
+            const ns = s + ds;
+            if (ns < 1 || ns > 20) continue;
+            for (let dr = -1; dr <= 1; dr += 1) {
+              const nr = r + dr;
+              if (nr < 1 || nr > 20) continue;
+              const nIdx = matrixIndex(nd, ns, nr);
+              sum += matrix.sinc[nIdx]!;
+              weight += 1;
+            }
+          }
+        }
+        const idx = matrixIndex(d, s, r);
+        next[idx] = (matrix.sinc[idx]! + sum) / (weight + 1);
+      }
+    }
+  }
+  matrix.sinc.set(next);
 }
 
 export function gradeToSmGrade(grade: Grade | number): number {

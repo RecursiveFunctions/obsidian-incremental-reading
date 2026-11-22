@@ -265,6 +265,7 @@ export interface IrReviewViewHost {
   emptyVault?: boolean;
   commitPdfExtract?: (opts?: {
     promote?: boolean;
+    priorityOverride?: number;
   }) => Promise<IrElement | undefined>;
   nothingDue?: UpcomingLoad | null;
   getUpcoming?: () => Promise<UpcomingLoad | null>;
@@ -550,6 +551,7 @@ export class IrReviewView extends ItemView {
   private emptyVault: boolean;
   private readonly commitPdfExtract?: (opts?: {
     promote?: boolean;
+    priorityOverride?: number;
   }) => Promise<IrElement | undefined>;
   private nothingDue: UpcomingLoad | null;
   private readonly getUpcoming?: () => Promise<UpcomingLoad | null>;
@@ -4945,6 +4947,7 @@ export class IrReviewView extends ItemView {
   public async handleExtract(opts?: {
     silent?: boolean;
     promote?: boolean;
+    priorityOverride?: number;
   }): Promise<IrElement | undefined> {
     return this.runAction(() => this.handleExtractNow(opts));
   }
@@ -4952,6 +4955,7 @@ export class IrReviewView extends ItemView {
   private async handleExtractNow(opts?: {
     silent?: boolean;
     promote?: boolean;
+    priorityOverride?: number;
   }): Promise<IrElement | undefined> {
     const slot = this.current;
     if (!slot || !this.canMakeChild()) return;
@@ -4965,6 +4969,7 @@ export class IrReviewView extends ItemView {
     if (this.pdfSourcePath(slot) && !cardHasSelection) {
       const created = await this.commitPdfExtract?.({
         promote: opts?.promote,
+        priorityOverride: opts?.priorityOverride,
       });
       if (!created) {
         new Notice(
@@ -5037,7 +5042,12 @@ export class IrReviewView extends ItemView {
       const extractText =
         textOverride ?? bodyBeforeExtract.slice(sel.start, sel.end);
       const { childSchedule, childPriority, parentAFactorAfter } =
-        this.prepareExtractScheduleAndPriority(slot, extractText.length, now);
+        this.prepareExtractScheduleAndPriority(
+          slot,
+          extractText.length,
+          now,
+          opts?.priorityOverride,
+        );
       const ev = buildExtractEvent({
         sourcePath,
         sourceText: bodyBeforeExtract,
@@ -5094,10 +5104,34 @@ export class IrReviewView extends ItemView {
     return created;
   }
 
+  /** Preview the automatic child priority for the current selection (#91). */
+  public previewExtractChildPriority(): {
+    priority: number;
+    label: string;
+  } | null {
+    const slot = this.current;
+    if (!slot || !this.canMakeChild()) return null;
+    const liveRes = this.resolveSelection();
+    const text = liveRes.ok
+      ? liveRes.text
+      : (liveRes.renderedText ?? "").trim();
+    if (!text && (this.multiSelect?.pending.body(this.heldKey(slot)).length ?? 0) === 0) {
+      return null;
+    }
+    const len = text.length || 100;
+    return {
+      priority: clampPriority(
+        spreadExtractPriority(slot.element.priority, len),
+      ),
+      label: (text || slot.element.notePath || "extract").slice(0, 40),
+    };
+  }
+
   private prepareExtractScheduleAndPriority(
     slot: ReviewSlot,
     extractTextLen: number,
     now: number,
+    priorityOverride?: number,
   ) {
     const parentAf =
       slot.element.schedule?.aFactor ?? this.settings.topicAFactor;
@@ -5106,7 +5140,8 @@ export class IrReviewView extends ItemView {
       extractTextLen,
     );
     const childPriority = clampPriority(
-      spreadExtractPriority(slot.element.priority, extractTextLen),
+      priorityOverride ??
+        spreadExtractPriority(slot.element.priority, extractTextLen),
     );
     const childState = newTopicState(this.settings, new Date(now));
     childState.aFactor = childAFactor;
@@ -6048,6 +6083,7 @@ export class IrReviewView extends ItemView {
 
     // One segment per model, sized by its own proposal. Each is clickable, and
     // the number keys choose the same model as the buttons below.
+    const keyByMemberId = new Map(div.config.members.map((m, idx) => [m.id, idx + 1]));
     const segments = trackSegments(div.config.members, DIVERGENCE_TRACK_SCALE);
     const track = bar.createDiv({ cls: "ir-divergence-track" });
     for (const [i, seg] of segments.entries()) {
@@ -6055,7 +6091,8 @@ export class IrReviewView extends ItemView {
         cls: `ir-divergence-seg ir-divergence-seg--${i % 4}`,
       });
       cell.style.flexGrow = String(Math.max(seg.share, 0.0001) * 1000);
-      cell.setAttribute("title", `${seg.id}: ${seg.intervalDays}d (press ${i + 1})`);
+      const keyNum = keyByMemberId.get(seg.id) ?? i + 1;
+      cell.setAttribute("title", `${seg.id}: ${seg.intervalDays}d (press ${keyNum})`);
       cell.createSpan({
         cls: "ir-divergence-seg-label",
         text: `${seg.id} ${trackLabel(seg.intervalDays)}`,

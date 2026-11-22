@@ -269,3 +269,20 @@ test("all batch priority planners reproduce finalOrder under pure and ledger fol
     step3.finalOrder,
   );
 });
+
+test("planSpread and planAdjust scale cleanly for large collections (#94)", () => {
+  const N = 2000;
+  const K = 500;
+  const initialOrder = Array.from({ length: N }, (_, i) => id(`e${String(i).padStart(4, "0")}`));
+  const selected = initialOrder.slice(0, K);
+  const t0 = performance.now();
+  const spread = planSpread(initialOrder, selected, 10, 90);
+  const adjust = planAdjust(initialOrder, selected, 15, 85);
+  const elapsedMs = performance.now() - t0;
+
+  assert.equal(spread.intents.length, K);
+  assert.equal(adjust.intents.length, K);
+  assert.deepEqual(replayIntentsPure(spread), spread.finalOrder);
+  assert.deepEqual(replayIntentsPure(adjust), adjust.finalOrder);
+  assert.ok(elapsedMs < 1500, `expected < 1500ms for 2000/500 batch plans, got ${elapsedMs.toFixed(1)}ms`);
+});

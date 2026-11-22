@@ -4259,3 +4259,54 @@ img.ir-source-image.ir-cloze-source {
   padding-top: 4px;
   border-top: 1px solid var(--background-modifier-border);
 }
+
+/* Placement priority panels (#89/#90/#91) */
+.ir-mark-priority-view,
+.ir-extract-priority-view,
+.ir-bulk-mark-view {
+  padding: 0.75rem 1rem;
+  overflow: auto;
+}
+
+.ir-placement-priority {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.ir-placement-priority-title {
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold, 600);
+}
+
+.ir-placement-priority-hint,
+.ir-bulk-mark-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin: 0;
+}
+
+.ir-bulk-mark-section-title {
+  font-weight: var(--font-semibold, 600);
+  margin: 0.75rem 0 0.35rem;
+}
+
+.ir-bulk-mark-source-row,
+.ir-bulk-mark-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+
+.ir-bulk-mark-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  max-height: 40vh;
+  overflow: auto;
+  font-size: var(--font-ui-small);
+}
+
+.ir-bulk-mark-error {
+  color: var(--text-error);
+}

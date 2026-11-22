@@ -125,6 +125,7 @@ export async function markAsTopic(
   app: App,
   file: TFile,
   settings: IrNoteSettings,
+  priority?: number,
 ): Promise<boolean> {
   if (getIrType(app, file) === "topic") return false;
 
@@ -137,7 +138,9 @@ export async function markAsTopic(
 
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm[IR_KEYS.type] = "topic" satisfies IrType;
-    if (typeof fm[IR_KEYS.priority] !== "number") {
+    if (priority !== undefined) {
+      fm[IR_KEYS.priority] = clampPriority(priority);
+    } else if (typeof fm[IR_KEYS.priority] !== "number") {
       fm[IR_KEYS.priority] = clampPriority(settings.defaultPriority);
     }
     writeTopicToFrontmatter(fm, newTopicState(settings, new Date(), bodyLength));

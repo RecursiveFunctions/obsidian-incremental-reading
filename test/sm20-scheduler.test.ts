@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  computeBlendedForgettingCurveRetention,
   computeInitialSincPrior,
   computeSm20Retrievability,
   difficulty01ToIndex20,
@@ -211,4 +212,33 @@ test("scheduleSm20Item preserves minimum interval growth floor for on-time revie
     next.scheduledDays > highDifficultyCard.scheduledDays,
     `expected on-time high-retention review to grow interval past ${highDifficultyCard.scheduledDays}d, got ${next.scheduledDays}d`,
   );
+});
+
+test("computeBlendedForgettingCurveRetention: finite and grade-sensitive (#70)", () => {
+  const a = computeBlendedForgettingCurveRetention(0.1, 10, 5, 5, 5);
+  const b = computeBlendedForgettingCurveRetention(0.9, 10, 5, 5, 5);
+  const lowGrade = computeBlendedForgettingCurveRetention(0.5, 10, 5, 5, 3);
+  const highGrade = computeBlendedForgettingCurveRetention(0.5, 10, 5, 5, 5);
+  assert.ok(Number.isFinite(a) && Number.isFinite(b));
+  assert.notEqual(a, b);
+  assert.ok(highGrade > lowGrade);
+});
+
+test("scheduleSm20Item again uses difficulty-aware post-lapse stability (#68)", () => {
+  const easyCard = {
+    due: NOW,
+    stability: 20,
+    difficulty: 1.5,
+    elapsedDays: 10,
+    scheduledDays: 10,
+    reps: 3,
+    lapses: 0,
+    state: 2,
+    lastReview: NOW - 10 * DAY_MS,
+  };
+  const hardCard = { ...easyCard, difficulty: 9.5 };
+  const easyNext = scheduleSm20Item(easyCard, "again", NOW, 0.9);
+  const hardNext = scheduleSm20Item(hardCard, "again", NOW, 0.9);
+  // ce0600 baseline rises with difficulty01.
+  assert.ok(hardNext.stability > easyNext.stability);
 });

@@ -151,6 +151,101 @@ export function mountPriorityEditor(
  * status-bar's current DOM as a snapshot; Enter commits, Esc / blur cancels
  * and restores the snapshot.
  */
+export interface PlacementPriorityOptions {
+  /** Pre-filled placement request (usually settings.defaultPriority). */
+  initial: number;
+  title: string;
+  hint?: string;
+  /** Primary commit button label. */
+  commitLabel?: string;
+  /** Optional preset that commits `initial` without editing. */
+  useDefaultLabel?: string;
+  /** Optional preset that commits a separately computed value (extract flow). */
+  useComputed?: { label: string; value: number };
+  onCommit: (priority: number) => void;
+  onCancel?: () => void;
+}
+
+/**
+ * Inline non-modal placement priority input for side-panel Views.
+ * Deliberately avoids role=dialog / aria-modal / focus traps (UI commitment #6).
+ * The value is a queue placement request, not a stored literal.
+ */
+export function mountPlacementPriorityInput(
+  host: HTMLElement,
+  options: PlacementPriorityOptions,
+): PriorityPromptHandle {
+  host.empty();
+  host.addClass("ir-placement-priority");
+  host.createEl("div", {
+    cls: "ir-placement-priority-title",
+    text: options.title,
+  });
+  host.createEl("p", {
+    cls: "ir-placement-priority-hint",
+    text:
+      options.hint ??
+      "Place near this point in the queue (0 = first, 100 = last). " +
+        "The number is a placement request; fold projects the final position.",
+  });
+
+  const field = host.createEl("label", { cls: "ir-priority-field" });
+  field.createSpan({ text: "Priority" });
+  const input = field.createEl("input", {
+    cls: "ir-priority-input",
+  }) as HTMLInputElement;
+  input.type = "number";
+  input.min = String(PRIORITY_MIN);
+  input.max = String(PRIORITY_MAX);
+  input.step = "0.0001";
+  input.value = formatPriority(options.initial);
+
+  const actions = host.createDiv({ cls: "ir-priority-actions" });
+  let closed = false;
+  const close = (commit: number | null) => {
+    if (closed) return;
+    closed = true;
+    if (commit === null) options.onCancel?.();
+    else options.onCommit(clampPriority(commit));
+  };
+
+  actions.createEl("button", {
+    text: options.commitLabel ?? "Mark",
+    cls: "mod-cta",
+  }).onclick = () => {
+    const v = parseCandidatePriority(input.value);
+    if (v === null) return;
+    close(v);
+  };
+  if (options.useDefaultLabel) {
+    actions.createEl("button", { text: options.useDefaultLabel }).onclick = () =>
+      close(options.initial);
+  }
+  if (options.useComputed) {
+    const computed = options.useComputed;
+    actions.createEl("button", { text: computed.label }).onclick = () =>
+      close(computed.value);
+  }
+  actions.createEl("button", { text: "Cancel" }).onclick = () => close(null);
+
+  host.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const v = parseCandidatePriority(input.value);
+      if (v === null) return;
+      close(v);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      close(null);
+    }
+  });
+
+  setTimeout(() => input.focus(), 0);
+  return {
+    cancel: () => close(null),
+  };
+}
+
 export function openPriorityPrompt(
   statusBarEl: HTMLElement,
   current: number,

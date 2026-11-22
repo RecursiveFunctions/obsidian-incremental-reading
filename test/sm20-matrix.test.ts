@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   calibrateSm20Retrievability,
+  computePostLapseStability,
   computePostReviewStability,
   createEmptySm20Matrix,
   foldSm20MatrixFromEvents,
@@ -9,17 +10,21 @@ import {
   lookupBlendedSinc,
   matrixIndex,
   parseSm20Alg17DatFiles,
+  reconcileRetentionMatrixOutliers,
   recordSm20Outcome,
   restoreSm20Matrix,
   retrievabilityToIndex20,
   SM20_CASES_DAT_BYTES,
   SM20_MATRIX_CELLS,
   SM20_SINC_DAT_BYTES,
+  smoothSm20SincCube,
   snapshotSm20Matrix,
 } from "../src/ir/sm20-matrix";
 import {
   difficulty01ToIndex20,
   scheduleSm20Item,
+  SM20_STABILITY_MAX,
+  SM20_STABILITY_MIN,
   stabilityToIndex20,
 } from "../src/ir/sm20-scheduler";
 import { newDeviceId, newElementId, newEventId } from "../src/ir/ids";
@@ -332,4 +337,32 @@ test("createEmptySm20Matrix matches ABC of SuperMemo 20 alg17/StabilityIncrease.
   assert.equal(nonZero, 8000);
   // Trailing sentinel slot (index 20 on contiguous axis) remains 0
   assert.equal(empty.sinc[20], 0);
+});
+
+test("computePostLapseStability: ce0600 rises with difficulty, falls with lapses (#68)", () => {
+  const easy = computePostLapseStability(10, 1, 0.1);
+  const hard = computePostLapseStability(10, 1, 0.9);
+  const manyLapses = computePostLapseStability(10, 8, 0.5);
+  const fewLapses = computePostLapseStability(10, 1, 0.5);
+  // 3.5*pow(d,1.8)*exp(-0.27*L)+0.6 — difficulty raises the baseline.
+  assert.ok(hard > easy);
+  assert.ok(fewLapses > manyLapses);
+  assert.ok(easy >= SM20_STABILITY_MIN && hard <= SM20_STABILITY_MAX);
+});
+
+test("reconcileRetentionMatrixOutliers: smooths Δ>0.5 low cells (#70)", () => {
+  const raw = [0.9, 0.1, 0.85, 0.8];
+  const fixed = reconcileRetentionMatrixOutliers(raw);
+  assert.ok(fixed[1]! > 0.1);
+  assert.ok(fixed[1]! < 0.9);
+});
+
+test("smoothSm20SincCube: averages neighbor cells (#68)", () => {
+  const matrix = createEmptySm20Matrix();
+  const idx = matrixIndex(5, 5, 5);
+  matrix.sinc[idx] = 100;
+  const before = matrix.sinc[idx]!;
+  smoothSm20SincCube(matrix);
+  assert.notEqual(matrix.sinc[idx]!, before);
+  assert.ok(matrix.sinc[idx]! < before);
 });

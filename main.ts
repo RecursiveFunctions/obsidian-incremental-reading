@@ -24,6 +24,18 @@ import { IR_SESSION_VIEW_TYPE, IrSessionView } from "./src/session-view";
 import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
 import { IR_HELP_VIEW_TYPE, IrHelpView } from "./src/help-view";
 import {
+  IR_MARK_PRIORITY_VIEW_TYPE,
+  IrMarkPriorityView,
+} from "./src/mark-priority-view";
+import {
+  IR_BULK_MARK_VIEW_TYPE,
+  IrBulkMarkView,
+} from "./src/bulk-mark-view";
+import {
+  IR_EXTRACT_PRIORITY_VIEW_TYPE,
+  IrExtractPriorityView,
+} from "./src/extract-priority-view";
+import {
   IrNoteResult,
   applyInheritedFrontmatter,
   createCloze,
@@ -910,6 +922,40 @@ export default class IncrementalReadingPlugin extends Plugin {
       (leaf: WorkspaceLeaf) => new IrHelpView(leaf, this.irCommands),
     );
 
+    this.registerView(
+      IR_MARK_PRIORITY_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) =>
+        new IrMarkPriorityView(leaf, {
+          defaultPriority: this.settings.defaultPriority,
+          onMark: async (file, priority) => {
+            await this.markActiveFileAsTopic(file, priority);
+            this.app.workspace.detachLeavesOfType(IR_MARK_PRIORITY_VIEW_TYPE);
+          },
+          onCancel: () => {
+            this.app.workspace.detachLeavesOfType(IR_MARK_PRIORITY_VIEW_TYPE);
+          },
+        }),
+    );
+
+    this.registerView(
+      IR_BULK_MARK_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) =>
+        new IrBulkMarkView(leaf, {
+          app: this.app,
+          defaultPriority: this.settings.defaultPriority,
+          loadSkipPaths: () => this.loadIrSkipPaths(),
+          onCommit: async (request) => {
+            await this.commitBulkMarkTopics(request.attempted, request.priorities);
+            this.app.workspace.detachLeavesOfType(IR_BULK_MARK_VIEW_TYPE);
+          },
+        }),
+    );
+
+    this.registerView(
+      IR_EXTRACT_PRIORITY_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) => new IrExtractPriorityView(leaf),
+    );
+
     this.registerView(IR_REVIEW_VIEW_TYPE, (leaf: WorkspaceLeaf) => {
         if (!this.ledger) {
           throw new Error(
@@ -1134,6 +1180,21 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
+    // No default hotkey — bind under Settings → Hotkeys (#89).
+    this.irCommand({
+      id: "mark-as-ir-topic-with-priority",
+      name: "Mark current note as IR topic with priority",
+      icon: "book-plus",
+      checkCallback: (checking: boolean) => {
+        const file = activeIrFile(this.app);
+        if (!file || (file.extension !== "md" && file.extension !== "pdf")) {
+          return false;
+        }
+        if (!checking) void this.openMarkWithPriority(file);
+        return true;
+      },
+    });
+
     this.irCommand({
       id: "mark-folder-as-ir-topics",
       name: "Mark folder notes as IR topics",
@@ -1144,6 +1205,14 @@ export default class IncrementalReadingPlugin extends Plugin {
         if (!checking) void this.markFolderAsTopics(folder);
         return true;
       },
+    });
+
+    // Unbound staging panel for folder + multi-file selection (#90).
+    this.irCommand({
+      id: "bulk-mark-ir-topics",
+      name: "Bulk mark folders and files as IR topics",
+      icon: "library",
+      callback: () => void this.openBulkMarkView(),
     });
 
     // SuperMemo parity: Alt+X extract, Alt+Z cloze. Defaults only; users
@@ -1214,6 +1283,18 @@ export default class IncrementalReadingPlugin extends Plugin {
           return true;
         }
         return false;
+      },
+    });
+
+    // No default hotkey — bind under Settings → Hotkeys (#91).
+    this.irCommand({
+      id: "extract-selection-with-priority",
+      name: "Extract selection with priority",
+      icon: "scissors",
+      checkCallback: (checking) => {
+        if (!this.canExtractWithPriority()) return false;
+        if (!checking) void this.openExtractWithPriority();
+        return true;
       },
     });
 
@@ -1598,6 +1679,12 @@ export default class IncrementalReadingPlugin extends Plugin {
               .setIcon("book-open")
               .onClick(() => void this.markFolderAsTopics(file)),
           );
+          menu.addItem((item) =>
+            item
+              .setTitle("Bulk mark as IR topics…")
+              .setIcon("library")
+              .onClick(() => void this.openBulkMarkView([file])),
+          );
           return;
         }
         if (!(file instanceof TFile)) return;
@@ -1608,6 +1695,12 @@ export default class IncrementalReadingPlugin extends Plugin {
                 .setTitle("Mark as IR topic")
                 .setIcon("book-open")
                 .onClick(() => void this.markActiveFileAsTopic(file)),
+            );
+            menu.addItem((item) =>
+              item
+                .setTitle("Mark as IR topic with priority…")
+                .setIcon("book-plus")
+                .onClick(() => void this.openMarkWithPriority(file)),
             );
           }
           this.addMobileIrFileMenuNav(menu);
@@ -1630,6 +1723,12 @@ export default class IncrementalReadingPlugin extends Plugin {
               .setTitle("Mark as IR topic")
               .setIcon("book-open")
               .onClick(() => void this.markActiveFileAsTopic(file)),
+          );
+          menu.addItem((item) =>
+            item
+              .setTitle("Mark as IR topic with priority…")
+              .setIcon("book-plus")
+              .onClick(() => void this.openMarkWithPriority(file)),
           );
           this.addMobileIrFileMenuNav(menu);
           return;
@@ -1657,6 +1756,26 @@ export default class IncrementalReadingPlugin extends Plugin {
         );
         this.addMobileIrFileMenuNav(menu);
       }),
+    );
+
+    // Multi-select in the file explorer (`files-menu`, Obsidian ≥1.4.10).
+    // One right-click can fire the event twice — openBulkMarkView is idempotent.
+    // Untyped core event (same approach as pdf-menu); callback arity differs from file-menu.
+    this.registerEvent(
+      (this.app.workspace as unknown as {
+        on(
+          name: "files-menu",
+          cb: (menu: Menu, files: TAbstractFile[]) => void,
+        ): { e: unknown };
+      }).on("files-menu", (menu, files) => {
+        if (!Array.isArray(files) || files.length === 0) return;
+        menu.addItem((item) =>
+          item
+            .setTitle("Bulk mark as IR topics…")
+            .setIcon("library")
+            .onClick(() => void this.openBulkMarkView(files)),
+        );
+      }) as Parameters<Plugin["registerEvent"]>[0],
     );
 
     this.registerEvent(
@@ -1813,6 +1932,9 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_HELP_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_MARK_PRIORITY_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_BULK_MARK_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_EXTRACT_PRIORITY_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     if (this.statusBarEl) {
       disposeStatusBar(this.statusBarEl);
@@ -2376,7 +2498,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async extractFromMarkdownView(
     mv: MarkdownView,
-    opts?: { promote?: boolean },
+    opts?: { promote?: boolean; priorityOverride?: number },
   ): Promise<void> {
     const file = mv.file;
     if (!file) return;
@@ -2435,7 +2557,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       textOverride?: string;
       spans?: ReadonlyArray<{ start: number; end: number }>;
     },
-    opts?: { promote?: boolean },
+    opts?: { promote?: boolean; priorityOverride?: number },
   ): Promise<void> {
     if (!(await this.ensureIrSource(source))) return;
     if (!this.ledger) {
@@ -2465,6 +2587,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         source,
         extractText.length,
         now,
+        opts?.priorityOverride,
       );
     try {
       const ev = buildExtractEvent({
@@ -2552,7 +2675,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async extractSelection(
     editor: Editor,
     source: TFile,
-    opts?: { promote?: boolean },
+    opts?: { promote?: boolean; priorityOverride?: number },
   ) {
     if (!(await this.ensureIrSource(source))) return;
     if (!this.ledger) {
@@ -2629,6 +2752,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         source,
         extractText.length,
         now,
+        opts?.priorityOverride,
       );
     try {
       const ev = buildExtractEvent({
@@ -2681,6 +2805,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     source: TFile,
     extractTextLen: number,
     now: number,
+    priorityOverride?: number,
   ) {
     const parentPriority =
       parentEl?.priority ??
@@ -2696,7 +2821,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       extractTextLen,
     );
     const childPriority = clampPriority(
-      spreadExtractPriority(parentPriority, extractTextLen),
+      priorityOverride ??
+        spreadExtractPriority(parentPriority, extractTextLen),
     );
     const childState = newTopicState(this.settings, new Date(now));
     childState.aFactor = childAFactor;
@@ -2757,6 +2883,7 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private async extractFromPdfInReview(opts?: {
     promote?: boolean;
+    priorityOverride?: number;
   }): Promise<IrElement | undefined> {
     const sel = findPdfTextSelection(this.app) ?? this.lastPdfSelection;
     if (!sel && !this.heldPdfFile()) return undefined;
@@ -2780,7 +2907,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private async extractFromPdfSelection(
     sel: PdfTextSelection | null,
-    opts?: { promote?: boolean },
+    opts?: { promote?: boolean; priorityOverride?: number },
   ): Promise<IrElement | undefined> {
     const file = sel?.file ?? this.heldPdfFile();
     if (!file) return undefined;
@@ -2820,7 +2947,11 @@ export default class IncrementalReadingPlugin extends Plugin {
     file: TFile,
     text: string,
     pdf: PdfSelector,
-    opts?: { promote?: boolean; noticeLabel?: string },
+    opts?: {
+      promote?: boolean;
+      noticeLabel?: string;
+      priorityOverride?: number;
+    },
   ): Promise<IrElement | undefined> {
     const sel = { file, page: pdf.page };
     if (!(await this.ensureIrSource(sel.file))) return;
@@ -2846,7 +2977,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       isImageCrop ? 0 : text.length,
     );
     const childPriority = clampPriority(
-      spreadExtractPriority(parentPriority, isImageCrop ? 100 : text.length),
+      opts?.priorityOverride ??
+        spreadExtractPriority(parentPriority, isImageCrop ? 100 : text.length),
     );
     const now = Date.now();
     const device = await this.ledger.getDeviceId();
@@ -7333,14 +7465,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     });
   }
 
-  private async markActiveFileAsTopic(file?: TFile) {
+  private async markActiveFileAsTopic(file?: TFile, priority?: number) {
     const target = file ?? activeIrFile(this.app);
     if (!target) {
       new Notice("Incremental Reading: no active Markdown note or PDF.");
       return;
     }
     if (target.extension === "pdf") {
-      await this.markPdfAsTopic(target);
+      await this.markPdfAsTopic(target, { priority });
       return;
     }
     if (target.extension !== "md") {
@@ -7354,10 +7486,261 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
-    const marked = await markAsTopic(this.app, target, this.settings);
+    const marked = await markAsTopic(this.app, target, this.settings, priority);
     if (marked) {
       await this.recordElement(target);
       new Notice(`Marked "${target.basename}" as an IR topic.`);
+    }
+  }
+
+  /**
+   * #89: side-panel mark with explicit placement priority. Already-IR notes
+   * route to the existing priority editor instead of no-oping.
+   */
+  private async openMarkWithPriority(file: TFile): Promise<void> {
+    if (file.extension === "md" && getIrType(this.app, file)) {
+      await this.openTreeAndFocusPriorityEditor(file);
+      return;
+    }
+    if (file.extension === "pdf") {
+      const existing = await this.resolveElementIdForFile(file);
+      if (existing) {
+        await this.openTreeAndFocusPriorityEditor(file);
+        return;
+      }
+    }
+    const existing = this.app.workspace.getLeavesOfType(IR_MARK_PRIORITY_VIEW_TYPE);
+    if (existing.length > 0) {
+      this.app.workspace.revealLeaf(existing[0]!);
+      const view = existing[0]!.view;
+      if (view instanceof IrMarkPriorityView) view.setTarget(file);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf) {
+      new Notice("Incremental Reading: could not open the mark-priority panel.");
+      return;
+    }
+    await leaf.setViewState({ type: IR_MARK_PRIORITY_VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
+    const view = leaf.view;
+    if (view instanceof IrMarkPriorityView) view.setTarget(file);
+  }
+
+  private async loadIrSkipPaths(): Promise<Set<string>> {
+    const skip = new Set<string>();
+    if (this.ledger) {
+      const state = await this.ledger.load();
+      for (const el of state.elements.values()) {
+        if (el.notePath) skip.add(el.notePath);
+      }
+    }
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      if (getIrType(this.app, f)) skip.add(f.path);
+    }
+    for (const path of this.irPdfPaths) skip.add(path);
+    return skip;
+  }
+
+  private async openBulkMarkView(seed?: readonly TAbstractFile[]): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(IR_BULK_MARK_VIEW_TYPE);
+    if (existing.length > 0) {
+      this.app.workspace.revealLeaf(existing[0]!);
+      const view = existing[0]!.view;
+      if (view instanceof IrBulkMarkView && seed && seed.length > 0) {
+        view.setSources(seed);
+      }
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf) {
+      new Notice("Incremental Reading: could not open the bulk-mark panel.");
+      return;
+    }
+    await leaf.setViewState({ type: IR_BULK_MARK_VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
+    const view = leaf.view;
+    if (!(view instanceof IrBulkMarkView)) return;
+    if (seed && seed.length > 0) view.setSources(seed);
+  }
+
+  private async commitBulkMarkTopics(
+    attempted: readonly { path: string; extension: string }[],
+    priorities: readonly number[],
+  ): Promise<void> {
+    let marked = 0;
+    const failures: string[] = [];
+    for (let i = 0; i < attempted.length; i += 1) {
+      const ref = attempted[i]!;
+      const priority = priorities[i] ?? this.settings.defaultPriority;
+      const abs = this.app.vault.getAbstractFileByPath(ref.path);
+      if (!(abs instanceof TFile)) {
+        failures.push(`${ref.path}: missing`);
+        continue;
+      }
+      try {
+        if (abs.extension === "pdf") {
+          if (await this.markPdfAsTopic(abs, { silent: true, priority })) {
+            marked += 1;
+          } else {
+            failures.push(`${ref.path}: already IR or ledger unavailable`);
+          }
+          continue;
+        }
+        if (abs.extension !== "md") {
+          failures.push(`${ref.path}: unsupported type`);
+          continue;
+        }
+        const did = await markAsTopic(this.app, abs, this.settings, priority);
+        if (!did) {
+          failures.push(`${ref.path}: already IR`);
+          continue;
+        }
+        await this.recordElement(abs, { skipReconcile: true });
+        marked += 1;
+      } catch (e) {
+        console.error("Incremental Reading: bulk mark failed", ref.path, e);
+        failures.push(`${ref.path}: error`);
+      }
+    }
+    if (this.ledger) {
+      await this.ledger.reconcile().catch((e) => {
+        console.error("Incremental Reading: reconcile after bulk mark failed", e);
+      });
+      void this.refreshStatusBar();
+    }
+    const skipped = attempted.length - marked;
+    const skipBit = skipped > 0 ? ` · ${skipped} skipped` : "";
+    new Notice(
+      `Marked ${marked} note${marked === 1 ? "" : "s"} as IR topics${skipBit}.`,
+    );
+    if (failures.length > 0) {
+      console.warn(
+        "Incremental Reading: bulk mark runtime failures",
+        failures.slice(0, 20),
+      );
+    }
+    const tree = this.getTreeView();
+    if (tree) void tree.refresh();
+  }
+
+  private canExtractWithPriority(): boolean {
+    const pdfSel = findPdfTextSelection(this.app);
+    if (pdfSel) this.lastPdfSelection = pdfSel;
+    if (pdfSel || this.lastPdfSelection || this.heldPdfFile()) return true;
+    const rv = this.getActiveReviewView();
+    if (rv?.getCurrentElementId()) return true;
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    return !!(mv?.file && this.markdownViewHasSelection(mv));
+  }
+
+  private async openExtractWithPriority(): Promise<void> {
+    const computed = await this.previewExtractChildPriority();
+    if (computed === null) {
+      new Notice("Incremental Reading: nothing selected to extract.");
+      return;
+    }
+    const existing = this.app.workspace.getLeavesOfType(
+      IR_EXTRACT_PRIORITY_VIEW_TYPE,
+    );
+    let leaf = existing[0];
+    if (!leaf) {
+      const created = this.app.workspace.getRightLeaf(false);
+      if (!created) {
+        new Notice(
+          "Incremental Reading: could not open the extract-priority panel.",
+        );
+        return;
+      }
+      leaf = created;
+      await leaf.setViewState({
+        type: IR_EXTRACT_PRIORITY_VIEW_TYPE,
+        active: true,
+      });
+    }
+    this.app.workspace.revealLeaf(leaf);
+    const view = leaf.view;
+    if (!(view instanceof IrExtractPriorityView)) return;
+    view.setRequest({
+      computedPriority: computed.priority,
+      defaultPriority: this.settings.defaultPriority,
+      label: computed.label,
+      onExtract: async (priority) => {
+        await this.runExtractWithPriority(priority);
+        this.app.workspace.detachLeavesOfType(IR_EXTRACT_PRIORITY_VIEW_TYPE);
+      },
+      onCancel: () => {
+        this.app.workspace.detachLeavesOfType(IR_EXTRACT_PRIORITY_VIEW_TYPE);
+      },
+    });
+  }
+
+  private async previewExtractChildPriority(): Promise<{
+    priority: number;
+    label: string;
+  } | null> {
+    const pdfSel = findPdfTextSelection(this.app);
+    if (pdfSel) this.lastPdfSelection = pdfSel;
+    const pdfFile =
+      pdfSel?.file ?? this.lastPdfSelection?.file ?? this.heldPdfFile();
+    if (pdfFile) {
+      const text = (pdfSel ?? this.lastPdfSelection)?.text ?? "selection";
+      const parentId =
+        (await this.resolveElementIdForFile(pdfFile)) ??
+        elementIdForPath(pdfFile.path);
+      const parent = this.ledger
+        ? (await this.ledger.load()).elements.get(parentId)
+        : undefined;
+      const parentPriority = parent?.priority ?? this.settings.defaultPriority;
+      return {
+        priority: clampPriority(
+          spreadExtractPriority(parentPriority, text.length || 100),
+        ),
+        label: text.trim().slice(0, 40) || pdfFile.basename,
+      };
+    }
+    const rv = this.getActiveReviewView();
+    if (rv) {
+      const preview = rv.previewExtractChildPriority();
+      if (preview) return preview;
+    }
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!mv?.file || !this.markdownViewHasSelection(mv)) return null;
+    const sel = mv.editor.getSelection().trim();
+    const parentId =
+      (await this.resolveElementIdForFile(mv.file)) ??
+      elementIdForPath(mv.file.path);
+    const parent = this.ledger
+      ? (await this.ledger.load()).elements.get(parentId)
+      : undefined;
+    const parentPriority =
+      parent?.priority ??
+      getPriority(this.app, mv.file, this.settings.defaultPriority);
+    return {
+      priority: clampPriority(
+        spreadExtractPriority(parentPriority, sel.length || 100),
+      ),
+      label: sel.slice(0, 40) || mv.file.basename,
+    };
+  }
+
+  private async runExtractWithPriority(priority: number): Promise<void> {
+    const opts = { priorityOverride: priority } as const;
+    const pdfSel = findPdfTextSelection(this.app);
+    if (pdfSel) this.lastPdfSelection = pdfSel;
+    const heldPdf = this.heldPdfFile();
+    if (pdfSel || this.lastPdfSelection || heldPdf) {
+      await this.extractFromPdfSelection(pdfSel ?? this.lastPdfSelection, opts);
+      return;
+    }
+    const rv = this.getActiveReviewView();
+    if (rv) {
+      await rv.handleExtract(opts);
+      return;
+    }
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (mv?.file && this.markdownViewHasSelection(mv)) {
+      await this.extractFromMarkdownView(mv, opts);
     }
   }
 
@@ -7806,7 +8189,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private async markPdfAsTopic(
     file: TFile,
-    opts?: { silentIfExists?: boolean; silent?: boolean },
+    opts?: { silentIfExists?: boolean; silent?: boolean; priority?: number },
   ): Promise<boolean> {
     if (!this.ledger) {
       if (!opts?.silent) {
@@ -7831,7 +8214,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         device: await this.ledger.getDeviceId(),
         lamport: now,
         now,
-        priority: this.settings.defaultPriority,
+        priority: opts?.priority ?? this.settings.defaultPriority,
         schedule: topicStateToSchedule(
           newTopicState(this.settings, new Date(now)),
         ),

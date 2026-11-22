@@ -170,16 +170,18 @@ function planFinalOrder(
   let working = [...initialOrder];
   const intents: PriorityPlacementIntent[] = [];
   const selectedSet = new Set(selectedIds);
-  const orderedTargets = finalOrder.filter((id) => selectedSet.has(id));
-  for (const targetId of orderedTargets) {
-    const desiredIndex = finalOrder.indexOf(targetId);
-    if (desiredIndex < 0) continue;
+  for (let desiredIndex = 0; desiredIndex < finalOrder.length; desiredIndex += 1) {
+    const targetId = finalOrder[desiredIndex];
+    if (!selectedSet.has(targetId)) continue;
     const without = working.filter((id) => id !== targetId);
-    const preceding = finalOrder.slice(0, desiredIndex).filter((id) => id !== targetId);
+    const posInWithout = new Map<ElementId, number>();
+    for (let i = 0; i < without.length; i += 1) {
+      posInWithout.set(without[i], i);
+    }
     let index = 0;
-    for (const id of preceding) {
-      const candidate = without.indexOf(id);
-      if (candidate >= index) index = candidate + 1;
+    for (let i = 0; i < desiredIndex; i += 1) {
+      const candidate = posInWithout.get(finalOrder[i]);
+      if (candidate !== undefined && candidate >= index) index = candidate + 1;
     }
     const intent = placementAtIndex(without, targetId, index);
     intents.push(intent);

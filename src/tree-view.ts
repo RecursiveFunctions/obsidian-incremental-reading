@@ -1840,21 +1840,50 @@ export class IrTreeView extends ItemView {
     start.value = "0"; end.value = "100"; start.min = end.min = "0"; start.max = end.max = "100";
     const preview = surface.createDiv({ cls: "ir-bulk-preview-summary" });
     let plan: PriorityBatchPlan;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const render = () => {
       const order = collectionSortOrder(this.elementsById.values());
       plan = operation === "spread"
         ? planSpread(order, ids, Number(start.value), Number(end.value))
         : planAdjust(order, ids, Number(start.value), Number(end.value));
-      const positions = plan.selectedIds.map((id) => plan.finalOrder.indexOf(id) + 1);
-      preview.setText(`${plan.selectedIds.length} elements · positions ${Math.min(...positions)}–${Math.max(...positions)} · ${start.value}% to ${end.value}%`);
+      const finalPos = new Map<ElementId, number>();
+      for (let i = 0; i < plan.finalOrder.length; i += 1) {
+        finalPos.set(plan.finalOrder[i], i + 1);
+      }
+      let minPos = Infinity;
+      let maxPos = -Infinity;
+      for (const id of plan.selectedIds) {
+        const pos = finalPos.get(id);
+        if (pos !== undefined) {
+          if (pos < minPos) minPos = pos;
+          if (pos > maxPos) maxPos = pos;
+        }
+      }
+      const rangeText = Number.isFinite(minPos) ? `${minPos}–${maxPos}` : "none";
+      preview.setText(`${plan.selectedIds.length} elements · positions ${rangeText} · ${start.value}% to ${end.value}%`);
     };
-    start.oninput = end.oninput = render;
+    const scheduleRender = () => {
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        if (surface.isConnected) render();
+      }, 120);
+    };
+    start.oninput = end.oninput = scheduleRender;
     const actions = surface.createDiv({ cls: "ir-priority-actions" });
     actions.createEl("button", { text: "Apply", cls: "mod-cta" }).onclick = () => {
+      if (debounceTimer !== null) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+        render();
+      }
       close();
       void this.commitPriorityPlan!(plan);
     };
-    actions.createEl("button", { text: "Cancel" }).onclick = close;
+    actions.createEl("button", { text: "Cancel" }).onclick = () => {
+      if (debounceTimer !== null) { clearTimeout(debounceTimer); debounceTimer = null; }
+      close();
+    };
     render();
   }
 
