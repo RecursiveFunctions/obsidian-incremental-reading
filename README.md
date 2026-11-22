@@ -151,7 +151,7 @@ Commands with a default binding:
 | `Alt+B` | Import clipboard text as a topic |
 | `Alt+Shift+U` | Quick actions wheel |
 
-Nine more commands ship with no default binding: resume last read topic, undo last grade, split cloze into separate notes, mark folder notes as topics, and the bulk extract commands (paragraph at cursor, heading section, every blockquote, every list item, every paragraph). Assign keys under Settings, Hotkeys.
+More commands ship with no default binding, including resume last read topic, undo last grade, split cloze into separate notes, mark folder notes as topics, import EPUB/HTML or SuperMemo collections, jump interval, start Final Drill, and search reviews. The Help panel lists every registered command; assign keys under Settings, Hotkeys.
 
 Inside the review tab: `Space` advances a reading card, reveals a cloze, and then grades Good by default. `1` to `4` grade a revealed cloze. `[` goes back, `L` is later today, `D` dismisses, `Ctrl+Enter` advances a reading card while the editor is focused, `Escape` leaves.
 
@@ -169,7 +169,7 @@ If you extract from the editor, pin these to the mobile toolbar under Settings, 
 
 ## Settings
 
-Six sections: Review, Extracts, Topics, Overload, Anki export, Danger zone.
+Eight sections: Review, Extracts, Topics, Overload, Priority scheduling, Mobile, Anki export, Danger zone.
 
 Review covers how many items sit between reading cards, interleaving, the scheduler divergence picker, and which grade Space applies after a cloze reveal. Overload holds the daily ceiling, the priority cutoff, and the optional startup auto-postpone, all described in [Stay ahead of overload](#stay-ahead-of-overload). Extracts covers standalone-note behavior and what happens when a source note is deleted. Danger zone can reset IR state while keeping your notes, or trash every IR note.
 
@@ -185,7 +185,7 @@ Built to work offline. Full threat model, verification commands and reproducible
 
 ## Roadmap
 
-Shipped: topics with length-based SM20 A-Factors, anchored extracts and standalone notes with SM20 A-Factor inheritance, parent A-Factor decay, and priority spreading, clozes with hints, FSRS-6 scheduling with post-grade priority drift and a local parameter optimizer, 3-model scheduler divergence (`FSRS-6` / `DSR` / `SM-2`), SM20 topic commit (`a^3` first interval, log-uniform dispersion, ease adjustment) and priority-scaled first intervals, interleaved due review, neural sessions, deterministic priority queue policies, 5-dimension Mercy scoring and interactive postpone preview (`Alt+M`), Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile capture/review FAB, and undo for grades, Mercy, later, and dismiss.
+Shipped: topics with length-based SM20 A-Factors, anchored extracts and standalone notes with SM20 A-Factor inheritance, parent A-Factor decay, and priority spreading, clozes with hints, FSRS-6 scheduling with post-grade priority drift and a local parameter optimizer, 4-model scheduler divergence (`SM-20` / `FSRS-6` / `DSR` / `SM-2`), SM20 topic commit (`a^3` first interval, log-uniform dispersion, ease adjustment) and priority-scaled first intervals, interleaved due review, neural sessions, deterministic priority queue policies, 5-dimension Mercy scoring and interactive postpone preview (`Alt+M`), Collection with global Priority and nested Sources modes, status bar, stats with forecast, session log, help panel, PDF topics and extracts, image extracts and image occlusion, Ctrl multi-span extracts, mobile capture/review FAB, and undo for grades, Mercy, later, and dismiss.
 
 PDF support covers text-layer PDFs. Scanned PDFs with no text layer cannot be extracted, and cloze is markdown-only: extract from the PDF first, then cloze the extract.
 
@@ -201,9 +201,9 @@ Under consideration: a one-way structure export for external collections.
 
 If you're interested in the architecture and full roadmap, check [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md).
 
-## Recent changes (0.14.1)
+## Recent changes
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the full version history.
+See [`CHANGELOG.md`](CHANGELOG.md) for the full version history. The latest release adds the EPUB/HTML importer, Advance and search review sessions, the neural Due today toggle, and the stats heatmap.
 
 - **Mobile shell & FAB toggles take effect right away:** Turning off the mobile bottom bar, Capture button, or Review button in Settings now hides them immediately (#48).
 - **Edit-mode extract and cloze buttons keep your selection:** Clicking **Extract**, **Cloze**, or **Cloze\*** while editing a card in Review no longer drops your text selection (#49).

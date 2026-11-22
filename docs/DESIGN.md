@@ -170,7 +170,7 @@ What we still keep separate:
 
 ## 4. Scheduler
 
-FSRS via `ts-fsrs` is the primary **item** scheduler, while **SuperMemo 20's
+SM-20 is the primary **item** scheduler for new vaults; FSRS-6 remains available and is grandfathered for existing vaults. **SuperMemo 20's
 decompiled reading and priority algorithms** (`src/sm18-ir-mechanics.ts` &
 `src/topic.ts`) govern topics, extracts, and priority drift. The plugin **owns
 the IR queue** (priority, topics, items, postpone, interleaving), because
@@ -206,7 +206,7 @@ the exact formulas recovered from SuperMemo 20 (`sm20.exe`):
 Replicates SuperMemo's divergence-triggered algorithm chooser as an ensemble
 plus manual override.
 
-- Ensemble members: default-FSRS, user-optimized-FSRS, classic SM-2. The
+- Ensemble members: SM-20, FSRS (default or user-optimized), DSR, classic SM-2. The
   informative pair is default-FSRS vs user-optimized-FSRS: large divergence
   signals model uncertainty or thin review history, and FSRS can expose the
   confidence behind it. SM showed two numbers; we can show why they differ.
@@ -218,9 +218,9 @@ plus manual override.
   `max(intervals) / min(intervals) > k`, k configurable, ~1.5 to start.
   Optionally gated by an absolute interval floor so short intervals never nag.
 - UX: the picker is **opt-in expert mode, off by default**. Default behavior is
-  silent auto-follow of the primary scheduler (FSRS). Settings → **Show
-  scheduler divergence picker** arms the inline FSRS vs SM-2 chooser when
-  intervals diverge past the threshold. A prompt in the queue every few cards
+  silent auto-follow of the primary scheduler (SM-20 for new vaults, FSRS-6 for
+  grandfathered vaults). Settings → **Show scheduler divergence picker** arms
+  the inline four-model chooser when intervals diverge past the threshold. A prompt in the queue every few cards
   would destroy IR throughput, which is the entire point of IR.
   **Migration (2026-08-13):** new vaults get off. Existing installs that
   already had the always-on picker are grandfathered to on so their workflow
@@ -525,9 +525,8 @@ Reading-view behavior and limitations:
 - RESOLVED: the SuperMemo chooser is an accuracy-weighted parallel ensemble
   (SM-17 through SM-20 lineage; SM-20's `sinc_model_v2/v4/v6`, `initial_sinc_prior`,
   and 21-bin forgetting-curve blend `w = cases / (cases + 3.5)` are now fully
-  decompiled). Section 5 ships a 3-model divergence display (`FSRS-6`, `DSR`,
-  `SM-2`) for IR throughput, with SM-19/20 SInc surface available as an
-  optional shadow model.
+  decompiled). Section 5 ships a 4-model divergence display (`SM-20`, `FSRS-6`,
+  `DSR`, `SM-2`) for IR throughput.
 - Image occlusion: SHIPPED (see "Multi-selection, image regions, and
   occlusion"). Incremental video and audio: planned in Phase 3 of
   `docs/FUTURE-PLANS.md` (`{ resume, start, stop }` timestamp model).
