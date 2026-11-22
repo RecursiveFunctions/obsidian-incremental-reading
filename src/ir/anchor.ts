@@ -41,6 +41,12 @@ export function resolveAnchor(anchor: Anchor, sourceText: string): AnchorResolut
       return { status: "ok", start, end, repaired: false };
     }
   }
+
+  // An empty needle would make the literal scan below advance by zero forever.
+  // Keep the position fast path above intact: zero-width positions are valid.
+  if (exact.length === 0) {
+    return { status: "needs-reanchor" };
+  }
   
   const exactIndices: number[] = [];
   let i = 0;
@@ -100,6 +106,13 @@ export function resolveAnchor(anchor: Anchor, sourceText: string): AnchorResolut
   
   const normalizedSource = normalizeForMatch(sourceText);
   const normalizedExact = normalizeForMatch(exact);
+
+  // Format-only quotes normalize to an empty needle. The normalized scan
+  // would otherwise advance by zero forever after a source edit removes the
+  // literal form. The literal scan above has already had its chance.
+  if (normalizedExact.length === 0) {
+    return { status: "needs-reanchor" };
+  }
   
   const normIndices: number[] = [];
   let n = 0;
