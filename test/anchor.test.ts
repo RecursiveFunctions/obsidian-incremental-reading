@@ -129,3 +129,27 @@ test("normalized match resolves exact slice when source starts with heading or s
   assert.equal(src.slice(r.start, r.end), "The **quick** brown\nfox");
   assert.equal(r.repaired, true);
 });
+
+test("empty exact returns needs-reanchor instead of hanging", () => {
+  assert.deepEqual(
+    resolveAnchor(anchor({ exact: "" }), "alpha beta"),
+    { status: "needs-reanchor" },
+  );
+});
+
+test("format-only exact whose literal was edited away returns needs-reanchor", () => {
+  const src = "Intro line\nX\nThe quick brown fox.\nTail.";
+  const r = resolveAnchor(anchor({ exact: "**", position: { start: 11, end: 13 } }), src);
+  assert.deepEqual(r, { status: "needs-reanchor" });
+});
+
+test("zero-width position still resolves when exact is empty", () => {
+  const r = resolveAnchor(anchor({ exact: "", position: { start: 5, end: 5 } }), "abcdef");
+  assert.deepEqual(r, { status: "ok", start: 5, end: 5, repaired: false });
+});
+
+test("format-only exact still resolves while the literal remains", () => {
+  const src = "Intro line\n**\nTail.";
+  const r = resolveAnchor(anchor({ exact: "**", position: { start: 11, end: 13 } }), src);
+  assert.deepEqual(r, { status: "ok", start: 11, end: 13, repaired: false });
+});
