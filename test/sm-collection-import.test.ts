@@ -339,6 +339,56 @@ test("duplicate guard skips already-imported elements and normalizes URLs withou
   );
 });
 
+test("planSmCollectionImport keeps note-path suffix probing linear for colliding titles", async () => {
+  const N = 200;
+  const sharedStem = "S".repeat(72);
+  const spans: Uint8Array[] = [];
+  const memRecords: Uint8Array[] = [];
+  let position = 1;
+  for (let i = 0; i < N; i += 1) {
+    const text = `${sharedStem} body ${i}`;
+    const span = makeRtxSpan(text, i + 1);
+    spans.push(span);
+    memRecords.push(makeMemRecord(position, span.length));
+    position += span.length;
+  }
+  const registryPtr = makeSub(Array.from({ length: N }, (_, i) => i + 1));
+  const elementInfo = concatBytes(
+    ...Array.from({ length: N }, (_, i) => makeElementInfo({ type: 0, status: 0, textMember: i + 1 })),
+  );
+  const contents = concatBytes(...Array.from({ length: N }, () => makeContents(0)));
+  const fs = memSourceFs({
+    "info/ElementInfo.dat": elementInfo,
+    "info/contents.dat": contents,
+    "registry/text.mem": concatBytes(...memRecords),
+    "registry/text.ptr": registryPtr,
+    "registry/text.rtx": concatBytes(...spans),
+  });
+
+  const originalHas = Set.prototype.has;
+  let probes = 0;
+  Set.prototype.has = function (key: unknown) {
+    if (typeof key === "string" && key.endsWith(".md")) probes += 1;
+    return originalHas.call(this, key);
+  };
+  let plan;
+  try {
+    plan = await planSmCollectionImport({
+      fs,
+      nowMs: NOW,
+      deviceId: DEV,
+      targetFolder: "SM Import",
+    });
+  } finally {
+    Set.prototype.has = originalHas;
+  }
+
+  assert.equal(plan.notes.length, N);
+  assert.equal(plan.notes[0]!.relPath, `SM Import/${sharedStem}.md`);
+  assert.equal(plan.notes[1]!.relPath, `SM Import/${sharedStem} 2.md`);
+  assert.ok(probes <= N + 2, `expected linear suffix probing, got ${probes}`);
+});
+
 test("import seeds sm20Baseline from alg17/*.dat and cursor skips imported RepetitionHistory.dat", async () => {
   const sincBuf = new Uint8Array(SM20_SINC_DAT_BYTES);
   const sincCasesBuf = new Uint8Array(SM20_CASES_DAT_BYTES);
