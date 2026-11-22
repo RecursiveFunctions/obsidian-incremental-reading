@@ -463,6 +463,7 @@ export async function planSmCollectionImport(
   const attachments: SmImportedAttachment[] = [];
   const bookmarks: Bookmark[] = [];
   const usedNotePaths = new Set<string>();
+  const stemHints = new Map<string, number>();
   const copiedAttachmentNames = new Set<string>();
 
   const stats = {
@@ -615,12 +616,14 @@ export async function planSmCollectionImport(
     if (shouldWriteNote) {
       const stem = sanitizeNoteStem(titleText, `sm-${smId}`);
       const dirPrefix = targetFolder ? `${targetFolder}/` : "";
-      let candidate = `${dirPrefix}${stem}.md`;
-      let suffix = 2;
+      const hintKey = `${dirPrefix}${stem}`;
+      let index = (stemHints.get(hintKey) ?? 0) + 1;
+      let candidate = index === 1 ? `${dirPrefix}${stem}.md` : `${dirPrefix}${stem} ${index}.md`;
       while (usedNotePaths.has(candidate)) {
-        candidate = `${dirPrefix}${stem} ${suffix}.md`;
-        suffix += 1;
+        index += 1;
+        candidate = `${dirPrefix}${stem} ${index}.md`;
       }
+      stemHints.set(hintKey, index);
       usedNotePaths.add(candidate);
       notePath = candidate;
 
