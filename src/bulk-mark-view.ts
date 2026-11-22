@@ -1,15 +1,9 @@
-/**
- * Side-panel staging View for bulk mark-as-topic with priority planning (#90).
- * Sources: folders and/or files; priority modes: default / fixed / even range.
- */
-
 import {
   ItemView,
   Notice,
   WorkspaceLeaf,
   type App,
   type TAbstractFile,
-  TFile,
   TFolder,
 } from "obsidian";
 import {
@@ -21,12 +15,11 @@ import {
 } from "./ir/bulk-mark-priority";
 import type { FolderFileRef } from "./ir/folder-topics";
 import { formatPriority } from "./ir/relative-priority";
-import { PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
+import { createPriorityField } from "./priority-prompt";
 
 export const IR_BULK_MARK_VIEW_TYPE = "ir-bulk-mark-view";
 
 export interface BulkMarkCommitRequest {
-  /** Attempted set shown in the preview (invariant with closed #25). */
   attempted: readonly FolderFileRef[];
   priorities: readonly number[];
 }
@@ -34,20 +27,24 @@ export interface BulkMarkCommitRequest {
 export interface BulkMarkViewHost {
   app: App;
   defaultPriority: number;
-  /** Already-IR paths (ledger + frontmatter). */
   loadSkipPaths: () => Promise<Set<string>>;
   onCommit: (request: BulkMarkCommitRequest) => Promise<void>;
 }
+
+const NO_SKIP = new Set<string>();
 
 export class IrBulkMarkView extends ItemView {
   private sources: BulkMarkSource[] = [];
   private modeKind: BulkPriorityMode["kind"] = "default";
   private fixedValue = "";
-  private rangeMin = "";
-  private rangeMax = "";
+  private rangeMin = "0";
+  private rangeMax = "100";
   private preview: FolderFileRef[] = [];
+  private skipped: FolderFileRef[] = [];
   private previewError: string | null = null;
   private plannedPriorities: number[] = [];
+  private previewEl: HTMLElement | null = null;
+  private markBtn: HTMLButtonElement | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -72,42 +69,35 @@ export class IrBulkMarkView extends ItemView {
     await this.refreshPreview();
   }
 
-  /** Replace staging sources (idempotent; deduped by path). */
   setSources(entries: readonly TAbstractFile[]): void {
-    const next: BulkMarkSource[] = [];
     const seen = new Set<string>();
-    for (const entry of entries) {
+    this.sources = entries.flatMap((entry) => {
       const classified = classifyVaultEntry(entry);
-      if (!classified || seen.has(classified.path)) continue;
+      if (!classified || seen.has(classified.path)) return [];
       seen.add(classified.path);
-      next.push(classified);
-    }
-    this.sources = next;
+      return [classified];
+    });
     void this.refreshPreview();
   }
 
   addSource(entry: TAbstractFile): void {
     const classified = classifyVaultEntry(entry);
-    if (!classified) return;
-    if (this.sources.some((s) => s.path === classified.path)) return;
+    if (!classified || this.sources.some((s) => s.path === classified.path)) {
+      return;
+    }
     this.sources = [...this.sources, classified];
     void this.refreshPreview();
   }
 
-  private vaultRefs(): FolderFileRef[] {
-    return this.host.app.vault.getFiles().map((f) => ({
+  private async refreshPreview(): Promise<void> {
+    const skip = await this.host.loadSkipPaths();
+    const refs = this.host.app.vault.getFiles().map((f) => ({
       path: f.path,
       extension: f.extension,
     }));
-  }
-
-  private async refreshPreview(): Promise<void> {
-    const skip = await this.host.loadSkipPaths();
-    this.preview = assembleBulkMarkCandidates(
-      this.vaultRefs(),
-      this.sources,
-      skip,
-    );
+    const all = assembleBulkMarkCandidates(refs, this.sources, NO_SKIP);
+    this.preview = all.filter((f) => !skip.has(f.path));
+    this.skipped = all.filter((f) => skip.has(f.path));
     this.recomputePriorities();
     this.render();
   }
@@ -132,13 +122,8 @@ export class IrBulkMarkView extends ItemView {
       this.currentMode(),
       this.host.defaultPriority,
     );
-    if (!plan.ok) {
-      this.previewError = plan.reason;
-      this.plannedPriorities = [];
-      return;
-    }
-    this.previewError = null;
-    this.plannedPriorities = plan.priorities;
+    this.previewError = plan.ok ? null : plan.reason;
+    this.plannedPriorities = plan.ok ? plan.priorities : [];
   }
 
   private render(): void {
@@ -189,12 +174,7 @@ export class IrBulkMarkView extends ItemView {
     };
     addRow.createEl("button", { text: "Add active folder" }).onclick = () => {
       const file = this.host.app.workspace.getActiveFile();
-      const folder =
-        file?.parent instanceof TFolder
-          ? file.parent
-          : file instanceof TFolder
-            ? file
-            : null;
+      const folder = file?.parent instanceof TFolder ? file.parent : null;
       if (!folder) {
         new Notice("Incremental Reading: no folder for the active file.");
         return;
@@ -225,139 +205,78 @@ export class IrBulkMarkView extends ItemView {
     };
 
     if (this.modeKind === "fixed") {
-      const field = modeEl.createEl("label", { cls: "ir-priority-field" });
-      field.createSpan({ text: "Priority" });
-      const input = field.createEl("input", {
-        cls: "ir-priority-input",
-      }) as HTMLInputElement;
-      input.type = "number";
-      input.min = String(PRIORITY_MIN);
-      input.max = String(PRIORITY_MAX);
-      input.step = "0.0001";
-      input.value = this.fixedValue || formatPriority(this.host.defaultPriority);
-      this.fixedValue = input.value;
+      this.fixedValue ||= formatPriority(this.host.defaultPriority);
+      const input = createPriorityField(modeEl, "Priority", this.fixedValue);
       input.oninput = () => {
         this.fixedValue = input.value;
         this.recomputePriorities();
-        this.renderPreviewOnly();
+        this.updatePreview();
       };
-    }
-
-    if (this.modeKind === "range") {
-      const minField = modeEl.createEl("label", { cls: "ir-priority-field" });
-      minField.createSpan({ text: "Min" });
-      const minInput = minField.createEl("input", {
-        cls: "ir-priority-input",
-      }) as HTMLInputElement;
-      minInput.type = "number";
-      minInput.min = String(PRIORITY_MIN);
-      minInput.max = String(PRIORITY_MAX);
-      minInput.step = "0.0001";
-      minInput.value = this.rangeMin || "0";
-      this.rangeMin = minInput.value;
-
-      const maxField = modeEl.createEl("label", { cls: "ir-priority-field" });
-      maxField.createSpan({ text: "Max" });
-      const maxInput = maxField.createEl("input", {
-        cls: "ir-priority-input",
-      }) as HTMLInputElement;
-      maxInput.type = "number";
-      maxInput.min = String(PRIORITY_MIN);
-      maxInput.max = String(PRIORITY_MAX);
-      maxInput.step = "0.0001";
-      maxInput.value = this.rangeMax || "100";
-      this.rangeMax = maxInput.value;
-
+    } else if (this.modeKind === "range") {
+      const minInput = createPriorityField(modeEl, "Min", this.rangeMin);
+      const maxInput = createPriorityField(modeEl, "Max", this.rangeMax);
       const onRange = () => {
         this.rangeMin = minInput.value;
         this.rangeMax = maxInput.value;
         this.recomputePriorities();
-        this.renderPreviewOnly();
+        this.updatePreview();
       };
       minInput.oninput = onRange;
       maxInput.oninput = onRange;
     }
 
-    const previewEl = container.createDiv({ cls: "ir-bulk-mark-preview" });
-    previewEl.createEl("div", {
-      cls: "ir-bulk-mark-section-title",
-      text: `Preview (${this.preview.length})`,
-    });
-    if (this.previewError) {
-      previewEl.createEl("p", {
-        cls: "ir-bulk-mark-error",
-        text: this.previewError,
-      });
-    } else if (this.preview.length === 0) {
-      previewEl.createEl("p", {
-        cls: "ir-bulk-mark-empty",
-        text: "No unmarked markdown notes or PDFs in the current sources.",
-      });
-    } else {
-      const list = previewEl.createEl("ul", { cls: "ir-bulk-mark-list" });
-      this.preview.forEach((ref, index) => {
-        const p = this.plannedPriorities[index];
-        list.createEl("li", {
-          text: `${ref.path} → p${formatPriority(p ?? this.host.defaultPriority)}`,
-        });
-      });
-    }
-
+    this.previewEl = container.createDiv({ cls: "ir-bulk-mark-preview" });
     const actions = container.createDiv({ cls: "ir-priority-actions" });
-    const markBtn = actions.createEl("button", {
+    this.markBtn = actions.createEl("button", {
       text: `Mark ${this.preview.length}`,
       cls: "mod-cta",
     });
-    markBtn.disabled =
-      this.preview.length === 0 ||
-      this.previewError !== null ||
-      this.plannedPriorities.length !== this.preview.length;
-    markBtn.onclick = () => {
-      if (markBtn.disabled) return;
+    this.markBtn.onclick = () => {
+      if (this.markBtn?.disabled) return;
       void this.host.onCommit({
         attempted: [...this.preview],
         priorities: [...this.plannedPriorities],
       });
     };
+    this.updatePreview();
   }
 
-  /** Update preview copy without rebuilding inputs (keeps focus). */
-  private renderPreviewOnly(): void {
-    const previewEl = this.contentEl.querySelector(".ir-bulk-mark-preview");
-    if (!previewEl) {
-      this.render();
-      return;
-    }
+  private updatePreview(): void {
+    const previewEl = this.previewEl;
+    if (!previewEl) return;
     previewEl.empty();
+    const skipNote =
+      this.skipped.length > 0 ? ` · ${this.skipped.length} already IR` : "";
     previewEl.createEl("div", {
       cls: "ir-bulk-mark-section-title",
-      text: `Preview (${this.preview.length})`,
+      text: `Preview (${this.preview.length} ready${skipNote})`,
     });
     if (this.previewError) {
       previewEl.createEl("p", {
         cls: "ir-bulk-mark-error",
         text: this.previewError,
       });
-    } else if (this.preview.length === 0) {
+    } else if (this.preview.length === 0 && this.skipped.length === 0) {
       previewEl.createEl("p", {
         cls: "ir-bulk-mark-empty",
-        text: "No unmarked markdown notes or PDFs in the current sources.",
+        text: "No markdown notes or PDFs in the current sources.",
       });
     } else {
       const list = previewEl.createEl("ul", { cls: "ir-bulk-mark-list" });
       this.preview.forEach((ref, index) => {
-        const p = this.plannedPriorities[index];
-        list.createEl("li", {
-          text: `${ref.path} → p${formatPriority(p ?? this.host.defaultPriority)}`,
-        });
+        const p = this.plannedPriorities[index] ?? this.host.defaultPriority;
+        list.createEl("li", { text: `${ref.path} → p${formatPriority(p)}` });
       });
+      for (const ref of this.skipped) {
+        list.createEl("li", {
+          cls: "ir-bulk-mark-skipped",
+          text: `${ref.path} (skip: already IR)`,
+        });
+      }
     }
-    const markBtn = this.contentEl.querySelector(
-      ".ir-priority-actions button.mod-cta",
-    ) as HTMLButtonElement | null;
-    if (markBtn) {
-      markBtn.textContent = `Mark ${this.preview.length}`;
-      markBtn.disabled =
+    if (this.markBtn) {
+      this.markBtn.textContent = `Mark ${this.preview.length}`;
+      this.markBtn.disabled =
         this.preview.length === 0 ||
         this.previewError !== null ||
         this.plannedPriorities.length !== this.preview.length;

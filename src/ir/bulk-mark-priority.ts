@@ -1,14 +1,6 @@
-/**
- * Pure priority planning for bulk mark-as-topic (#90).
- * Placement requests only — finalizeFold projects final queue positions.
- */
-
-import { clampPriority, PRIORITY_MAX, PRIORITY_MIN } from "./model";
+import { clampPriority } from "./model";
 import { formatPriority } from "./relative-priority";
-import {
-  folderTopicCandidates,
-  type FolderFileRef,
-} from "./folder-topics";
+import { folderTopicCandidates, type FolderFileRef } from "./folder-topics";
 
 export type BulkPriorityMode =
   | { kind: "default" }
@@ -19,7 +11,6 @@ export type BulkPriorityPlan =
   | { ok: true; priorities: number[] }
   | { ok: false; reason: string };
 
-/** Four-decimal priority format needs a band wide enough for N distinct slots. */
 const PRIORITY_STEP = 0.0001;
 
 export function evenSpacedPriorities(
@@ -65,9 +56,8 @@ export function planBulkMarkPriorities(
     return { ok: false, reason: "Range minimum must be ≤ maximum." };
   }
   if (count > 1) {
-    const span = max - min;
     const needed = (count - 1) * PRIORITY_STEP;
-    if (span + 1e-12 < needed) {
+    if (max - min + 1e-12 < needed) {
       return {
         ok: false,
         reason:
@@ -84,10 +74,7 @@ export interface BulkMarkSource {
   kind: "file" | "folder";
 }
 
-/**
- * Classify an Obsidian abstract file without relying on minified class names.
- * Folders expose `children`; files expose `extension`.
- */
+/** Structural check because production minifies Obsidian class names. */
 export function classifyVaultEntry(entry: {
   path: string;
   extension?: string;
@@ -105,16 +92,13 @@ export function classifyVaultEntry(entry: {
   return null;
 }
 
-/**
- * Expand folders + files to a unique, path-sorted candidate list.
- * Preview equals this attempted set; runtime failures are reported separately.
- */
 export function assembleBulkMarkCandidates(
   files: readonly FolderFileRef[],
   sources: readonly BulkMarkSource[],
   skipPaths: ReadonlySet<string>,
 ): FolderFileRef[] {
   const byPath = new Map<string, FolderFileRef>();
+  const fileByPath = new Map(files.map((f) => [f.path, f]));
   for (const source of sources) {
     if (source.kind === "folder") {
       for (const ref of folderTopicCandidates(files, source.path, skipPaths)) {
@@ -123,20 +107,10 @@ export function assembleBulkMarkCandidates(
       continue;
     }
     if (skipPaths.has(source.path)) continue;
-    const hit = files.find((f) => f.path === source.path);
+    const hit = fileByPath.get(source.path);
     if (!hit) continue;
     const ext = hit.extension.toLowerCase();
-    if (ext !== "md" && ext !== "pdf") continue;
-    byPath.set(hit.path, hit);
+    if (ext === "md" || ext === "pdf") byPath.set(hit.path, hit);
   }
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
-}
-
-export function validatePriorityBounds(raw: string): number | null {
-  const trimmed = raw.trim();
-  if (trimmed === "") return null;
-  const n = Number(trimmed);
-  if (!Number.isFinite(n)) return null;
-  if (n < PRIORITY_MIN || n > PRIORITY_MAX) return clampPriority(n);
-  return n;
 }

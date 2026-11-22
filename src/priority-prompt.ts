@@ -1,12 +1,37 @@
 import { clampPriority, PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
-import { formatPriority } from "./ir/relative-priority";
 import {
+  formatPriority,
   previewPriorityPlacement,
   priorityForPosition,
   type PriorityPlacementPreview,
 } from "./ir/relative-priority";
 import type { ElementId } from "./ir/ids";
 import type { IrElement } from "./ir/model";
+
+export function configurePriorityInput(
+  input: HTMLInputElement,
+  value: string,
+): HTMLInputElement {
+  input.type = "number";
+  input.min = String(PRIORITY_MIN);
+  input.max = String(PRIORITY_MAX);
+  input.step = "0.0001";
+  input.value = value;
+  return input;
+}
+
+export function createPriorityField(
+  parent: HTMLElement,
+  label: string,
+  value: string,
+): HTMLInputElement {
+  const field = parent.createEl("label", { cls: "ir-priority-field" });
+  field.createSpan({ text: label });
+  const input = field.createEl("input", {
+    cls: "ir-priority-input",
+  }) as HTMLInputElement;
+  return configurePriorityInput(input, value);
+}
 
 /**
  * Parse a status-bar priority input. Returns null on unparseable input so
@@ -56,14 +81,7 @@ export function mountPriorityEditor(
   position.min = "1";
   position.max = String(Math.max(1, options.elements.length));
   const total = positionField.createSpan({ cls: "ir-priority-total" });
-  const percentField = host.createEl("label", { cls: "ir-priority-field" });
-  percentField.createSpan({ text: "Percentage" });
-  const percent = percentField.createEl("input", { cls: "ir-priority-input" }) as HTMLInputElement;
-  percent.type = "number";
-  percent.min = String(PRIORITY_MIN);
-  percent.max = String(PRIORITY_MAX);
-  percent.step = "0.0001";
-  percent.value = formatPriority(initial);
+  const percent = createPriorityField(host, "Percentage", formatPriority(initial));
   const neighbors = host.createDiv({ cls: "ir-priority-neighbors" });
   const disclosure = host.createEl("details", { cls: "ir-priority-near" });
   disclosure.createEl("summary", { text: "Place near another element" });
@@ -145,32 +163,18 @@ export function mountPriorityEditor(
   return { cancel: () => close(false) };
 }
 
-/**
- * Reuses the status-bar element from UI commitment #4 as a transient input
- * surface for UI commitment #6 (non-modal priority editing). Captures the
- * status-bar's current DOM as a snapshot; Enter commits, Esc / blur cancels
- * and restores the snapshot.
- */
 export interface PlacementPriorityOptions {
-  /** Pre-filled placement request (usually settings.defaultPriority). */
   initial: number;
   title: string;
   hint?: string;
-  /** Primary commit button label. */
   commitLabel?: string;
-  /** Optional preset that commits `initial` without editing. */
   useDefaultLabel?: string;
-  /** Optional preset that commits a separately computed value (extract flow). */
   useComputed?: { label: string; value: number };
   onCommit: (priority: number) => void;
   onCancel?: () => void;
 }
 
-/**
- * Inline non-modal placement priority input for side-panel Views.
- * Deliberately avoids role=dialog / aria-modal / focus traps (UI commitment #6).
- * The value is a queue placement request, not a stored literal.
- */
+/** Non-modal placement priority input for side-panel Views (no dialog/focus trap). */
 export function mountPlacementPriorityInput(
   host: HTMLElement,
   options: PlacementPriorityOptions,
@@ -189,17 +193,7 @@ export function mountPlacementPriorityInput(
         "The number is a placement request; fold projects the final position.",
   });
 
-  const field = host.createEl("label", { cls: "ir-priority-field" });
-  field.createSpan({ text: "Priority" });
-  const input = field.createEl("input", {
-    cls: "ir-priority-input",
-  }) as HTMLInputElement;
-  input.type = "number";
-  input.min = String(PRIORITY_MIN);
-  input.max = String(PRIORITY_MAX);
-  input.step = "0.0001";
-  input.value = formatPriority(options.initial);
-
+  const input = createPriorityField(host, "Priority", formatPriority(options.initial));
   const actions = host.createDiv({ cls: "ir-priority-actions" });
   let closed = false;
   const close = (commit: number | null) => {
@@ -208,15 +202,15 @@ export function mountPlacementPriorityInput(
     if (commit === null) options.onCancel?.();
     else options.onCommit(clampPriority(commit));
   };
+  const submitInput = () => {
+    const v = parseCandidatePriority(input.value);
+    if (v !== null) close(v);
+  };
 
   actions.createEl("button", {
     text: options.commitLabel ?? "Mark",
     cls: "mod-cta",
-  }).onclick = () => {
-    const v = parseCandidatePriority(input.value);
-    if (v === null) return;
-    close(v);
-  };
+  }).onclick = submitInput;
   if (options.useDefaultLabel) {
     actions.createEl("button", { text: options.useDefaultLabel }).onclick = () =>
       close(options.initial);
@@ -231,9 +225,7 @@ export function mountPlacementPriorityInput(
   host.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      const v = parseCandidatePriority(input.value);
-      if (v === null) return;
-      close(v);
+      submitInput();
     } else if (event.key === "Escape") {
       event.preventDefault();
       close(null);
@@ -241,11 +233,15 @@ export function mountPlacementPriorityInput(
   });
 
   setTimeout(() => input.focus(), 0);
-  return {
-    cancel: () => close(null),
-  };
+  return { cancel: () => close(null) };
 }
 
+/**
+ * Reuses the status-bar element from UI commitment #4 as a transient input
+ * surface for UI commitment #6 (non-modal priority editing). Captures the
+ * status-bar's current DOM as a snapshot; Enter commits, Esc / blur cancels
+ * and restores the snapshot.
+ */
 export function openPriorityPrompt(
   statusBarEl: HTMLElement,
   current: number,
@@ -264,14 +260,12 @@ export function openPriorityPrompt(
     cls: "ir-priority-prompt-label",
     text: "IR priority: ",
   });
-  const input = statusBarEl.createEl("input", {
-    cls: "ir-priority-prompt-input",
-  }) as HTMLInputElement;
-  input.type = "number";
-  input.min = String(PRIORITY_MIN);
-  input.max = String(PRIORITY_MAX);
-  input.step = "0.0001";
-  input.value = formatPriority(current);
+  const input = configurePriorityInput(
+    statusBarEl.createEl("input", {
+      cls: "ir-priority-prompt-input",
+    }) as HTMLInputElement,
+    formatPriority(current),
+  );
 
   let closed = false;
   const close = () => {

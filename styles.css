@@ -4260,9 +4260,7 @@ img.ir-source-image.ir-cloze-source {
   border-top: 1px solid var(--background-modifier-border);
 }
 
-/* Placement priority panels (#89/#90/#91) */
-.ir-mark-priority-view,
-.ir-extract-priority-view,
+.ir-placement-priority-view,
 .ir-bulk-mark-view {
   padding: 0.75rem 1rem;
   overflow: auto;
@@ -4279,7 +4277,8 @@ img.ir-source-image.ir-cloze-source {
 }
 
 .ir-placement-priority-hint,
-.ir-bulk-mark-hint {
+.ir-bulk-mark-hint,
+.ir-bulk-mark-skipped {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
   margin: 0;

@@ -239,6 +239,5 @@ test("scheduleSm20Item again uses difficulty-aware post-lapse stability (#68)", 
   const hardCard = { ...easyCard, difficulty: 9.5 };
   const easyNext = scheduleSm20Item(easyCard, "again", NOW, 0.9);
   const hardNext = scheduleSm20Item(hardCard, "again", NOW, 0.9);
-  // ce0600 baseline rises with difficulty01.
   assert.ok(hardNext.stability > easyNext.stability);
 });

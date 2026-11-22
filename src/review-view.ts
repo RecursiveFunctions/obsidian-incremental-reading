@@ -5104,7 +5104,6 @@ export class IrReviewView extends ItemView {
     return created;
   }
 
-  /** Preview the automatic child priority for the current selection (#91). */
   public previewExtractChildPriority(): {
     priority: number;
     label: string;

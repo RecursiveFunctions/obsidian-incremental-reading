@@ -24,17 +24,13 @@ import { IR_SESSION_VIEW_TYPE, IrSessionView } from "./src/session-view";
 import { IR_STATS_VIEW_TYPE, IrStatsView } from "./src/stats-view";
 import { IR_HELP_VIEW_TYPE, IrHelpView } from "./src/help-view";
 import {
-  IR_MARK_PRIORITY_VIEW_TYPE,
-  IrMarkPriorityView,
-} from "./src/mark-priority-view";
+  IR_PLACEMENT_PRIORITY_VIEW_TYPE,
+  IrPlacementPriorityView,
+} from "./src/placement-priority-view";
 import {
   IR_BULK_MARK_VIEW_TYPE,
   IrBulkMarkView,
 } from "./src/bulk-mark-view";
-import {
-  IR_EXTRACT_PRIORITY_VIEW_TYPE,
-  IrExtractPriorityView,
-} from "./src/extract-priority-view";
 import {
   IrNoteResult,
   applyInheritedFrontmatter,
@@ -146,7 +142,7 @@ import {
   type IrElement,
   type IrEvent,
 } from "./src/ir/model";
-import { buildPriorityPlacement, collectionSortOrder, planAdjacentBlockMove, planAdjust, planBlockInsertion, planSpread, type PriorityPlacementPreview } from "./src/ir/relative-priority";
+import { buildPriorityPlacement, collectionSortOrder, formatPriority, planAdjacentBlockMove, planAdjust, planBlockInsertion, planSpread, type PriorityPlacementPreview } from "./src/ir/relative-priority";
 import type { DeviceId, ElementId } from "./src/ir/ids";
 import { IR_KEYS } from "./src/types";
 import { newTopicState, readTopicFromFrontmatter, writeTopicToFrontmatter } from "./src/topic";
@@ -923,18 +919,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
 
     this.registerView(
-      IR_MARK_PRIORITY_VIEW_TYPE,
-      (leaf: WorkspaceLeaf) =>
-        new IrMarkPriorityView(leaf, {
-          defaultPriority: this.settings.defaultPriority,
-          onMark: async (file, priority) => {
-            await this.markActiveFileAsTopic(file, priority);
-            this.app.workspace.detachLeavesOfType(IR_MARK_PRIORITY_VIEW_TYPE);
-          },
-          onCancel: () => {
-            this.app.workspace.detachLeavesOfType(IR_MARK_PRIORITY_VIEW_TYPE);
-          },
-        }),
+      IR_PLACEMENT_PRIORITY_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) => new IrPlacementPriorityView(leaf),
     );
 
     this.registerView(
@@ -949,11 +935,6 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.app.workspace.detachLeavesOfType(IR_BULK_MARK_VIEW_TYPE);
           },
         }),
-    );
-
-    this.registerView(
-      IR_EXTRACT_PRIORITY_VIEW_TYPE,
-      (leaf: WorkspaceLeaf) => new IrExtractPriorityView(leaf),
     );
 
     this.registerView(IR_REVIEW_VIEW_TYPE, (leaf: WorkspaceLeaf) => {
@@ -1180,7 +1161,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    // No default hotkey — bind under Settings → Hotkeys (#89).
     this.irCommand({
       id: "mark-as-ir-topic-with-priority",
       name: "Mark current note as IR topic with priority",
@@ -1207,7 +1187,6 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    // Unbound staging panel for folder + multi-file selection (#90).
     this.irCommand({
       id: "bulk-mark-ir-topics",
       name: "Bulk mark folders and files as IR topics",
@@ -1286,13 +1265,12 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
 
-    // No default hotkey — bind under Settings → Hotkeys (#91).
     this.irCommand({
       id: "extract-selection-with-priority",
       name: "Extract selection with priority",
       icon: "scissors",
       checkCallback: (checking) => {
-        if (!this.canExtractWithPriority()) return false;
+        if (!this.canExtractSelection()) return false;
         if (!checking) void this.openExtractWithPriority();
         return true;
       },
@@ -1690,18 +1668,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         if (!(file instanceof TFile)) return;
         if (file.extension === "pdf") {
           if (!this.irPdfPaths.has(file.path)) {
-            menu.addItem((item) =>
-              item
-                .setTitle("Mark as IR topic")
-                .setIcon("book-open")
-                .onClick(() => void this.markActiveFileAsTopic(file)),
-            );
-            menu.addItem((item) =>
-              item
-                .setTitle("Mark as IR topic with priority…")
-                .setIcon("book-plus")
-                .onClick(() => void this.openMarkWithPriority(file)),
-            );
+            this.addMarkTopicMenuItems(menu, file);
           }
           this.addMobileIrFileMenuNav(menu);
           return;
@@ -1718,18 +1685,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         if (file.extension !== "md") return;
         const irType = getIrType(this.app, file);
         if (!irType) {
-          menu.addItem((item) =>
-            item
-              .setTitle("Mark as IR topic")
-              .setIcon("book-open")
-              .onClick(() => void this.markActiveFileAsTopic(file)),
-          );
-          menu.addItem((item) =>
-            item
-              .setTitle("Mark as IR topic with priority…")
-              .setIcon("book-plus")
-              .onClick(() => void this.openMarkWithPriority(file)),
-          );
+          this.addMarkTopicMenuItems(menu, file);
           this.addMobileIrFileMenuNav(menu);
           return;
         }
@@ -1758,9 +1714,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       }),
     );
 
-    // Multi-select in the file explorer (`files-menu`, Obsidian ≥1.4.10).
-    // One right-click can fire the event twice — openBulkMarkView is idempotent.
-    // Untyped core event (same approach as pdf-menu); callback arity differs from file-menu.
+    // Obsidian can fire `files-menu` twice per right-click; guard per Menu.
+    const seenBulkMenus = new WeakSet<Menu>();
     this.registerEvent(
       (this.app.workspace as unknown as {
         on(
@@ -1769,6 +1724,8 @@ export default class IncrementalReadingPlugin extends Plugin {
         ): { e: unknown };
       }).on("files-menu", (menu, files) => {
         if (!Array.isArray(files) || files.length === 0) return;
+        if (seenBulkMenus.has(menu)) return;
+        seenBulkMenus.add(menu);
         menu.addItem((item) =>
           item
             .setTitle("Bulk mark as IR topics…")
@@ -1802,6 +1759,21 @@ export default class IncrementalReadingPlugin extends Plugin {
             .onClick(() => void this.extractFromPdfSelection(sel)),
         );
       }),
+    );
+  }
+
+  private addMarkTopicMenuItems(menu: Menu, file: TFile): void {
+    menu.addItem((item) =>
+      item
+        .setTitle("Mark as IR topic")
+        .setIcon("book-open")
+        .onClick(() => void this.markActiveFileAsTopic(file)),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Mark as IR topic with priority…")
+        .setIcon("book-plus")
+        .onClick(() => void this.openMarkWithPriority(file)),
     );
   }
 
@@ -1932,9 +1904,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(IR_SESSION_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_STATS_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_HELP_VIEW_TYPE);
-    this.app.workspace.detachLeavesOfType(IR_MARK_PRIORITY_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(IR_PLACEMENT_PRIORITY_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_BULK_MARK_VIEW_TYPE);
-    this.app.workspace.detachLeavesOfType(IR_EXTRACT_PRIORITY_VIEW_TYPE);
     this.app.workspace.detachLeavesOfType(IR_REVIEW_VIEW_TYPE);
     if (this.statusBarEl) {
       disposeStatusBar(this.statusBarEl);
@@ -2557,7 +2528,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       textOverride?: string;
       spans?: ReadonlyArray<{ start: number; end: number }>;
     },
-    opts?: { promote?: boolean; priorityOverride?: number },
+    opts?: { promote?: boolean; priorityOverride?: number; spanCount?: number },
   ): Promise<void> {
     if (!(await this.ensureIrSource(source))) return;
     if (!this.ledger) {
@@ -2623,8 +2594,11 @@ export default class IncrementalReadingPlugin extends Plugin {
         await this.applyIrPromote(created.id, created);
         return;
       }
+      const spanCount = opts?.spanCount ?? 1;
       new Notice(
-        `Extracted (anchored in "${source.basename}", not a separate note).`,
+        spanCount > 1
+          ? `Extracted ${spanCount} spans as one extract (anchored in "${source.basename}").`
+          : `Extracted (anchored in "${source.basename}", not a separate note).`,
       );
     } catch (e) {
       console.error("Incremental Reading: anchored extract failed", e);
@@ -2737,67 +2711,16 @@ export default class IncrementalReadingPlugin extends Plugin {
       offsets.start,
       offsets.end,
     );
-    const parentId =
-      (await this.resolveElementIdForFile(source)) ??
-      elementIdForPath(source.path);
-    const state = await this.ledger.load();
-    const parentEl = state.elements.get(parentId);
-    const extractText =
-      joinedOverride ?? bodyBeforeExtract.slice(extractStart, extractEnd);
-    const now = Date.now();
-    const device = await this.ledger.getDeviceId();
-    const { childSchedule, childPriority, parentAFactorAfter } =
-      this.prepareSourceExtractScheduleAndPriority(
-        parentEl,
-        source,
-        extractText.length,
-        now,
-        opts?.priorityOverride,
-      );
-    try {
-      const ev = buildExtractEvent({
-        sourcePath: source.path,
-        sourceText: bodyBeforeExtract,
-        selStart: extractStart,
-        selEnd: extractEnd,
+    await this.extractMappedBodyRange(
+      source,
+      {
+        start: extractStart,
+        end: extractEnd,
+        text: selection,
         textOverride: joinedOverride,
-        parentId,
-        priority: childPriority,
-        elementId: newElementId(),
-        eventId: newEventId(),
-        device,
-        lamport: now,
-        now,
-        schedule: childSchedule,
-      });
-      await this.appendCreatedWithPlacement(ev);
-      await this.decayParentAFactorAfterExtract(
-        parentId,
-        parentEl,
-        source,
-        parentAFactorAfter,
-        device,
-      );
-      await this.ledger.reconcile();
-      void this.refreshStatusBar();
-      const created = ev.payload.element as IrElement;
-      const promote =
-        opts?.promote ?? this.settings.extractCreatesStandaloneNote;
-      if (promote) {
-        await this.applyIrPromote(created.id, created);
-        return;
-      }
-      new Notice(
-        ranges.length > 1
-          ? `Extracted ${ranges.length} spans as one extract (anchored in "${source.basename}").`
-          : `Extracted (anchored in "${source.basename}", not a separate note).`,
-      );
-    } catch (e) {
-      console.error("Incremental Reading: anchored extract failed", e);
-      new Notice(
-        "Incremental Reading: could not record the extract in the ledger. See the developer console.",
-      );
-    }
+      },
+      { ...opts, spanCount: ranges.length },
+    );
   }
 
   private prepareSourceExtractScheduleAndPriority(
@@ -4854,23 +4777,31 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.addCommand(command);
   }
 
-  /**
-   * Open (or reveal) the help view. Right sidebar, so it can sit beside the
-   * review pane while you learn the keys instead of replacing it.
-   */
-  private async openHelpView(): Promise<void> {
-    const existing = this.app.workspace.getLeavesOfType(IR_HELP_VIEW_TYPE);
-    if (existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]);
-      return;
-    }
-    const leaf = this.app.workspace.getRightLeaf(false);
+  private async openRightView<V>(
+    viewType: string,
+    guard: (view: unknown) => view is V,
+    label: string,
+  ): Promise<V | null> {
+    let leaf = this.app.workspace.getLeavesOfType(viewType)[0];
     if (!leaf) {
-      new Notice("Incremental Reading: could not open the help view.");
-      return;
+      const created = this.app.workspace.getRightLeaf(false);
+      if (!created) {
+        new Notice(`Incremental Reading: could not open ${label}.`);
+        return null;
+      }
+      leaf = created;
+      await leaf.setViewState({ type: viewType, active: true });
     }
-    await leaf.setViewState({ type: IR_HELP_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
+    return guard(leaf.view) ? leaf.view : null;
+  }
+
+  private async openHelpView(): Promise<void> {
+    await this.openRightView(
+      IR_HELP_VIEW_TYPE,
+      (v): v is IrHelpView => v instanceof IrHelpView,
+      "the help view",
+    );
   }
 
   async openStatsView(tab?: "overview" | "triage" | "models"): Promise<void> {
@@ -7369,67 +7300,27 @@ export default class IncrementalReadingPlugin extends Plugin {
    * Skips notes already in IR (topic/extract/item). Nested folders included.
    */
   private async markFolderAsTopics(folder: TFolder): Promise<void> {
-    const skip = new Set<string>();
-    if (this.ledger) {
-      const state = await this.ledger.load();
-      for (const el of state.elements.values()) {
-        if (el.notePath) skip.add(el.notePath);
-      }
-    }
+    const skip = await this.loadIrSkipPaths();
     const refs = this.app.vault.getFiles().map((f) => ({
       path: f.path,
       extension: f.extension,
     }));
-    for (const f of this.app.vault.getMarkdownFiles()) {
-      if (getIrType(this.app, f)) skip.add(f.path);
-    }
+    const folderLabel = folder.name || "/";
     const planned = folderTopicCandidates(refs, folder.path, skip);
     if (planned.length === 0) {
-      new Notice(
-        `Incremental Reading: no unmarked notes in "${folder.name || "/"}".`,
-      );
+      new Notice(`Incremental Reading: no unmarked notes in "${folderLabel}".`);
       return;
     }
-    const needConfirm =
+    if (
       folder.path === "" ||
       folder.path === "/" ||
-      planned.length > FOLDER_TOPIC_CONFIRM_THRESHOLD;
-    if (needConfirm) {
-      const ok = await this.confirmMarkFolderTopics(
-        folder.name || "/",
-        planned.length,
-      );
-      if (!ok) return;
-    }
-    let marked = 0;
-    for (const ref of planned) {
-      const abs = this.app.vault.getAbstractFileByPath(ref.path);
-      if (!(abs instanceof TFile)) continue;
-      if (abs.extension === "pdf") {
-        if (await this.markPdfAsTopic(abs, { silent: true })) marked += 1;
-        continue;
+      planned.length > FOLDER_TOPIC_CONFIRM_THRESHOLD
+    ) {
+      if (!(await this.confirmMarkFolderTopics(folderLabel, planned.length))) {
+        return;
       }
-      const did = await markAsTopic(this.app, abs, this.settings);
-      if (!did) continue;
-      await this.recordElement(abs, { skipReconcile: true });
-      marked += 1;
     }
-    if (this.ledger) {
-      await this.ledger.reconcile().catch((e) => {
-        console.error(
-          "Incremental Reading: reconcile after folder topics failed",
-          e,
-        );
-      });
-      void this.refreshStatusBar();
-    }
-    const skipped = planned.length - marked;
-    const skipBit = skipped > 0 ? ` · ${skipped} skipped` : "";
-    new Notice(
-      `Marked ${marked} note${marked === 1 ? "" : "s"} in "${folder.name || "/"}" as IR topics${skipBit}.`,
-    );
-    const tree = this.getTreeView();
-    if (tree) void tree.refresh();
+    await this.commitBulkMarkTopics(planned, [], ` in "${folderLabel}"`);
   }
 
   private async confirmMarkFolderTopics(
@@ -7493,42 +7384,33 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
   }
 
-  /**
-   * #89: side-panel mark with explicit placement priority. Already-IR notes
-   * route to the existing priority editor instead of no-oping.
-   */
   private async openMarkWithPriority(file: TFile): Promise<void> {
-    if (file.extension === "md" && getIrType(this.app, file)) {
+    const alreadyIr =
+      (file.extension === "md" && Boolean(getIrType(this.app, file))) ||
+      (file.extension === "pdf" &&
+        Boolean(await this.resolveElementIdForFile(file)));
+    if (alreadyIr) {
       await this.openTreeAndFocusPriorityEditor(file);
       return;
     }
-    if (file.extension === "pdf") {
-      const existing = await this.resolveElementIdForFile(file);
-      if (existing) {
-        await this.openTreeAndFocusPriorityEditor(file);
-        return;
-      }
-    }
-    const existing = this.app.workspace.getLeavesOfType(IR_MARK_PRIORITY_VIEW_TYPE);
-    if (existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]!);
-      const view = existing[0]!.view;
-      if (view instanceof IrMarkPriorityView) view.setTarget(file);
-      return;
-    }
-    const leaf = this.app.workspace.getRightLeaf(false);
-    if (!leaf) {
-      new Notice("Incremental Reading: could not open the mark-priority panel.");
-      return;
-    }
-    await leaf.setViewState({ type: IR_MARK_PRIORITY_VIEW_TYPE, active: true });
-    this.app.workspace.revealLeaf(leaf);
-    const view = leaf.view;
-    if (view instanceof IrMarkPriorityView) view.setTarget(file);
+    const view = await this.openRightView(
+      IR_PLACEMENT_PRIORITY_VIEW_TYPE,
+      (v): v is IrPlacementPriorityView => v instanceof IrPlacementPriorityView,
+      "the priority panel",
+    );
+    view?.setPrompt({
+      displayText: "Mark IR topic",
+      icon: "book-plus",
+      initial: this.settings.defaultPriority,
+      title: `Mark “${file.basename}” as IR topic`,
+      commitLabel: "Mark",
+      useDefaultLabel: "Use default",
+      onCommit: (priority) => void this.markActiveFileAsTopic(file, priority),
+    });
   }
 
   private async loadIrSkipPaths(): Promise<Set<string>> {
-    const skip = new Set<string>();
+    const skip = new Set<string>(this.irPdfPaths);
     if (this.ledger) {
       const state = await this.ledger.load();
       for (const el of state.elements.values()) {
@@ -7538,41 +7420,28 @@ export default class IncrementalReadingPlugin extends Plugin {
     for (const f of this.app.vault.getMarkdownFiles()) {
       if (getIrType(this.app, f)) skip.add(f.path);
     }
-    for (const path of this.irPdfPaths) skip.add(path);
     return skip;
   }
 
   private async openBulkMarkView(seed?: readonly TAbstractFile[]): Promise<void> {
-    const existing = this.app.workspace.getLeavesOfType(IR_BULK_MARK_VIEW_TYPE);
-    if (existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]!);
-      const view = existing[0]!.view;
-      if (view instanceof IrBulkMarkView && seed && seed.length > 0) {
-        view.setSources(seed);
-      }
-      return;
-    }
-    const leaf = this.app.workspace.getRightLeaf(false);
-    if (!leaf) {
-      new Notice("Incremental Reading: could not open the bulk-mark panel.");
-      return;
-    }
-    await leaf.setViewState({ type: IR_BULK_MARK_VIEW_TYPE, active: true });
-    this.app.workspace.revealLeaf(leaf);
-    const view = leaf.view;
-    if (!(view instanceof IrBulkMarkView)) return;
-    if (seed && seed.length > 0) view.setSources(seed);
+    const view = await this.openRightView(
+      IR_BULK_MARK_VIEW_TYPE,
+      (v): v is IrBulkMarkView => v instanceof IrBulkMarkView,
+      "the bulk-mark panel",
+    );
+    if (view && seed && seed.length > 0) view.setSources(seed);
   }
 
   private async commitBulkMarkTopics(
     attempted: readonly { path: string; extension: string }[],
     priorities: readonly number[],
+    scopeSuffix = "",
   ): Promise<void> {
     let marked = 0;
     const failures: string[] = [];
     for (let i = 0; i < attempted.length; i += 1) {
       const ref = attempted[i]!;
-      const priority = priorities[i] ?? this.settings.defaultPriority;
+      const priority = priorities[i];
       const abs = this.app.vault.getAbstractFileByPath(ref.path);
       if (!(abs instanceof TFile)) {
         failures.push(`${ref.path}: missing`);
@@ -7585,19 +7454,16 @@ export default class IncrementalReadingPlugin extends Plugin {
           } else {
             failures.push(`${ref.path}: already IR or ledger unavailable`);
           }
-          continue;
-        }
-        if (abs.extension !== "md") {
+        } else if (abs.extension === "md") {
+          if (await markAsTopic(this.app, abs, this.settings, priority)) {
+            await this.recordElement(abs, { skipReconcile: true });
+            marked += 1;
+          } else {
+            failures.push(`${ref.path}: already IR`);
+          }
+        } else {
           failures.push(`${ref.path}: unsupported type`);
-          continue;
         }
-        const did = await markAsTopic(this.app, abs, this.settings, priority);
-        if (!did) {
-          failures.push(`${ref.path}: already IR`);
-          continue;
-        }
-        await this.recordElement(abs, { skipReconcile: true });
-        marked += 1;
       } catch (e) {
         console.error("Incremental Reading: bulk mark failed", ref.path, e);
         failures.push(`${ref.path}: error`);
@@ -7612,7 +7478,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     const skipped = attempted.length - marked;
     const skipBit = skipped > 0 ? ` · ${skipped} skipped` : "";
     new Notice(
-      `Marked ${marked} note${marked === 1 ? "" : "s"} as IR topics${skipBit}.`,
+      `Marked ${marked} note${marked === 1 ? "" : "s"}${scopeSuffix} as IR topics${skipBit}.`,
     );
     if (failures.length > 0) {
       console.warn(
@@ -7620,84 +7486,82 @@ export default class IncrementalReadingPlugin extends Plugin {
         failures.slice(0, 20),
       );
     }
-    const tree = this.getTreeView();
-    if (tree) void tree.refresh();
+    this.getTreeView()?.refresh();
   }
 
-  private canExtractWithPriority(): boolean {
+  private activePdfSelection(): PdfTextSelection | null {
     const pdfSel = findPdfTextSelection(this.app);
     if (pdfSel) this.lastPdfSelection = pdfSel;
-    if (pdfSel || this.lastPdfSelection || this.heldPdfFile()) return true;
-    const rv = this.getActiveReviewView();
-    if (rv?.getCurrentElementId()) return true;
+    return pdfSel ?? this.lastPdfSelection;
+  }
+
+  private canExtractSelection(): boolean {
+    if (this.activePdfSelection() || this.heldPdfFile()) return true;
+    if (this.getActiveReviewView()?.getCurrentElementId()) return true;
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     return !!(mv?.file && this.markdownViewHasSelection(mv));
   }
 
   private async openExtractWithPriority(): Promise<void> {
     const computed = await this.previewExtractChildPriority();
-    if (computed === null) {
+    if (!computed) {
       new Notice("Incremental Reading: nothing selected to extract.");
       return;
     }
-    const existing = this.app.workspace.getLeavesOfType(
-      IR_EXTRACT_PRIORITY_VIEW_TYPE,
+    const view = await this.openRightView(
+      IR_PLACEMENT_PRIORITY_VIEW_TYPE,
+      (v): v is IrPlacementPriorityView => v instanceof IrPlacementPriorityView,
+      "the priority panel",
     );
-    let leaf = existing[0];
-    if (!leaf) {
-      const created = this.app.workspace.getRightLeaf(false);
-      if (!created) {
-        new Notice(
-          "Incremental Reading: could not open the extract-priority panel.",
-        );
-        return;
-      }
-      leaf = created;
-      await leaf.setViewState({
-        type: IR_EXTRACT_PRIORITY_VIEW_TYPE,
-        active: true,
-      });
-    }
-    this.app.workspace.revealLeaf(leaf);
-    const view = leaf.view;
-    if (!(view instanceof IrExtractPriorityView)) return;
-    view.setRequest({
-      computedPriority: computed.priority,
-      defaultPriority: this.settings.defaultPriority,
-      label: computed.label,
-      onExtract: async (priority) => {
-        await this.runExtractWithPriority(priority);
-        this.app.workspace.detachLeavesOfType(IR_EXTRACT_PRIORITY_VIEW_TYPE);
+    view?.setPrompt({
+      displayText: "Extract with priority",
+      icon: "scissors",
+      initial: this.settings.defaultPriority,
+      title: `Extract “${computed.label}” with priority`,
+      commitLabel: "Extract",
+      useDefaultLabel: "Use default",
+      useComputed: {
+        label: `Use computed (${formatPriority(computed.priority)})`,
+        value: computed.priority,
       },
-      onCancel: () => {
-        this.app.workspace.detachLeavesOfType(IR_EXTRACT_PRIORITY_VIEW_TYPE);
-      },
+      onCommit: (priority) => void this.runExtractWithPriority(priority),
     });
+  }
+
+  private async previewSourceExtractPriority(
+    file: TFile,
+    text: string,
+    fallbackPriority: number,
+  ): Promise<{ priority: number; label: string }> {
+    const parentId =
+      (await this.resolveElementIdForFile(file)) ?? elementIdForPath(file.path);
+    const parent = this.ledger
+      ? (await this.ledger.load()).elements.get(parentId)
+      : undefined;
+    const trimmed = text.trim();
+    return {
+      priority: clampPriority(
+        spreadExtractPriority(
+          parent?.priority ?? fallbackPriority,
+          trimmed.length || 100,
+        ),
+      ),
+      label: trimmed.slice(0, 40) || file.basename,
+    };
   }
 
   private async previewExtractChildPriority(): Promise<{
     priority: number;
     label: string;
   } | null> {
-    const pdfSel = findPdfTextSelection(this.app);
-    if (pdfSel) this.lastPdfSelection = pdfSel;
-    const pdfFile =
-      pdfSel?.file ?? this.lastPdfSelection?.file ?? this.heldPdfFile();
+    const pdfSel = this.activePdfSelection();
+    const pdfFile = pdfSel?.file ?? this.heldPdfFile();
     if (pdfFile) {
-      const text = (pdfSel ?? this.lastPdfSelection)?.text ?? "selection";
-      const parentId =
-        (await this.resolveElementIdForFile(pdfFile)) ??
-        elementIdForPath(pdfFile.path);
-      const parent = this.ledger
-        ? (await this.ledger.load()).elements.get(parentId)
-        : undefined;
-      const parentPriority = parent?.priority ?? this.settings.defaultPriority;
-      return {
-        priority: clampPriority(
-          spreadExtractPriority(parentPriority, text.length || 100),
-        ),
-        label: text.trim().slice(0, 40) || pdfFile.basename,
-      };
+      return this.previewSourceExtractPriority(
+        pdfFile,
+        pdfSel?.text ?? "",
+        this.settings.defaultPriority,
+      );
     }
     const rv = this.getActiveReviewView();
     if (rv) {
@@ -7706,31 +7570,21 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!mv?.file || !this.markdownViewHasSelection(mv)) return null;
-    const sel = mv.editor.getSelection().trim();
-    const parentId =
-      (await this.resolveElementIdForFile(mv.file)) ??
-      elementIdForPath(mv.file.path);
-    const parent = this.ledger
-      ? (await this.ledger.load()).elements.get(parentId)
-      : undefined;
-    const parentPriority =
-      parent?.priority ??
-      getPriority(this.app, mv.file, this.settings.defaultPriority);
-    return {
-      priority: clampPriority(
-        spreadExtractPriority(parentPriority, sel.length || 100),
-      ),
-      label: sel.slice(0, 40) || mv.file.basename,
-    };
+    const sel =
+      mv.editor.getSelection().trim() ||
+      (this.previewSelectionRange(mv)?.toString().trim() ?? "");
+    return this.previewSourceExtractPriority(
+      mv.file,
+      sel,
+      getPriority(this.app, mv.file, this.settings.defaultPriority),
+    );
   }
 
   private async runExtractWithPriority(priority: number): Promise<void> {
     const opts = { priorityOverride: priority } as const;
-    const pdfSel = findPdfTextSelection(this.app);
-    if (pdfSel) this.lastPdfSelection = pdfSel;
-    const heldPdf = this.heldPdfFile();
-    if (pdfSel || this.lastPdfSelection || heldPdf) {
-      await this.extractFromPdfSelection(pdfSel ?? this.lastPdfSelection, opts);
+    const pdfSel = this.activePdfSelection();
+    if (pdfSel || this.heldPdfFile()) {
+      await this.extractFromPdfSelection(pdfSel, opts);
       return;
     }
     const rv = this.getActiveReviewView();

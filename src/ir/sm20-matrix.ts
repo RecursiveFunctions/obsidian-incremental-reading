@@ -205,39 +205,31 @@ export function calibrateSm20Retrievability(
 ): number {
   const cleanR = clamp(analyticalR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
   let totalCases = 0;
-  for (let rIdx = 1; rIdx <= 20; rIdx += 1) {
-    totalCases += matrix.recallCases[matrixIndex(dIdx, sIdx, rIdx)]!;
-  }
-  if (totalCases === 0) return cleanR;
-
+  const xs: number[] = [];
+  const ws: number[] = [];
   const rawY: number[] = [];
   for (let rIdx = 1; rIdx <= 20; rIdx += 1) {
     const idx = matrixIndex(dIdx, sIdx, rIdx);
     const cases = matrix.recallCases[idx]!;
+    totalCases += cases;
     const x = index20ToRetrievabilityAxis(rIdx);
+    xs.push(x);
+    ws.push(Math.round(cases) + 1e-5);
     rawY.push(
-      cases > 0
-        ? clamp(matrix.recall[idx]! / cases, 0.0, 1.0)
-        : 0.64 * x + 0.3,
+      cases > 0 ? clamp(matrix.recall[idx]! / cases, 0.0, 1.0) : 0.64 * x + 0.3,
     );
   }
-  // ReconcileRetentionMatrixColumnDiffs (0x00c243f0): smooth outlier bins
-  // before weighted regression so sparse single-lapse cells do not skew A,B.
-  const yVals = reconcileRetentionMatrixOutliers(rawY);
+  if (totalCases === 0) return cleanR;
 
-  // ComputeWeightedLinearRegression (0x00a8d320): weight = round(cases) + 1e-5
+  const yVals = reconcileRetentionMatrixOutliers(rawY);
   let sumW = 0;
   let sumWX = 0;
   let sumWY = 0;
-  for (let rIdx = 1; rIdx <= 20; rIdx += 1) {
-    const idx = matrixIndex(dIdx, sIdx, rIdx);
-    const cases = matrix.recallCases[idx]!;
-    const w = Math.round(cases) + 1e-5;
-    const x = index20ToRetrievabilityAxis(rIdx);
-    const y = yVals[rIdx - 1]!;
+  for (let i = 0; i < 20; i += 1) {
+    const w = ws[i]!;
     sumW += w;
-    sumWX += w * x;
-    sumWY += w * y;
+    sumWX += w * xs[i]!;
+    sumWY += w * yVals[i]!;
   }
   if (sumW <= 0) return cleanR;
   const meanX = sumWX / sumW;
@@ -245,15 +237,10 @@ export function calibrateSm20Retrievability(
 
   let num = 0;
   let den = 0;
-  for (let rIdx = 1; rIdx <= 20; rIdx += 1) {
-    const idx = matrixIndex(dIdx, sIdx, rIdx);
-    const cases = matrix.recallCases[idx]!;
-    const w = Math.round(cases) + 1e-5;
-    const x = index20ToRetrievabilityAxis(rIdx);
-    const y = yVals[rIdx - 1]!;
-    const dx = x - meanX;
-    num += w * dx * (y - meanY);
-    den += w * dx * dx;
+  for (let i = 0; i < 20; i += 1) {
+    const dx = xs[i]! - meanX;
+    num += ws[i]! * dx * (yVals[i]! - meanY);
+    den += ws[i]! * dx * dx;
   }
   const slope = den > 1e-12 ? num / den : 0.64;
   const intercept = meanY - slope * meanX;
@@ -369,10 +356,7 @@ export function computeBlendedNextStability(
   return computePostReviewStability(prevS, sinc, elapsedDays, smGrade, retrievability, desiredRetention);
 }
 
-/**
- * `ComputeInitialRepetitionStabilityFactor` (`0x00ce0600`).
- * Difficulty-and-lapse-aware baseline post-lapse stability (days).
- */
+/** `ComputeInitialRepetitionStabilityFactor` (`0x00ce0600`). */
 export function computeInitialRepetitionStabilityFactor(
   lapseIndex: number,
   difficultyFrac: number,
@@ -382,43 +366,19 @@ export function computeInitialRepetitionStabilityFactor(
   return 3.5 * Math.pow(d, 1.8) * Math.exp(-0.27 * L) + 0.6;
 }
 
-/**
- * `ComputeBlendedRepetitionStability` (`0x00ce0460`) / post-lapse path.
- * Uses the ce0600 baseline; optional empirical blend when cases are supplied.
- */
 export function computePostLapseStability(
-  prevS: number,
+  _prevS: number,
   lapses: number,
   difficulty01?: number,
-  empiricalS?: number,
-  empiricalCases?: number,
 ): number {
-  void prevS;
   const baseline = computeInitialRepetitionStabilityFactor(
-    Math.max(1, Math.trunc(lapses)),
+    lapses,
     difficulty01 ?? (5 - 1) / 9,
   );
-  const cases = empiricalCases ?? 0;
-  if (
-    empiricalS === undefined ||
-    !Number.isFinite(empiricalS) ||
-    cases <= 0
-  ) {
-    return clamp(baseline, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
-  }
-  const w = rationalSaturationZeroGuarded(cases, 10.0);
-  return clamp(
-    (1.0 - w) * baseline + w * empiricalS,
-    SM20_STABILITY_MIN,
-    SM20_STABILITY_MAX,
-  );
+  return clamp(baseline, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
 }
 
-/**
- * `ReconcileRetentionMatrixColumnDiffs` (`0x00c243f0`).
- * When adjacent retention bins jump by more than 0.5 and a cell is < 0.5,
- * replace the outlier with the midpoint of its neighbors.
- */
+/** `ReconcileRetentionMatrixColumnDiffs` (`0x00c243f0`). */
 export function reconcileRetentionMatrixOutliers(values: readonly number[]): number[] {
   const out = values.map((v) => clamp(Number.isFinite(v) ? v : 0.5, 0.0, 1.0));
   const n = out.length;
@@ -440,11 +400,7 @@ export function reconcileRetentionMatrixOutliers(values: readonly number[]): num
   return out;
 }
 
-/**
- * `Smooth3DMatrixCubeByMode` / `Smooth3DMatrixCellWithNeighborCube`
- * (`0x00a93480` / `0x00a93510`, mode 1 = SInc doubles).
- * Neighbor average: (self + sum) / (weight + 1) over the 3×3×3 neighborhood.
- */
+/** `Smooth3DMatrixCubeByMode` (`0x00a93480` / `0x00a93510`, mode 1). */
 export function smoothSm20SincCube(matrix: Sm20Matrix): void {
   const next = new Float64Array(matrix.sinc);
   for (let d = 1; d <= 20; d += 1) {
@@ -461,8 +417,7 @@ export function smoothSm20SincCube(matrix: Sm20Matrix): void {
             for (let dr = -1; dr <= 1; dr += 1) {
               const nr = r + dr;
               if (nr < 1 || nr > 20) continue;
-              const nIdx = matrixIndex(nd, ns, nr);
-              sum += matrix.sinc[nIdx]!;
+              sum += matrix.sinc[matrixIndex(nd, ns, nr)]!;
               weight += 1;
             }
           }

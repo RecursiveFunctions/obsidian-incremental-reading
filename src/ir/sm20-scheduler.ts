@@ -41,10 +41,7 @@ export function computeSm20Retrievability(elapsedDays: number, stability: number
   return clamp(raw, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
 }
 
-/**
- * Placeholder FSRS curve weights for `ComputeBlendedForgettingCurveRetention`
- * (`0x00cad6a0`) pending a dump of `PTR_DAT_011a5bd0+0xc8..0x110`.
- */
+/** Placeholder weights pending `PTR_DAT_011a5bd0+0xc8..0x110` dump. */
 const BLENDED_FC_WEIGHTS = {
   wC8: 0.8,
   wD0: 0.5,
@@ -58,11 +55,7 @@ const BLENDED_FC_WEIGHTS = {
   w110: 0.05,
 } as const;
 
-/**
- * `ComputeBlendedForgettingCurveRetention` (`0x00cad6a0`).
- * Binary returns a stability product; keep DSR `computeSm20Retrievability`
- * for R and use this on the pass-grade stability path.
- */
+/** `ComputeBlendedForgettingCurveRetention` (`0x00cad6a0`). */
 export function computeBlendedForgettingCurveRetention(
   difficulty01: number,
   stability: number,

@@ -344,7 +344,6 @@ test("computePostLapseStability: ce0600 rises with difficulty, falls with lapses
   const hard = computePostLapseStability(10, 1, 0.9);
   const manyLapses = computePostLapseStability(10, 8, 0.5);
   const fewLapses = computePostLapseStability(10, 1, 0.5);
-  // 3.5*pow(d,1.8)*exp(-0.27*L)+0.6 — difficulty raises the baseline.
   assert.ok(hard > easy);
   assert.ok(fewLapses > manyLapses);
   assert.ok(easy >= SM20_STABILITY_MIN && hard <= SM20_STABILITY_MAX);
