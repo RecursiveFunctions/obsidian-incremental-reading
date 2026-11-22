@@ -16,3 +16,11 @@ export function scheduleToTopicState(
 export function topicStateToSchedule(t: TopicState): ReadSchedule {
   return { due: t.dueMs, interval: t.interval, aFactor: t.aFactor };
 }
+
+/** Payload for the undo of a Later today action; tagged so it is not counted as a read. */
+export function laterTodayUndoPayload(schedule: ReadSchedule): {
+  schedule: ReadSchedule;
+  operation: "later-today";
+} {
+  return { schedule, operation: "later-today" };
+}

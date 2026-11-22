@@ -82,7 +82,7 @@ import {
   effectiveReadingAFactor,
   PRIORITY_SCHEDULING_POLICY_VERSION,
 } from "./ir/priority-scheduling";
-import { scheduleToTopicState, topicStateToSchedule } from "./ir/queue-adapter";
+import { laterTodayUndoPayload, scheduleToTopicState, topicStateToSchedule } from "./ir/queue-adapter";
 import type { Sm20Matrix } from "./ir/sm20-matrix";
 import { describeNextDue, type UpcomingLoad } from "./status-bar";
 import {
@@ -3775,9 +3775,7 @@ export class IrReviewView extends ItemView {
         }
       } else {
         const prior = scheduleToTopicState(restored.schedule);
-        await this.emit("topic-advanced", undo.slotId, {
-          schedule: restored.schedule,
-        });
+        await this.emit("topic-advanced", undo.slotId, laterTodayUndoPayload(restored.schedule!));
         if (file && prior) {
           await quietFrontmatterWrite(async () => {
             await this.app.fileManager.processFrontMatter(file, (f) => {
