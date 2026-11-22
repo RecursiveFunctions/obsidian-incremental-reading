@@ -852,9 +852,22 @@ export async function planSmCollectionImport(
       const stem = sanitizeNoteStem(titleText, `sm-${smId}`);
       const dirPrefix = targetFolder ? `${targetFolder}/` : "";
       const baseStem = `${dirPrefix}${stem}`;
-      let candidate = `${baseStem}.md`;
-      if (usedNotePaths.has(candidate)) {
-        let suffix = nextNoteSuffixByStem.get(baseStem) ?? 2;
+      const nextSuffix = nextNoteSuffixByStem.get(baseStem);
+      let candidate: string;
+      if (nextSuffix === undefined) {
+        candidate = `${baseStem}.md`;
+        if (usedNotePaths.has(candidate)) {
+          let suffix = 2;
+          while (usedNotePaths.has(`${baseStem} ${suffix}.md`)) {
+            suffix += 1;
+          }
+          nextNoteSuffixByStem.set(baseStem, suffix + 1);
+          candidate = `${baseStem} ${suffix}.md`;
+        } else {
+          nextNoteSuffixByStem.set(baseStem, 2);
+        }
+      } else {
+        let suffix = nextSuffix;
         while (usedNotePaths.has(`${baseStem} ${suffix}.md`)) {
           suffix += 1;
         }
