@@ -95,6 +95,7 @@ function sanitizeStem(raw: string, fallback: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 72);
+  if (/^\.+$/.test(cleaned)) return fallback;
   return cleaned || fallback;
 }
 
