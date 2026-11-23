@@ -8,6 +8,7 @@ import {
   readingViewNeedle,
   readingViewNeedleBlocks,
   readingViewNeedlePasses,
+  sourceMarkContext,
 } from "../src/ir/extract-reading-marks";
 
 test("readingViewNeedlePasses: skips short needles, keeps duplicate quotes", () => {
@@ -149,6 +150,7 @@ test("paintIrSourceMarksInElement: highlights heading+body extract across blocks
     parentNode: DomEl | null = null;
     tagName: string;
     className = "";
+    textContent?: string | null;
     childNodes: DomNode[] = [];
     classList = {
       contains: (c: string) => this.className.split(/\s+/).includes(c),
@@ -223,6 +225,74 @@ test("paintIrSourceMarksInElement: highlights heading+body extract across blocks
     assert.equal(hasMark(pIntro), false);
     assert.equal(hasMark(h2), true);
     assert.equal(hasMark(pBody), true);
+
+    // Short 3-char anchored cloze ("ATP"), substring collision ("port" after [!important] + "Important transport"),
+    // and formatted earlier twin ("The **quick brown** fox" before "The quick brown fox" before "The quick brown fox").
+    const raw2 = [
+      "> [!important] Port Notice",
+      "> Important transport overview.",
+      "",
+      "The **quick brown** fox jumps.",
+      "",
+      "The quick brown fox uses port 443 and ATP.",
+      "",
+      "The quick brown fox sleeps.",
+    ].join("\n");
+    const root2 = new FakeEl("DIV");
+    const calloutP = new FakeEl("P");
+    calloutP.appendChild(textNode("Important transport overview."));
+    const pFox1 = new FakeEl("P");
+    pFox1.appendChild(textNode("The "));
+    const strong = new FakeEl("STRONG");
+    strong.appendChild(textNode("quick brown"));
+    pFox1.appendChild(strong);
+    pFox1.appendChild(textNode(" fox jumps."));
+    const pFox2 = new FakeEl("P");
+    pFox2.appendChild(textNode("The quick brown fox uses port 443 and ATP."));
+    const pFox3 = new FakeEl("P");
+    pFox3.appendChild(textNode("The quick brown fox sleeps."));
+    root2.appendChild(calloutP);
+    root2.appendChild(pFox1);
+    root2.appendChild(pFox2);
+    root2.appendChild(pFox3);
+
+    const foxStart = raw2.indexOf("The quick brown fox uses");
+    const foxEnd = foxStart + "The quick brown fox".length;
+    const portStart = raw2.indexOf("uses port 443") + "uses ".length;
+    const portEnd = portStart + 4;
+    const atpStart = raw2.indexOf("ATP");
+    const atpEnd = atpStart + 3;
+
+    paintIrSourceMarksInElement(root2 as unknown as HTMLElement, [
+      {
+        text: "The quick brown fox",
+        cls: "ir-extract-source",
+        occurrence: occurrenceIndexInSource(raw2, foxStart, "The quick brown fox"),
+        ...sourceMarkContext(raw2, foxStart, foxEnd),
+      },
+      {
+        text: "port",
+        cls: "ir-cloze-source",
+        occurrence: occurrenceIndexInSource(raw2, portStart, "port"),
+        ...sourceMarkContext(raw2, portStart, portEnd),
+      },
+      {
+        text: "ATP",
+        cls: "ir-cloze-source",
+        occurrence: occurrenceIndexInSource(raw2, atpStart, "ATP"),
+        ...sourceMarkContext(raw2, atpStart, atpEnd),
+      },
+    ]);
+
+    assert.equal(hasMark(calloutP), false, "callout must not get false-positive port mark");
+    assert.equal(hasMark(pFox1), false, "formatted twin p1 must not get extract mark");
+    assert.equal(hasMark(pFox3), false, "later twin p3 must not get shifted extract mark");
+    const p2Marks = pFox2.childNodes.filter((c): c is FakeEl => c instanceof FakeEl && c.tagName === "MARK");
+    assert.equal(p2Marks.length, 3, "p2 must receive all 3 marks (extract, port, ATP)");
+    assert.deepEqual(
+      p2Marks.map((m) => m.textContent),
+      ["The quick brown fox", "port", "ATP"],
+    );
   } finally {
     (globalThis as Record<string, unknown>).document = prevDoc;
     (globalThis as Record<string, unknown>).NodeFilter = prevNF;

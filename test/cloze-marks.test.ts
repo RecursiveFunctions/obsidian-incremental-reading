@@ -1,12 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildExtractChildClozeAnchor,
   buildTextQuoteAnchor,
   clozeRangesInBody,
   itemSourcePath,
   packSourceMarksPreferringCloze,
   reviewSourceSplices,
 } from "../src/ir/cloze-marks";
+import { resolveAnchor } from "../src/ir/anchor";
 import type { IrElement } from "../src/ir/model";
 import type { ElementId } from "../src/ir/ids";
 
@@ -175,4 +177,57 @@ test("reviewSourceSplices: cloze that ate the focused span still gets highlight"
   );
   assert.equal(splices.length, 1);
   assert.equal(splices[0].cls, "ir-cloze-source ir-extract-highlight");
+});
+
+test("buildExtractChildClozeAnchor: resolves exact span after extract is edited in edit mode", () => {
+  const parentBody = "Header intro.\n\nMitochondria generate ATP for the cell.\n\nFooter.";
+  const origStart = parentBody.indexOf("Mitochondria");
+  const origEnd = origStart + "Mitochondria generate ATP for the cell.".length;
+  const parentAnchor = buildTextQuoteAnchor("Notes/Bio.md", parentBody, origStart, origEnd);
+
+  // User enters Edit mode on the extract and prepends a note before clozing "ATP"
+  const editedExtract = "Added prefix in edit mode: Mitochondria generate ATP for the cell.";
+  const atpStart = editedExtract.indexOf("ATP");
+  const atpEnd = atpStart + 3;
+
+  const anchor = buildExtractChildClozeAnchor(
+    "Notes/Bio.md",
+    editedExtract,
+    atpStart,
+    atpEnd,
+    parentAnchor,
+    parentBody,
+  );
+  assert.ok(anchor);
+  // Must anchor "ATP", NOT whatever sat at `origStart + atpStart` in `parentBody`!
+  assert.equal(anchor!.quote.exact, "ATP");
+  const inParent = resolveAnchor(anchor!, parentBody);
+  assert.equal(inParent.status, "ok");
+  if (inParent.status === "ok") {
+    assert.equal(parentBody.slice(inParent.start, inParent.end), "ATP");
+  }
+  const inExtract = resolveAnchor(anchor!, editedExtract);
+  assert.equal(inExtract.status, "ok");
+  if (inExtract.status === "ok") {
+    assert.equal(editedExtract.slice(inExtract.start, inExtract.end), "ATP");
+  }
+
+  // Clozing newly typed text that only exists in the edited extract still anchors cleanly
+  const newWordStart = editedExtract.indexOf("Added prefix");
+  const newWordEnd = newWordStart + "Added prefix".length;
+  const newAnchor = buildExtractChildClozeAnchor(
+    "Notes/Bio.md",
+    editedExtract,
+    newWordStart,
+    newWordEnd,
+    parentAnchor,
+    parentBody,
+  );
+  assert.ok(newAnchor);
+  assert.equal(newAnchor!.quote.exact, "Added prefix");
+  const inEdited = resolveAnchor(newAnchor!, editedExtract);
+  assert.equal(inEdited.status, "ok");
+  if (inEdited.status === "ok") {
+    assert.equal(editedExtract.slice(inEdited.start, inEdited.end), "Added prefix");
+  }
 });
