@@ -1205,18 +1205,15 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "scissors",
       hotkeys: [{ modifiers: ["Alt"], key: "x" }],
       checkCallback: (checking) => {
-        const pdfSel = findPdfTextSelection(this.app);
-        if (pdfSel) this.lastPdfSelection = pdfSel;
+        const pdfSel = this.activePdfSelection();
         const heldPdf = this.heldPdfFile();
-        if (pdfSel || this.lastPdfSelection || heldPdf) {
+        if (pdfSel || heldPdf) {
           if (!checking) {
-            void this.extractFromPdfSelection(
-              pdfSel ?? this.lastPdfSelection,
-            );
+            void this.extractFromPdfSelection(pdfSel);
           }
           return true;
         }
-        const rv = this.getActiveReviewView();
+        const rv = this.getFocusedReviewView();
         if (rv) {
           if (!checking) void rv.handleExtract();
           return true;
@@ -1239,18 +1236,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "file-plus",
       hotkeys: [{ modifiers: ["Alt", "Shift"], key: "x" }],
       checkCallback: (checking) => {
-        const pdfSel = findPdfTextSelection(this.app);
-        if (pdfSel) this.lastPdfSelection = pdfSel;
-        if (pdfSel || this.lastPdfSelection) {
+        const pdfSel = this.activePdfSelection();
+        if (pdfSel) {
           if (!checking) {
-            void this.extractFromPdfSelection(
-              pdfSel ?? this.lastPdfSelection!,
-              { promote: true },
-            );
+            void this.extractFromPdfSelection(pdfSel, { promote: true });
           }
           return true;
         }
-        const rv = this.getActiveReviewView();
+        const rv = this.getFocusedReviewView();
         if (rv) {
           if (!checking) void this.extractSelectionToNoteFromReview(rv);
           return true;
@@ -1347,7 +1340,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "brackets",
       hotkeys: [{ modifiers: ["Alt"], key: "z" }],
       checkCallback: (checking) => {
-        const rv = this.getActiveReviewView();
+        const rv = this.getFocusedReviewView();
         if (rv) {
           if (!checking) void rv.handleCloze();
           return true;
@@ -1844,6 +1837,44 @@ export default class IncrementalReadingPlugin extends Plugin {
       if (leaf.view instanceof IrReviewView) return leaf.view;
     }
     return null;
+  }
+
+  /**
+   * Return an `IrReviewView` ONLY when the Review pane itself (or its embedded
+   * `ReviewLiveEditor`) currently owns workspace/DOM focus or the active
+   * selection — never when the user is editing a separate `MarkdownView` tab
+   * while a Review tab sits in the background.
+   */
+  private getFocusedReviewView(): IrReviewView | null {
+    const active = this.app.workspace.getActiveViewOfType(IrReviewView);
+    if (active) return active;
+    const doc = typeof document !== "undefined" ? document : null;
+    const activeEl = doc?.activeElement ?? null;
+    const selAnchor = doc?.getSelection?.()?.anchorNode ?? null;
+    for (const leaf of this.app.workspace.getLeavesOfType(IR_REVIEW_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (!(view instanceof IrReviewView)) continue;
+      if (activeEl && view.containerEl.contains(activeEl)) return view;
+      if (selAnchor && view.containerEl.contains(selAnchor)) return view;
+    }
+    return null;
+  }
+
+  private async allocLamport(now = Date.now()): Promise<number> {
+    if (!this.ledger) return now;
+    return Math.max(now, await this.ledger.nextLamport());
+  }
+
+  private async flushEditorToVault(editor: Editor, file: TFile): Promise<string> {
+    const full = editor.getValue();
+    try {
+      if ((await this.app.vault.cachedRead(file)) !== full) {
+        await this.app.vault.modify(file, full);
+      }
+    } catch {
+      /* best-effort pre-extract/cloze buffer flush */
+    }
+    return full;
   }
 
   private getTreeView(): IrTreeView | null {
@@ -2589,7 +2620,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         elementId: newElementId(),
         eventId: newEventId(),
         device,
-        lamport: now,
+        lamport: await this.allocLamport(now),
         now,
         schedule: childSchedule,
       });
@@ -2660,6 +2691,16 @@ export default class IncrementalReadingPlugin extends Plugin {
       hintR.hint,
     );
     await this.openResult(result, "Cloze item created:");
+    if (result.file) {
+      const snapped = expandSelectionAroundLinks(body, mapped.start, mapped.end);
+      await this.attachClozeSourceAnchor(
+        result.file,
+        file.path,
+        body,
+        snapped.start,
+        snapped.end,
+      );
+    }
   }
 
   private async extractSelection(
@@ -2706,8 +2747,9 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: nothing selected.");
       return;
     }
+    const fullBefore = await this.flushEditorToVault(editor, source);
     const offsets = bodyOffsetsFromFullOffsets(
-      editor.getValue(),
+      fullBefore,
       fromOffset + leadingWs,
       toOffset - trailingWs,
     );
@@ -2717,9 +2759,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       );
       return;
     }
-    const bodyBeforeExtract = stripFrontmatter(
-      await this.app.vault.cachedRead(source),
-    );
+    const bodyBeforeExtract = stripFrontmatter(fullBefore);
     // Snap the selection out to whole markdown/wiki-link tokens so an
     // anchored extract's quote never ends up as `data.tf](#dat`. Also
     // preserve heading markers (`## `) when a Live Preview drag starts right
@@ -2941,7 +2981,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         elementId: newElementId(),
         eventId: newEventId(),
         device,
-        lamport: now,
+        lamport: await this.allocLamport(now),
         now,
         schedule: topicStateToSchedule(childState),
       });
@@ -3198,7 +3238,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           elementId: newElementId(),
           eventId: newEventId(),
           device,
-          lamport: now,
+          lamport: await this.allocLamport(now),
           now,
           schedule: topicStateToSchedule(childState),
         });
@@ -3344,7 +3384,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     const hintR = await promptClozeHintInline(this.clozeHintHost());
     if (!hintR.ok) return;
     editor.setSelection(fromPos, toPos);
-    const fullBefore = editor.getValue();
+    const fullBefore = await this.flushEditorToVault(editor, source);
     const body = stripFrontmatter(fullBefore);
     const off = this.bodyOffsetsForEditorSelection(editor);
     const result = await createCloze(
@@ -3356,12 +3396,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
     await this.openResult(result, "Cloze item created:");
     if (result.file && off) {
+      const snapped = expandSelectionAroundLinks(body, off.start, off.end);
       await this.attachClozeSourceAnchor(
         result.file,
         source.path,
         body,
-        off.start,
-        off.end,
+        snapped.start,
+        snapped.end,
       );
     }
   }
@@ -4720,10 +4761,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.ledger.appendEvent({
       id: newEventId(),
       ts: now,
-      // Live single-device events sort after migration lamports and among
-      // themselves by wall clock; ties break on the unique event id. Same
-      // policy as `IrReviewView.emit`.
-      lamport: now,
+      lamport: await this.allocLamport(now),
       device: await this.ledger.getDeviceId(),
       kind: "grade-undone",
       target: target.target,
@@ -6808,7 +6846,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async buildIrHubEntries(): Promise<IrHubEntry[]> {
     const out: IrHubEntry[] = [];
 
-    const review = this.getActiveReviewView();
+    const review = this.getFocusedReviewView();
     const mvForHub = this.app.workspace.getActiveViewOfType(MarkdownView);
     const hubFile = mvForHub?.file ?? this.app.workspace.getActiveFile();
     for (const kind of sessionHubKinds({
@@ -7252,7 +7290,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     const event: IrEvent = {
       id: newEventId(),
       ts: now,
-      lamport: now,
+      lamport: await this.allocLamport(now),
       device,
       kind: "element-created",
       target: newEl.id,
@@ -7295,10 +7333,11 @@ export default class IncrementalReadingPlugin extends Plugin {
       selEnd,
     );
     try {
+      const now = Date.now();
       await this.ledger.appendEvent({
         id: newEventId(),
-        ts: Date.now(),
-        lamport: Date.now(),
+        ts: now,
+        lamport: await this.allocLamport(now),
         device: await this.ledger.getDeviceId(),
         kind: "anchor-repaired",
         target: id,
@@ -7515,13 +7554,20 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   private activePdfSelection(): PdfTextSelection | null {
     const pdfSel = findPdfTextSelection(this.app);
-    if (pdfSel) this.lastPdfSelection = pdfSel;
-    return pdfSel ?? this.lastPdfSelection;
+    if (pdfSel) {
+      this.lastPdfSelection = pdfSel;
+      return pdfSel;
+    }
+    const active = this.app.workspace.getActiveFile();
+    if (active?.extension === "pdf") {
+      return this.lastPdfSelection;
+    }
+    return null;
   }
 
   private canExtractSelection(): boolean {
     if (this.activePdfSelection() || this.heldPdfFile()) return true;
-    if (this.getActiveReviewView()?.getCurrentElementId()) return true;
+    if (this.getFocusedReviewView()?.getCurrentElementId()) return true;
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     return !!(mv?.file && this.markdownViewHasSelection(mv));
   }
@@ -7587,7 +7633,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         this.settings.defaultPriority,
       );
     }
-    const rv = this.getActiveReviewView();
+    const rv = this.getFocusedReviewView();
     if (rv) {
       const preview = rv.previewExtractChildPriority();
       if (preview) return preview;
@@ -7611,7 +7657,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.extractFromPdfSelection(pdfSel, opts);
       return;
     }
-    const rv = this.getActiveReviewView();
+    const rv = this.getFocusedReviewView();
     if (rv) {
       await rv.handleExtract(opts);
       return;
@@ -8090,7 +8136,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         elementId: elementIdForPath(file.path),
         eventId: newEventId(),
         device: await this.ledger.getDeviceId(),
-        lamport: now,
+        lamport: await this.allocLamport(now),
         now,
         priority: opts?.priority ?? this.settings.defaultPriority,
         schedule: topicStateToSchedule(

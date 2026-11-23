@@ -39,6 +39,7 @@ import {
 import {
   escapeClozeHtmlFragment,
   hasCloze,
+  listClozeGroups,
   nextClozeNumber,
   spliceClozeIntoText,
   transformClozes,
@@ -140,6 +141,7 @@ import {
 } from "./ir/review-keys";
 import { applyMobileReviewLayout } from "./ir/mobile-review";
 import {
+  buildExtractChildClozeAnchor,
   buildTextQuoteAnchor,
   reviewSourceSplices,
   type SourceMarkKind,
@@ -148,6 +150,7 @@ import {
 import {
   occurrenceIndexInSource,
   paintIrSourceMarksInElement,
+  sourceMarkContext,
   type DomSourceMark,
 } from "./ir/extract-reading-marks";
 import {
@@ -1712,7 +1715,7 @@ export class IrReviewView extends ItemView {
         elementId,
         eventId: newEventId(),
         device: await this.ledger.getDeviceId(),
-        lamport: now,
+        lamport: await this.allocLamport(now),
         now,
         schedule: childSchedule,
         placement: buildPriorityPlacement(
@@ -1888,6 +1891,10 @@ export class IrReviewView extends ItemView {
     return null;
   }
 
+  private async allocLamport(now = Date.now()): Promise<number> {
+    return Math.max(now, await this.ledger.nextLamport());
+  }
+
   /** Append a ledger event for the current element's state change. */
   private async emit(
     kind: IrEventKind,
@@ -1896,12 +1903,11 @@ export class IrReviewView extends ItemView {
   ): Promise<string> {
     this.dirtyElementIds.add(target);
     const id = newEventId();
+    const now = Date.now();
     await this.ledger.appendEvent({
       id,
-      ts: Date.now(),
-      // Live single-device events sort after the small migration lamports and
-      // among themselves by wall clock; ties break on the unique event id.
-      lamport: Date.now(),
+      ts: now,
+      lamport: await this.allocLamport(now),
       device: await this.ledger.getDeviceId(),
       kind,
       target,
@@ -1992,6 +1998,7 @@ export class IrReviewView extends ItemView {
           "IR radial: new cloze / split / fork when this context supports it (Alt+Shift+U)",
       },
     });
+    this.preventClickStealingFocus(hubBtn);
     hubBtn.addEventListener("click", () => this.openIrHub?.());
   }
 
@@ -2006,6 +2013,7 @@ export class IrReviewView extends ItemView {
       attr: { "aria-label": "More review actions" },
     });
     setIcon(btn, "more-horizontal");
+    this.preventClickStealingFocus(btn);
     btn.addEventListener("click", (ev) => {
       const menu = new Menu();
       for (const item of items) {
@@ -2785,7 +2793,7 @@ export class IrReviewView extends ItemView {
           text: this.currentRaw,
           eventId: newEventId(),
           device: await this.ledger.getDeviceId(),
-          lamport: now,
+          lamport: await this.allocLamport(now),
           now,
         });
         await this.ledger.appendEvent(ev);
@@ -3044,6 +3052,7 @@ export class IrReviewView extends ItemView {
               text,
               cls: m.cls,
               occurrence: occurrenceIndexInSource(sourceCtx.raw, m.start, text),
+              ...sourceMarkContext(sourceCtx.raw, m.start, m.end),
             };
           }),
         );
@@ -4382,27 +4391,53 @@ export class IrReviewView extends ItemView {
           return {
             text,
             cls: r.kind === "cloze" ? "ir-cloze-source" : "ir-extract-source",
-            // Which twin to paint comes from the offsets, not from the
-            // order these ranges happen to arrive in.
+            // Which twin to paint comes from the offsets + surrounding context,
+            // not from the order these ranges happen to arrive in.
             occurrence: occurrenceIndexInSource(raw, r.start, text),
+            ...sourceMarkContext(raw, r.start, r.end),
           };
         }),
       );
     } else if (!isCloze && slot && !slot.file) {
-      // Ledger-only card (e.g. a PDF extract): its children are anchored
-      // in this card's own text, so paint them from the element tree.
+      // Ledger-only card (e.g. a PDF or markdown anchored extract): its
+      // children are anchored in this card's own text, so paint them from
+      // the element tree with exact occurrence and context disambiguation.
       const kids: DomSourceMark[] = [];
       for (const e of this.elementsById.values()) {
-        if (e.parentId !== slot.id || !e.anchor) continue;
-        const text = e.anchor.quote.exact || e.text;
-        if (!text.trim()) continue;
-        kids.push({
-          text,
-          // A clozed child is an item. It has to read green here like it
-          // does on a file-backed card, or the card cannot tell you what
-          // was extracted from what was clozed.
-          cls: e.type === "item" ? "ir-cloze-source" : "ir-extract-source",
-        });
+        if (e.parentId !== slot.id) continue;
+        const cls = e.type === "item" ? "ir-cloze-source" : "ir-extract-source";
+        if (e.anchor) {
+          const r = resolveAnchor(e.anchor, raw);
+          if (r.status === "ok") {
+            const text = e.anchor.quote.exact || raw.slice(r.start, r.end);
+            if (!text.trim()) continue;
+            kids.push({
+              text,
+              cls,
+              occurrence: occurrenceIndexInSource(raw, r.start, text),
+              ...sourceMarkContext(raw, r.start, r.end),
+            });
+            continue;
+          }
+          const fallbackText = e.anchor.quote.exact || e.text;
+          if (fallbackText.trim()) {
+            kids.push({
+              text: fallbackText,
+              cls,
+              leftContext: e.anchor.quote.prefix,
+              rightContext: e.anchor.quote.suffix,
+            });
+          }
+          continue;
+        }
+        if (e.type === "item") {
+          for (const g of listClozeGroups(e.text)) {
+            const needle = g.answer.trim();
+            if (needle.length >= 2) {
+              kids.push({ text: needle, cls: "ir-cloze-source" });
+            }
+          }
+        }
       }
       if (kids.length > 0) paintIrSourceMarksInElement(body, kids);
     }
@@ -4561,6 +4596,7 @@ export class IrReviewView extends ItemView {
       parent.appendChild(this.liveEditor.hostEl);
       await this.flushEdits();
       await this.liveEditor.setKind(this.editKind);
+      void this.refreshDecorations?.();
       return true;
     }
     this.teardownLiveEditorSync();
@@ -4574,6 +4610,7 @@ export class IrReviewView extends ItemView {
     );
     if (!mounted) return false;
     this.liveEditor = mounted;
+    void this.refreshDecorations?.();
     return true;
   }
 
@@ -5119,7 +5156,7 @@ export class IrReviewView extends ItemView {
         elementId,
         eventId: newEventId(),
         device: await this.ledger.getDeviceId(),
-        lamport: now,
+        lamport: await this.allocLamport(now),
         now,
         schedule: childSchedule,
         placement: buildPriorityPlacement(
@@ -5153,6 +5190,11 @@ export class IrReviewView extends ItemView {
       new Notice(
         "Incremental Reading: could not record the extract in the ledger. See the developer console.",
       );
+    }
+    // On a plain <textarea> fallback (ledger-only extract or mobile), HTML
+    // <mark> decorations can only paint in the rendered card view.
+    if (this.editing && !this.liveEditor) {
+      this.editing = false;
     }
     await this.reloadCurrentRaw();
     // Await the cache rebuild so the just-created extract's range is in
@@ -5407,7 +5449,7 @@ export class IrReviewView extends ItemView {
         elementId,
         eventId: newEventId(),
         device: await this.ledger.getDeviceId(),
-        lamport: now,
+        lamport: await this.allocLamport(now),
         now,
         schedule: childSchedule,
         placement: buildPriorityPlacement(
@@ -5482,6 +5524,9 @@ export class IrReviewView extends ItemView {
     // Source remains pristine under DESIGN §Q3: the cloze item carries the
     // `{{cN::...}}` syntax in its own note and the queue records the new
     // element, so there is no source-mutation step here any more.
+    if (this.editing && !this.liveEditor) {
+      this.editing = false;
+    }
     await this.reloadCurrentRaw();
     await this.refreshDecorations?.();
     await this.renderCard();
@@ -5493,7 +5538,9 @@ export class IrReviewView extends ItemView {
   /**
    * Record a text-quote anchor on a new cloze item so source decorations
    * can paint the already-clozed span (SuperMemo coverage). Ledger-only
-   * extracts map the selection through the extract's own anchor.
+   * extracts map the selection through the extract's own anchor when the
+   * extract text matches the parent slice, and fall back to the extract's
+   * own text when the extract was edited in place.
    */
   private async attachClozeSourceAnchor(
     item: IrElement,
@@ -5520,16 +5567,32 @@ export class IrReviewView extends ItemView {
       );
     }
     const a = slot.element.anchor;
-    if (!a || a.pdf || isPdfPath(a.sourcePath)) return null;
+    if (!a || a.pdf || isPdfPath(a.sourcePath)) {
+      return buildExtractChildClozeAnchor(
+        a?.sourcePath ?? slot.id,
+        this.currentRaw,
+        sel.start,
+        sel.end,
+      );
+    }
     const file = this.app.vault.getAbstractFileByPath(a.sourcePath);
-    if (!(file instanceof TFile)) return null;
+    if (!(file instanceof TFile)) {
+      return buildExtractChildClozeAnchor(
+        a.sourcePath,
+        this.currentRaw,
+        sel.start,
+        sel.end,
+      );
+    }
     const body = stripFrontmatter(await this.app.vault.cachedRead(file));
-    const r = resolveAnchor(a, body);
-    if (r.status !== "ok") return null;
-    const start = r.start + sel.start;
-    const end = r.start + sel.end;
-    if (end > r.end || start < r.start) return null;
-    return buildTextQuoteAnchor(a.sourcePath, body, start, end);
+    return buildExtractChildClozeAnchor(
+      a.sourcePath,
+      this.currentRaw,
+      sel.start,
+      sel.end,
+      a,
+      body,
+    );
   }
 
   /**
@@ -5570,6 +5633,12 @@ export class IrReviewView extends ItemView {
     if (!slot) return;
     if (slot.file) {
       if (isPdfPath(slot.file.path)) return;
+      if (this.liveEditor && this.liveEditor.filePath === slot.file.path) {
+        const body = this.liveEditor.getBody();
+        this.currentRaw = body;
+        this.rawOnDisk = body;
+        return;
+      }
       try {
         const body = stripFrontmatter(await this.app.vault.read(slot.file));
         this.currentRaw = body;
