@@ -23,7 +23,7 @@ npm run ship:minor    # new user-facing feature milestone
 npm run ship:major    # breaking change (rare)
 ```
 
-Before shipping, update `CHANGELOG.md` (move `[Unreleased]` notes into the new version section, or add an entry there). Then `npm run ship:*`, which:
+Before shipping, update `CHANGELOG.md` (move `[Unreleased]` notes into the new version section, or add an entry there; **keep each version section body ≤ 2,000 characters** so the Discord release bot posts it in full without truncation). Then `npm run ship:*`, which:
 
 1. Runs `npm run test:ci`.
 2. Bumps `package.json` `version` and syncs `manifest.json` / `versions.json` via `version-bump.mjs`.
