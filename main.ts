@@ -264,6 +264,7 @@ import {
   stripFrontmatter,
 } from "./src/ir/frontmatter-body";
 import {
+  expandSelectionAroundHeadingPrefix,
   expandSelectionAroundLinks,
   locateTextInBody,
   mapRenderedSelectionToRaw,
@@ -2485,8 +2486,23 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const body = stripFrontmatter(await this.app.vault.cachedRead(file));
     const mapped =
-      mapRenderedSelectionToRaw(body, root, range) ??
-      fuzzyLocateInBody(body, range.toString());
+      mapRenderedSelectionToRaw(body, root, range, { includeHeadingPrefix: true }) ??
+      (() => {
+        const hit = fuzzyLocateInBody(body, range.toString());
+        if (!hit) return null;
+        const expanded = expandSelectionAroundHeadingPrefix(
+          body,
+          hit.start,
+          hit.end,
+        );
+        return expanded.start === hit.start && expanded.end === hit.end
+          ? hit
+          : {
+              start: expanded.start,
+              end: expanded.end,
+              text: body.slice(expanded.start, expanded.end),
+            };
+      })();
     if (!mapped) {
       new Notice(
         "Incremental Reading: could not map that selection to the note text. Select a little more or less and try again.",
@@ -2705,18 +2721,26 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.app.vault.cachedRead(source),
     );
     // Snap the selection out to whole markdown/wiki-link tokens so an
-    // anchored extract's quote never ends up as `data.tf](#dat`.
-    const { start: extractStart, end: extractEnd } = expandSelectionAroundLinks(
+    // anchored extract's quote never ends up as `data.tf](#dat`. Also
+    // preserve heading markers (`## `) when a Live Preview drag starts right
+    // after hidden heading syntax across the rest of the heading line.
+    const snappedLinks = expandSelectionAroundLinks(
       bodyBeforeExtract,
       offsets.start,
       offsets.end,
     );
+    const { start: extractStart, end: extractEnd } =
+      expandSelectionAroundHeadingPrefix(
+        bodyBeforeExtract,
+        snappedLinks.start,
+        snappedLinks.end,
+      );
     await this.extractMappedBodyRange(
       source,
       {
         start: extractStart,
         end: extractEnd,
-        text: selection,
+        text: bodyBeforeExtract.slice(extractStart, extractEnd),
         textOverride: joinedOverride,
       },
       { ...opts, spanCount: ranges.length },
@@ -7690,7 +7714,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         void (async () => {
           const raw = stripFrontmatter(await this.app.vault.cachedRead(file));
           const mapped =
-            mapRenderedSelectionToRaw(raw, root, range) ??
+            mapRenderedSelectionToRaw(raw, root, range, { includeHeadingPrefix: true }) ??
             fuzzyLocateInBody(raw, range.toString());
           if (!mapped) {
             new Notice(

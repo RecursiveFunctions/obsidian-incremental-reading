@@ -48,6 +48,23 @@ interface RenderedIndex {
   offsets: Map<Text, number>;
 }
 
+const SKIPPED_PREVIEW_CLASSES = [
+  "mod-header",
+  "inline-title",
+  "metadata-container",
+  "frontmatter-container",
+  "heading-collapse-indicator",
+  "copy-code-button",
+];
+
+function isSkippedPreviewElement(el: HTMLElement): boolean {
+  const tag = (el.tagName ?? "").toUpperCase();
+  if (tag === "SVG" || tag === "STYLE") return true;
+  const cl = el.classList;
+  if (!cl) return false;
+  return SKIPPED_PREVIEW_CLASSES.some((cls) => cl.contains(cls));
+}
+
 function buildRenderedIndex(root: HTMLElement): RenderedIndex {
   let text = "";
   const offsets = new Map<Text, number>();
@@ -65,11 +82,13 @@ function buildRenderedIndex(root: HTMLElement): RenderedIndex {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const el = node as HTMLElement;
-    if (el.tagName === "BR") {
+    if (isSkippedPreviewElement(el)) return;
+    const tag = (el.tagName ?? "").toUpperCase();
+    if (tag === "BR") {
       pushNewline();
       return;
     }
-    const isBlock = BLOCK_TAGS.has(el.tagName);
+    const isBlock = BLOCK_TAGS.has(tag);
     if (isBlock) pushNewline();
     for (const child of Array.from(el.childNodes)) walk(child);
     if (isBlock) pushNewline();
@@ -110,12 +129,27 @@ export function renderedPlainText(root: HTMLElement): string {
   return buildRenderedIndex(root).text;
 }
 
-/** Deepest last text node under `node`, for element-boundary end offsets. */
-function lastTextIn(node: Node): Text | null {
-  if (node.nodeType === Node.TEXT_NODE) return node as Text;
+/** Deepest first indexed text node under `node`, for element-boundary start offsets. */
+function firstTextIn(node: Node, index: RenderedIndex): Text | null {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return index.offsets.has(node as Text) ? (node as Text) : null;
+  }
+  const kids = node.childNodes;
+  for (let i = 0; i < kids.length; i += 1) {
+    const t = firstTextIn(kids[i]!, index);
+    if (t) return t;
+  }
+  return null;
+}
+
+/** Deepest last indexed text node under `node`, for element-boundary end offsets. */
+function lastTextIn(node: Node, index: RenderedIndex): Text | null {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return index.offsets.has(node as Text) ? (node as Text) : null;
+  }
   const kids = node.childNodes;
   for (let i = kids.length - 1; i >= 0; i -= 1) {
-    const t = lastTextIn(kids[i]!);
+    const t = lastTextIn(kids[i]!, index);
     if (t) return t;
   }
   return null;
@@ -134,17 +168,27 @@ function offsetAtBoundary(
   }
   if (container.nodeType === Node.ELEMENT_NODE) {
     const el = container as Element;
-    const child = el.childNodes[offset];
-    if (child) return offsetAtBoundary(child, 0, index);
-    // Past the last child: the boundary is the END of what came before,
-    // not the start of it.
-    const prev =
-      el.childNodes[offset - 1] ?? el.childNodes[el.childNodes.length - 1];
-    if (!prev) return offset === 0 ? 0 : null;
-    const last = lastTextIn(prev);
-    if (!last) return null;
-    const base = index.offsets.get(last);
-    return base === undefined ? null : base + last.length;
+    for (let i = Math.max(0, offset); i < el.childNodes.length; i += 1) {
+      const first = firstTextIn(el.childNodes[i]!, index);
+      if (first) {
+        const base = index.offsets.get(first);
+        if (base !== undefined) return base;
+      }
+    }
+    // Past the last text-bearing child: the boundary is the END of what came
+    // before, skipping non-text siblings like collapse-indicator SVGs or <hr>.
+    for (
+      let i = Math.min(offset - 1, el.childNodes.length - 1);
+      i >= 0;
+      i -= 1
+    ) {
+      const last = lastTextIn(el.childNodes[i]!, index);
+      if (last) {
+        const base = index.offsets.get(last);
+        if (base !== undefined) return base + last.length;
+      }
+    }
+    return offset === 0 ? 0 : null;
   }
   return null;
 }
@@ -375,12 +419,38 @@ export function locateTextInBody(
 }
 
 /**
+ * If `[start, end]` begins at the first character of a markdown ATX heading's
+ * visible text (`## examples`) and covers the remainder of that heading line
+ * (either the full heading or a multi-line selection extending past it),
+ * pull `start` back to include the `## ` markers so extracted cards keep
+ * their markdown header. Mid-heading selections stay unexpanded.
+ */
+export function expandSelectionAroundHeadingPrefix(
+  raw: string,
+  start: number,
+  end: number,
+): { start: number; end: number } {
+  if (end <= start) return { start, end };
+  const lineStart = raw.lastIndexOf("\n", start - 1) + 1;
+  const prefix = raw.slice(lineStart, start);
+  if (!/^[ \t]*#{1,6}[ \t]+$/.test(prefix)) return { start, end };
+  const lineEndIdx = raw.indexOf("\n", start);
+  const lineEnd = lineEndIdx === -1 ? raw.length : lineEndIdx;
+  if (end < lineEnd && raw.slice(end, lineEnd).trim() !== "") {
+    return { start, end };
+  }
+  const leadingWs = prefix.length - prefix.trimStart().length;
+  return { start: lineStart + leadingWs, end };
+}
+
+/**
  * Map a rendered preview selection to offsets in the markdown body string.
  */
 export function mapRenderedSelectionToRaw(
   raw: string,
   root: HTMLElement,
   range: Range,
+  opts?: { includeHeadingPrefix?: boolean },
 ): { start: number; end: number; text: string } | null {
   const rendered = renderedPlainText(root);
   const rOff = rangeOffsetsInRendered(root, range);
@@ -393,16 +463,14 @@ export function mapRenderedSelectionToRaw(
     if (exact !== -1 && raw.indexOf(slice, exact + 1) === -1) {
       return { start: exact, end: exact + slice.length, text: slice };
     }
-    // A selection that touches a link has no chance of matching raw
-    // markdown by whitespace-tolerant search alone: `the anchor guide` is
-    // stored as `[the anchor guide](https://…)`. The fuzzy pass drops the
-    // link chrome from the raw side.
-    //
-    // A sentence that repeats in the note is ambiguous to a plain search,
-    // which used to fail the whole extract. The rendered offsets say which
-    // occurrence the user selected, so pass that index down.
+    // Prefer occurrence-aware fuzzy matching over `locateTextInBody`: when a
+    // rendered selection begins on a heading like `## examples` and the word
+    // `examples` also appeared earlier in prose, `locateTextInBody`'s
+    // multi-line first..last scan grabs from the prose occurrence down to
+    // the body and ignores `nth`. Keep `locateTextInBody` as fallback for
+    // tiny (<2 char) or symbol-heavy needles that normalization drops.
     const nth = normalizedOccurrencesBefore(rendered, rOff.start, slice);
-    return locateTextInBody(raw, slice) ?? fuzzyLocateInBody(raw, slice, nth);
+    return fuzzyLocateInBody(raw, slice, nth) ?? locateTextInBody(raw, slice);
   })();
   if (!hit) return null;
 
@@ -410,7 +478,10 @@ export function mapRenderedSelectionToRaw(
   // preview selection of the visible label lands *inside* the `[...]` in raw
   // and would splice link syntax across the extract/cloze boundary. Snap out
   // to whole-link so callers get a clean token.
-  const snapped = expandSelectionAroundLinks(raw, hit.start, hit.end);
+  const snappedLinks = expandSelectionAroundLinks(raw, hit.start, hit.end);
+  const snapped = opts?.includeHeadingPrefix
+    ? expandSelectionAroundHeadingPrefix(raw, snappedLinks.start, snappedLinks.end)
+    : snappedLinks;
   if (snapped.start === hit.start && snapped.end === hit.end) return hit;
   return {
     start: snapped.start,

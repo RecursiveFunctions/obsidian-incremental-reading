@@ -236,6 +236,23 @@ export function paintIrSourceMarksInElement(
   }
 }
 
+const BLOCK_TAG_NAMES = new Set([
+  "P", "DIV", "LI", "UL", "OL",
+  "H1", "H2", "H3", "H4", "H5", "H6",
+  "BLOCKQUOTE", "PRE", "TABLE", "TR", "TD", "TH",
+]);
+
+function nearestBlockAncestor(node: Node, root: HTMLElement): Node {
+  let cur: Node | null = node.parentNode;
+  while (cur && cur !== root) {
+    if (cur.nodeType === Node.ELEMENT_NODE && BLOCK_TAG_NAMES.has(((cur as Element).tagName ?? "").toUpperCase())) {
+      return cur;
+    }
+    cur = cur.parentNode;
+  }
+  return root;
+}
+
 /**
  * Formatting-tolerant variant: normalizes the concatenated text of every
  * text node under `root` (same rules as the needle), finds the n-th
@@ -251,8 +268,14 @@ export function wrapNthOccurrenceAcrossNodes(
   const norm = new Normalizer<{ node: Text; offset: number }>();
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let node: Node | null = walker.nextNode();
+  let prevBlock: Node | null = null;
   while (node) {
     const t = node as Text;
+    const block = nearestBlockAncestor(t, root);
+    if (prevBlock !== null && block !== prevBlock) {
+      norm.separateBlock();
+    }
+    prevBlock = block;
     const text = t.nodeValue ?? "";
     for (let i = 0; i < text.length; i++) {
       norm.push(text[i]!, { node: t, offset: i });

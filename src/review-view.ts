@@ -154,7 +154,7 @@ import {
   saveBody,
   stripExtractMarks,
 } from "./ir/frontmatter-body";
-import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, caretOffsetInRendered, renderedPlainText, previewScrollNeedle, uniqueIndex, alignRawOffsetToRendered, textPointAtTextOffset, expandSelectionAroundLinks } from "./ir/selection-map";
+import { mapRenderedSelectionToRaw, locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, caretOffsetInRendered, renderedPlainText, previewScrollNeedle, uniqueIndex, alignRawOffsetToRendered, textPointAtTextOffset, expandSelectionAroundLinks, expandSelectionAroundHeadingPrefix } from "./ir/selection-map";
 import {
   canUseReviewLivePreview,
   type ReviewEditorKind,
@@ -1300,7 +1300,7 @@ export class IrReviewView extends ItemView {
     const ms = this.multiSelect;
     if (!slot || !ms || this.editing || !this.canMakeChild()) return false;
     if (this.pdfSourcePath(slot)) return false;
-    const sel = this.resolveSelection();
+    const sel = this.resolveSelection({ includeHeadingPrefix: true });
     if (!sel.ok) return false;
     const doc = this.contentEl.ownerDocument;
     const live = doc.getSelection();
@@ -4851,7 +4851,7 @@ export class IrReviewView extends ItemView {
     }
   }
 
-  private resolveSelection():
+  private resolveSelection(opts?: { includeHeadingPrefix?: boolean }):
     | { ok: true; text: string; start: number; end: number }
     | { ok: false; reason: string; renderedText?: string } {
     if (this.editing) {
@@ -4861,11 +4861,18 @@ export class IrReviewView extends ItemView {
         if (!live) return { ok: false, reason: "Nothing selected." };
         // Same link-guard as the preview path: `[data.tf](#datatf)` must be
         // extracted or clozed as one token so the anchor round-trips.
-        const snapped = expandSelectionAroundLinks(
+        const snappedLinks = expandSelectionAroundLinks(
           this.currentRaw,
           live.start,
           live.end,
         );
+        const snapped = opts?.includeHeadingPrefix
+          ? expandSelectionAroundHeadingPrefix(
+              this.currentRaw,
+              snappedLinks.start,
+              snappedLinks.end,
+            )
+          : snappedLinks;
         return {
           ok: true,
           text: this.currentRaw.slice(snapped.start, snapped.end),
@@ -4885,11 +4892,18 @@ export class IrReviewView extends ItemView {
       const rawEnd = textarea.selectionEnd ?? 0;
       if (rawEnd <= rawStart) return { ok: false, reason: "Nothing selected." };
       this.currentRaw = textarea.value;
-      const { start, end } = expandSelectionAroundLinks(
+      const snappedLinks = expandSelectionAroundLinks(
         textarea.value,
         rawStart,
         rawEnd,
       );
+      const { start, end } = opts?.includeHeadingPrefix
+        ? expandSelectionAroundHeadingPrefix(
+            textarea.value,
+            snappedLinks.start,
+            snappedLinks.end,
+          )
+        : snappedLinks;
       return {
         ok: true,
         text: textarea.value.slice(start, end),
@@ -4916,6 +4930,7 @@ export class IrReviewView extends ItemView {
       this.currentRaw,
       containerEl,
       sel.getRangeAt(0),
+      opts,
     );
     if (!mapped) {
       return {
@@ -4987,7 +5002,7 @@ export class IrReviewView extends ItemView {
       return created;
     }
     const held = this.multiSelect?.pending.body(this.heldKey(slot)) ?? [];
-    const liveRes = this.resolveSelection();
+    const liveRes = this.resolveSelection({ includeHeadingPrefix: true });
     let live: BodyHeldSelection | null = liveRes.ok
       ? {
           kind: "body",
@@ -5004,12 +5019,17 @@ export class IrReviewView extends ItemView {
     if (!live && renderedText.trim()) {
       const f = fuzzyLocateInBody(this.currentRaw, renderedText);
       if (f) {
+        const expanded = expandSelectionAroundHeadingPrefix(
+          this.currentRaw,
+          f.start,
+          f.end,
+        );
         live = {
           kind: "body",
           sourcePath: this.heldKey(slot),
-          text: f.text,
-          start: f.start,
-          end: f.end,
+          text: this.currentRaw.slice(expanded.start, expanded.end),
+          start: expanded.start,
+          end: expanded.end,
         };
       }
     }

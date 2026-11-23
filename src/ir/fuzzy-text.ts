@@ -17,6 +17,10 @@ export class Normalizer<Ref> {
   refs: Ref[] = [];
   private pendingSpace = false;
 
+  separateBlock(): void {
+    if (this.text.length > 0) this.pendingSpace = true;
+  }
+
   push(ch: string, ref: Ref): void {
     if (SYNTAX.has(ch)) return;
     if (WS.has(ch)) {
