@@ -2,6 +2,21 @@ import type { IrElement, IrEvent, SourceTombstone } from "./model";
 import type { ElementId, EventId, DeviceId } from "./ids";
 import { buildPriorityPlacement } from "./relative-priority";
 
+/**
+ * The parent a deleted element's children should be reparented to. Bulk
+ * actions pass a parent captured before earlier deletes in the same batch;
+ * that id may already be gone, so the live state is authoritative.
+ */
+export function liveParentForDelete(
+  live: ReadonlyMap<ElementId, IrElement>,
+  elementId: ElementId,
+  callerParentId?: ElementId | null,
+): ElementId | null {
+  const current = live.get(elementId);
+  if (!current) return callerParentId ?? null;
+  return current.parentId ?? null;
+}
+
 export interface DeletionOptions {
   autoPromoteRootless: boolean;
 }

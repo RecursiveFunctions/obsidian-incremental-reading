@@ -10,6 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { liveParentForDelete } from "../src/ir/deletion";
 import { fold } from "../src/ir/log";
 import { newElement } from "../src/ir/model";
 import type { IrElement, IrEvent } from "../src/ir/model";
@@ -378,4 +379,19 @@ test("tombstonesOwnedBy: only the device that saw the delete may re-link on load
   ];
   assert.deepEqual([...mod.tombstonesOwnedBy(events, A)].sort(), ["a.md"]);
   assert.deepEqual([...mod.tombstonesOwnedBy(events, B)].sort(), ["b.md", "both.md"]);
+});
+
+test("liveParentForDelete ignores a stale caller parent", () => {
+  const elements = new Map<any, any>([
+    ["X", { id: "X", parentId: null }],
+    ["P", { id: "P", parentId: "X" }],
+    ["C", { id: "C", parentId: "P" }],
+  ]);
+  // After P was deleted, C's current parent in live state is null (root)
+  const live = new Map(elements);
+  live.delete("P");
+  live.set("C", { id: "C", parentId: null });
+  assert.equal(liveParentForDelete(live, "C" as any, "P" as any), null);
+  assert.equal(liveParentForDelete(live, "C" as any, undefined), null);
+  assert.equal(liveParentForDelete(elements, "C" as any, "P" as any), "P");
 });

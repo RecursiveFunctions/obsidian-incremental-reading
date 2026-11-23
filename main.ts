@@ -110,7 +110,7 @@ import {
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
 import { planOrphanRecoveries } from "./src/ir/orphan-notes";
 import { isOcclusionItem, toAnkiTsv } from "./src/ir/anki-export";
-import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath, tombstonesOwnedBy } from "./src/ir/deletion";
+import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath, tombstonesOwnedBy, liveParentForDelete } from "./src/ir/deletion";
 import {
   assertVaultRelativePath,
   basenameOf,
@@ -4526,6 +4526,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     if (!this.ledger) return;
     const state = await this.ledger.load();
+    const effectiveParentId = liveParentForDelete(state.elements, elementId, parentId);
     const specs: Array<{
       kind: IrEvent["kind"];
       target: ElementId;
@@ -4536,7 +4537,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         specs.push({
           kind: "reparented",
           target: el.id,
-          payload: { parentId },
+          payload: { parentId: effectiveParentId },
         });
       }
     }
