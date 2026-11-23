@@ -1,4 +1,24 @@
 /**
+ * Return a note path that is not in `isTaken`, appending " 2", " 3", ... to
+ * the stem. Used when promoting orphans whose id tag and first line collide.
+ */
+export function uniquePromotedNotePath(
+  basePath: string,
+  isTaken: (path: string) => boolean,
+): string {
+  const dot = basePath.lastIndexOf(".");
+  const stem = dot > 0 ? basePath.slice(0, dot) : basePath;
+  const extension = dot > 0 ? basePath.slice(dot) : "";
+  let candidate = basePath;
+  let suffix = 2;
+  while (isTaken(candidate)) {
+    candidate = `${stem} ${suffix}${extension}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+/**
  * Put IR-marked notes back in the ledger when they vanished from the fold.
  *
  * A folder move used to fire source-gone, which `element-deleted` every

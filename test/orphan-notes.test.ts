@@ -7,6 +7,7 @@ import {
   orphanNotes,
   planOrphanRecoveries,
   storeNotePaths,
+  uniquePromotedNotePath,
 } from "../src/ir/orphan-notes";
 import { elementIdForPath, migrateNotes } from "../src/ir/migrate";
 import { fold } from "../src/ir/log";
@@ -539,5 +540,40 @@ test("planOrphanRecoveries: does not resurrect deliberately deleted promoted not
   assert.equal(plan.restored, 0);
   assert.deepEqual(plan.events, []);
   assert.ok(knownNotePathsFromEvents(events).includes(promotedPath));
+});
+
+test("uniquePromotedNotePath: returns the base path when it is free", () => {
+  assert.equal(
+    uniquePromotedNotePath("Extracts/A quote (el_mig_4).md", () => false),
+    "Extracts/A quote (el_mig_4).md",
+  );
+});
+
+test("uniquePromotedNotePath: appends a numeric suffix for each taken path", () => {
+  const taken = new Set([
+    "Extracts/A quote (el_mig_4).md",
+    "Extracts/A quote (el_mig_4) 2.md",
+  ]);
+  assert.equal(
+    uniquePromotedNotePath("Extracts/A quote (el_mig_4).md", (p) => taken.has(p)),
+    "Extracts/A quote (el_mig_4) 3.md",
+  );
+});
+
+test("uniquePromotedNotePath: colliding migrated ids and first lines get distinct paths", () => {
+  const idA = elementIdForPath("Alpha/one.md");
+  const idB = elementIdForPath("Another/two.md");
+  assert.equal(idA.slice(0, 8), idB.slice(0, 8));
+
+  const base = `Same opening line (${idA.slice(0, 8)}).md`;
+  const used = new Set<string>();
+  const first = uniquePromotedNotePath(base, (p) => used.has(p));
+  used.add(first);
+  const second = uniquePromotedNotePath(base, (p) => used.has(p));
+  used.add(second);
+
+  assert.notEqual(first, second);
+  assert.equal(first, base);
+  assert.equal(second, "Same opening line (el_mig_4) 2.md");
 });
 
