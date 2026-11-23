@@ -47,6 +47,8 @@ export function parseCandidatePriority(raw: string): number | null {
 
 export interface PriorityPromptHandle {
   cancel(): void;
+  /** Tear down for replacement. Does not run the user-cancel callback. */
+  dispose(): void;
 }
 
 export interface RichPriorityEditorOptions {
@@ -160,7 +162,10 @@ export function mountPriorityEditor(
   });
   render();
   setTimeout(() => position.focus(), 0);
-  return { cancel: () => close(false) };
+  return {
+    cancel: () => close(false),
+    dispose: () => { closed = true; },
+  };
 }
 
 export interface PlacementPriorityOptions {
@@ -222,7 +227,7 @@ export function mountPlacementPriorityInput(
   }
   actions.createEl("button", { text: "Cancel" }).onclick = () => close(null);
 
-  host.addEventListener("keydown", (event) => {
+  const onKey = (event: KeyboardEvent) => {
     if (event.key === "Enter") {
       event.preventDefault();
       submitInput();
@@ -230,10 +235,18 @@ export function mountPlacementPriorityInput(
       event.preventDefault();
       close(null);
     }
-  });
+  };
+  host.addEventListener("keydown", onKey);
 
   setTimeout(() => input.focus(), 0);
-  return { cancel: () => close(null) };
+  return {
+    cancel: () => close(null),
+    dispose: () => {
+      if (closed) return;
+      closed = true;
+      host.removeEventListener("keydown", onKey);
+    },
+  };
 }
 
 /**
@@ -302,5 +315,6 @@ export function openPriorityPrompt(
       close();
       onCancel?.();
     },
+    dispose: () => { closed = true; },
   };
 }
