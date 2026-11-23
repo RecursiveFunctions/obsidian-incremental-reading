@@ -4,6 +4,7 @@ import {
   imageTargetsInText,
   nthOccurrenceOffset,
   occurrenceIndexInSource,
+  paintIrSourceMarksInElement,
   readingViewNeedle,
   readingViewNeedleBlocks,
   readingViewNeedlePasses,
@@ -126,4 +127,106 @@ test("imageTargetsInText: finds embeds and markdown images", () => {
     "sub/b.png",
   ]);
   assert.deepEqual(imageTargetsInText("no images here"), []);
+});
+
+test("paintIrSourceMarksInElement: highlights heading+body extract across blocks without hitting earlier prose", () => {
+  const prevDoc = (globalThis as Record<string, unknown>).document;
+  const prevNF = (globalThis as Record<string, unknown>).NodeFilter;
+  const prevHTMLElement = (globalThis as Record<string, unknown>).HTMLElement;
+  const prevNode = (globalThis as Record<string, unknown>).Node;
+
+  interface DomNode {
+    nodeType: number;
+    parentNode: DomEl | null;
+    nodeValue?: string;
+    tagName?: string;
+    className?: string;
+    textContent?: string | null;
+    childNodes: DomNode[];
+  }
+  class FakeEl implements DomNode {
+    nodeType = 1;
+    parentNode: DomEl | null = null;
+    tagName: string;
+    className = "";
+    childNodes: DomNode[] = [];
+    classList = {
+      contains: (c: string) => this.className.split(/\s+/).includes(c),
+      add: (...cs: string[]) => {
+        for (const c of cs) if (!this.classList.contains(c)) this.className = `${this.className} ${c}`.trim();
+      },
+    };
+    constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+    appendChild(n: DomNode) {
+      n.parentNode = this;
+      this.childNodes.push(n);
+      return n;
+    }
+    insertBefore(n: DomNode, ref: DomNode | null) {
+      n.parentNode = this;
+      const idx = ref ? this.childNodes.indexOf(ref) : -1;
+      if (idx === -1) this.childNodes.push(n);
+      else this.childNodes.splice(idx, 0, n);
+      return n;
+    }
+    removeChild(n: DomNode) {
+      const idx = this.childNodes.indexOf(n);
+      if (idx !== -1) this.childNodes.splice(idx, 1);
+      n.parentNode = null;
+      return n;
+    }
+    querySelectorAll() { return []; }
+  }
+  type DomEl = FakeEl;
+  const textNode = (v: string): DomNode => ({ nodeType: 3, parentNode: null, nodeValue: v, childNodes: [] });
+
+  (globalThis as Record<string, unknown>).Node = { TEXT_NODE: 3, ELEMENT_NODE: 1 };
+  (globalThis as Record<string, unknown>).NodeFilter = { SHOW_TEXT: 4 };
+  (globalThis as Record<string, unknown>).HTMLElement = FakeEl;
+  (globalThis as Record<string, unknown>).document = {
+    createElement: (tag: string) => new FakeEl(tag),
+    createTextNode: (v: string) => textNode(v),
+    createTreeWalker: (root: DomEl) => {
+      const list: DomNode[] = [];
+      const walk = (n: DomNode) => {
+        if (n.nodeType === 3) list.push(n);
+        for (const c of n.childNodes) walk(c);
+      };
+      walk(root);
+      let i = -1;
+      return {
+        nextNode: () => {
+          i += 1;
+          return list[i] ?? null;
+        },
+      };
+    },
+  };
+
+  try {
+    const root = new FakeEl("DIV");
+    const pIntro = new FakeEl("P");
+    pIntro.appendChild(textNode("See examples below."));
+    const h2 = new FakeEl("H2");
+    h2.appendChild(textNode("examples"));
+    const pBody = new FakeEl("P");
+    pBody.appendChild(textNode("First example line."));
+    root.appendChild(pIntro);
+    root.appendChild(h2);
+    root.appendChild(pBody);
+
+    paintIrSourceMarksInElement(root as unknown as HTMLElement, [
+      { text: "## examples\n\nFirst example line.", cls: "ir-extract-source", occurrence: 0 },
+    ]);
+
+    const hasMark = (el: FakeEl) => el.childNodes.some((c) => c instanceof FakeEl && c.tagName === "MARK");
+    assert.equal(hasMark(pIntro), false);
+    assert.equal(hasMark(h2), true);
+    assert.equal(hasMark(pBody), true);
+  } finally {
+    (globalThis as Record<string, unknown>).document = prevDoc;
+    (globalThis as Record<string, unknown>).NodeFilter = prevNF;
+    (globalThis as Record<string, unknown>).HTMLElement = prevHTMLElement;
+    (globalThis as Record<string, unknown>).Node = prevNode;
+  }
 });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, alignRenderedOffsetToRaw, alignRawOffsetToRendered, previewScrollNeedle, uniqueIndex, expandSelectionAroundLinks } from "../src/ir/selection-map";
+import { locateTextInBody, SWITCH_TO_EDIT_COPY, mapRenderedCaretToRaw, alignRenderedOffsetToRaw, alignRawOffsetToRendered, previewScrollNeedle, uniqueIndex, expandSelectionAroundLinks, expandSelectionAroundHeadingPrefix, mapRenderedSelectionToRaw } from "../src/ir/selection-map";
 
 test("locateTextInBody: finds multi-line text when needle has newlines", () => {
   const raw = "intro\nfirst line here\nsecond line there\noutro";
@@ -132,4 +132,89 @@ test("expandSelectionAroundLinks: unclosed [ in prose doesn't runaway across new
   const okStart = raw.indexOf("ok](");
   const r = expandSelectionAroundLinks(raw, okStart, okStart + 2);
   assert.equal(raw.slice(r.start, r.end), "[ok](#ok)");
+});
+
+test("expandSelectionAroundHeadingPrefix: preserves heading markers for full-heading and multi-line selections", () => {
+  const raw = "intro\n## examples\n\nBody text.";
+  const exStart = raw.indexOf("examples");
+  const exEnd = exStart + "examples".length;
+  const fullHeading = expandSelectionAroundHeadingPrefix(raw, exStart, exEnd);
+  assert.equal(raw.slice(fullHeading.start, fullHeading.end), "## examples");
+
+  const multiLine = expandSelectionAroundHeadingPrefix(raw, exStart, raw.length);
+  assert.equal(raw.slice(multiLine.start, multiLine.end), "## examples\n\nBody text.");
+
+  const longer = "## examples of usage\nBody";
+  const mid = expandSelectionAroundHeadingPrefix(longer, 3, 11);
+  assert.equal(longer.slice(mid.start, mid.end), "examples");
+
+  const tagRaw = "#examples in prose";
+  assert.deepEqual(expandSelectionAroundHeadingPrefix(tagRaw, 1, 9), { start: 1, end: 9 });
+});
+
+test("mapRenderedSelectionToRaw: handles heading collapse indicator SVG, repeated words, and ## prefix", () => {
+  const prevNode = (globalThis as Record<string, unknown>).Node;
+  (globalThis as Record<string, unknown>).Node = { TEXT_NODE: 3, ELEMENT_NODE: 1 };
+  try {
+    interface FakeNode {
+      nodeType: number;
+      childNodes: FakeNode[];
+      textContent?: string;
+      length?: number;
+      tagName?: string;
+      classList?: { contains: (c: string) => boolean };
+    }
+    const text = (s: string): FakeNode => ({ nodeType: 3, childNodes: [], textContent: s, length: s.length });
+    const el = (tag: string, classes: string[], kids: FakeNode[]): FakeNode => ({
+      nodeType: 1,
+      tagName: tag,
+      classList: { contains: (c: string) => classes.includes(c) },
+      childNodes: kids,
+    });
+
+    const tIntro = text("See examples below.");
+    const tHeading = text("examples");
+    const tBody = text("First example line.");
+    const h2 = el("H2", [], [
+      el("DIV", ["heading-collapse-indicator"], [el("SVG", [], [el("PATH", [], [])])]),
+      tHeading,
+    ]);
+    const root = el("DIV", ["markdown-preview-view"], [
+      el("DIV", ["mod-header"], [el("DIV", ["inline-title"], [text("examples")])]),
+      el("DIV", ["el-p"], [el("P", [], [tIntro])]),
+      el("DIV", ["el-h2"], [h2]),
+      el("DIV", ["el-p"], [el("P", [], [tBody])]),
+    ]);
+
+    const raw = "See examples below.\n\n## examples\n\nFirst example line.";
+    // Browser places startContainer on <h2> at offset 0 (the SVG collapse indicator)
+    const range = {
+      startContainer: h2,
+      startOffset: 0,
+      endContainer: tBody,
+      endOffset: "First example line.".length,
+    } as unknown as Range;
+
+    const extracted = mapRenderedSelectionToRaw(raw, root as unknown as HTMLElement, range, {
+      includeHeadingPrefix: true,
+    });
+    assert.ok(extracted);
+    assert.equal(extracted!.text, "## examples\n\nFirst example line.");
+
+    // Single-heading selection: extract keeps `## `, cloze omits `## `
+    const headingOnly = {
+      startContainer: h2,
+      startOffset: 0,
+      endContainer: tHeading,
+      endOffset: "examples".length,
+    } as unknown as Range;
+    const extHeading = mapRenderedSelectionToRaw(raw, root as unknown as HTMLElement, headingOnly, {
+      includeHeadingPrefix: true,
+    });
+    assert.equal(extHeading?.text, "## examples");
+    const clozeHeading = mapRenderedSelectionToRaw(raw, root as unknown as HTMLElement, headingOnly);
+    assert.equal(clozeHeading?.text, "examples");
+  } finally {
+    (globalThis as Record<string, unknown>).Node = prevNode;
+  }
 });
