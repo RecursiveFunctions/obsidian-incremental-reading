@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] — 2026-11-23
+
+### Fixed
+
+- **Legacy ledger ID compatibility** (`src/ir/model.ts`, `src/ir/ledger.ts`): Allowed `ev_mig_` / `el_mig_` migration IDs over 128 characters, `auto-postpone:<device>:<day>:<index>` event IDs containing colons, and `el_tomb:` / `el_restored:` sentinel targets on tombstone and restore events while still rejecting path-traversal and control characters.
+- **Ledger reconcile `VaultFs.remove` context** (`src/ir/ledger.ts`): Invoked `this.fs.remove(...)` directly instead of detaching the method reference, preventing `Cannot read properties of undefined (reading 'adapter')` when pruning stale `.ir/state/` or `.ir/tombstones.json` files through `ObsidianVaultFs`.
+
 ## [0.15.0] — 2026-11-22
 
 ### Added
