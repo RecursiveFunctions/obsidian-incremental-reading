@@ -3,10 +3,24 @@ import assert from "node:assert/strict";
 import {
   canAdvanceReadingInSession,
   canGradeInSession,
+  digitGradeAllowed,
   restoreDismissedSlot,
   spacebarReviewAction,
   spliceDismissedSlot,
 } from "../src/ir/review-keys";
+
+test("digit grade: blocked when a dedicated input is focused", () => {
+  assert.equal(digitGradeAllowed(true, "INPUT"), false);
+});
+
+test("digit grade: still allowed in the source textarea", () => {
+  assert.equal(digitGradeAllowed(true, "TEXTAREA"), true);
+});
+
+test("digit grade: allowed when not typing", () => {
+  assert.equal(digitGradeAllowed(false, "INPUT"), true);
+  assert.equal(digitGradeAllowed(false, null), true);
+});
 
 test("spacebar: typing never hijacks the key", () => {
   assert.deepEqual(
