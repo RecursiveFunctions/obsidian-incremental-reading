@@ -6,9 +6,9 @@ Incremental Reading for Obsidian is a complete incremental-reading workflow buil
 
 ## How a session looks
 
-1. Open a markdown note or a PDF and mark it as a topic (`Alt+T`). Right-clicking a folder marks every unmarked note and PDF inside it.
+1. Open a markdown note or a PDF and mark it as a topic (`Alt+T`), or pick an explicit placement priority / evenly space a batch of folders and files from the side panel.
 2. Start review (`Alt+R`, the ribbon icon, or a click on the status bar). Reading cards remember where you stopped, and the source note sits beside the card.
-3. When a passage is worth keeping, extract it (`Alt+X`). Extracts stay linked to their source, and you can build one extract from several spans across pages.
+3. When a passage is worth keeping, extract it (`Alt+X`, or with an explicit priority for urgent passages). Extracts stay linked to their source, and you can build one extract from several spans across pages.
 4. When a fact is worth remembering, cloze it (`Alt+Z`) or make an image-occlusion card from a figure. New cards join the current session right away.
 5. Open Collection (`Alt+I`) to see the whole tree: every topic, the extracts cut from it, and the items cut from those extracts.
 
@@ -25,9 +25,9 @@ When the queue runs away, Mercy (`Alt+M`) previews a fix before applying it: it 
 ## What it does
 
 - Element tree with source → extract → item lineage in Collection
-- Priority queue (0 to 100, lower is more important) with global and nested views
+- Priority queue (0 to 100, lower is more important) with global and nested views, plus non-modal placement-priority panels for marking, bulk staging, and extracting
 - Mercy with load visibility: due, postponed, and seven-day inflow in the status bar
-- Desktop and mobile sessions, including a mobile capture button with a due-count badge
+- Calm 3-layer progressive disclosure across desktop, tablet, and phone (with an on-demand `Element Info (I)` telemetry drawer, 3-tab Stats, unified Mobile Hub FAB, and Touch Selection Bar)
 - PDF topics and extracts, image extracts, and image-occlusion cards
 - SM-20 default item scheduling alongside FSRS-6 with a local parameter optimizer that fits to your own review log, plus same-day Final Drill and SM18/SM20 & EPUB/HTML import
 - Offline operation: no network calls, no telemetry, one runtime dependency

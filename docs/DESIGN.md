@@ -193,13 +193,18 @@ the queue is the core of the product.
 
 Rationale: SM-20 and FSRS-6 share the DSR lineage (SM-17 -> FSRS-6 / SM-20).
 For items under SM-20, stability updates use the 21x21x21 `SInc` and recall
-matrices (`sm20-matrix.json`, schema v2) with analytical priors, bankers-rounded
-1..20 difficulty/stability/repetition axis transforms, early-review R damping
-(bypassing the `1.1x` minimum interval growth floor when `elapsedDays < prevS`
-and `retrievability > desiredRetention`), and `round(cases) + 1e-5` weighted
-retrievability calibration. For ungraded reading elements (topics and extracts)
-and priority dynamics, we use the exact formulas recovered from SuperMemo 20
-(`sm20.exe`):
+matrices (`sm20-matrix.json`, schema v2) with analytical priors, 3D neighbor
+smoothing (`smoothSm20SincCube`, `0x00a93480`/`0x00a93510`), difficulty-and-lapse
+post-lapse baseline stability (`computeInitialRepetitionStabilityFactor`,
+`0x00ce0600`), bankers-rounded 1..20 difficulty/stability/repetition axis
+transforms, early-review R damping (bypassing the `1.1x` minimum interval
+growth floor when `elapsedDays < prevS` and `retrievability > desiredRetention`),
+adjacent-bin outlier reconciliation (`reconcileRetentionMatrixOutliers`,
+`0x00c243f0`) ahead of `round(cases) + 1e-5` weighted retrievability
+calibration, and blended forgetting-curve scaling
+(`computeBlendedForgettingCurveRetention`, `0x00cad6a0`). For ungraded reading
+elements (topics and extracts) and priority dynamics, we use the exact formulas
+recovered from SuperMemo 20 (`sm20.exe`):
 
 - **Length-based Topic A-Factor (`0x00cfee40`):** `1.25 + 150 / (L + 200)` from
   character length `L` (`1.3` for image/crop extracts at `0x00bcb0a0`).
@@ -211,10 +216,15 @@ and priority dynamics, we use the exact formulas recovered from SuperMemo 20
   First repetition uses `a^3`, subsequent repetitions use `interval * a` (with
   `a` clamped to `[1.01, 3.0]`), dispersed with log-uniform random spread, and
   adjusts `aFactor` via rational saturation.
-- **Extract Priority Spreading (`0x00ca1140`) & Item Grade Drift (`0x00ca1e30`):**
+- **Extract Priority Spreading (`0x00ca1140`), Placement Requests & Item Grade Drift (`0x00ca1e30`):**
   New extracts spread around parent priority `P` within `[0.7*P, exp(1.7*P^0.2)]`
-  weighted by `L / (L + 100)`, and passing item grades (`Hard/Good/Easy`) nudge
-  item priority by `+0.05 / +0.15 / +0.30`.
+  weighted by `L / (L + 100)` unless overridden via the non-modal placement
+  priority side panel (`IrPlacementPriorityView`). Single-file mark with
+  priority, bulk folder/file staging (`IrBulkMarkView` with default, fixed, or
+  deterministic even-spaced range priorities), and extract-with-priority treat
+  entered numbers as queue placement requests projected by `finalizeFold`.
+  Passing item grades (`Hard/Good/Easy`) nudge item priority by
+  `+0.05 / +0.15 / +0.30`.
 - **Review log & local FSRS optimizer (`src/ir/optimizer/`):** Review grades
   and ratings (`1..4`, plus `overridden` flags) are persisted from day one.
   `fit.ts` runs seeded, deterministic Adam optimization over binary
@@ -578,16 +588,22 @@ Reading-view behavior and limitations:
 
 ## Open items
 
-- **SM-20 & 4-model ensemble:** SHIPPED. SM-20 (`SInc` 21x21x21 matrix,
-  early-review R damping, priority-scaled intervals) is the default item
-  scheduler for new vaults alongside FSRS-6 with the local parameter
-  optimizer (`src/ir/optimizer/`), and Section 5 ships the 4-model divergence
-  picker (`SM-20`, `FSRS`, `DSR`, `SM-2`).
-- **Phase 1 & Phase 2 (`docs/FUTURE-PLANS.md`):** SHIPPED — rich SM18/SM20
-  collection import (`src/ir/sm-collection-import.ts`), EPUB/HTML import
-  (`src/ir/epub-import.ts`), duplicate URL/content guards, persisted Final
-  Drill (`drill.json`), dynamic Neural Queue (`neural.json`), `Advance` /
-  `JumpInterval`, bounded leech triage, and 26-week/rolling retention Stats.
+- **SM-20 & 4-model ensemble:** SHIPPED (`v0.14.0`–`v0.15.0`). SM-20 (`SInc`
+  21x21x21 matrix with 3D neighbor smoothing, difficulty/lapse post-lapse
+  curve, retention outlier reconciliation, early-review R damping,
+  priority-scaled intervals) is the default item scheduler for new vaults
+  alongside FSRS-6 with the local parameter optimizer (`src/ir/optimizer/`),
+  and Section 5 ships the 4-model divergence picker (`SM-20`, `FSRS`, `DSR`,
+  `SM-2`).
+- **Phase 1 & Phase 2 (`docs/FUTURE-PLANS.md`):** SHIPPED (`v0.14.0`–`v0.15.0`)
+  — rich SM18/SM20 collection import (`src/ir/sm-collection-import.ts` with
+  non-positive interval and grade/lapse history verification), EPUB/HTML import
+  (`src/ir/epub-import.ts`), duplicate URL/content guards, non-modal
+  placement-priority panels (`IrPlacementPriorityView`, `IrBulkMarkView`),
+  3-layer progressive disclosure UX across Review/Stats/Settings/Mobile,
+  persisted Final Drill (`drill.json`), dynamic Neural Queue (`neural.json`
+  with Aho-Corasick title-mention matching), `Advance` / `JumpInterval`,
+  bounded leech triage, and 3-tab Stats (`Overview | Triage | Models & SM-20`).
 - **Phase 3 (`docs/FUTURE-PLANS.md`):** Planned — timestamp-anchored
   incremental video and audio (`{ resume, start, stop }` model), companion
   browser capture extension, and Obsidian Community Plugins directory release.
