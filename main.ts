@@ -259,6 +259,7 @@ import {
 import {
   bodyOffsetsFromFullOffsets,
   fullOffsetsFromBodyOffsets,
+  mapBodySpans,
   saveBody,
   serializeInitialNoteWithFrontmatter,
   stripFrontmatter,
@@ -2730,13 +2731,15 @@ export default class IncrementalReadingPlugin extends Plugin {
     const fromOffset = editor.posToOffset(fromPos);
     const toOffset = editor.posToOffset(toPos);
     const rawSelection = editor.getRange(fromPos, toPos);
+    const trimmedRanges = ranges.map((r) => {
+      const raw = editor.getRange(editor.offsetToPos(r.from), editor.offsetToPos(r.to));
+      const lead = raw.length - raw.trimStart().length;
+      const trail = raw.length - raw.trimEnd().length;
+      return { from: r.from + lead, to: r.to - trail, text: raw };
+    });
     const joinedOverride =
       ranges.length > 1
-        ? joinSelectionTexts(
-            ranges.map((r) =>
-              editor.getRange(editor.offsetToPos(r.from), editor.offsetToPos(r.to)),
-            ),
-          )
+        ? joinSelectionTexts(trimmedRanges.map((r) => r.text))
         : undefined;
     // Shrink the range past surrounding whitespace so the wrap and the
     // ancestor-propagation text stay aligned and don't include stray spaces.
@@ -2775,6 +2778,11 @@ export default class IncrementalReadingPlugin extends Plugin {
         snappedLinks.start,
         snappedLinks.end,
       );
+    const spans = mapBodySpans(
+      fullBefore,
+      trimmedRanges.map((r) => ({ from: r.from, to: r.to })),
+    );
+    if (spans.length > 0) spans[0] = { start: extractStart, end: extractEnd };
     await this.extractMappedBodyRange(
       source,
       {
@@ -2782,6 +2790,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         end: extractEnd,
         text: bodyBeforeExtract.slice(extractStart, extractEnd),
         textOverride: joinedOverride,
+        spans,
       },
       { ...opts, spanCount: ranges.length },
     );
