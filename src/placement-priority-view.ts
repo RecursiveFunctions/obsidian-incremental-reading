@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import {
   mountPlacementPriorityInput,
   type PlacementPriorityOptions,
+  type PriorityPromptHandle,
 } from "./priority-prompt";
 
 export const IR_PLACEMENT_PRIORITY_VIEW_TYPE = "ir-placement-priority-view";
@@ -13,7 +14,7 @@ export interface PlacementPriorityViewPrompt extends PlacementPriorityOptions {
 
 export class IrPlacementPriorityView extends ItemView {
   private prompt: PlacementPriorityViewPrompt | null = null;
-  private handle: { cancel(): void } | null = null;
+  private handle: PriorityPromptHandle | null = null;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -41,7 +42,8 @@ export class IrPlacementPriorityView extends ItemView {
   }
 
   setPrompt(prompt: PlacementPriorityViewPrompt): void {
-    this.handle?.cancel();
+    this.handle?.dispose();
+    this.handle = null;
     this.prompt = prompt;
     this.render();
   }
