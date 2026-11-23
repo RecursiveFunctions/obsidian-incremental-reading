@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.4] — 2026-11-23
+
+### Fixed
+
+- **Highlights now show up right where you place them, in any mode**: Fixed a timing bug where creating a cloze could drop its highlight position, hooked up live highlights inside the Review pane's built-in editor, and made sure unsaved edits are picked up right away instead of lagging behind disk saves.
+- **Short clozes and repeated words**: Short clozes like `ATP` or `SSH` (under 4 characters) now highlight properly in Preview and Reading mode, and repeated words or words near bold/italic text, links, or callouts highlight the exact spot you selected instead of jumping to another paragraph.
+- **Edited extracts and Windows line endings**: Making a cloze after editing an extract card no longer shifts the highlight to the wrong words, notes with Windows (`CRLF`) line endings stay lined up in the editor, and `Alt+X` / `Alt+Z` in normal note tabs won't get grabbed by a Review tab open in the background.
+
 ## [0.15.3] — 2026-11-23
 
 ### Fixed
