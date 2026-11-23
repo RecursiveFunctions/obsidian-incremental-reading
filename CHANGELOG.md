@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] — 2026-11-23
+
+### Fixed
+
+- **Markdown heading extraction in Reading View & Live Preview** (`src/ir/selection-map.ts`, `main.ts`, `src/review-view.ts`): Skipped non-body preview chrome (`.mod-header`, `.inline-title`, `.metadata-container`, `.heading-collapse-indicator` SVGs) and scanned past textless children in `offsetAtBoundary` so selections starting on headings like `## examples` no longer fail mapping. Prioritized occurrence-aware fuzzy matching over `locateTextInBody` and added `expandSelectionAroundHeadingPrefix` so extracted cards preserve `## ` while clozes stay inside the heading.
+- **Cross-block heading highlight painting** (`src/ir/extract-reading-marks.ts`, `src/ir/fuzzy-text.ts`): Inserted block-boundary spacing in `wrapNthOccurrenceAcrossNodes` so extracts spanning a heading and following paragraph highlight accurately in one pass.
+
 ## [0.15.1] — 2026-11-23
 
 ### Fixed
