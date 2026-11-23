@@ -34,12 +34,12 @@ export function flattenLinksForMatch(text: string): string {
  * preview text node. Markdown emphasis markers and link syntax are stripped
  * because the reading view / MarkdownRenderer output no longer contains them.
  */
-export function readingViewNeedle(text: string): string {
+export function readingViewNeedle(text: string, minLen = MIN_NEEDLE): string {
   const flat = flattenLinksForMatch(text);
   const normalized = normalizeForMatch(flat);
-  if (normalized.length >= MIN_NEEDLE) return normalized;
+  if (normalized.length >= minLen) return normalized;
   const trimmed = flat.trim();
-  return trimmed.length >= MIN_NEEDLE ? trimmed : "";
+  return trimmed.length >= minLen ? trimmed : "";
 }
 
 export function readingViewNeedlePasses(
@@ -127,7 +127,7 @@ export function occurrenceIndexInSource(
   start: number,
   text: string,
 ): number {
-  const needle = readingViewNeedle(text);
+  const needle = readingViewNeedle(text, 1);
   if (!needle) return 0;
   const before = normalizeForMatch(flattenLinksForMatch(body.slice(0, start)));
   let n = 0;
@@ -138,6 +138,21 @@ export function occurrenceIndexInSource(
     n += 1;
     from = i + 1;
   }
+}
+
+/** Normalized left/right context around `[start, end]` in `body` for exact DOM span disambiguation. */
+export function sourceMarkContext(
+  body: string,
+  start: number,
+  end: number,
+  window = 48,
+): { leftContext: string; rightContext: string } {
+  const rawLeft = body.slice(Math.max(0, start - window), start);
+  const rawRight = body.slice(end, Math.min(body.length, end + window));
+  return {
+    leftContext: normalizeForMatch(flattenLinksForMatch(rawLeft)),
+    rightContext: normalizeForMatch(flattenLinksForMatch(rawRight)),
+  };
 }
 
 /**
@@ -175,6 +190,9 @@ export interface DomSourceMark {
    * it the painter falls back to counting marks in arrival order.
    */
   occurrence?: number;
+  /** Optional normalized prefix/suffix around the anchored source span. */
+  leftContext?: string;
+  rightContext?: string;
 }
 
 /**
@@ -183,22 +201,24 @@ export interface DomSourceMark {
  * unreliable, and as the shared implementation behind the reading-view
  * MarkdownPostProcessor.
  *
- * Identical needles are marked at the Nth occurrence (stable with the
- * decoration cache order). Spans already inside an IR mark are left alone.
+ * Identical needles are marked using local surrounding context when anchored
+ * (breaking ties by `occurrence`), and using normalized DOM traversal so
+ * inline formatting (`<strong>`, `<a>`, `<code>`) or prior `<mark>` splits
+ * never shift occurrence counts.
  */
 export function paintIrSourceMarksInElement(
   root: HTMLElement,
   marks: ReadonlyArray<DomSourceMark>,
 ): void {
   const counts = new Map<string, number>();
-  const paint = (needle: string, cls: string): boolean => {
+  const paint = (
+    needle: string,
+    cls: string,
+    ctx?: { leftContext?: string; rightContext?: string },
+  ): boolean => {
     const n = counts.get(needle) ?? 0;
     counts.set(needle, n + 1);
-    // Fast path: the whole needle sits in one text node. Otherwise the
-    // extract crosses inline formatting (bold, links, code) and we wrap
-    // each text-node slice it touches.
-    if (wrapNthOccurrenceInTextNode(root, needle, n, cls)) return true;
-    return wrapNthOccurrenceAcrossNodes(root, needle, n, cls);
+    return wrapNthOccurrenceAcrossNodes(root, needle, n, cls, ctx);
   };
   const paintImages = (text: string, cls: string): void => {
     for (const target of imageTargetsInText(text)) {
@@ -215,16 +235,23 @@ export function paintIrSourceMarksInElement(
   for (const m of marks) {
     // A figure contributes no text, so it is flagged on the element itself.
     paintImages(m.text, m.cls);
-    const needle = readingViewNeedle(m.text);
+    const hasAnchorHint =
+      m.occurrence !== undefined ||
+      m.leftContext !== undefined ||
+      m.rightContext !== undefined;
+    const needle = readingViewNeedle(m.text, hasAnchorHint ? 1 : MIN_NEEDLE);
     if (!needle) continue;
     if (m.occurrence !== undefined) {
       counts.set(needle, m.occurrence);
     }
-    if (paint(needle, m.cls)) continue;
+    const ctx =
+      m.leftContext !== undefined || m.rightContext !== undefined
+        ? { leftContext: m.leftContext, rightContext: m.rightContext }
+        : undefined;
+    if (paint(needle, m.cls, ctx)) continue;
     // The extract covers more than one rendered block (multi-paragraph
     // selection, list, or a multi-span Ctrl-select extract whose spans are
-    // stored joined by a blank line). No single needle can match across a
-    // block boundary, so paint block by block, then line by line.
+    // stored joined by a blank line). Paint block by block, then line by line.
     for (const block of readingViewNeedleBlocks(m.text)) {
       if (block.needle && block.needle !== needle) {
         if (paint(block.needle, m.cls)) continue;
@@ -253,17 +280,96 @@ function nearestBlockAncestor(node: Node, root: HTMLElement): Node {
   return root;
 }
 
+function pickBestOccurrenceOffset(
+  haystack: string,
+  needle: string,
+  n: number,
+  ctx?: { leftContext?: string; rightContext?: string },
+): number {
+  if (!needle) return -1;
+  const left = ctx?.leftContext ?? "";
+  const right = ctx?.rightContext ?? "";
+  if (!left && !right) {
+    return nthOccurrenceOffset(haystack, needle, n);
+  }
+  const candidates: number[] = [];
+  let from = 0;
+  while (from <= haystack.length) {
+    const i = haystack.indexOf(needle, from);
+    if (i === -1) break;
+    candidates.push(i);
+    from = i + 1;
+  }
+  if (candidates.length === 0) return -1;
+  if (candidates.length === 1) return candidates[0]!;
+
+  // Compare suffix of `left` against `haystack` immediately preceding `i`
+  // (ignoring optional single space boundary) and prefix of `right` after `i + needle.length`.
+  const scoreAt = (idx: number): number => {
+    let score = 0;
+    if (left) {
+      let hi = idx - 1;
+      let li = left.length - 1;
+      if (hi >= 0 && haystack[hi] === " " && li >= 0 && left[li] !== " ") {
+        hi -= 1;
+      }
+      while (hi >= 0 && li >= 0 && haystack[hi] === left[li]) {
+        score += 1;
+        hi -= 1;
+        li -= 1;
+      }
+    }
+    if (right) {
+      let hi = idx + needle.length;
+      let ri = 0;
+      if (hi < haystack.length && haystack[hi] === " " && ri < right.length && right[ri] !== " ") {
+        hi += 1;
+      }
+      while (hi < haystack.length && ri < right.length && haystack[hi] === right[ri]) {
+        score += 1;
+        hi += 1;
+        ri += 1;
+      }
+    }
+    return score;
+  };
+
+  let bestScore = -1;
+  let bestIndices: number[] = [];
+  for (let ci = 0; ci < candidates.length; ci += 1) {
+    const s = scoreAt(candidates[ci]!);
+    if (s > bestScore) {
+      bestScore = s;
+      bestIndices = [ci];
+    } else if (s === bestScore) {
+      bestIndices.push(ci);
+    }
+  }
+  if (bestIndices.length === 1 && bestScore > 0) {
+    return candidates[bestIndices[0]!]!;
+  }
+  if (bestScore > 0) {
+    // Multiple candidates tied on local context: pick the one closest to `n`.
+    const chosenCi = bestIndices.reduce((prev, curr) =>
+      Math.abs(curr - n) < Math.abs(prev - n) ? curr : prev,
+    );
+    return candidates[chosenCi]!;
+  }
+  return nthOccurrenceOffset(haystack, needle, n);
+}
+
 /**
  * Formatting-tolerant variant: normalizes the concatenated text of every
- * text node under `root` (same rules as the needle), finds the n-th
- * occurrence, and wraps each touched text node's slice in its own
- * `<mark>`. Returns true on a hit.
+ * text node under `root` (same rules as the needle), finds the matching
+ * occurrence (by local context when anchored, breaking ties on `n`), and
+ * wraps each touched text node's slice in its own `<mark>`.
  */
 export function wrapNthOccurrenceAcrossNodes(
   root: HTMLElement,
   needle: string,
   n: number,
   cls: string,
+  ctx?: { leftContext?: string; rightContext?: string },
 ): boolean {
   const norm = new Normalizer<{ node: Text; offset: number }>();
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -282,7 +388,7 @@ export function wrapNthOccurrenceAcrossNodes(
     }
     node = walker.nextNode();
   }
-  const idx = nthOccurrenceOffset(norm.text, needle, n);
+  const idx = pickBestOccurrenceOffset(norm.text, needle, n, ctx);
   if (idx === -1) return false;
   const refs = norm.refs.slice(idx, idx + needle.length);
   // Group consecutive refs by text node.

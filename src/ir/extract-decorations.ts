@@ -35,6 +35,7 @@ import { resolveAnchor } from "./anchor";
 import {
   occurrenceIndexInSource,
   paintIrSourceMarksInElement,
+  sourceMarkContext,
 } from "./extract-reading-marks";
 import {
   clozeRangesInBody,
@@ -44,8 +45,43 @@ import { FRONTMATTER_RE } from "./frontmatter-body";
 
 export { paintIrSourceMarksInElement } from "./extract-reading-marks";
 
+const detachedMarkdownViews = new Set<MarkdownView>();
+
+/**
+ * Register a detached MarkdownView (such as the Review pane's embedded Live
+ * Preview / Source editor) that `app.workspace.iterateAllLeaves` does not
+ * visit, so decoration cache refreshes read its live buffer and push updated
+ * `<mark>` decorations into its CodeMirror instance.
+ */
+export function registerDetachedIrMarkdownView(view: MarkdownView): void {
+  detachedMarkdownViews.add(view);
+}
+
+export function unregisterDetachedIrMarkdownView(view: MarkdownView): void {
+  detachedMarkdownViews.delete(view);
+}
+
 /** CSS class shared with pre-§Q3 inline marks so styles.css needs no change. */
 const EXTRACT_CLASS = "ir-extract-source";
+
+function liveEditorTextForPath(app: App, path: string): string | null {
+  for (const v of detachedMarkdownViews) {
+    if (v.file?.path === path && v.editor) {
+      return v.editor.getValue();
+    }
+  }
+  let found: string | null = null;
+  if (typeof app.workspace?.iterateAllLeaves === "function") {
+    app.workspace.iterateAllLeaves((leaf) => {
+      if (found !== null) return;
+      const v = leaf.view;
+      if (v instanceof MarkdownView && v.file?.path === path && v.editor) {
+        found = v.editor.getValue();
+      }
+    });
+  }
+  return found;
+}
 const CLOZE_CLASS = "ir-cloze-source";
 
 /**
@@ -147,7 +183,9 @@ export async function refreshIrDecorationCache(
   for (const path of paths) {
     const file = app.vault.getAbstractFileByPath(path);
     if (!file || !("extension" in file) || file.extension !== "md") continue;
-    const full = await app.vault.cachedRead(file as TFile);
+    const full =
+      liveEditorTextForPath(app, path) ??
+      (await app.vault.cachedRead(file as TFile));
     const body = stripFrontmatterPlain(full);
     const ranges: CachedAnchor[] = [];
     for (const { anchor, text } of byPath.get(path) ?? []) {
@@ -183,7 +221,8 @@ export async function refreshIrDecorationCache(
 
 /** Inline copy of frontmatter-body.stripFrontmatter, kept here for isolation. */
 function stripFrontmatterPlain(full: string): string {
-  return full.replace(FRONTMATTER_RE, "").trim();
+  const lf = full.includes("\r\n") ? full.replace(/\r\n/g, "\n") : full;
+  return lf.replace(FRONTMATTER_RE, "").trim();
 }
 
 /**
@@ -192,9 +231,10 @@ function stripFrontmatterPlain(full: string): string {
  * direction so a round-trip is exact.
  */
 function bodyStartInFull(full: string): number {
-  const fm = full.match(FRONTMATTER_RE);
+  const lf = full.includes("\r\n") ? full.replace(/\r\n/g, "\n") : full;
+  const fm = lf.match(FRONTMATTER_RE);
   const fmLen = fm ? fm[0].length : 0;
-  const afterFm = full.slice(fmLen);
+  const afterFm = lf.slice(fmLen);
   const leadingWs = afterFm.length - afterFm.trimStart().length;
   return fmLen + leadingWs;
 }
@@ -272,29 +312,44 @@ function decorationsForView(
   return Decoration.set(out, true);
 }
 
+function pushIrDecorationsToMarkdownView(
+  v: MarkdownView,
+  cache: IrDecorationCache,
+): void {
+  const file = v.file;
+  if (!file) return;
+  // `editor.cm` is the underlying EditorView. Typed as untyped on
+  // MarkdownView, so we narrow defensively.
+  const cm = (v.editor as unknown as { cm?: EditorView })?.cm;
+  if (!cm) return;
+  const ranges = cache.rangesFor(file.path);
+  cm.dispatch({
+    effects: setIrDecorations.of(decorationsForView(cm, ranges)),
+  });
+}
+
 /**
- * Push the current cache state into every open MarkdownView's editor. The
- * main plugin calls this after every reconcile and on workspace layout
- * changes.
+ * Push the current cache state into every open MarkdownView's editor
+ * (including detached Review live-preview editors). The main plugin calls
+ * this after every reconcile and on workspace layout changes.
  */
 export function pushIrDecorations(
   app: App,
   cache: IrDecorationCache,
 ): void {
-  app.workspace.iterateAllLeaves((leaf) => {
-    const v = leaf.view;
-    if (!(v instanceof MarkdownView)) return;
-    const file = v.file;
-    if (!file) return;
-    // `editor.cm` is the underlying EditorView. Typed as untyped on
-    // MarkdownView, so we narrow defensively.
-    const cm = (v.editor as unknown as { cm?: EditorView }).cm;
-    if (!cm) return;
-    const ranges = cache.rangesFor(file.path);
-    cm.dispatch({
-      effects: setIrDecorations.of(decorationsForView(cm, ranges)),
+  const seen = new Set<MarkdownView>();
+  if (typeof app.workspace?.iterateAllLeaves === "function") {
+    app.workspace.iterateAllLeaves((leaf) => {
+      const v = leaf.view;
+      if (!(v instanceof MarkdownView)) return;
+      seen.add(v);
+      pushIrDecorationsToMarkdownView(v, cache);
     });
-  });
+  }
+  for (const v of detachedMarkdownViews) {
+    if (seen.has(v)) continue;
+    pushIrDecorationsToMarkdownView(v, cache);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -317,7 +372,10 @@ function blockBodyRange(
   info: { text: string; lineStart: number; lineEnd: number } | null,
 ): { start: number; end: number; body: string } | null {
   if (!info) return null;
-  const lines = info.text.split("\n");
+  const lfText = info.text.includes("\r\n")
+    ? info.text.replace(/\r\n/g, "\n")
+    : info.text;
+  const lines = lfText.split("\n");
   if (info.lineStart < 0 || info.lineEnd >= lines.length) return null;
   let start = 0;
   for (let i = 0; i < info.lineStart; i += 1) start += lines[i]!.length + 1;
@@ -325,10 +383,10 @@ function blockBodyRange(
   for (let i = info.lineStart; i <= info.lineEnd; i += 1) {
     end += lines[i]!.length + 1;
   }
-  const offset = bodyStartInFull(info.text);
-  const body = stripFrontmatterPlain(info.text);
+  const offset = bodyStartInFull(lfText);
+  const body = stripFrontmatterPlain(lfText);
   return {
-    start: start - offset,
+    start: Math.max(0, start - offset),
     end: Math.min(end - offset, body.length),
     body,
   };
@@ -369,14 +427,20 @@ export function createIrExtractMarkdownPostProcessor(
     const ranges = block
       ? all
           .filter((r) => r.start >= block.start && r.start < block.end)
-          .map((r) => ({
-            ...r,
-            occurrence: occurrenceIndexInSource(
-              block.body.slice(block.start),
-              r.start - block.start,
-              r.text,
-            ),
-          }))
+          .map((r) => {
+            const blockSlice = block.body.slice(block.start, block.end);
+            const relStart = r.start - block.start;
+            const relEnd = Math.min(blockSlice.length, r.end - block.start);
+            return {
+              ...r,
+              occurrence: occurrenceIndexInSource(
+                blockSlice,
+                relStart,
+                r.text,
+              ),
+              ...sourceMarkContext(blockSlice, relStart, relEnd),
+            };
+          })
       : all.map((r) => ({ ...r, occurrence: undefined }));
     const paint = (kind: SourceMarkKind, cls: string) =>
       paintIrSourceMarksInElement(
@@ -387,6 +451,12 @@ export function createIrExtractMarkdownPostProcessor(
             text: r.text,
             cls,
             ...(r.occurrence === undefined ? {} : { occurrence: r.occurrence }),
+            ...("leftContext" in r && typeof r.leftContext === "string"
+              ? { leftContext: r.leftContext }
+              : {}),
+            ...("rightContext" in r && typeof r.rightContext === "string"
+              ? { rightContext: r.rightContext }
+              : {}),
           })),
       );
     paint("extract", EXTRACT_CLASS);

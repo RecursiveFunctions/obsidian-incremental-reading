@@ -35,6 +35,10 @@ import {
   reviewEditorState,
   type ReviewEditorKind,
 } from "./review-live-preview";
+import {
+  registerDetachedIrMarkdownView,
+  unregisterDetachedIrMarkdownView,
+} from "./extract-decorations";
 
 type SplitDom = WorkspaceSplit & {
   containerEl: HTMLElement;
@@ -103,6 +107,7 @@ export async function mountReviewLiveEditor(
     if (!mv.editor.getValue()) {
       mv.setViewData(await app.vault.read(file), false);
     }
+    registerDetachedIrMarkdownView(mv);
     // Keep the review tab as the workspace leaf; only the inner editor
     // takes DOM focus so Space/Alt+X stay on the review keymap.
     app.workspace.setActiveLeaf(reviewLeaf, { focus: false });
@@ -171,19 +176,30 @@ export async function mountReviewLiveEditor(
     },
     save: async () => {
       const mv = markdownViewOf(opened);
-      if (mv) await mv.save();
+      if (!mv) return;
+      const cur = mv.editor.getValue();
+      await mv.save();
+      if ((await app.vault.cachedRead(file)) !== cur) {
+        await app.vault.modify(file, cur);
+      }
     },
     setKind: async (nextKind) => {
+      const prevMv = markdownViewOf(opened);
+      if (prevMv) unregisterDetachedIrMarkdownView(prevMv);
       hostEl.toggleClass("ir-review-live-editor--source", nextKind === "source");
       await applyEditorKind(opened, file.path, nextKind);
+      const nextMv = markdownViewOf(opened);
+      if (nextMv) registerDetachedIrMarkdownView(nextMv);
       app.workspace.setActiveLeaf(reviewLeaf, { focus: false });
       opened.onResize();
-      markdownViewOf(opened)?.editor.focus();
+      nextMv?.editor.focus();
     },
     destroy: () => {
       if (onEscape) {
         hostEl.removeEventListener("keydown", escapeListener, true);
       }
+      const mv = markdownViewOf(opened);
+      if (mv) unregisterDetachedIrMarkdownView(mv);
       opened.detach();
       hostEl.detach();
     },
