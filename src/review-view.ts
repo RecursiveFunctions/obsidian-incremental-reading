@@ -131,6 +131,7 @@ import {
 import { findExtractRange } from "./ir/extract-range";
 import { resolveAnchor } from "./ir/anchor";
 import {
+  canAdvanceReadingInSession,
   canGradeInSession,
   isSpaceAfterReveal,
   restoreDismissedSlot,
@@ -481,9 +482,13 @@ export class IrReviewView extends ItemView {
   } | null = null;
   /** Slots already graded in this session; prevents duplicate grading after Previous (#33). */
   private gradedSlotIds = new Set<ElementId>();
+  /** Reading slots already advanced via Next/Space in this session; prevents repeated interval multiplication after Previous (`[`). */
+  private advancedSlotIds = new Set<ElementId>();
   private processedSlotIds = new Set<ElementId>();
   private skippedSlotIds = new Set<ElementId>();
   private drillEnqueuedByGrade = new Set<ElementId>();
+  private renderSeq = 0;
+  private renderInFlight: Promise<void> | null = null;
   private sessionPhase: SessionBarPhase = "due";
   private cachedTopicAdvance: {
     key: string;
@@ -666,6 +671,16 @@ export class IrReviewView extends ItemView {
         this.elementsById = restored.elementsById;
         this.isNeural = restored.isNeural;
         this.index = Math.min(restored.cursor ?? 0, restored.queue.length - 1);
+        for (let i = 0; i < this.index; i++) {
+          const past = this.queue[i];
+          if (!past) continue;
+          this.processedSlotIds.add(past.id);
+          if (this.isReading(past)) {
+            this.advancedSlotIds.add(past.id);
+          } else {
+            this.gradedSlotIds.add(past.id);
+          }
+        }
       } else {
         // A restored leaf with nothing due used to detach itself on a
         // timeout, so the tab the user reopened Obsidian to just vanished.
@@ -2792,7 +2807,24 @@ export class IrReviewView extends ItemView {
     }
   }
 
-  private async renderCard() {
+  private async renderCard(): Promise<void> {
+    const seq = ++this.renderSeq;
+    while (this.renderInFlight) {
+      await this.renderInFlight;
+      if (seq !== this.renderSeq) return;
+    }
+    const run = this.renderCardNow(seq);
+    this.renderInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (this.renderInFlight === run) {
+        this.renderInFlight = null;
+      }
+    }
+  }
+
+  private async renderCardNow(seq: number): Promise<void> {
     const slotNow = this.current;
     if (slotNow && this.loadedSlotId === slotNow.id) {
       this.captureBookmark();
@@ -2805,6 +2837,7 @@ export class IrReviewView extends ItemView {
         this.editing = true;
       }
     }
+    if (seq !== this.renderSeq) return;
     const host = this.cardHostEl ?? this.contentEl;
     host.empty();
     this.syncMobileEditChrome();
@@ -2843,7 +2876,9 @@ export class IrReviewView extends ItemView {
     }
 
     await this.ensureLoaded(slot);
+    if (seq !== this.renderSeq) return;
     if (this.bodyMissing) {
+      host.empty();
       const recovery = host.createDiv({ cls: "ir-review-read-recovery" });
       recovery.setAttr("role", "alert");
       recovery.createEl("p", {
@@ -2857,13 +2892,16 @@ export class IrReviewView extends ItemView {
         });
       recovery
         .createEl("button", { text: "Skip for this pass", type: "button" })
-        .addEventListener("click", () => this.advance());
+        .addEventListener("click", () => void this.advance());
       return;
     }
     this.announceSlot(slot);
     this.touchSelection.resetForSlot(slot.id);
 
     const sourceCtx = await this.loadSourceContext(slot);
+    if (seq !== this.renderSeq) return;
+    this.parkLiveEditor();
+    host.empty();
     this.hasSourceContext = !!sourceCtx;
     this.currentSourceMeta =
       sourceCtx && !sourceCtx.pdf
@@ -3505,6 +3543,7 @@ export class IrReviewView extends ItemView {
     this.neuralEndedEarly = false;
     this.lastReversible = null;
     this.gradedSlotIds.clear();
+    this.advancedSlotIds.clear();
     this.processedSlotIds.clear();
     this.skippedSlotIds.clear();
     this.drillEnqueuedByGrade.clear();
@@ -5632,7 +5671,7 @@ export class IrReviewView extends ItemView {
     }
   }
 
-  private advance() {
+  private async advance(): Promise<void> {
     void this.persistBookmarks();
     this.index += 1;
     this.reportSessionState();
@@ -5640,10 +5679,10 @@ export class IrReviewView extends ItemView {
     this.editing = false;
     this.loadedSlotId = null;
     if (!this.current) {
-      void this.transitionToDrillOrComplete();
+      await this.transitionToDrillOrComplete();
       return;
     }
-    void this.renderCard();
+    await this.renderCard();
   }
 
   private async transitionToDrillOrComplete(): Promise<void> {
@@ -5694,7 +5733,7 @@ export class IrReviewView extends ItemView {
     this.editing = false;
     this.loadedSlotId = null;
     this.sessionComplete = false;
-    void this.renderCard();
+    await this.renderCard();
   }
 
   /**
@@ -5809,6 +5848,7 @@ export class IrReviewView extends ItemView {
   }
 
   private topicNextPreview(slot: ReviewSlot): string | null {
+    if (!canAdvanceReadingInSession(slot.id, this.advancedSlotIds)) return null;
     if (!scheduleToTopicState(slot.element.schedule)) return null;
     const now = Date.now();
     const next = this.resolveActiveTopicAdvance(slot, now);
@@ -5975,7 +6015,7 @@ export class IrReviewView extends ItemView {
     }
     await this.exciteIfNeural(slot.id);
     this.onChange?.();
-    this.advance();
+    await this.advance();
   }
 
   private async applyDrillExposure(slot: ReviewSlot, g: Grade): Promise<void> {
@@ -6165,6 +6205,12 @@ export class IrReviewView extends ItemView {
     if (!slot) return;
     if (!(await this.flushEdits())) return;
 
+    if (!canAdvanceReadingInSession(slot.id, this.advancedSlotIds)) {
+      this.flash(`Already advanced in this session · ${this.remainingAfterCurrent()} left`);
+      await this.advance();
+      return;
+    }
+
     const now = Date.now();
     const resolved = this.resolveActiveTopicAdvance(slot, now);
     this.cachedTopicAdvance = null;
@@ -6222,11 +6268,12 @@ export class IrReviewView extends ItemView {
         });
       }, "topic-advanced");
     }
+    this.advancedSlotIds.add(slot.id);
     this.processedSlotIds.add(slot.id);
     this.skippedSlotIds.delete(slot.id);
     await this.exciteIfNeural(slot.id);
     this.onChange?.();
-    this.advance();
+    await this.advance();
   }
 
   private async later() {
@@ -6267,7 +6314,7 @@ export class IrReviewView extends ItemView {
     this.rememberReversible("later", slot, prevElement);
     this.flash(`Later today · ${this.remainingAfterCurrent()} left`);
     this.onChange?.();
-    this.advance();
+    await this.advance();
   }
 
   private async dismiss() {
@@ -6306,6 +6353,6 @@ export class IrReviewView extends ItemView {
     this.queue = spliced.queue;
     this.index = spliced.nextIndex - 1;
     this.onChange?.();
-    this.advance();
+    await this.advance();
   }
 }

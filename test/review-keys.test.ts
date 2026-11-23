@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  canAdvanceReadingInSession,
   canGradeInSession,
   restoreDismissedSlot,
   spacebarReviewAction,
@@ -116,4 +117,16 @@ test("spliceDismissedSlot and restoreDismissedSlot prevent Previous from resurfa
   const dismissFirst = spliceDismissedSlot(initial, 0);
   assert.deepEqual(dismissFirst.queue, ["card_b", "card_c"]);
   assert.equal(dismissFirst.nextIndex, 0);
+});
+
+test("canAdvanceReadingInSession prevents repeated interval multiplication after Previous ([) and Space", () => {
+  const advanced = new Set<string>();
+  assert.equal(canAdvanceReadingInSession("topic_1", advanced), true);
+
+  // First Space / Next stretches the topic interval and records the slot id
+  advanced.add("topic_1");
+  // Stepping back via `[` and pressing Space again must not re-stretch topic_1
+  assert.equal(canAdvanceReadingInSession("topic_1", advanced), false);
+  // Other reading slots remain advanceable
+  assert.equal(canAdvanceReadingInSession("topic_2", advanced), true);
 });

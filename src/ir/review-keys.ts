@@ -61,6 +61,19 @@ export function canGradeInSession(
 }
 
 /**
+ * True when a reading element (`topic` or `extract`) has not yet had its
+ * interval stretched via `Next` / `Space` in the active review session.
+ * Prevents `Next -> Previous ([) -> Space` from repeatedly multiplying the
+ * element's interval in the same session.
+ */
+export function canAdvanceReadingInSession(
+  slotId: string,
+  advancedSlotIds: ReadonlySet<string>,
+): boolean {
+  return !advancedSlotIds.has(slotId);
+}
+
+/**
  * Remove a dismissed slot at `index` from the in-session queue so `Previous`
  * cannot step back onto a dismissed card (`#33`). `nextIndex` points at the
  * slot that shifted into `index` (or `queue.length` if the last card was
