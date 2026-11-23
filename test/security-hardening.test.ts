@@ -125,3 +125,110 @@ test("readZipEntries enforces maxEntries and maxPathLength", async () => {
   view.setUint16(10, 5000, true);
   await assert.rejects(() => readZipEntries(eocd), /exceeding limit 4096/);
 });
+
+test("validateIrEvent and IrLedger accept legacy auto-postpone, long migration, and tombstone ids while rejecting traversal", async () => {
+  const realDevice = "dev_66c2ed57-987a-4e15-a284-f5b4ac65f921" as DeviceId;
+  const longMigElementId = `el_mig_${"a".repeat(240)}` as ElementId;
+  const longMigParentId = `el_mig_${"b".repeat(240)}` as ElementId;
+  const longMigEventId = `ev_mig_${"a".repeat(240)}` as EventId;
+
+  const createdEv = {
+    id: longMigEventId,
+    ts: NOW,
+    lamport: 1,
+    device: "dev_mig_ir_store" as DeviceId,
+    kind: "element-created",
+    target: longMigElementId,
+    payload: {
+      element: {
+        id: longMigElementId,
+        type: "topic",
+        priority: 50,
+        parentId: longMigParentId,
+        dismissed: false,
+        created: NOW,
+        text: "",
+        anchorState: "ok",
+        notePath: "Reading/Long/Nested/Path.md",
+      },
+    },
+  };
+  assert.equal(validateIrEvent(createdEv), null);
+
+  const autoPostponeEv = {
+    id: `auto-postpone:${realDevice}:2026-11-22:0` as EventId,
+    ts: NOW + 1000,
+    lamport: 2,
+    device: realDevice,
+    kind: "mercy-postponed",
+    target: longMigElementId,
+    payload: {
+      batchId: `auto-postpone:${realDevice}:2026-11-22`,
+      previousDue: NOW,
+      newDue: NOW + 86_400_000,
+    },
+  };
+  assert.equal(validateIrEvent(autoPostponeEv), null);
+
+  assert.equal(
+    validateIrEvent({
+      id: "ev_tomb" as EventId,
+      ts: NOW + 2000,
+      lamport: 3,
+      device: realDevice,
+      kind: "source-tombstoned",
+      target: "el_tomb:Notes/Deleted Note.md" as ElementId,
+      payload: { tombstone: { path: "Notes/Deleted Note.md", title: "Deleted Note", deletedAt: NOW } },
+    }),
+    null,
+  );
+  assert.equal(
+    validateIrEvent({
+      id: "ev_restored" as EventId,
+      ts: NOW + 3000,
+      lamport: 4,
+      device: realDevice,
+      kind: "source-restored",
+      target: "el_restored:Notes/Deleted Note.md" as ElementId,
+      payload: { path: "Notes/Deleted Note.md" },
+    }),
+    null,
+  );
+
+  // Colons and traversal remain rejected for element/device/non-tombstone target ids.
+  assert.ok(validateIrEvent({ ...autoPostponeEv, target: "bad:target" as ElementId }) !== null);
+  assert.ok(validateIrEvent({ ...autoPostponeEv, device: "bad:device" as DeviceId }) !== null);
+  assert.ok(validateIrEvent({ ...autoPostponeEv, id: "bad/../id" as EventId }) !== null);
+
+  // Compaction archive containing legacy auto-postpone + long migration ids loads and reconciles cleanly.
+  const files = new Map<string, string>();
+  const folders = new Set<string>();
+  const adapter: ObsidianDataAdapter = {
+    async exists(p) { return files.has(p) || folders.has(p); },
+    async read(p) { const v = files.get(p); if (v === undefined) throw new Error("ENOENT"); return v; },
+    async write(p, d) { files.set(p, d); },
+    async append(p, d) { files.set(p, (files.get(p) ?? "") + d); },
+    async list(dir) {
+      const prefix = dir.endsWith("/") ? dir : `${dir}/`;
+      const out = [...files.keys()].filter((k) => k.startsWith(prefix) && !k.slice(prefix.length).includes("/"));
+      return { files: out, folders: [] };
+    },
+    async remove(p) { files.delete(p); },
+    async mkdir(p) { folders.add(p); },
+    async rmdir(p) { folders.delete(p); },
+  };
+  const vfs = new ObsidianVaultFs(adapter);
+  const ledger = new IrLedger(vfs);
+  await ledger.init();
+  await vfs.write(
+    `.ir/compaction/${realDevice}-3db01402.jsonl`,
+    `${JSON.stringify(createdEv)}\n${JSON.stringify(autoPostponeEv)}\n`,
+  );
+  await vfs.write(".ir/state/el_stale_deleted.json", "{}");
+  await vfs.write(".ir/tombstones.json", "{}");
+  const state = await ledger.reconcile();
+  assert.equal(state.elements.has(longMigElementId), true);
+  assert.equal(files.has(`.ir/state/${longMigElementId}.json`), true);
+  assert.equal(files.has(".ir/state/el_stale_deleted.json"), false);
+  assert.equal(files.has(".ir/tombstones.json"), false);
+});

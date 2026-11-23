@@ -23,7 +23,13 @@ import {
   type SerializedFoldIntermediate,
 } from "./log";
 import { newDeviceId, type DeviceId, type ElementId } from "./ids";
-import { validateIrEvent, type IrElement, type IrEvent } from "./model";
+import {
+  SAFE_ELEMENT_ID_RE,
+  SAFE_LEDGER_ID_RE,
+  validateIrEvent,
+  type IrElement,
+  type IrEvent,
+} from "./model";
 import type { BookmarkMap } from "./bookmark";
 import { parseSessionSnapshot, type SessionSnapshot } from "./session-snapshot";
 import { parseDailyPriorityAnalytics, type DailyPriorityAnalytics } from "./priority-analytics";
@@ -305,7 +311,6 @@ function assertNoConflictingEvents(
   }
 }
 
-const SAFE_LEDGER_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const FORBIDDEN_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 function sanitizeRecord<T>(raw: unknown): Record<string, T> {
@@ -324,7 +329,7 @@ function sanitizeRecord<T>(raw: unknown): Record<string, T> {
 }
 
 function elementStatePath(id: string): string {
-  if (!SAFE_LEDGER_ID_RE.test(id)) {
+  if (!SAFE_ELEMENT_ID_RE.test(id)) {
     throw new Error(`IrLedger: unsafe element id "${id}"`);
   }
   return `${STATEDIR}/${id}.json`;
@@ -1399,8 +1404,7 @@ export class IrLedger {
   }
 
   async reconcile(): Promise<LogState> {
-    const rm = this.fs.remove;
-    if (!rm) {
+    if (!this.fs.remove) {
       throw new Error("IrLedger.reconcile requires VaultFs.remove");
     }
 
@@ -1453,7 +1457,7 @@ export class IrLedger {
         await this.fs.write(TOMBSTONES, tombBytes);
       }
     } else if (await this.fs.exists(TOMBSTONES)) {
-      await rm(TOMBSTONES);
+      await this.fs.remove(TOMBSTONES);
     }
 
     const listed = await this.fs.list(STATEDIR);
@@ -1463,7 +1467,7 @@ export class IrLedger {
         continue;
       }
       if (!state.elements.has(id) && (await this.fs.exists(fullPath))) {
-        await rm(fullPath);
+        await this.fs.remove(fullPath);
       }
     }
 
