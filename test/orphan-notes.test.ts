@@ -541,3 +541,29 @@ test("planOrphanRecoveries: does not resurrect deliberately deleted promoted not
   assert.ok(knownNotePathsFromEvents(events).includes(promotedPath));
 });
 
+
+test("planOrphanRecoveries: deliberate delete stays deleted when the note moves", () => {
+  const oldPath = "Keep/moved.md";
+  const newPath = "Archive/moved.md";
+  const id = elementIdForPath(oldPath);
+  const el = newElement({ id, type: "topic", priority: 50, notePath: oldPath, now: 0 });
+  const events: IrEvent[] = [
+    created(el, 1),
+    { id: "ev_del_moved" as EventId, ts: NOW, lamport: 2, device: DEV,
+      kind: "element-deleted", target: id, payload: {} },
+  ];
+  const state = fold(events);
+  const plan = planOrphanRecoveries(
+    [{ path: newPath, frontmatter: topicFm() }],
+    state.elements.values(),
+    events,
+    state.tombstones.keys(),
+    [newPath],
+    NOW,
+    3,
+    DEV,
+    ids().next,
+  );
+  assert.equal(plan.restored, 0);
+  assert.equal(plan.events.length, 0);
+});
