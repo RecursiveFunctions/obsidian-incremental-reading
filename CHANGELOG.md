@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3] — 2026-11-23
+
+### Fixed
+
+- **Block repeated reading interval stretch after `Previous` (`[`)** (`src/ir/review-keys.ts`, `src/review-view.ts`): Tracked reading elements already advanced via `Next` / `Space` in the active session (`advancedSlotIds`, `canAdvanceReadingInSession`) so stepping back with `[` and pressing `Space` advances the queue cursor without re-multiplying the element's interval or emitting duplicate `topic-advanced` events.
+- **Prevent duplicate cards and grading bars on overlapping renders** (`src/review-view.ts`): Serialized and coalesced `renderCard()` with `renderSeq` + `renderInFlight`, cleared `host` immediately before building card columns and dock controls, and awaited transition renders inside `advance()` and `previousNow()` before releasing `actionGate`.
+
 ## [0.15.2] — 2026-11-23
 
 ### Fixed
