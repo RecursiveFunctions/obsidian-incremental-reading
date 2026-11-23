@@ -4,9 +4,36 @@ import type { App, TFile } from "obsidian";
 
 export const FRONTMATTER_RE = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
 
-/** Drop the YAML frontmatter block so only the note body is rendered. */
+function toLf(s: string): string {
+  return s.includes("\r\n") ? s.replace(/\r\n/g, "\n") : s;
+}
+
+function lfOffsetAtRawOffset(s: string, rawOffset: number): number {
+  const clamped = Math.max(0, Math.min(s.length, rawOffset));
+  if (!s.includes("\r\n")) return clamped;
+  let lf = 0;
+  for (let i = 0; i < clamped; i++) {
+    if (s[i] === "\r" && s[i + 1] === "\n") continue;
+    lf++;
+  }
+  return lf;
+}
+
+function rawOffsetAtLfOffset(s: string, lfOffset: number): number {
+  if (!s.includes("\r\n")) return Math.max(0, Math.min(s.length, lfOffset));
+  if (lfOffset <= 0) return 0;
+  let lf = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (lf >= lfOffset) return i;
+    if (s[i] === "\r" && s[i + 1] === "\n") continue;
+    lf++;
+  }
+  return s.length;
+}
+
+/** Drop the YAML frontmatter block and normalize CRLF -> LF so body offsets match CodeMirror 6 and <textarea>. */
 export function stripFrontmatter(content: string): string {
-  return content.replace(FRONTMATTER_RE, "").trim();
+  return toLf(content).replace(FRONTMATTER_RE, "").trim();
 }
 
 /**
@@ -40,17 +67,20 @@ export function bodyOffsetsFromFullOffsets(
   toOffset: number,
 ): { start: number; end: number } | null {
   if (toOffset <= fromOffset) return null;
-  const fm = fullFile.match(FRONTMATTER_RE);
+  const lfFull = toLf(fullFile);
+  const lfFrom = lfOffsetAtRawOffset(fullFile, fromOffset);
+  const lfTo = lfOffsetAtRawOffset(fullFile, toOffset);
+  const fm = lfFull.match(FRONTMATTER_RE);
   const fmLen = fm ? fm[0].length : 0;
-  const afterFm = fullFile.slice(fmLen);
+  const afterFm = lfFull.slice(fmLen);
   const leadingWs = afterFm.length - afterFm.trimStart().length;
   const trimmedLen = afterFm.trim().length;
   const bodyStartInFull = fmLen + leadingWs;
   const bodyEndInFull = bodyStartInFull + trimmedLen;
-  if (toOffset <= bodyStartInFull) return null;
-  if (fromOffset >= bodyEndInFull) return null;
-  const start = Math.max(0, fromOffset - bodyStartInFull);
-  const end = Math.min(trimmedLen, toOffset - bodyStartInFull);
+  if (lfTo <= bodyStartInFull) return null;
+  if (lfFrom >= bodyEndInFull) return null;
+  const start = Math.max(0, lfFrom - bodyStartInFull);
+  const end = Math.min(trimmedLen, lfTo - bodyStartInFull);
   if (end <= start) return null;
   return { start, end };
 }
@@ -64,13 +94,15 @@ export function bodyOffsetFromFullOffset(
   fullFile: string,
   offset: number,
 ): number {
-  const fm = fullFile.match(FRONTMATTER_RE);
+  const lfFull = toLf(fullFile);
+  const lfOff = lfOffsetAtRawOffset(fullFile, offset);
+  const fm = lfFull.match(FRONTMATTER_RE);
   const fmLen = fm ? fm[0].length : 0;
-  const afterFm = fullFile.slice(fmLen);
+  const afterFm = lfFull.slice(fmLen);
   const leadingWs = afterFm.length - afterFm.trimStart().length;
   const trimmedLen = afterFm.trim().length;
   const bodyStartInFull = fmLen + leadingWs;
-  return Math.max(0, Math.min(trimmedLen, offset - bodyStartInFull));
+  return Math.max(0, Math.min(trimmedLen, lfOff - bodyStartInFull));
 }
 
 /** Inverse of {@link bodyOffsetsFromFullOffsets}. */
@@ -79,12 +111,16 @@ export function fullOffsetsFromBodyOffsets(
   start: number,
   end: number,
 ): { from: number; to: number } {
-  const fm = fullFile.match(FRONTMATTER_RE);
+  const lfFull = toLf(fullFile);
+  const fm = lfFull.match(FRONTMATTER_RE);
   const fmLen = fm ? fm[0].length : 0;
-  const afterFm = fullFile.slice(fmLen);
+  const afterFm = lfFull.slice(fmLen);
   const leadingWs = afterFm.length - afterFm.trimStart().length;
   const bodyStartInFull = fmLen + leadingWs;
-  return { from: bodyStartInFull + start, to: bodyStartInFull + end };
+  return {
+    from: rawOffsetAtLfOffset(fullFile, bodyStartInFull + start),
+    to: rawOffsetAtLfOffset(fullFile, bodyStartInFull + end),
+  };
 }
 
 /**

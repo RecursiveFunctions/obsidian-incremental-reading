@@ -30,10 +30,18 @@ export function normalizeForMatch(s: string): string {
   return result.trim();
 }
 
+function matchLf(quoteField: string, sourceUsesCrlf: boolean): string {
+  if (!sourceUsesCrlf && quoteField.includes("\r\n")) {
+    return quoteField.replace(/\r\n/g, "\n");
+  }
+  return quoteField;
+}
+
 export function resolveAnchor(anchor: Anchor, sourceText: string): AnchorResolution {
-  const exact = anchor.quote.exact;
-  const prefix = anchor.quote.prefix;
-  const suffix = anchor.quote.suffix;
+  const sourceUsesCrlf = sourceText.includes("\r\n");
+  const exact = matchLf(anchor.quote.exact, sourceUsesCrlf);
+  const prefix = matchLf(anchor.quote.prefix, sourceUsesCrlf);
+  const suffix = matchLf(anchor.quote.suffix, sourceUsesCrlf);
   
   if (anchor.position) {
     const { start, end } = anchor.position;

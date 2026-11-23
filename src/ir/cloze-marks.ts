@@ -170,6 +170,61 @@ export function buildTextQuoteAnchor(
   };
 }
 
+/**
+ * Build a cloze anchor when clozing `[selStart, selEnd]` inside a ledger-only
+ * extract (`extractText`). When `extractText` still matches the parent note's
+ * slice at `r.start..r.end`, maps offsets into `parentBody`; when `extractText`
+ * was edited in place (`text-edited`), resolves by quote inside the parent
+ * slice or falls back to anchoring against `extractText` so `quote.exact` is
+ * never sliced from a shifted offset in `parentBody`.
+ */
+export function buildExtractChildClozeAnchor(
+  sourcePath: string,
+  extractText: string,
+  selStart: number,
+  selEnd: number,
+  parentAnchor?: Anchor,
+  parentBody?: string,
+): Anchor | null {
+  if (selEnd <= selStart) return null;
+  const localAnchor = buildTextQuoteAnchor(
+    parentAnchor?.sourcePath ?? sourcePath,
+    extractText,
+    selStart,
+    selEnd,
+  );
+  if (!parentAnchor || parentAnchor.pdf || parentBody === undefined) {
+    return localAnchor;
+  }
+  const r = resolveAnchor(parentAnchor, parentBody);
+  if (r.status !== "ok") return localAnchor;
+  const directStart = r.start + selStart;
+  const directEnd = r.start + selEnd;
+  if (
+    directStart >= r.start &&
+    directEnd <= r.end &&
+    parentBody.slice(directStart, directEnd) === localAnchor.quote.exact
+  ) {
+    return buildTextQuoteAnchor(
+      parentAnchor.sourcePath,
+      parentBody,
+      directStart,
+      directEnd,
+    );
+  }
+  const parentSlice = parentBody.slice(r.start, r.end);
+  const sub = resolveAnchor(localAnchor, parentSlice);
+  if (sub.status === "ok") {
+    return buildTextQuoteAnchor(
+      parentAnchor.sourcePath,
+      parentBody,
+      r.start + sub.start,
+      r.start + sub.end,
+    );
+  }
+  return localAnchor;
+}
+
 export interface ReviewSourceSplice {
   start: number;
   end: number;

@@ -63,19 +63,22 @@ export function findExtractEditorPosition(
   el: IrElement,
   fullFileContent: string,
 ): { line: number; ch: number } | undefined {
-  const body = stripFrontmatter(fullFileContent);
+  const lfFull = fullFileContent.includes("\r\n")
+    ? fullFileContent.replace(/\r\n/g, "\n")
+    : fullFileContent;
+  const body = stripFrontmatter(lfFull);
   const range = findExtractRange(el, body);
   if (!range) return undefined;
-  const fm = fullFileContent.match(FRONTMATTER_RE);
+  const fm = lfFull.match(FRONTMATTER_RE);
   const fmLen = fm ? fm[0].length : 0;
-  const afterFm = fullFileContent.slice(fmLen);
+  const afterFm = lfFull.slice(fmLen);
   const leadingWs = afterFm.length - afterFm.trimStart().length;
   const fullOffset = fmLen + leadingWs + range.start;
   let line = 0;
   let ch = 0;
-  const cap = Math.min(fullOffset, fullFileContent.length);
+  const cap = Math.min(fullOffset, lfFull.length);
   for (let i = 0; i < cap; i++) {
-    if (fullFileContent[i] === "\n") {
+    if (lfFull[i] === "\n") {
       line += 1;
       ch = 0;
     } else {
