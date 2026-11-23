@@ -18,6 +18,7 @@ import {
   buildPriorityRows,
   formatScheduleState,
   filterTreeByPredicate,
+  isAncestorOf,
   rangeSelectIds,
   TreeNode,
 } from "./ir/tree";
@@ -1552,6 +1553,7 @@ export class IrTreeView extends ItemView {
   private canMoveOnto(sourceId: string, targetId: string | null): boolean {
     if (targetId === null) return true;
     if (sourceId === targetId) return false;
+    if (isAncestorOf(this.elementsById as any, sourceId as any, targetId as any)) return false;
     return !this.isDescendantOf(sourceId, targetId);
   }
 
