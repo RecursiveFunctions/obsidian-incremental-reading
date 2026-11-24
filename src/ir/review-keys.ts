@@ -29,6 +29,19 @@ export function isSpaceAfterReveal(v: unknown): v is SpaceAfterReveal {
   );
 }
 
+/**
+ * Grade digits (1-4) are allowed while editing the source body textarea, but
+ * must not fire while typing into a dedicated numeric input such as Jump
+ * interval or Advance — otherwise the digit is swallowed and a grade is
+ * committed instead of editing the number.
+ */
+export function digitGradeAllowed(
+  typing: boolean,
+  activeTag: string | null,
+): boolean {
+  return !typing || activeTag !== "INPUT";
+}
+
 export type SpacebarReviewAction =
   | { kind: "next" }
   | { kind: "reveal" }
