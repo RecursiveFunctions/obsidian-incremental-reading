@@ -108,7 +108,10 @@ import {
   type ObsidianDataAdapter,
 } from "./src/ir/obsidian-vault-fs";
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
-import { planOrphanRecoveries } from "./src/ir/orphan-notes";
+import {
+  planOrphanRecoveries,
+  uniquePromotedNotePath,
+} from "./src/ir/orphan-notes";
 import { isOcclusionItem, toAnkiTsv } from "./src/ir/anki-export";
 import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath, tombstonesOwnedBy } from "./src/ir/deletion";
 import {
@@ -4575,7 +4578,10 @@ export default class IncrementalReadingPlugin extends Plugin {
       new Notice("Incremental Reading: that extract is already a note.");
       return;
     }
-    const notePath = this.promoteOrphanPath(element);
+    const notePath = uniquePromotedNotePath(
+      this.promoteOrphanPath(element),
+      (p) => !!this.app.vault.getAbstractFileByPath(p),
+    );
     await this.materializePromotedNote(notePath, element);
 
     const now = Date.now();
@@ -6503,6 +6509,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
 
+    const promotedNotePaths = new Set<string>();
     const newEvents = planSourceDeletion(
       elements,
       path,
@@ -6511,7 +6518,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       lamport,
       device,
       () => newEventId(),
-      (el) => this.promoteOrphanPath(el),
+      (el) => {
+        const base = this.promoteOrphanPath(el);
+        const path = uniquePromotedNotePath(base, (p) =>
+          promotedNotePaths.has(p) || !!this.app.vault.getAbstractFileByPath(p),
+        );
+        promotedNotePaths.add(path);
+        return path;
+      },
       { autoPromoteRootless: choice === "promote-all" },
     );
 
