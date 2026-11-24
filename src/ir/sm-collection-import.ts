@@ -129,6 +129,8 @@ export interface SmCollectionImportOptions {
   targetFolder: string;
   attachmentFolder?: string;
   existingElements?: ReadonlyMap<ElementId, IrElement>;
+  /** Vault paths already in use; colliding note paths get a numeric suffix. */
+  existingPaths?: ReadonlySet<string>;
   htmlToMarkdown?: (html: string) => string;
   extractCreatesStandaloneNote?: boolean;
 }
@@ -623,7 +625,7 @@ export async function planSmCollectionImport(
   const notes: SmImportedNotePlan[] = [];
   const attachments: SmImportedAttachment[] = [];
   const bookmarks: Bookmark[] = [];
-  const usedNotePaths = new Set<string>();
+  const usedNotePaths = new Set<string>(opts.existingPaths ?? []);
   const nextNoteSuffixByStem = new Map<string, number>();
   const copiedAttachmentNames = new Set<string>();
   const nextAttachmentSuffixByStem = new Map<string, number>();

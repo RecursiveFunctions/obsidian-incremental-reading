@@ -5494,6 +5494,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         targetFolder,
         attachmentFolder,
         existingElements: state.elements,
+        existingPaths: new Set(this.app.vault.getFiles().map((f) => f.path)),
         extractCreatesStandaloneNote: this.settings.extractCreatesStandaloneNote,
       });
     } catch (e) {

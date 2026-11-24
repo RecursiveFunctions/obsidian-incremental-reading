@@ -804,3 +804,32 @@ test("planSmCollectionImport rejects source-tree traversal entries in elements/ 
   assert.equal(readPaths.some((p) => p.includes("..") || p.includes("secret") || p.includes("outside")), false);
   assert.equal(plan.elements[0]!.text, "Plain note with <T> generic parameter");
 });
+
+test("planSmCollectionImport: existing vault paths force a distinct note path", async () => {
+  const build = (payload: string) => {
+    const title = makeRtxSpan("Shared Title", 1);
+    const body = makeRtxSpan(payload, 2);
+    const fs = memSourceFs({
+      "info/ElementInfo.dat": makeElementInfo({ type: 0, status: 1, textMember: 1 }),
+      "info/compon.dat": makeComponRecord({ elementNumber: 1, components: [{ type: 0, displayAt: 0xff, member: 2 }] }),
+      "registry/text.mem": concatBytes(
+        makeMemRecord(1, title.length),
+        makeMemRecord(1 + title.length, body.length),
+      ),
+      "registry/text.ptr": makeSub([1, 2]),
+      "registry/text.rtx": concatBytes(title, body),
+    });
+    return fs;
+  };
+  const first = await planSmCollectionImport({
+    fs: build("ALPHA"), nowMs: NOW, deviceId: DEV, targetFolder: "SM Import",
+  });
+  assert.equal(first.notes[0]!.relPath, "SM Import/Shared Title.md");
+
+  const second = await planSmCollectionImport({
+    fs: build("BETA"), nowMs: NOW, deviceId: DEV, targetFolder: "SM Import",
+    existingPaths: new Set(first.notes.map((n) => n.relPath)),
+  });
+  assert.equal(second.notes[0]!.relPath, "SM Import/Shared Title 2.md");
+  assert.equal(second.notes[0]!.markdown.includes("BETA"), true);
+});
