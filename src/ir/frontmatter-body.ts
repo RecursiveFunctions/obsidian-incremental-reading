@@ -86,6 +86,23 @@ export function bodyOffsetsFromFullOffsets(
 }
 
 /**
+ * Map every editor range onto the stripped body. Ranges that fall entirely
+ * inside frontmatter or surrounding whitespace are skipped. Order is
+ * preserved so the first span remains the anchor carrier.
+ */
+export function mapBodySpans(
+  fullFile: string,
+  ranges: ReadonlyArray<{ from: number; to: number }>,
+): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  for (const range of ranges) {
+    const mapped = bodyOffsetsFromFullOffsets(fullFile, range.from, range.to);
+    if (mapped) spans.push(mapped);
+  }
+  return spans;
+}
+
+/**
  * Map a collapsed caret from a full-file offset onto the stripped body.
  * Unlike {@link bodyOffsetsFromFullOffsets}, a caret may sit at the same
  * index as start and end.

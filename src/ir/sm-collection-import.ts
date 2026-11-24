@@ -59,6 +59,26 @@ export interface SmSourceFs {
   readBinary(relPath: string): Promise<Uint8Array | null>;
 }
 
+/** Counts source reads that failed, so the caller can report an incomplete import. */
+export class SmReadDiagnostics {
+  private failures = 0;
+
+  noteFailure(): void {
+    this.failures += 1;
+  }
+
+  get count(): number {
+    return this.failures;
+  }
+}
+
+/** User-visible suffix for an import whose source had unreadable files. */
+export function formatSmReadWarning(count: number): string {
+  return count > 0
+    ? ` (${count} collection file${count === 1 ? "" : "s"} could not be read; results may be incomplete)`
+    : "";
+}
+
 export interface SmComponBookmark {
   readPointStart: number;
   readPointLength: number;
