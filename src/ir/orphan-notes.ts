@@ -419,8 +419,8 @@ function elementAtNewPath(
       priority: fromFm?.priority ?? known.priority,
       dismissed: fromFm?.dismissed ?? known.dismissed,
       parentId: fromFm?.parentId ?? known.parentId,
-      schedule: fromFm?.schedule ?? known.schedule,
-      card: fromFm?.card ?? known.card,
+      schedule: known.schedule ?? fromFm?.schedule,
+      card: known.card ?? fromFm?.card,
     };
     if (oldPath && known.anchor?.sourcePath === oldPath) {
       element = {
