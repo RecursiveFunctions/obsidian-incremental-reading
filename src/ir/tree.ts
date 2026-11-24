@@ -199,6 +199,27 @@ export function filterTreeByPredicate(
   return roots.map(walk).filter((n): n is TreeNode => n !== null);
 }
 
+/**
+ * True when `ancestorId` is reachable by following `parentId` from `nodeId`.
+ * Uses the full element map, not a rendered (possibly flat priority) tree.
+ */
+export function isAncestorOf(
+  elements: ReadonlyMap<ElementId, IrElement>,
+  ancestorId: ElementId,
+  nodeId: ElementId,
+): boolean {
+  const seen = new Set<ElementId>();
+  let current: ElementId | null = nodeId;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const parent: ElementId | null = elements.get(current)?.parentId ?? null;
+    if (!parent) return false;
+    if (parent === ancestorId) return true;
+    current = parent;
+  }
+  return false;
+}
+
 /** Collect `rootId` and all its descendants in deterministic tree order (cycle-safe). */
 export function collectBranchIds(
   elements: readonly IrElement[],

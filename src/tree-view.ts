@@ -18,6 +18,7 @@ import {
   buildPriorityRows,
   formatScheduleState,
   filterTreeByPredicate,
+  isAncestorOf,
   rangeSelectIds,
   TreeNode,
 } from "./ir/tree";
@@ -231,6 +232,7 @@ export class IrTreeView extends ItemView {
   /** Pending debounced re-render for the filter box. */
   private filterRenderTimer: number | null = null;
   private selectedIds: Set<string> = new Set();
+  private lastMatchedIds: Set<string> = new Set();
   private selectionAnchorId: string | null = null;
   /** Explicit touch-friendly multi-select checkbox mode (#65). */
   private selectMode = false;
@@ -598,7 +600,7 @@ export class IrTreeView extends ItemView {
         attr: { type: "button" },
       });
       reviewFiltered.onclick = () => {
-        const ids = [...this.lastNodeIds] as ElementId[];
+        const ids = [...this.lastMatchedIds] as ElementId[];
         if (ids.length === 0) {
           new Notice("Incremental Reading: no filtered elements to review.");
           return;
@@ -721,6 +723,7 @@ export class IrTreeView extends ItemView {
     const hasTypeFilter = this.visibleTypes.size < 3;
     const hasStateFilter = this.visibleStates.size < 3 || !this.showDismissed;
     if (hasTextFilter || hasTypeFilter || hasStateFilter || this.leechesOnly) {
+      this.lastMatchedIds = new Set<string>();
       roots = filterTreeByPredicate(roots, (node) => {
         if (!this.visibleTypes.has(node.type)) return false;
         if (node.element.dismissed) return this.showDismissed;
@@ -728,8 +731,9 @@ export class IrTreeView extends ItemView {
         const due = dueMsOf(node.element);
         const state = !Number.isFinite(due) ? "unscheduled" : due <= Date.now() ? "due" : "future";
         if (!this.visibleStates.has(state)) return false;
-        if (!hasTextFilter) return true;
-        return this.rowLabel(node.element).toLowerCase().includes(query);
+        const matches = !hasTextFilter || this.rowLabel(node.element).toLowerCase().includes(query);
+        if (matches) this.lastMatchedIds.add(node.id);
+        return matches;
       });
       if (roots.length === 0) {
         body.createEl("p", {
@@ -737,6 +741,7 @@ export class IrTreeView extends ItemView {
           text: this.emptyFilterMessage(queryRaw, hasTypeFilter),
         });
         this.lastNodeIds = new Set();
+        this.lastMatchedIds = new Set();
         this.lastRenderedRoots = [];
         return;
       }
@@ -1552,6 +1557,7 @@ export class IrTreeView extends ItemView {
   private canMoveOnto(sourceId: string, targetId: string | null): boolean {
     if (targetId === null) return true;
     if (sourceId === targetId) return false;
+    if (isAncestorOf(this.elementsById as any, sourceId as any, targetId as any)) return false;
     return !this.isDescendantOf(sourceId, targetId);
   }
 

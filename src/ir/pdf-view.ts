@@ -21,6 +21,17 @@ import {
 
 export const PDF_VIEW_TYPE = "pdf";
 
+/** PDF leaves opened by this module for review; user-opened PDFs are never adopted. */
+const reviewPdfLeaves = new WeakSet<WorkspaceLeaf>();
+
+/** Pick a tracked review leaf that is still attached to the workspace. */
+export function pickReusablePdfLeaf(
+  leaves: readonly WorkspaceLeaf[],
+  tracked: Pick<WeakSet<WorkspaceLeaf>, "has">,
+): WorkspaceLeaf | null {
+  return leaves.find((leaf) => tracked.has(leaf)) ?? null;
+}
+
 interface PdfViewerChild {
   file?: TFile;
   containerEl?: HTMLElement;
@@ -254,11 +265,22 @@ export async function openPdfAt(
     page,
   );
   if (plan.kind === "open") {
-    await app.workspace.openLinkText(`${path}${plan.fragment}`, "", "split");
-    leaf =
-      app.workspace.getLeavesOfType(PDF_VIEW_TYPE).find(
-        (l) => pdfFileFromView(l.view)?.path === path,
-      ) ?? app.workspace.activeLeaf;
+    const reusable = pickReusablePdfLeaf(leaves, reviewPdfLeaves);
+    if (reusable) {
+      // Reuse the leaf review opened: the previous PDF is replaced rather
+      // than accumulating a split per card.
+      await reusable.openFile(file as TFile, {
+        eState: { subpath: plan.fragment },
+      });
+      leaf = reusable;
+    } else {
+      await app.workspace.openLinkText(`${path}${plan.fragment}`, "", "split");
+      leaf =
+        app.workspace.getLeavesOfType(PDF_VIEW_TYPE).find(
+          (l) => pdfFileFromView(l.view)?.path === path,
+        ) ?? app.workspace.activeLeaf;
+      if (leaf) reviewPdfLeaves.add(leaf);
+    }
   } else if (plan.kind === "turn-page" && leaf) {
     if (!turnPdfPage(leaf.view, plan.page)) {
       const subpath = formatPdfLinktext("", plan.page);

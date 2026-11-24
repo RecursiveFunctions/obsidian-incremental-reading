@@ -61,7 +61,9 @@ export function resolveAnchor(anchor: Anchor, sourceText: string): AnchorResolut
   while (i <= sourceText.length - exact.length) {
     if (sourceText.slice(i, i + exact.length) === exact) {
       exactIndices.push(i);
-      i += exact.length;
+      // Advance by one so overlapping occurrences are also collected; two
+      // identical candidate spans must degrade to needs-reanchor (DESIGN Q1).
+      i++;
     } else {
       i++;
     }
@@ -127,7 +129,7 @@ export function resolveAnchor(anchor: Anchor, sourceText: string): AnchorResolut
   while (n <= normalizedSource.length - normalizedExact.length) {
     if (normalizedSource.slice(n, n + normalizedExact.length) === normalizedExact) {
       normIndices.push(n);
-      n += normalizedExact.length;
+      n++;
     } else {
       n++;
     }
