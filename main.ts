@@ -202,7 +202,12 @@ import {
   type DuplicateMatch,
   type DuplicateSourceNote,
 } from "./src/ir/bulk-import";
-import { planSmCollectionImport, type SmSourceFs } from "./src/ir/sm-collection-import";
+import {
+  formatSmReadWarning,
+  planSmCollectionImport,
+  SmReadDiagnostics,
+  type SmSourceFs,
+} from "./src/ir/sm-collection-import";
 import { readZipEntries } from "./src/ir/zip-read";
 import { planEpubImport, planHtmlImport } from "./src/ir/epub-import";
 import { folderTopicCandidates } from "./src/ir/folder-topics";
@@ -5317,7 +5322,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.app.workspace.getLeaf(true).openFile(file);
   }
 
-  private async pickSmCollectionSource(): Promise<SmSourceFs | null> {
+  private async pickSmCollectionSource(): Promise<{ fs: SmSourceFs; diagnostics: SmReadDiagnostics } | null> {
+    const diagnostics = new SmReadDiagnostics();
     if (Platform.isDesktopApp) {
       const req = (window as unknown as { require?: (id: string) => unknown }).require;
       if (typeof req === "function") {
@@ -5363,7 +5369,7 @@ export default class IncrementalReadingPlugin extends Plugin {
               }
               return real;
             };
-            return {
+            return { fs: {
               async listDir(relDir: string): Promise<string[]> {
                 try {
                   const full = await resolveConfinedPath(relDir);
@@ -5379,6 +5385,7 @@ export default class IncrementalReadingPlugin extends Plugin {
                   }
                   return out;
                 } catch {
+                  diagnostics.noteFailure();
                   return [];
                 }
               },
@@ -5391,10 +5398,11 @@ export default class IncrementalReadingPlugin extends Plugin {
                   const buf = await fsPromises.readFile(full);
                   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
                 } catch {
+                  diagnostics.noteFailure();
                   return null;
                 }
               },
-            };
+            }, diagnostics };
           }
         } catch {
           // Fall through to in-vault folder picker
@@ -5426,7 +5434,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (pickedFolder === null) return null;
     const base = pickedFolder.replace(/^\/+|\/+$/g, "");
     const adapter = this.app.vault.adapter;
-    return {
+    return { fs: {
       async listDir(relDir: string): Promise<string[]> {
         const target = [base, relDir].filter(Boolean).join("/");
         try {
@@ -5435,6 +5443,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             base && p.startsWith(`${base}/`) ? p.slice(base.length + 1) : p;
           return [...listed.folders.map(stripBase), ...listed.files.map(stripBase)];
         } catch {
+          diagnostics.noteFailure();
           return [];
         }
       },
@@ -5445,10 +5454,11 @@ export default class IncrementalReadingPlugin extends Plugin {
           const buf = await adapter.readBinary(target);
           return new Uint8Array(buf);
         } catch {
+          diagnostics.noteFailure();
           return null;
         }
       },
-    };
+    }, diagnostics };
   }
 
   private async importSmCollection(): Promise<void> {
@@ -5457,8 +5467,9 @@ export default class IncrementalReadingPlugin extends Plugin {
       return;
     }
     await this.ledgerInit;
-    const fs = await this.pickSmCollectionSource();
-    if (!fs) return;
+    const picked = await this.pickSmCollectionSource();
+    if (!picked) return;
+    const { fs, diagnostics } = picked;
 
     const nowMs = Date.now();
     const state = await this.ledger.load();
@@ -5586,7 +5597,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     const s = plan.stats;
     const summary = `Imported SM collection: ${s.topics} topics, ${s.ledgerExtracts + s.noteExtracts} extracts, ${s.items} items, ${s.attachments} attachments, ${savedBookmarkCount} bookmarks` +
       (s.skippedDuplicates > 0 ? ` (${s.skippedDuplicates} duplicates skipped)` : "") +
-      bookmarkWarnSuffix;
+      bookmarkWarnSuffix +
+      formatSmReadWarning(diagnostics.count);
     console.info(`Incremental Reading: ${summary}`);
     new Notice(`Incremental Reading: ${summary}`);
   }
