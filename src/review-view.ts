@@ -134,6 +134,7 @@ import { resolveAnchor } from "./ir/anchor";
 import {
   canAdvanceReadingInSession,
   canGradeInSession,
+  digitGradeAllowed,
   isSpaceAfterReveal,
   restoreDismissedSlot,
   spacebarReviewAction,
@@ -918,7 +919,14 @@ export class IrReviewView extends ItemView {
       // review is not the expected flow.
       for (const { grade, key } of GRADES) {
         if (evt.key === key) {
-          if (slot && !this.isReading(slot) && this.revealed) {
+          const activeTag =
+            this.contentEl.ownerDocument.activeElement?.tagName ?? null;
+          if (
+            digitGradeAllowed(typing, activeTag) &&
+            slot &&
+            !this.isReading(slot) &&
+            this.revealed
+          ) {
             evt.preventDefault();
             void this.grade(grade);
           }

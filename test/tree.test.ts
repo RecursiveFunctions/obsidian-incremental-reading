@@ -9,6 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { isAncestorOf } from "../src/ir/tree";
 import { newElement, type IrElement } from "../src/ir/model";
 import type { ElementId } from "../src/ir/ids";
 
@@ -294,4 +295,18 @@ test("collectBranchIds returns root and all descendants in deterministic order, 
   ]);
   assert.deepEqual(m.collectBranchIds(items, "el_x"), ["el_x", "el_y"]);
   assert.deepEqual(m.collectBranchIds(items, "missing"), []);
+});
+
+test("isAncestorOf follows the full parent chain", () => {
+  const el = (id: string, parentId: string | null): any => ({ id, parentId });
+  const els = new Map<any, any>([
+    [el("root", null).id, el("root", null)],
+    [el("a", "root").id, el("a", "root")],
+    [el("b", "a").id, el("b", "a")],
+    [el("c", "b").id, el("c", "b")],
+  ]);
+  assert.equal(isAncestorOf(els, "a" as any, "c" as any), true);
+  assert.equal(isAncestorOf(els, "c" as any, "a" as any), false);
+  assert.equal(isAncestorOf(els, "root" as any, "c" as any), true);
+  assert.equal(isAncestorOf(els, "a" as any, "a" as any), false);
 });

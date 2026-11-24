@@ -153,3 +153,26 @@ test("format-only exact still resolves while the literal remains", () => {
   const r = resolveAnchor(anchor({ exact: "**", position: { start: 11, end: 13 } }), src);
   assert.deepEqual(r, { status: "ok", start: 11, end: 13, repaired: false });
 });
+
+test("self-overlapping exact is treated as ambiguous without a disambiguator", () => {
+  const r = resolveAnchor(
+    anchor({ exact: "ana" }),
+    "banana",
+  );
+  assert.deepEqual(r, { status: "needs-reanchor" });
+});
+
+test("self-overlapping exact resolves to the occurrence nearest a stale position", () => {
+  const r = resolveAnchor(
+    anchor({ exact: "ana", position: { start: 4, end: 7 } }),
+    "banana",
+  );
+  assert.deepEqual(r, { status: "ok", start: 3, end: 6, repaired: true });
+});
+
+test("self-overlapping exact still resolves with the position fast path", () => {
+  assert.deepEqual(
+    resolveAnchor(anchor({ exact: "ana", position: { start: 3, end: 6 } }), "banana"),
+    { status: "ok", start: 3, end: 6, repaired: false },
+  );
+});
