@@ -536,11 +536,10 @@ export function planOrphanRecoveries(
       historical,
     );
 
-    if (
-      recoveredId &&
-      oldPath === null &&
-      explicitDeletes.has(recoveredId)
-    ) {
+    // Exclude deliberate Collection deletes regardless of whether the note
+    // has since moved. Folder-move deletes carry a tombstone and are already
+    // excluded from explicitDeletes, so intended recovery is unaffected.
+    if (recoveredId && explicitDeletes.has(recoveredId)) {
       continue;
     }
 
