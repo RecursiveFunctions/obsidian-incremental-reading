@@ -549,6 +549,164 @@ test("uniquePromotedNotePath: returns the base path when it is free", () => {
   );
 });
 
+test("planOrphanRecoveries keeps the ledger schedule for a note the ledger knew", () => {
+  const oldPath = "Papers/topic.md";
+  const newPath = "Archive/Papers/topic.md";
+  const id = elementIdForPath(oldPath);
+  const el = newElement({
+    id,
+    type: "topic",
+    priority: 50,
+    notePath: oldPath,
+    now: 0,
+  });
+  const ledgerSchedule = {
+    due: NOW + 21 * 86_400_000,
+    interval: 21,
+    aFactor: 2.5,
+  };
+  const events: IrEvent[] = [
+    created(el, 1),
+    {
+      id: "ev_adv_ledger" as EventId,
+      ts: NOW,
+      lamport: 2,
+      device: DEV,
+      kind: "topic-advanced",
+      target: id,
+      payload: { schedule: ledgerSchedule },
+    },
+  ];
+  const before = fold(events);
+  assert.deepEqual(before.elements.get(id)?.schedule, ledgerSchedule);
+
+  const del = planSourceDeletion(
+    Array.from(before.elements.values()),
+    oldPath,
+    "topic",
+    NOW,
+    4,
+    DEV,
+    (i) => `ev_del_topic_${i}` as EventId,
+    () => "IR/Promoted.md",
+    { autoPromoteRootless: false },
+  );
+  const all = [...events, ...del];
+  const state = fold(all);
+  assert.equal(state.elements.has(id), false);
+
+  const notes = [
+    {
+      path: newPath,
+      frontmatter: {
+        ...topicFm(),
+        [IR_KEYS.due]: new Date(NOW + 3 * 86_400_000).toISOString(),
+        [IR_KEYS.interval]: 3,
+        [IR_KEYS.aFactor]: 2,
+      },
+    },
+  ];
+  const plan = planOrphanRecoveries(
+    notes,
+    state.elements.values(),
+    all,
+    state.tombstones.keys(),
+    [newPath],
+    NOW,
+    40,
+    DEV,
+    ids().next,
+  );
+  const recovered = fold([...all, ...plan.events]);
+  assert.deepEqual(recovered.elements.get(id)?.schedule, ledgerSchedule);
+});
+
+test("planOrphanRecoveries keeps the ledger card for a note the ledger knew", () => {
+  const oldPath = "Cards/item.md";
+  const newPath = "Archive/Cards/item.md";
+  const id = elementIdForPath(oldPath);
+  const el = newElement({
+    id,
+    type: "item",
+    priority: 50,
+    notePath: oldPath,
+    now: 0,
+    text: "question",
+  });
+  const ledgerCard = {
+    due: NOW + 20 * 86_400_000,
+    stability: 20,
+    difficulty: 3,
+    elapsedDays: 10,
+    scheduledDays: 20,
+    reps: 9,
+    lapses: 0,
+    state: 2,
+    learningSteps: 0,
+  };
+  const events: IrEvent[] = [
+    created(el, 1),
+    {
+      id: "ev_grade_ledger" as EventId,
+      ts: NOW,
+      lamport: 2,
+      device: DEV,
+      kind: "graded",
+      target: id,
+      payload: { card: ledgerCard },
+    },
+  ];
+  const before = fold(events);
+  assert.equal(before.elements.get(id)?.card?.reps, 9);
+
+  const del = planSourceDeletion(
+    Array.from(before.elements.values()),
+    oldPath,
+    "item",
+    NOW,
+    4,
+    DEV,
+    (i) => `ev_del_item_${i}` as EventId,
+    () => "IR/Promoted.md",
+    { autoPromoteRootless: false },
+  );
+  const all = [...events, ...del];
+  const state = fold(all);
+  assert.equal(state.elements.has(id), false);
+
+  const notes = [
+    {
+      path: newPath,
+      frontmatter: {
+        [IR_KEYS.type]: "item",
+        [IR_KEYS.priority]: 50,
+        [IR_KEYS.due]: new Date(NOW + 86_400_000).toISOString(),
+        [IR_KEYS.stability]: 5,
+        [IR_KEYS.difficulty]: 5,
+        [IR_KEYS.elapsedDays]: 1,
+        [IR_KEYS.scheduledDays]: 5,
+        [IR_KEYS.reps]: 1,
+        [IR_KEYS.lapses]: 0,
+        [IR_KEYS.state]: 2,
+        [IR_KEYS.learningSteps]: 0,
+      },
+    },
+  ];
+  const plan = planOrphanRecoveries(
+    notes,
+    state.elements.values(),
+    all,
+    state.tombstones.keys(),
+    [newPath],
+    NOW,
+    40,
+    DEV,
+    ids().next,
+  );
+  const recovered = fold([...all, ...plan.events]);
+  assert.deepEqual(recovered.elements.get(id)?.card, ledgerCard);
+});
+
 test("uniquePromotedNotePath: appends a numeric suffix for each taken path", () => {
   const taken = new Set([
     "Extracts/A quote (el_mig_4).md",
@@ -576,4 +734,3 @@ test("uniquePromotedNotePath: colliding migrated ids and first lines get distinc
   assert.equal(first, base);
   assert.equal(second, "Same opening line (el_mig_4) 2.md");
 });
-
