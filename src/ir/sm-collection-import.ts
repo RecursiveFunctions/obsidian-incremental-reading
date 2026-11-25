@@ -21,8 +21,11 @@ import {
   type Sm20MatrixSnapshot,
 } from "./sm20-matrix";
 import {
+  MAX_LAST_REPETITION_DAY,
   hasWrongRepetitionGradeAndLapsesMatch,
+  repairLastRepetitionDateInElementInfo,
   repairNonPositiveIntervalDays,
+  repairReviewDateVsIntervalDiscrepancy,
 } from "./sm-history-repair";
 
 const MS_PER_DAY = 86_400_000;
@@ -133,6 +136,8 @@ export interface SmCollectionImportPlan {
     historyEvents: number;
     historyIntervalRepairs: number;
     historyGradeLapseMismatches: number;
+    historyReviewDateRepairs: number;
+    historyElementInfoDateRepairs: number;
   };
 }
 
@@ -591,11 +596,14 @@ export async function planSmCollectionImport(
   }
 
   const smToElementId = new Map<number, ElementId>();
+  const elementInfoByElementId = new Map<ElementId, ElementInfoRecord>();
   for (let i = 0; i < elementInfos.length; i += 1) {
     const smId = i + 1;
     const rec = elementInfos[i]!;
     if (rec.element_status === 3) continue;
-    smToElementId.set(smId, newElementId());
+    const elementId = newElementId();
+    smToElementId.set(smId, elementId);
+    elementInfoByElementId.set(elementId, rec);
   }
 
   const elements: IrElement[] = [];
@@ -723,6 +731,8 @@ export async function planSmCollectionImport(
     historyEvents: 0,
     historyIntervalRepairs: 0,
     historyGradeLapseMismatches: 0,
+    historyReviewDateRepairs: 0,
+    historyElementInfoDateRepairs: 0,
   };
 
   let lamport = nowMs;
@@ -983,7 +993,56 @@ export async function planSmCollectionImport(
   let lastHistoryEventId: string | undefined;
   for (const [elementId, rows] of historyByElement) {
     const targetEl = elementById.get(elementId)!;
+
+    // `Str_LastRepetitionDateInElementInfoDat` (`0x00d19de0`): ElementInfo.dat may
+    // carry a missing or stale last repetition date relative to history.
+    const elementInfoRec = elementInfoByElementId.get(elementId);
+    if (elementInfoRec && rows.length > 0) {
+      const fix = repairLastRepetitionDateInElementInfo(
+        elementInfoRec.last_repetition_date,
+        rows.map((row) => ({ date: row.rep.repetition_date, intervalDays: row.rep.interval_days })),
+        elementInfoRec.last_repetition_day,
+      );
+      if (fix.repairedCount > 0) {
+        stats.historyElementInfoDateRepairs += fix.repairedCount;
+        elementInfoRec.last_repetition_date = fix.lastRepetitionDate;
+        if (fix.lastRepetitionDay !== null) {
+          elementInfoRec.last_repetition_day = Math.min(
+            MAX_LAST_REPETITION_DAY,
+            Math.max(0, fix.lastRepetitionDay),
+          );
+        }
+        const repairedMs = delphiDateToEpochMs(fix.lastRepetitionDate);
+        if (repairedMs !== null && targetEl.card) {
+          targetEl.card = { ...targetEl.card, lastReview: repairedMs };
+        }
+      }
+    }
+
     const authoritativeCard = targetEl.card;
+
+    // `Str_ReviewDateVsIntervalDiscrepancyIn` (`0x00d1efe0`): back-fill review
+    // dates from the last review date and intervals when history is missing them.
+    const lastReviewMs = authoritativeCard?.lastReview ?? null;
+    const dateFix = repairReviewDateVsIntervalDiscrepancy(
+      rows.map((row) => ({
+        repetitionNumber: row.rep.repetition_number,
+        intervalDays: row.rep.interval_days,
+        date: row.rep.repetition_date,
+      })),
+      0,
+      lastReviewMs,
+    );
+    if (dateFix.repairedCount > 0) {
+      stats.historyReviewDateRepairs += dateFix.repairedCount;
+      rows.forEach((row, i) => {
+        const fixed = dateFix.rows[i]!;
+        row.rep.repetition_date = fixed.date;
+        row.rep.interval_days = fixed.intervalDays;
+        row.repMs = delphiDateToEpochMs(fixed.date) ?? row.repMs;
+      });
+    }
+
     rows.sort((a, b) => a.repMs - b.repMs || a.rep.repetition_number - b.rep.repetition_number || a.rowIndex - b.rowIndex);
 
     for (let idx = 0; idx < rows.length; idx += 1) {
