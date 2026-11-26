@@ -393,6 +393,20 @@ export function priorityToBucket20(priority: number): number {
   return Math.min(20, Math.max(1, roundHalfToEven(20.0 * Math.pow(p / 100.0, 0.25))));
 }
 
+/**
+ * `GetLog2IntervalDistributionBucket` (`0x00cfc860`, #71):
+ * maps `intervalDays` into 13 log2 buckets (`1..13`, upper bounds `2^0..2^11` and `4096+`)
+ * with SM-20's `-0.1` day boundary tolerance.
+ */
+export function getLog2IntervalDistributionBucket(intervalDays: number): number {
+  const iv = Number.isFinite(intervalDays) ? intervalDays : 0;
+  const shifted = iv - 0.1;
+  for (let b = 1; b < 13; b += 1) {
+    if (shifted <= Math.pow(2, b - 1)) return b;
+  }
+  return 13;
+}
+
 /** `FUN_00b86810` (`0x00b86810`). */
 export function postponeCeilingForPriority(
   priority: number,

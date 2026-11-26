@@ -1,6 +1,6 @@
 import type { Grade } from "../fsrs";
 import { rationalSaturationZeroGuarded, roundHalfToEven } from "../sm18-ir-mechanics";
-import type { IrEvent, StoredCard } from "./model";
+import type { IrElement, IrEvent, StoredCard } from "./model";
 import {
   computeInitialSincPrior,
   computeSm20Retrievability,
@@ -190,20 +190,21 @@ export function parseSm20Alg17DatFiles(files: {
   return { sinc, sincCases, recall, recallCases };
 }
 
+export interface Sm20RecallRegressionCell {
+  slope: number;
+  intercept: number;
+  totalCases: number;
+}
+
 /**
- * Empirical forgetting-curve calibration (`FUN_00ce5140` + `0x00a8d320` + `FUN_00ce6c80`).
- * Fits weighted linear regression `Recall = A * R + B` across `rIdx = 1..20`
- * with weights `round(cases) + 1e-5` (`0x00a8d320`) and empty-bin fallback
- * `0.64 * x + 0.3` (`0x00ce5140`), blended with `analyticalR` by
- * `totalCases / (totalCases + 3.5)` (`0x00ce6c80`).
+ * Fit weighted linear regression `Recall = A * R + B` for one `(dIdx, sIdx)` cell
+ * across `rIdx = 1..20` (`FUN_00ce5140` + `0x00a8d320`).
  */
-export function calibrateSm20Retrievability(
+export function fitSm20RecallCellRegression(
   matrix: Sm20Matrix,
   dIdx: number,
   sIdx: number,
-  analyticalR: number,
-): number {
-  const cleanR = clamp(analyticalR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
+): Sm20RecallRegressionCell {
   let totalCases = 0;
   const xs: number[] = [];
   const ws: number[] = [];
@@ -219,7 +220,9 @@ export function calibrateSm20Retrievability(
       cases > 0 ? clamp(matrix.recall[idx]! / cases, 0.0, 1.0) : 0.64 * x + 0.3,
     );
   }
-  if (totalCases === 0) return cleanR;
+  if (totalCases === 0) {
+    return { slope: 0.64, intercept: 0.3, totalCases: 0 };
+  }
 
   const yVals = reconcileRetentionMatrixOutliers(rawY);
   let sumW = 0;
@@ -231,7 +234,9 @@ export function calibrateSm20Retrievability(
     sumWX += w * xs[i]!;
     sumWY += w * yVals[i]!;
   }
-  if (sumW <= 0) return cleanR;
+  if (sumW <= 0) {
+    return { slope: 0.64, intercept: 0.3, totalCases };
+  }
   const meanX = sumWX / sumW;
   const meanY = sumWY / sumW;
 
@@ -244,6 +249,25 @@ export function calibrateSm20Retrievability(
   }
   const slope = den > 1e-12 ? num / den : 0.64;
   const intercept = meanY - slope * meanX;
+  return { slope, intercept, totalCases };
+}
+
+/**
+ * Empirical forgetting-curve calibration (`FUN_00ce5140` + `0x00a8d320` + `FUN_00ce6c80`).
+ * Fits weighted linear regression `Recall = A * R + B` across `rIdx = 1..20`
+ * with weights `round(cases) + 1e-5` (`0x00a8d320`) and empty-bin fallback
+ * `0.64 * x + 0.3` (`0x00ce5140`), blended with `analyticalR` by
+ * `totalCases / (totalCases + 3.5)` (`0x00ce6c80`).
+ */
+export function calibrateSm20Retrievability(
+  matrix: Sm20Matrix,
+  dIdx: number,
+  sIdx: number,
+  analyticalR: number,
+): number {
+  const cleanR = clamp(analyticalR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
+  const { slope, intercept, totalCases } = fitSm20RecallCellRegression(matrix, dIdx, sIdx);
+  if (totalCases === 0) return cleanR;
   const empR = clamp(slope * cleanR + intercept, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
   const alpha = totalCases / (totalCases + 3.5);
   return clamp(alpha * empR + (1.0 - alpha) * cleanR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
@@ -564,4 +588,119 @@ export function foldSm20MatrixFromEvents(
   }
 
   return matrix;
+}
+
+function csvEscape(cell: string): string {
+  return /[",\r\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell;
+}
+
+/**
+ * `RecallData.csv` diagnostic matrix export (`0x00ce5500`, #71):
+ * serializes the three 20x20 `(D x S)` regression tables (`A`, `B`, `Repetition cases`)
+ * for `Recall = A * R + B`.
+ */
+export function formatSm20RecallDataCsv(matrix: Sm20Matrix): string {
+  const sHeaders = Array.from({ length: 20 }, (_, i) => {
+    const sIdx = i + 1;
+    return `S${sIdx}(${stabilityIndex20ToTransformed(sIdx).toFixed(1)}d)`;
+  });
+  const cells: Sm20RecallRegressionCell[][] = Array.from({ length: 20 }, (_, dZero) =>
+    Array.from({ length: 20 }, (__, sZero) =>
+      fitSm20RecallCellRegression(matrix, dZero + 1, sZero + 1),
+    ),
+  );
+
+  const buildTable = (
+    title: string,
+    pick: (c: Sm20RecallRegressionCell) => string,
+  ): string[] => {
+    const lines = [title, ["Difficulty\\Stability", ...sHeaders].join(",")];
+    for (let dZero = 0; dZero < 20; dZero += 1) {
+      const dLabel = `D${dZero + 1}(${((dZero / 19) * 100).toFixed(0)}%)`;
+      const row = [dLabel, ...cells[dZero]!.map(pick)];
+      lines.push(row.join(","));
+    }
+    return lines;
+  };
+
+  return [
+    ...buildTable("A in Recall=A*R+B", (c) => c.slope.toFixed(4)),
+    "",
+    ...buildTable("B in Recall=A*R+B", (c) => c.intercept.toFixed(4)),
+    "",
+    ...buildTable("Repetition cases in Recall=A*R+B", (c) => String(c.totalCases)),
+  ].join("\n");
+}
+
+/**
+ * Category difficulty deviation CSV export (`0x00bc6410`, #71):
+ * groups active items by root ancestor topic/category, computing mean item
+ * difficulty, signed deviation from collection mean, and mean lapses.
+ */
+export function formatCategoryDifficultyDeviationCsv(
+  elements: Iterable<IrElement>,
+): string {
+  const list = Array.from(elements);
+  const byId = new Map(list.map((el) => [el.id, el]));
+
+  const rootCategoryLabel = (start: IrElement): string => {
+    let cur: IrElement | undefined = start;
+    const visited = new Set<string>();
+    while (cur && cur.parentId && !visited.has(cur.id)) {
+      visited.add(cur.id);
+      const parent = byId.get(cur.parentId);
+      if (!parent) break;
+      cur = parent;
+    }
+    if (!cur || cur.id === start.id) return "(Uncategorized)";
+    const rawPath = cur.notePath ?? cur.anchor?.sourcePath;
+    if (rawPath) {
+      const base = rawPath.split("/").pop() ?? rawPath;
+      return base.replace(/\.(md|pdf)$/i, "") || rawPath;
+    }
+    const firstLine = cur.text.split("\n")[0]?.trim();
+    return firstLine ? firstLine.slice(0, 60) : cur.id;
+  };
+
+  const items = list.filter((el) => !el.dismissed && el.type === "item" && el.card);
+  const lines = ["Category,Items,MeanDifficulty,DeviationFromMean,MeanLapses"];
+  if (items.length === 0) return lines.join("\n");
+
+  let totalDiff = 0;
+  const groups = new Map<
+    string,
+    { count: number; sumDiff: number; sumLapses: number }
+  >();
+  for (const item of items) {
+    const d01 = storedDifficultyTo01(item.card!.difficulty);
+    totalDiff += d01;
+    const cat = rootCategoryLabel(item);
+    const bucket = groups.get(cat) ?? { count: 0, sumDiff: 0, sumLapses: 0 };
+    bucket.count += 1;
+    bucket.sumDiff += d01;
+    bucket.sumLapses += item.card!.lapses ?? 0;
+    groups.set(cat, bucket);
+  }
+  const collectionMean = totalDiff / items.length;
+  const sorted = Array.from(groups.entries()).sort((a, b) => {
+    const meanA = a[1].sumDiff / a[1].count;
+    const meanB = b[1].sumDiff / b[1].count;
+    return meanB - meanA || b[1].count - a[1].count || a[0].localeCompare(b[0]);
+  });
+
+  for (const [cat, g] of sorted) {
+    const meanDiff = g.sumDiff / g.count;
+    const dev = meanDiff - collectionMean;
+    const meanLapses = g.sumLapses / g.count;
+    lines.push(
+      [
+        csvEscape(cat),
+        String(g.count),
+        meanDiff.toFixed(4),
+        (dev >= 0 ? "+" : "") + dev.toFixed(4),
+        meanLapses.toFixed(2),
+      ].join(","),
+    );
+  }
+  return lines.join("\n");
 }

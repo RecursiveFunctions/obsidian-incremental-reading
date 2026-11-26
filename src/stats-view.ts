@@ -1,4 +1,4 @@
-import { ItemView, Menu, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Menu, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 
 import { promptConfirm } from "./confirm-modal";
 
@@ -25,6 +25,7 @@ import { evalCardsFor, fit, type FitResult } from "./ir/optimizer/fit";
 import { intervalDelta, meanLogLoss } from "./ir/optimizer/metrics";
 import {
   activityHeatmap,
+  computeIntervalDistribution,
   computeStats,
   dueByType,
   forecast,
@@ -35,7 +36,13 @@ import {
   type GradeEvent,
 } from "./ir/stats";
 import { type PriorityGrade } from "./ir/priority-analytics";
-import { getSm20MatrixStats, type Sm20Matrix } from "./ir/sm20-matrix";
+import {
+  createEmptySm20Matrix,
+  formatCategoryDifficultyDeviationCsv,
+  formatSm20RecallDataCsv,
+  getSm20MatrixStats,
+  type Sm20Matrix,
+} from "./ir/sm20-matrix";
 import {
   buildActionablePriorityFiBuckets,
   type StatsTabId,
@@ -246,6 +253,7 @@ export class IrStatsView extends ItemView {
     if (this.activeTab === "overview") {
       this.renderCounts(body, elements, stats, now);
       this.renderForecast(body, elements, now);
+      this.renderIntervalDistribution(body, elements);
       this.renderActivityHeatmap(body, events, now);
       this.renderReviewHistory(body, grades, stats, windowStart, now);
     } else if (this.activeTab === "triage") {
@@ -258,6 +266,55 @@ export class IrStatsView extends ItemView {
   }
 
   // --- Scheduler parameters (PLAN-OPTIMIZER.md stage 3) -------------------
+
+  private downloadCsv(filename: string, csv: string): void {
+    try {
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      new Notice(`Incremental Reading: exported ${filename}.`);
+    } catch {
+      void navigator.clipboard?.writeText(csv);
+      new Notice(`Incremental Reading: copied ${filename} CSV to clipboard.`);
+    }
+  }
+
+  private renderIntervalDistribution(
+    body: HTMLElement,
+    elements: readonly IrElement[],
+  ): void {
+    const dist = computeIntervalDistribution(elements);
+    if (dist.totalScheduled === 0) return;
+    const section = body.createDiv({ cls: "ir-stats-section" });
+    section.createDiv({
+      cls: "ir-stats-section-title",
+      text: `Interval distribution (${dist.totalScheduled})`,
+    });
+    const bars = section.createDiv({ cls: "ir-stats-bars" });
+    for (const b of dist.buckets) {
+      const col = bars.createDiv({
+        cls: "ir-stats-bar-col",
+        attr: {
+          title: `≤ ${b.label}: ${b.total} (${b.items} items · ${b.reading} reading)`,
+        },
+      });
+      col.createDiv({
+        cls: "ir-stats-bar-count",
+        text: b.total > 0 ? String(b.total) : "",
+      });
+      const track = col.createDiv({ cls: "ir-stats-bar-track" });
+      const fill = track.createDiv({ cls: "ir-stats-bar-fill" });
+      const pct = dist.maxTotal > 0 ? Math.round((b.total / dist.maxTotal) * 100) : 0;
+      fill.style.height = `${b.total > 0 ? Math.max(8, pct) : 0}%`;
+      col.createDiv({ cls: "ir-stats-bar-label", text: b.label });
+    }
+  }
 
   private renderScheduler(
     body: HTMLElement,
@@ -316,8 +373,8 @@ export class IrStatsView extends ItemView {
       ]);
     }
     this.table(section, rows);
+    const smActions = section.createDiv({ cls: "ir-opt-actions" });
     if (this.host.rebuildSm20Matrix) {
-      const smActions = section.createDiv({ cls: "ir-opt-actions" });
       const rebuildBtn = smActions.createEl("button", {
         type: "button",
         text: "Rebuild SM-20 matrix",
@@ -332,6 +389,22 @@ export class IrStatsView extends ItemView {
           });
       });
     }
+    const exportRecallBtn = smActions.createEl("button", {
+      type: "button",
+      text: "Export RecallData.csv",
+    });
+    exportRecallBtn.addEventListener("click", () => {
+      const csv = formatSm20RecallDataCsv(matrix ?? createEmptySm20Matrix());
+      this.downloadCsv("RecallData.csv", csv);
+    });
+    const exportDiffBtn = smActions.createEl("button", {
+      type: "button",
+      text: "Export Difficulty.csv",
+    });
+    exportDiffBtn.addEventListener("click", () => {
+      const csv = formatCategoryDifficultyDeviationCsv(state.elements.values());
+      this.downloadCsv("DifficultyDeviation.csv", csv);
+    });
     if (s.primaryScheduler !== "fsrs") {
       section.createEl("p", {
         cls: "setting-item-description",

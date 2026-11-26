@@ -1,6 +1,7 @@
 import type { ElementId } from "./ids";
 import { undoneEventIds } from "./log";
 import type { IrElement, IrEvent } from "./model";
+import { getLog2IntervalDistributionBucket } from "../sm18-ir-mechanics";
 
 /** grade: 1 Again, 2 Hard, 3 Good, 4 Easy. */
 export interface GradeEvent {
@@ -346,4 +347,71 @@ export function rollingTrueRetention(
     totalReviewReps,
     totalPassedReps,
   };
+}
+
+export const INTERVAL_DISTRIBUTION_LABELS: readonly string[] = [
+  "1d",
+  "2d",
+  "4d",
+  "8d",
+  "16d",
+  "32d",
+  "64d",
+  "128d",
+  "256d",
+  "512d",
+  "1024d",
+  "2048d",
+  "4096d+",
+];
+
+export interface IntervalDistributionBucket {
+  bucket: number;
+  label: string;
+  items: number;
+  reading: number;
+  total: number;
+}
+
+export interface IntervalDistribution {
+  buckets: IntervalDistributionBucket[];
+  maxTotal: number;
+  totalScheduled: number;
+}
+
+/**
+ * 13-bucket SM-20 log2 interval distribution (`0x00cfc860`, #71) across
+ * non-dismissed scheduled elements.
+ */
+export function computeIntervalDistribution(
+  elements: ReadonlyArray<IrElement>,
+): IntervalDistribution {
+  const buckets: IntervalDistributionBucket[] = INTERVAL_DISTRIBUTION_LABELS.map(
+    (label, idx) => ({
+      bucket: idx + 1,
+      label,
+      items: 0,
+      reading: 0,
+      total: 0,
+    }),
+  );
+  let totalScheduled = 0;
+  for (const el of elements) {
+    if (el.dismissed) continue;
+    let iv: number | undefined;
+    if (el.type === "item" && el.card) {
+      iv = el.card.scheduledDays;
+    } else if (el.schedule) {
+      iv = el.schedule.interval;
+    }
+    if (iv === undefined || !Number.isFinite(iv)) continue;
+    const bIdx = getLog2IntervalDistributionBucket(iv) - 1;
+    const target = buckets[bIdx]!;
+    if (el.type === "item") target.items += 1;
+    else target.reading += 1;
+    target.total += 1;
+    totalScheduled += 1;
+  }
+  const maxTotal = buckets.reduce((m, b) => Math.max(m, b.total), 0);
+  return { buckets, maxTotal, totalScheduled };
 }

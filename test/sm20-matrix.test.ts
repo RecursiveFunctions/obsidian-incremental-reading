@@ -6,6 +6,8 @@ import {
   computePostReviewStability,
   createEmptySm20Matrix,
   foldSm20MatrixFromEvents,
+  formatCategoryDifficultyDeviationCsv,
+  formatSm20RecallDataCsv,
   getSm20MatrixStats,
   lookupBlendedSinc,
   matrixIndex,
@@ -20,6 +22,9 @@ import {
   smoothSm20SincCube,
   snapshotSm20Matrix,
 } from "../src/ir/sm20-matrix";
+import { getLog2IntervalDistributionBucket } from "../src/sm18-ir-mechanics";
+import { computeIntervalDistribution } from "../src/ir/stats";
+import { newElement } from "../src/ir/model";
 import {
   difficulty01ToIndex20,
   scheduleSm20Item,
@@ -364,4 +369,78 @@ test("smoothSm20SincCube: averages neighbor cells (#68)", () => {
   smoothSm20SincCube(matrix);
   assert.notEqual(matrix.sinc[idx]!, before);
   assert.ok(matrix.sinc[idx]! < before);
+});
+
+test("getLog2IntervalDistributionBucket (0x00cfc860) & computeIntervalDistribution match SM-20 13-bucket boundaries (#71)", () => {
+  assert.equal(getLog2IntervalDistributionBucket(0), 1);
+  assert.equal(getLog2IntervalDistributionBucket(1.0), 1);
+  assert.equal(getLog2IntervalDistributionBucket(1.1), 1);
+  assert.equal(getLog2IntervalDistributionBucket(1.11), 2);
+  assert.equal(getLog2IntervalDistributionBucket(2.1), 2);
+  assert.equal(getLog2IntervalDistributionBucket(2.11), 3);
+  assert.equal(getLog2IntervalDistributionBucket(4.1), 3);
+  assert.equal(getLog2IntervalDistributionBucket(2048.1), 12);
+  assert.equal(getLog2IntervalDistributionBucket(2048.2), 13);
+  assert.equal(getLog2IntervalDistributionBucket(10000), 13);
+
+  const item1 = {
+    ...newElement({ id: newElementId(), type: "item", priority: 20, now: NOW }),
+    card: {
+      due: NOW,
+      stability: 1,
+      difficulty: 5,
+      elapsedDays: 0,
+      scheduledDays: 1,
+      reps: 1,
+      lapses: 0,
+      state: 2,
+    },
+  };
+  const topic8 = {
+    ...newElement({ id: newElementId(), type: "topic", priority: 30, now: NOW }),
+    schedule: { due: NOW, interval: 8, aFactor: 2 },
+  };
+  const dist = computeIntervalDistribution([item1, topic8]);
+  assert.equal(dist.buckets.length, 13);
+  assert.equal(dist.buckets[0]!.items, 1);
+  assert.equal(dist.buckets[3]!.reading, 1);
+  assert.equal(dist.totalScheduled, 2);
+});
+
+test("formatSm20RecallDataCsv (0x00ce5500) & formatCategoryDifficultyDeviationCsv (0x00bc6410) emit diagnostic CSVs (#71)", () => {
+  const matrix = createEmptySm20Matrix();
+  recordSm20Outcome(matrix, {
+    prevDifficulty01: 0.2,
+    prevStability: 5,
+    retrievability: 0.9,
+    nextStability: 15,
+    smGrade: 4,
+  });
+  const recallCsv = formatSm20RecallDataCsv(matrix);
+  assert.match(recallCsv, /A in Recall=A\*R\+B/);
+  assert.match(recallCsv, /B in Recall=A\*R\+B/);
+  assert.match(recallCsv, /Repetition cases in Recall=A\*R\+B/);
+
+  const rootA = {
+    ...newElement({ id: newElementId(), type: "topic", priority: 10, now: NOW }),
+    notePath: "Math/Algebra.md",
+  };
+  const rootB = {
+    ...newElement({ id: newElementId(), type: "topic", priority: 20, now: NOW }),
+    notePath: "History/Rome.md",
+  };
+  const hardItem = {
+    ...newElement({ id: newElementId(), type: "item", priority: 15, now: NOW }),
+    parentId: rootA.id,
+    card: { due: NOW, stability: 4, difficulty: 9, elapsedDays: 2, scheduledDays: 4, reps: 5, lapses: 3, state: 2 },
+  };
+  const easyItem = {
+    ...newElement({ id: newElementId(), type: "item", priority: 25, now: NOW }),
+    parentId: rootB.id,
+    card: { due: NOW, stability: 20, difficulty: 3, elapsedDays: 10, scheduledDays: 20, reps: 5, lapses: 0, state: 2 },
+  };
+  const diffCsv = formatCategoryDifficultyDeviationCsv([rootA, rootB, hardItem, easyItem]);
+  assert.match(diffCsv, /Category,Items,MeanDifficulty,DeviationFromMean,MeanLapses/);
+  assert.match(diffCsv, /Algebra/);
+  assert.match(diffCsv, /Rome/);
 });
