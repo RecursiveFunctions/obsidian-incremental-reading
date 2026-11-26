@@ -833,3 +833,84 @@ test("planSmCollectionImport: existing vault paths force a distinct note path", 
   assert.equal(second.notes[0]!.relPath, "SM Import/Shared Title 2.md");
   assert.equal(second.notes[0]!.markdown.includes("BETA"), true);
 });
+
+test("planSmCollectionImport repairs missing early history dates, non-positive intervals, and stale ElementInfo dates (#73)", async () => {
+  const q = makeRtxSpan("What is SM-20? [...]", 1);
+  const a = makeRtxSpan("Spaced repetition", 2);
+  const elInfoBuf = makeElementInfo({
+    type: 1,
+    status: 1,
+    textMember: 1,
+    reps: 3,
+    lapses: 0,
+    interval: 10,
+    // Stale ElementInfo lastRepMs (10 days older than latest RepetitionHistory row)
+    lastRepMs: NOW - 15 * DAY_MS,
+  });
+  // Set last_repetition_day (offset 18, uint16) > 0x7ffe (0x7fff)
+  new DataView(elInfoBuf.buffer).setUint16(18, 0x7fff, true);
+
+  // Build RepetitionHistory with first two rows missing timestamps (date = 0 <= 1.0)
+  // and row 1 carrying non-positive interval 0.
+  const latestRepMs = NOW - 5 * DAY_MS;
+  const repBuf = new Uint8Array(3 * 39);
+  const rv = new DataView(repBuf.buffer);
+  // Row 0: rep 1, iv 0, date 0 (missing!)
+  rv.setUint32(0, 1, true);
+  rv.setUint16(4, 1, true);
+  rv.setUint16(6, 0, true);
+  rv.setUint16(8, 0, true);
+  rv.setFloat64(10, 0, true);
+  rv.setInt8(24, 4);
+  // Row 1: rep 2, iv 4, date 0 (missing!)
+  rv.setUint32(39 + 0, 1, true);
+  rv.setUint16(39 + 4, 2, true);
+  rv.setUint16(39 + 6, 0, true);
+  rv.setUint16(39 + 8, 4, true);
+  rv.setFloat64(39 + 10, 0, true);
+  rv.setInt8(39 + 24, 4);
+  // Row 2: rep 3, iv 10, date = latestRepMs
+  rv.setUint32(78 + 0, 1, true);
+  rv.setUint16(78 + 4, 3, true);
+  rv.setUint16(78 + 6, 0, true);
+  rv.setUint16(78 + 8, 10, true);
+  rv.setFloat64(78 + 10, epochMsToDelphi(latestRepMs), true);
+  rv.setInt8(78 + 24, 5);
+
+  const fs = memSourceFs({
+    "info/ElementInfo.dat": elInfoBuf,
+    "info/compon.dat": makeComponRecord({
+      elementNumber: 1,
+      components: [
+        { type: 0, displayAt: 0xff, member: 1 },
+        { type: 0, displayAt: 0xd7, member: 2 },
+      ],
+    }),
+    "info/RepetitionHistory.dat": repBuf,
+    "registry/text.mem": concatBytes(
+      makeMemRecord(1, q.length),
+      makeMemRecord(1 + q.length, a.length),
+    ),
+    "registry/text.ptr": makeSub([1, 2]),
+    "registry/text.rtx": concatBytes(q, a),
+  });
+
+  const plan = await planSmCollectionImport({
+    fs,
+    nowMs: NOW,
+    deviceId: DEV,
+    targetFolder: "SM Import",
+  });
+
+  assert.equal(plan.stats.historyEvents, 3);
+  assert.ok(plan.stats.historyReviewDateRepairs >= 2);
+  assert.ok(plan.stats.historyElementInfoDateRepairs >= 2);
+  assert.ok(plan.stats.historyIntervalRepairs >= 1);
+
+  const graded = plan.events.filter((e) => e.kind === "graded");
+  assert.equal(graded.length, 3);
+  assert.ok(graded[0]!.ts < graded[1]!.ts);
+  assert.ok(graded[1]!.ts < graded[2]!.ts);
+  assert.equal(Math.round((graded[2]!.ts - latestRepMs) / 1000), 0);
+  assert.equal(Math.round((plan.elements[0]!.card!.lastReview! - latestRepMs) / 1000), 0);
+});

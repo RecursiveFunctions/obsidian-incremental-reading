@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  MAX_LAST_REPETITION_DAY,
   hasWrongRepetitionGradeAndLapsesMatch,
+  repairLastRepetitionDateInElementInfo,
   repairNonPositiveIntervalDays,
+  repairReviewDateVsIntervalDiscrepancy,
 } from "../src/ir/sm-history-repair";
+
+const DAY_MS = 86_400_000;
+const DELPHI_EPOCH_MS = Date.UTC(1899, 11, 30);
+
+function epochMsToDelphi(ms: number): number {
+  return (ms - DELPHI_EPOCH_MS) / DAY_MS;
+}
 
 test("repairNonPositiveIntervalDays: clamps non-positive to 1 day", () => {
   assert.deepEqual(repairNonPositiveIntervalDays(3), {
@@ -52,4 +62,67 @@ test("hasWrongRepetitionGradeAndLapsesMatch: fail with non-increasing reps needs
     ),
     true,
   );
+});
+
+test("repairReviewDateVsIntervalDiscrepancy: back-fills missing dates from intervals and preserves valid variance", () => {
+  const lastMs = Date.UTC(2024, 0, 20);
+  const last = epochMsToDelphi(lastMs);
+  const fixed = repairReviewDateVsIntervalDiscrepancy(
+    [
+      { repetitionNumber: 1, intervalDays: 0, date: 0 },
+      { repetitionNumber: 2, intervalDays: 5, date: 0 },
+      { repetitionNumber: 3, intervalDays: 10, date: last },
+    ],
+    0,
+    lastMs,
+  );
+  assert.ok(fixed.repairedCount >= 2);
+  assert.equal(fixed.rows[2]!.date, last);
+  assert.equal(fixed.rows[1]!.date, last - 10);
+  assert.equal(fixed.rows[0]!.date, last - 10 - 5);
+
+  // Valid historical dates that had early/late review variance but are strictly monotonic stay intact.
+  const preserved = repairReviewDateVsIntervalDiscrepancy(
+    [
+      { repetitionNumber: 1, intervalDays: 3, date: last - 18 },
+      { repetitionNumber: 2, intervalDays: 5, date: last - 12 },
+      { repetitionNumber: 3, intervalDays: 10, date: last },
+    ],
+    0,
+    lastMs,
+  );
+  assert.equal(preserved.repairedCount, 0);
+  assert.equal(preserved.rows[0]!.date, last - 18);
+  assert.equal(preserved.rows[1]!.date, last - 12);
+});
+
+test("repairReviewDateVsIntervalDiscrepancy: clamps non-monotonic dates strictly after previous record + 0.01d", () => {
+  const base = epochMsToDelphi(Date.UTC(2024, 2, 10));
+  const fixed = repairReviewDateVsIntervalDiscrepancy(
+    [
+      { repetitionNumber: 1, intervalDays: 2, date: base },
+      { repetitionNumber: 2, intervalDays: 30, date: 0 },
+      { repetitionNumber: 3, intervalDays: 40, date: base + 5 },
+    ],
+    0,
+    null,
+  );
+  assert.ok(fixed.repairedCount >= 1);
+  assert.ok(fixed.rows[1]!.date > fixed.rows[0]!.date);
+  assert.equal(fixed.rows[1]!.date, base + 0.01);
+});
+
+test("repairLastRepetitionDateInElementInfo: advances stale ElementInfo when drift > 1 day and clamps day > 0x7ffe", () => {
+  const hist = epochMsToDelphi(Date.UTC(2024, 5, 10));
+  const stale = epochMsToDelphi(Date.UTC(2024, 5, 1));
+  const fixed = repairLastRepetitionDateInElementInfo(stale, [
+    { date: hist, intervalDays: 9 },
+  ]);
+  assert.equal(fixed.repairedCount, 1);
+  assert.equal(fixed.lastRepetitionDate, hist);
+
+  const clamped = repairLastRepetitionDateInElementInfo(40000, [], MAX_LAST_REPETITION_DAY + 50);
+  assert.equal(clamped.repairedCount, 1);
+  assert.equal(clamped.lastRepetitionDate, 40000);
+  assert.equal(clamped.lastRepetitionDay, MAX_LAST_REPETITION_DAY);
 });

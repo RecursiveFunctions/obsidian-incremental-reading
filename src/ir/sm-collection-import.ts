@@ -21,8 +21,11 @@ import {
   type Sm20MatrixSnapshot,
 } from "./sm20-matrix";
 import {
+  MAX_LAST_REPETITION_DAY,
   hasWrongRepetitionGradeAndLapsesMatch,
+  repairLastRepetitionDateInElementInfo,
   repairNonPositiveIntervalDays,
+  repairReviewDateVsIntervalDiscrepancy,
 } from "./sm-history-repair";
 
 const MS_PER_DAY = 86_400_000;
@@ -155,6 +158,8 @@ export interface SmCollectionImportPlan {
     historyEvents: number;
     historyIntervalRepairs: number;
     historyGradeLapseMismatches: number;
+    historyReviewDateRepairs: number;
+    historyElementInfoDateRepairs: number;
   };
 }
 
@@ -613,11 +618,14 @@ export async function planSmCollectionImport(
   }
 
   const smToElementId = new Map<number, ElementId>();
+  const elementInfoByElementId = new Map<ElementId, ElementInfoRecord>();
   for (let i = 0; i < elementInfos.length; i += 1) {
     const smId = i + 1;
     const rec = elementInfos[i]!;
     if (rec.element_status === 3) continue;
-    smToElementId.set(smId, newElementId());
+    const elementId = newElementId();
+    smToElementId.set(smId, elementId);
+    elementInfoByElementId.set(elementId, rec);
   }
 
   const elements: IrElement[] = [];
@@ -745,6 +753,8 @@ export async function planSmCollectionImport(
     historyEvents: 0,
     historyIntervalRepairs: 0,
     historyGradeLapseMismatches: 0,
+    historyReviewDateRepairs: 0,
+    historyElementInfoDateRepairs: 0,
   };
 
   let lamport = nowMs;
@@ -991,8 +1001,8 @@ export async function planSmCollectionImport(
     if (!elementId) continue;
     const targetEl = elementById.get(elementId);
     if (!targetEl || targetEl.type !== "item") continue;
-    const repMs = delphiDateToEpochMs(rep.repetition_date);
-    if (repMs === null) continue;
+    if (!Number.isFinite(rep.repetition_date)) continue;
+    const repMs = delphiDateToEpochMs(rep.repetition_date) ?? 0;
     const rawDifficultyI16 = repHistoryView
       ? repHistoryView.getInt16(rowIndex * 39 + 0x19, true)
       : -1;
@@ -1003,9 +1013,68 @@ export async function planSmCollectionImport(
   }
 
   let lastHistoryEventId: string | undefined;
-  for (const [elementId, rows] of historyByElement) {
+  for (const [elementId, rawRows] of historyByElement) {
     const targetEl = elementById.get(elementId)!;
+
+    // `Str_LastRepetitionDateInElementInfoDat` (`0x00d19de0`): ElementInfo.dat may
+    // carry a missing/stale last repetition date relative to history or day > 0x7ffe.
+    const elementInfoRec = elementInfoByElementId.get(elementId);
+    if (elementInfoRec && rawRows.length > 0) {
+      const fix = repairLastRepetitionDateInElementInfo(
+        elementInfoRec.last_repetition_date,
+        rawRows.map((row) => ({
+          date: row.rep.repetition_date,
+          intervalDays: row.rep.interval_days,
+        })),
+        elementInfoRec.last_repetition_day,
+      );
+      if (fix.repairedCount > 0) {
+        stats.historyElementInfoDateRepairs += fix.repairedCount;
+        elementInfoRec.last_repetition_date = fix.lastRepetitionDate;
+        if (fix.lastRepetitionDay !== null) {
+          elementInfoRec.last_repetition_day = Math.min(
+            MAX_LAST_REPETITION_DAY,
+            Math.max(0, fix.lastRepetitionDay),
+          );
+        }
+        const repairedMs = delphiDateToEpochMs(fix.lastRepetitionDate);
+        if (repairedMs !== null && targetEl.card) {
+          const schedDays = Math.max(1, targetEl.card.scheduledDays || 1);
+          targetEl.card = {
+            ...targetEl.card,
+            lastReview: repairedMs,
+            due: Math.min(MAX_VALID_EPOCH_MS, repairedMs + schedDays * MS_PER_DAY),
+          };
+        }
+      }
+    }
+
     const authoritativeCard = targetEl.card;
+
+    // `Str_ReviewDateVsIntervalDiscrepancyIn` (`0x00d1efe0`): back-fill missing
+    // (`<= 1.0`) or non-monotonic review dates from intervals and lastReview.
+    const lastReviewMs = authoritativeCard?.lastReview ?? null;
+    const dateFix = repairReviewDateVsIntervalDiscrepancy(
+      rawRows.map((row) => ({
+        repetitionNumber: row.rep.repetition_number,
+        intervalDays: row.rep.interval_days,
+        date: row.rep.repetition_date,
+      })),
+      0,
+      lastReviewMs,
+    );
+    if (dateFix.repairedCount > 0) {
+      stats.historyReviewDateRepairs += dateFix.repairedCount;
+      rawRows.forEach((row, i) => {
+        const fixed = dateFix.rows[i]!;
+        row.rep.repetition_date = fixed.date;
+        row.rep.interval_days = fixed.intervalDays;
+        row.repMs = delphiDateToEpochMs(fixed.date) ?? 0;
+      });
+    }
+
+    const rows = rawRows.filter((row) => row.repMs > 0);
+    if (rows.length === 0) continue;
     rows.sort((a, b) => a.repMs - b.repMs || a.rep.repetition_number - b.rep.repetition_number || a.rowIndex - b.rowIndex);
 
     for (let idx = 0; idx < rows.length; idx += 1) {
