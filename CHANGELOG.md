@@ -9,14 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Timestamp-anchored video & audio IR** (#69): Mark vault audio/video (`mp4`, `webm`, `mp3`, `m4a`, `ogg`, `wav`) or media descriptor notes as IR topics, review with an inline/side-by-side HTML5 player that restores `resumeSec` and pauses at clip bounds, extract `[start, stop]` clips (`Alt+X`) with timeline markers, and keep external streams opt-in with zero network code in `main.js`.
-- **One-click batch advance on finished due queues** (#96): `Nothing due right now` and `Session complete` screens (plus `Alt+Shift+A`) advance up to the daily ceiling of soonest-due elements into today's queue in one undoable batch.
-- **SM-20 semi-leeches, queue ordinals & diagnostic exports** (#67, #71, #72): Added semi-leech early-warning detection and mutually exclusive leech policies (`manual`, `semi-leeches`, `auto-postpone`, `auto-forget`), 13-bucket log2 interval distribution (`0x00cfc860`) plus `RecallData.csv` (`0x00ce5500`) and `DifficultyDeviation.csv` (`0x00bc6410`) exports in Stats, and `repSortFactorToSlider` (`0x00b2c9f0`), `computeBlendedQueueOrdinal` (`0x00d649c0`), and `interleaveSimilarPriority` support in `policyQueue`.
+- **Video and audio incremental reading**: You can now mark local video and audio files (`mp4`, `webm`, `mp3`, `m4a`, `ogg`, `wav`) — or notes pointing to a media stream — as IR topics. Review opens a built-in player that picks up right where you left off, pauses automatically at the end of a clip, shows your extracted clips on a timeline bar, and lets you mark start/stop points and extract timestamped clips with `Alt+X` (all 100% offline-first).
+- **Keep going when you finish today's queue**: The "Nothing due right now" and "Session complete" screens now have a one-click button (plus `Alt+Shift+A`) to pull your next batch of soonest-due cards into today's session — and you can still undo the whole batch in one step if you change your mind.
+- **Smarter leech options, interval chart, and CSV exports**: Added early "semi-leech" warnings when a card is one lapse away from becoming a leech, along with a simple setting to handle leeches manually, warn early, auto-postpone, or auto-reset on a fail. Stats also gets a new interval-spread bar chart and one-click CSV exports for recall and category difficulty, plus smoother daily tie-shuffling in custom queues.
 
 ### Fixed
 
-- **PDF multi-bullet & full-page extract highlights** (#119, #125): Unwrapped PDF.js `.markedContent` (`display: contents`) spans, decomposed DOM `Range` intersections into sorted `PdfSegment` runs, normalized reversed `data-idx` tuples, and reused the review-owned PDF leaf across cards.
-- **Single-source Ctrl multi-select & reused note paths** (#101, #105, #111, #117, #118, #122, #123, #124): Enforced single-source batching on `PendingSelections` so cross-note `Alt+X` never drops held spans, minted fresh `ElementId`/`EventId`s when creating notes at renamed/reused paths, anchored editor multi-cursor spans and overlapping quotes, and hardened orphan recovery and SM import path/history repairs (#73, #103).
+- **PDF highlights on bullet lists and full-page extracts**: Extracting multi-bullet passages or whole pages from PDFs now highlights every selected line consistently instead of skipping bullets or paragraphs, and Review reuses its own PDF tab cleanly as you move from card to card.
+- **Safer multi-select holds and reused note names**: Holding `Ctrl` selections in one note or PDF and pressing `Alt+X` somewhere else now warns you instead of quietly dropping what you held. Creating new clozes or extracts at a filename that used to belong to a renamed or deleted note works reliably again, alongside fixes for multi-cursor editor extracts, orphan recovery, and SuperMemo history imports.
 
 ## [0.15.4] — 2026-11-23
 

@@ -8,7 +8,7 @@
 | **Ship** | Milestone / feature / fix batch is complete and should reach users | Bumped via `npm run ship:*` | New Release |
 
 - Keep **`main`** at or ahead of the latest **stable tag** so the default branch matches what you released.
-- Update **`CHANGELOG.md`** before or as part of ship (move `[Unreleased]` into the new `## [X.Y.Z]` section, and keep each version section body **≤ 2,000 characters** so the Discord release bot posts it without truncation).
+- Update **`CHANGELOG.md`** before or as part of ship (move `[Unreleased]` into the new `## [X.Y.Z]` section, **write in casual, plain user-facing language**, and keep each version section body **≤ 2,000 characters** so the Discord release bot posts it without truncation).
 - Avoid **mega commits** that combine large features with a semver bump; land features in normal commits, then ship.
 
 Agents: full rules in `AGENTS.md` and `.cursor/rules/brat-version-on-commit.mdc`.
