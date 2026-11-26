@@ -19,7 +19,7 @@ Docs / tests / CI only → commit and push, no tag.
 
 A **BRAT-visible release** is done only when:
 
-1. `CHANGELOG.md` documents the version (usually move notes out of `[Unreleased]`), with the version section body **≤ 2,000 characters** so the Discord release bot posts the full entry.
+1. `CHANGELOG.md` documents the version (usually move notes out of `[Unreleased]`), written in **casual, plain user-facing language** (no internal function names or hex offsets) and with the version section body **≤ 2,000 characters** so the Discord release bot posts the full entry.
 2. `npm run ship:patch|minor|major` has run (tests + build + version bump + tag + push).
 3. GitHub Release at that tag has **`main.js`**, **`manifest.json`**, **`styles.css`** and the Release workflow is green.
 

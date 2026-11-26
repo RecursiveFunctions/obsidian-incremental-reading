@@ -16,15 +16,79 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing semver tag to publish (e.g. 0.5.6 or 0.5.6-feat.neural-review.1)"
+        description: "Existing semver tag to publish or edit changelog for (e.g. 0.16.0)"
         required: true
+        type: string
+      discord_message_id:
+        description: "Optional Discord message ID or message link to edit in-place from main's CHANGELOG.md (skips release build)"
+        required: false
         type: string
 
 permissions:
   contents: write
 
 jobs:
+  edit-discord:
+    if: github.event_name == 'workflow_dispatch' && inputs.discord_message_id != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Edit Discord changelog message in-place
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
+          TAG: ${{ inputs.tag }}
+          RAW_MSG: ${{ inputs.discord_message_id }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          node - <<'EOF'
+          const fs = require("fs");
+          if (!process.env.DISCORD_WEBHOOK) {
+            console.error("DISCORD_CHANGELOG_WEBHOOK secret is not set");
+            process.exit(1);
+          }
+          const tag = process.env.TAG.trim();
+          const rawMsg = process.env.RAW_MSG.trim();
+          const idMatch = rawMsg.match(/(\d{15,25})\/?$/);
+          if (!idMatch) {
+            console.error("Invalid Discord message ID or link:", rawMsg);
+            process.exit(1);
+          }
+          const msgId = idMatch[1];
+          const md = fs.readFileSync("CHANGELOG.md", "utf8");
+          const esc = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const re = new RegExp(`^## \\[${esc}\\][^\n]*\n([\\s\\S]*?)(?=^## \\[|$(?!\\n))`, "m");
+          const match = md.match(re);
+          if (!match) {
+            console.error(`Tag section ## [${tag}] not found in CHANGELOG.md`);
+            process.exit(1);
+          }
+          const notes = match[1].trim().slice(0, 2000);
+          const baseWebhook = process.env.DISCORD_WEBHOOK.split("?")[0].replace(/\/+$/, "");
+          const payload = {
+            embeds: [{
+              title: `obsidian-incremental-reading ${tag}`,
+              url: `${process.env.REPO_URL}/releases/tag/${tag}`,
+              description: notes,
+              color: 0x7c3aed
+            }]
+          };
+          fetch(`${baseWebhook}/messages/${msgId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          }).then(async (r) => {
+            if (!r.ok) {
+              console.error("Discord PATCH failed:", r.status, await r.text());
+              process.exit(1);
+            }
+            console.log(`Updated Discord message ${msgId} for ${tag}`);
+          });
+          EOF
+
   publish:
+    if: github.event_name != 'workflow_dispatch' || inputs.discord_message_id == ''
     runs-on: ubuntu-24.04
     steps:
       - name: Resolve release tag
@@ -131,11 +195,16 @@ jobs:
             }]
           };
 
-          fetch(process.env.DISCORD_WEBHOOK, {
+          const baseWebhook = process.env.DISCORD_WEBHOOK.split("?")[0].replace(/\/+$/, "");
+          fetch(`${baseWebhook}?wait=true`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
-          }).then(r => {
+          }).then(async (r) => {
             if (!r.ok) process.exit(1);
+            const data = await r.json().catch(() => null);
+            if (data && data.id) {
+              console.log(`Discord changelog message ID: ${data.id}`);
+            }
           });
           EOF
