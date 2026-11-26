@@ -2,9 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   PendingSelections,
+  formatHeldSelectionConflictNotice,
   heldSelectionKey,
   isMultiSelectModifier,
   mergeWithLive,
+  selectionSourcePath,
   type PdfHeldSelection,
 } from "../src/ir/multi-select";
 
@@ -30,15 +32,49 @@ test("PendingSelections accumulates in order and dedupes identical spans", () =>
   assert.equal(p.size, 0);
 });
 
-test("body selections key on path + offsets, drop() removes by path", () => {
+test("body selections key on path + offsets, and single-source constraint rejects cross-note holds without dropping existing spans (#123)", () => {
   const p = new PendingSelections();
-  p.add({ kind: "body", sourcePath: "n.md", text: "x", start: 0, end: 1 });
-  p.add({ kind: "body", sourcePath: "n.md", text: "x", start: 0, end: 1 });
-  p.add({ kind: "body", sourcePath: "m.md", text: "y", start: 5, end: 6 });
-  assert.equal(p.size, 2);
-  assert.equal(p.body("n.md").length, 1);
-  p.drop("n.md");
+  assert.equal(p.sourcePath(), null);
+  assert.deepEqual(
+    p.tryAdd({ kind: "body", sourcePath: "n.md", text: "x", start: 0, end: 1 }),
+    { ok: true },
+  );
+  assert.equal(p.sourcePath(), "n.md");
+  assert.deepEqual(
+    p.tryAdd({ kind: "body", sourcePath: "n.md", text: "x", start: 0, end: 1 }),
+    { ok: false, reason: "duplicate" },
+  );
+  // Attempting to hold from another note or PDF is rejected without dropping n.md's held span
+  assert.deepEqual(
+    p.tryAdd({ kind: "body", sourcePath: "m.md", text: "y", start: 5, end: 6 }),
+    { ok: false, reason: "source-mismatch", heldSourcePath: "n.md" },
+  );
+  assert.equal(p.add(pdfSel("from pdf")), false);
   assert.equal(p.size, 1);
+  assert.equal(p.body("n.md").length, 1);
+  assert.equal(p.conflictSourcePath("n.md"), null);
+  assert.equal(p.conflictSourcePath("m.md"), "n.md");
+  assert.match(
+    formatHeldSelectionConflictNotice("n.md"),
+    /n\.md.*Esc/i,
+  );
+  assert.match(
+    formatHeldSelectionConflictNotice("slot:el_abc"),
+    /review card.*Esc/i,
+  );
+
+  p.drop("n.md");
+  assert.equal(p.size, 0);
+  assert.equal(p.sourcePath(), null);
+  // After clearing/dropping n.md, m.md can now be held
+  assert.equal(
+    p.add({ kind: "body", sourcePath: "m.md", text: "y", start: 5, end: 6 }),
+    true,
+  );
+  assert.equal(
+    selectionSourcePath({ kind: "body", sourcePath: "m.md", text: "y", start: 5, end: 6 }),
+    "m.md",
+  );
   assert.equal(
     heldSelectionKey({ kind: "body", sourcePath: "m.md", text: "y", start: 5, end: 6 }),
     "body:m.md:5-6",

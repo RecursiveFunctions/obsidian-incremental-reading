@@ -5,7 +5,11 @@
  * the API; the held set still works, it just isn't painted.
  */
 
-import { PendingSelections, type HeldSelection } from "./multi-select";
+import {
+  PendingSelections,
+  type HeldSelection,
+  type HoldAttemptResult,
+} from "./multi-select";
 
 export const HELD_HIGHLIGHT_NAME = "ir-held-selection";
 const HELD_LAYER_CLASS = "ir-pdf-held-layer";
@@ -77,13 +81,19 @@ export class MultiSelectController {
 
   constructor(private readonly onChange?: (count: number) => void) {}
 
-  /** Hold a span; paints `range` when given. False when it was a duplicate. */
-  hold(sel: HeldSelection, range: Range | null): boolean {
-    if (!this.pending.add(sel)) return false;
+  /** Hold a span with structured rejection details; paints `range` on success. */
+  holdWithResult(sel: HeldSelection, range: Range | null): HoldAttemptResult {
+    const res = this.pending.tryAdd(sel);
+    if (!res.ok) return res;
     if (range) this.ranges.push(range.cloneRange());
     this.repaint();
     this.onChange?.(this.pending.size);
-    return true;
+    return res;
+  }
+
+  /** Hold a span; paints `range` when given. False when duplicate or mismatched source. */
+  hold(sel: HeldSelection, range: Range | null): boolean {
+    return this.holdWithResult(sel, range).ok;
   }
 
   /** Drop the most recent hold. */

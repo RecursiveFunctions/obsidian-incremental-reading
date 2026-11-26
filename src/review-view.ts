@@ -26,7 +26,11 @@ import { formatIntervalShort, previewGradeDelays, PREVIEW_GRADES } from "./ir/gr
 import { hasOcclusion } from "./ir/occlusion";
 import { fuzzyLocateInBody } from "./ir/fuzzy-text";
 import type { MultiSelectController } from "./ir/multi-select-dom";
-import { mergeWithLive, type BodyHeldSelection } from "./ir/multi-select";
+import {
+  formatHeldSelectionConflictNotice,
+  mergeWithLive,
+  type BodyHeldSelection,
+} from "./ir/multi-select";
 import { joinSelectionTexts } from "./ir/pdf-canvas";
 import {
   createClozeFromText,
@@ -1331,7 +1335,7 @@ export class IrReviewView extends ItemView {
     const doc = this.contentEl.ownerDocument;
     const live = doc.getSelection();
     const range = live && live.rangeCount > 0 ? live.getRangeAt(0) : null;
-    const ok = ms.hold(
+    const res = ms.holdWithResult(
       {
         kind: "body",
         sourcePath: this.heldKey(slot),
@@ -1341,8 +1345,11 @@ export class IrReviewView extends ItemView {
       },
       range,
     );
+    if (!res.ok && res.reason === "source-mismatch" && res.heldSourcePath) {
+      new Notice(formatHeldSelectionConflictNotice(res.heldSourcePath));
+    }
     this.updateHeldSpanBadge();
-    return ok;
+    return res.ok;
   }
 
   public updateHeldSpanBadge(): void {
@@ -1350,9 +1357,8 @@ export class IrReviewView extends ItemView {
     if (!badge) return;
     const slot = this.current;
     const heldCount = slot
-      ? (this.multiSelect?.pending.body(this.heldKey(slot)).length ?? 0) ||
-        (this.multiSelect?.size ?? 0)
-      : (this.multiSelect?.size ?? 0);
+      ? (this.multiSelect?.pending.body(this.heldKey(slot)).length ?? 0)
+      : 0;
     if (heldCount <= 0 || this.sessionComplete) {
       badge.empty();
       badge.addClass("is-hidden");
@@ -5084,6 +5090,13 @@ export class IrReviewView extends ItemView {
       await this.refreshDecorations?.();
       await this.renderCard();
       return created;
+    }
+    const heldConflict = this.multiSelect?.pending.conflictSourcePath(
+      this.heldKey(slot),
+    );
+    if (heldConflict && !this.pdfSourcePath(slot)) {
+      new Notice(formatHeldSelectionConflictNotice(heldConflict));
+      return;
     }
     const held = this.multiSelect?.pending.body(this.heldKey(slot)) ?? [];
     const liveRes = this.resolveSelection({ includeHeadingPrefix: true });

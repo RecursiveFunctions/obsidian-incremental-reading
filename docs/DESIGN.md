@@ -124,7 +124,9 @@ viewer in a split, focuses it, and offers **Focus PDF** to bring it back
 model above, without a second anchoring scheme.
 
 - **Ctrl multi-select.** A pure `PendingSelections` set
-  (`src/ir/multi-select.ts`, dedupe by source + span) plus a DOM
+  (`src/ir/multi-select.ts`, dedupe by source + span, enforcing a
+  single-source batch invariant so spans held in one note, PDF, or review
+  card are never silently dropped if `Alt+X` is pressed elsewhere) plus a DOM
   controller that paints held ranges with `CSS.highlights`
   (`multi-select-dom.ts`). One rule on every surface: the first span
   carries the anchor, all spans join the stored `text`

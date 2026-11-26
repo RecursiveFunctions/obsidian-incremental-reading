@@ -226,6 +226,7 @@ import {
 } from "./src/ir/pdf-rect-select";
 import { MultiSelectController } from "./src/ir/multi-select-dom";
 import {
+  formatHeldSelectionConflictNotice,
   isMultiSelectModifier,
   mergeWithLive,
   type BodyHeldSelection,
@@ -2514,49 +2515,63 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     const file = mv.file;
     if (!file) return;
+    const conflict = this.multiSelect.pending.conflictSourcePath(file.path);
+    if (conflict) {
+      new Notice(formatHeldSelectionConflictNotice(conflict));
+      return;
+    }
     if (mv.editor.getSelection().trim()) {
       await this.extractSelection(mv.editor, file, opts);
       return;
     }
+    const held = this.multiSelect.pending.body(file.path);
     const range = this.previewSelectionRange(mv);
     const root = this.previewRoot(mv);
-    if (!range || !root) {
+    let live: BodyHeldSelection | null = null;
+    if (range && root) {
+      const body = stripFrontmatter(await this.app.vault.cachedRead(file));
+      const mapped =
+        mapRenderedSelectionToRaw(body, root, range, { includeHeadingPrefix: true }) ??
+        (() => {
+          const hit = fuzzyLocateInBody(body, range.toString());
+          if (!hit) return null;
+          const expanded = expandSelectionAroundHeadingPrefix(
+            body,
+            hit.start,
+            hit.end,
+          );
+          return expanded.start === hit.start && expanded.end === hit.end
+            ? hit
+            : {
+                start: expanded.start,
+                end: expanded.end,
+                text: body.slice(expanded.start, expanded.end),
+              };
+        })();
+      if (!mapped && held.length === 0) {
+        new Notice(
+          "Incremental Reading: could not map that selection to the note text. Select a little more or less and try again.",
+        );
+        return;
+      }
+      if (mapped) {
+        live = {
+          kind: "body",
+          sourcePath: file.path,
+          text: mapped.text,
+          start: mapped.start,
+          end: mapped.end,
+        };
+      }
+    } else if (held.length === 0) {
       new Notice("Incremental Reading: nothing selected.");
       return;
     }
-    const body = stripFrontmatter(await this.app.vault.cachedRead(file));
-    const mapped =
-      mapRenderedSelectionToRaw(body, root, range, { includeHeadingPrefix: true }) ??
-      (() => {
-        const hit = fuzzyLocateInBody(body, range.toString());
-        if (!hit) return null;
-        const expanded = expandSelectionAroundHeadingPrefix(
-          body,
-          hit.start,
-          hit.end,
-        );
-        return expanded.start === hit.start && expanded.end === hit.end
-          ? hit
-          : {
-              start: expanded.start,
-              end: expanded.end,
-              text: body.slice(expanded.start, expanded.end),
-            };
-      })();
-    if (!mapped) {
-      new Notice(
-        "Incremental Reading: could not map that selection to the note text. Select a little more or less and try again.",
-      );
+    const spans = mergeWithLive(held, live);
+    if (spans.length === 0) {
+      new Notice("Incremental Reading: nothing selected.");
       return;
     }
-    const held = this.multiSelect.pending.body(file.path);
-    const spans = mergeWithLive(held, {
-      kind: "body",
-      sourcePath: file.path,
-      text: mapped.text,
-      start: mapped.start,
-      end: mapped.end,
-    });
     const first = spans[0]!;
     await this.extractMappedBodyRange(
       file,
@@ -2915,6 +2930,11 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<IrElement | undefined> {
     const file = sel?.file ?? this.heldPdfFile();
     if (!file) return undefined;
+    const conflict = this.multiSelect.pending.conflictSourcePath(file.path);
+    if (conflict) {
+      new Notice(formatHeldSelectionConflictNotice(conflict));
+      return undefined;
+    }
     const live: PdfHeldSelection | null =
       sel && sel.file.path === file.path
         ? {
@@ -7780,7 +7800,10 @@ export default class IncrementalReadingPlugin extends Plugin {
         };
         const sel = document.getSelection();
         const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-        this.multiSelect.hold(held, range);
+        const res = this.multiSelect.holdWithResult(held, range);
+        if (!res.ok && res.reason === "source-mismatch" && res.heldSourcePath) {
+          new Notice(formatHeldSelectionConflictNotice(res.heldSourcePath));
+        }
         return;
       }
       const rv = this.getActiveReviewView();
@@ -7812,7 +7835,10 @@ export default class IncrementalReadingPlugin extends Plugin {
             start: mapped.start,
             end: mapped.end,
           };
-          this.multiSelect.hold(held, range);
+          const res = this.multiSelect.holdWithResult(held, range);
+          if (!res.ok && res.reason === "source-mismatch" && res.heldSourcePath) {
+            new Notice(formatHeldSelectionConflictNotice(res.heldSourcePath));
+          }
         })();
       }
     }, 0);

@@ -37,6 +37,25 @@ export interface BodyHeldSelection {
 
 export type HeldSelection = PdfHeldSelection | BodyHeldSelection;
 
+export type HoldAttemptResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: "empty" | "duplicate" | "source-mismatch";
+      heldSourcePath?: string;
+    };
+
+export function selectionSourcePath(sel: HeldSelection): string {
+  return sel.kind === "pdf" ? sel.pdfPath : sel.sourcePath;
+}
+
+export function formatHeldSelectionConflictNotice(heldSourcePath: string): string {
+  const label = heldSourcePath.startsWith("slot:")
+    ? "another review card"
+    : `"${heldSourcePath}"`;
+  return `Incremental Reading: held selections belong to ${label}. Extract there first or press Esc to clear.`;
+}
+
 /** Identity used for dedupe: same source + same span = same hold. */
 export function heldSelectionKey(s: HeldSelection): string {
   if (s.kind === "pdf") {
@@ -51,13 +70,43 @@ export function heldSelectionKey(s: HeldSelection): string {
 export class PendingSelections {
   private items: HeldSelection[] = [];
 
-  /** Add a span; returns false if an identical span is already held. */
-  add(sel: HeldSelection): boolean {
-    if (!sel.text.trim()) return false;
+  /** Source key of the currently held set, or null when empty. */
+  sourcePath(): string | null {
+    return this.items.length > 0 ? selectionSourcePath(this.items[0]!) : null;
+  }
+
+  /**
+   * Non-null when `targetSourcePath` conflicts with already-held spans from a
+   * different note, PDF, or review card.
+   */
+  conflictSourcePath(targetSourcePath: string): string | null {
+    const existing = this.sourcePath();
+    if (!existing || existing === targetSourcePath) return null;
+    return existing;
+  }
+
+  /**
+   * Add a span while enforcing the single-source invariant: all held spans in
+   * one `PendingSelections` batch must originate from the same note, PDF, or
+   * review slot so extracting elsewhere never silently drops them (#123).
+   */
+  tryAdd(sel: HeldSelection): HoldAttemptResult {
+    if (!sel.text.trim()) return { ok: false, reason: "empty" };
+    const conflict = this.conflictSourcePath(selectionSourcePath(sel));
+    if (conflict) {
+      return { ok: false, reason: "source-mismatch", heldSourcePath: conflict };
+    }
     const key = heldSelectionKey(sel);
-    if (this.items.some((s) => heldSelectionKey(s) === key)) return false;
+    if (this.items.some((s) => heldSelectionKey(s) === key)) {
+      return { ok: false, reason: "duplicate" };
+    }
     this.items.push(sel);
-    return true;
+    return { ok: true };
+  }
+
+  /** Add a span; returns false if empty, duplicate, or from a different source. */
+  add(sel: HeldSelection): boolean {
+    return this.tryAdd(sel).ok;
   }
 
   /** Remove the most recently held span (Ctrl+Z-style undo of a hold). */
