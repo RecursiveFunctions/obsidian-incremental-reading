@@ -5,13 +5,16 @@
 
 import { DEFAULT_MERCY_WEIGHTS, type MercyWeights } from "./mercy";
 import type { FinalDrillMode } from "./drill";
+import type { LeechHandlingPolicy } from "./leech";
 export type { MercyWeights } from "./mercy";
 export type { FinalDrillMode } from "./drill";
+export type { LeechHandlingPolicy } from "./leech";
 
 export interface IrSettings {
   schemaVersion: 2;
   primaryScheduler: "sm20" | "fsrs";
   finalDrillMode: FinalDrillMode;
+  leechPolicy: LeechHandlingPolicy;
   randomizeDrill: boolean;
   sortingPolicy: SortingPolicySettings;
   autoPostponePolicy: AutoPostponePolicy;
@@ -184,6 +187,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   schemaVersion: 2,
   primaryScheduler: "sm20",
   finalDrillMode: "again-and-hard",
+  leechPolicy: "manual",
   randomizeDrill: false,
   sortingPolicy: {
     version: 1,

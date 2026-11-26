@@ -3,6 +3,7 @@ import {
   type IrSettings,
   type ReprioritizationAction,
 } from "./settings-data";
+import { normalizeLeechPolicy } from "./leech";
 
 /**
  * Settings keys that need a one-time grandfather when introduced.
@@ -60,6 +61,7 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
     saved.finalDrillMode === "again" || saved.finalDrillMode === "off"
       ? saved.finalDrillMode
       : "again-and-hard";
+  result.leechPolicy = normalizeLeechPolicy(saved.leechPolicy);
   result.randomizeDrill = saved.randomizeDrill === true;
   result.sortingPolicy = {
     version: 1,

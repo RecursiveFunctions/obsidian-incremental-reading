@@ -3,8 +3,13 @@ import { test } from "node:test";
 import {
   buildCardResetCard,
   diagnoseLeech,
+  diagnoseSemiLeech,
   findLeeches,
+  findSemiLeeches,
   isLeech,
+  isSemiLeech,
+  normalizeLeechPolicy,
+  planLeechReviewIntervention,
 } from "../src/ir/leech";
 import { fold } from "../src/ir/log";
 import { newElement, validateIrEvent, type IrElement, type IrEvent } from "../src/ir/model";
@@ -187,4 +192,128 @@ test("cured long-interval items exit leech wizard and post-reset failRate flags 
   assert.equal(hits.length, 1);
   assert.ok(hits[0]!.reasons.includes("high-fail-rate"));
   assert.equal(hits[0]!.failRate, 0.5);
+});
+
+test("semi-leech detection flags items 1 lapse or near fail-rate below full leech threshold without overlapping full leeches (#67)", () => {
+  const semi = makeItem("semi_1", {
+    card: {
+      due: NOW,
+      stability: 3,
+      difficulty: 6,
+      elapsedDays: 2,
+      scheduledDays: 4,
+      reps: 5,
+      lapses: 4, // 1 below DEFAULT minLapses = 5
+      state: 2,
+    },
+  });
+  const full = makeItem("full_1", {
+    card: {
+      due: NOW,
+      stability: 2,
+      difficulty: 7,
+      elapsedDays: 1,
+      scheduledDays: 2,
+      reps: 6,
+      lapses: 5,
+      state: 2,
+    },
+  });
+  assert.equal(isLeech(semi), false);
+  assert.equal(isSemiLeech(semi), true);
+  assert.deepEqual(diagnoseSemiLeech(semi)?.reasons, ["near-lapses"]);
+  assert.equal(isLeech(full), true);
+  assert.equal(isSemiLeech(full), false);
+
+  const state = {
+    elements: new Map([
+      [semi.id, semi],
+      [full.id, full],
+    ]),
+  };
+  assert.deepEqual(
+    findSemiLeeches(state).map((s) => s.elementId),
+    [semi.id],
+  );
+});
+
+test("mutually exclusive leech policies normalize cleanly and plan review interventions on Again lapses (#67)", () => {
+  assert.equal(normalizeLeechPolicy(undefined), "manual");
+  assert.equal(normalizeLeechPolicy("bogus"), "manual");
+  assert.equal(normalizeLeechPolicy("semi-leeches"), "semi-leeches");
+  assert.equal(normalizeLeechPolicy("auto-postpone"), "auto-postpone");
+  assert.equal(normalizeLeechPolicy("auto-forget"), "auto-forget");
+
+  const leechAfterAgain = makeItem("leech_again", {
+    priority: 80,
+    card: {
+      due: NOW + DAY_MS,
+      stability: 1,
+      difficulty: 8,
+      elapsedDays: 2,
+      scheduledDays: 1,
+      reps: 7,
+      lapses: 5,
+      state: 2,
+    },
+  });
+
+  // Passing grade never triggers auto-forget / auto-postpone
+  assert.equal(
+    planLeechReviewIntervention({
+      elementAfterGrade: leechAfterAgain,
+      grade: 3,
+      policy: "auto-forget",
+      nowMs: NOW,
+    }).kind,
+    "none",
+  );
+
+  // Auto-forget resets card state
+  const forgetPlan = planLeechReviewIntervention({
+    elementAfterGrade: leechAfterAgain,
+    grade: 1,
+    policy: "auto-forget",
+    nowMs: NOW,
+  });
+  assert.equal(forgetPlan.kind, "auto-forget");
+  if (forgetPlan.kind === "auto-forget") {
+    assert.equal(forgetPlan.resetCard.lapses, 0);
+    assert.equal(forgetPlan.resetCard.reps, 0);
+    assert.equal(forgetPlan.resetCard.due, NOW);
+  }
+
+  // Auto-postpone pushes card due out by priority-scaled postpone ceiling
+  const postponePlan = planLeechReviewIntervention({
+    elementAfterGrade: leechAfterAgain,
+    grade: 1,
+    policy: "auto-postpone",
+    nowMs: NOW,
+  });
+  assert.equal(postponePlan.kind, "auto-postpone");
+  if (postponePlan.kind === "auto-postpone") {
+    assert.ok(postponePlan.postponeDays >= 2);
+    assert.equal(postponePlan.postponedCard.due, NOW + postponePlan.postponeDays * DAY_MS);
+  }
+
+  // Semi-leeches policy warns early when item reaches semi-leech threshold
+  const semiAfterAgain = makeItem("semi_again", {
+    card: {
+      due: NOW + DAY_MS,
+      stability: 2,
+      difficulty: 6,
+      elapsedDays: 2,
+      scheduledDays: 2,
+      reps: 5,
+      lapses: 4,
+      state: 2,
+    },
+  });
+  const warnPlan = planLeechReviewIntervention({
+    elementAfterGrade: semiAfterAgain,
+    grade: 1,
+    policy: "semi-leeches",
+    nowMs: NOW,
+  });
+  assert.equal(warnPlan.kind, "warn-semi-leech");
 });

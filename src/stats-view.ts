@@ -8,7 +8,10 @@ import { labelFor } from "./ir/labels";
 import {
   DEFAULT_LEECH_CRITERIA,
   findLeeches,
+  findSemiLeeches,
+  normalizeLeechPolicy,
   type LeechDiagnosis,
+  type SemiLeechDiagnosis,
 } from "./ir/leech";
 import type { IrElement, IrEvent } from "./ir/model";
 import type { LogState } from "./ir/log";
@@ -190,6 +193,11 @@ export class IrStatsView extends ItemView {
       maxLapseIntervalDays: this.leechMaxInterval,
       maxPostpones: this.leechMaxPostpones,
     });
+    const semiLeeches: SemiLeechDiagnosis[] = findSemiLeeches(state, events, {
+      minLapses: this.leechMinLapses,
+      maxLapseIntervalDays: this.leechMaxInterval,
+      maxPostpones: this.leechMaxPostpones,
+    });
 
     const header = container.createDiv({ cls: "ir-stats-header" });
     header.createEl("h4", { text: "IR stats" });
@@ -242,7 +250,7 @@ export class IrStatsView extends ItemView {
       this.renderReviewHistory(body, grades, stats, windowStart, now);
     } else if (this.activeTab === "triage") {
       this.renderTrueRetentionTrend(body, events, now);
-      this.renderLeechTriage(body, state, leeches);
+      this.renderLeechTriage(body, state, leeches, semiLeeches);
     } else {
       this.renderScheduler(body, events, state);
       this.renderPriorityForgettingIndex(body, priorityGrades, elements);
@@ -863,11 +871,34 @@ export class IrStatsView extends ItemView {
     body: HTMLElement,
     state: LogState,
     leeches: readonly LeechDiagnosis[],
+    semiLeeches: readonly SemiLeechDiagnosis[] = [],
   ): void {
     const section = body.createDiv({ cls: "ir-stats-section ir-stats-leech-section" });
     section.createDiv({
       cls: "ir-stats-section-title",
-      text: `Leech & High-Lapse (${leeches.length})`,
+      text: `Leech & High-Lapse (${leeches.length}${semiLeeches.length > 0 ? ` · ${semiLeeches.length} semi` : ""})`,
+    });
+
+    const policyRow = section.createDiv({ cls: "ir-stats-leech-controls" });
+    const policyLabel = policyRow.createEl("label", { cls: "ir-stats-leech-control" });
+    policyLabel.createSpan({ text: "Policy" });
+    const policySelect = policyLabel.createEl("select");
+    for (const [val, text] of [
+      ["manual", "Manual triage"],
+      ["semi-leeches", "Semi-leeches warning"],
+      ["auto-postpone", "Auto-postpone"],
+      ["auto-forget", "Auto-forget"],
+    ] as const) {
+      const opt = policySelect.createEl("option", { text });
+      opt.value = val;
+      if (this.host.settings.leechPolicy === val) opt.selected = true;
+    }
+    policySelect.addEventListener("change", () => {
+      this.host.settings.leechPolicy = normalizeLeechPolicy(policySelect.value);
+      void this.host.saveSettings();
+      if (this.cachedSnapshot) {
+        this.renderFromSnapshot(this.cachedSnapshot.state, this.cachedSnapshot.events);
+      }
     });
 
     const thresholdDetails = section.createEl("details", {
@@ -914,7 +945,10 @@ export class IrStatsView extends ItemView {
     if (leeches.length === 0) {
       section.createDiv({
         cls: "ir-stats-note",
-        text: "No leeches or high-lapse items detected.",
+        text:
+          semiLeeches.length > 0
+            ? `No full leeches yet (${semiLeeches.length} semi-leech item${semiLeeches.length === 1 ? "" : "s"} 1 lapse below threshold).`
+            : "No leeches or high-lapse items detected.",
       });
       return;
     }

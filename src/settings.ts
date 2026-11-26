@@ -8,6 +8,7 @@ import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type IncrementalReadingPlugin from "../main";
 import { PRIORITY_MAX, PRIORITY_MIN } from "./ir/model";
 import { cloneDefaultSettings } from "./ir/settings-data";
+import { normalizeLeechPolicy } from "./ir/leech";
 import { getSm20MatrixStats } from "./ir/sm20-matrix";
 import {
   sliderToRepSortFactor,
@@ -113,6 +114,25 @@ export class IrSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.finalDrillMode =
               value === "again" || value === "off" ? value : "again-and-hard";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Leech handling policy")
+      .setDesc(
+        "SM-20 mutually exclusive action when an item lapses repeatedly (Again): " +
+          "Manual triage in Stats, Semi-leeches early warning, Auto-postpone by priority ceiling, or Auto-forget (reset schedule).",
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("manual", "Manual triage (Stats & Collection)")
+          .addOption("semi-leeches", "Semi-leeches (early warning on lapse)")
+          .addOption("auto-postpone", "Auto-postpone on lapse")
+          .addOption("auto-forget", "Auto-forget (reset schedule) on lapse")
+          .setValue(this.plugin.settings.leechPolicy)
+          .onChange(async (value) => {
+            this.plugin.settings.leechPolicy = normalizeLeechPolicy(value);
             await this.plugin.saveSettings();
           }),
       );

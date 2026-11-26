@@ -64,6 +64,7 @@ import {
 } from "./topic";
 import type { IrSettings } from "./settings";
 import type { IrLedger } from "./ir/ledger";
+import { planLeechReviewIntervention } from "./ir/leech";
 import { elementIdForPath } from "./ir/migrate";
 import { buildRecordedNoteEvents } from "./ir/record-note";
 import {
@@ -6105,6 +6106,30 @@ export class IrReviewView extends ItemView {
       if (updatedSlotEl) {
         slot.element = updatedSlotEl;
       }
+    }
+    const leechIntervention = planLeechReviewIntervention({
+      elementAfterGrade: slot.element,
+      grade: gradeNumber(g),
+      policy: this.settings.leechPolicy,
+      nowMs: Date.now(),
+    });
+    if (leechIntervention.kind === "auto-forget") {
+      await this.emit("card-reset", slot.id, {
+        card: leechIntervention.resetCard,
+      });
+      slot.element = { ...slot.element, card: leechIntervention.resetCard };
+      this.elementsById.set(slot.id, slot.element);
+      this.flash(leechIntervention.message);
+    } else if (leechIntervention.kind === "auto-postpone") {
+      await this.emit("mercy-postponed", slot.id, {
+        newDue: leechIntervention.postponedCard.due,
+        batchId: `leech_${Date.now()}`,
+      });
+      slot.element = { ...slot.element, card: leechIntervention.postponedCard };
+      this.elementsById.set(slot.id, slot.element);
+      this.flash(leechIntervention.message);
+    } else if (leechIntervention.kind === "warn-semi-leech") {
+      this.flash(leechIntervention.message);
     }
     if (slot.file) {
       await quietFrontmatterWrite(async () => {
