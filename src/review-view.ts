@@ -64,7 +64,8 @@ import {
 } from "./topic";
 import type { IrSettings } from "./settings";
 import type { IrLedger } from "./ir/ledger";
-import { elementIdForPath, migrateNotes } from "./ir/migrate";
+import { elementIdForPath } from "./ir/migrate";
+import { buildRecordedNoteEvents } from "./ir/record-note";
 import {
   clampPriority,
   isReadType,
@@ -5528,8 +5529,8 @@ export class IrReviewView extends ItemView {
       hint,
     );
     const created = await this.afterChildCreated(result);
-    if (!slot.file && result.file) {
-      const id = elementIdForPath(result.file.path);
+    if (!slot.file && created) {
+      const id = created.id;
       await this.emit("reparented", id, { parentId: slot.id });
       const el = this.elementsById.get(id);
       if (el) {
@@ -5551,7 +5552,7 @@ export class IrReviewView extends ItemView {
     await this.reloadCurrentRaw();
     await this.refreshDecorations?.();
     await this.renderCard();
-    if (result.file) {
+    if (created) {
       this.flash(`Cloze item created · ${this.remainingInSession()} left`);
     }
   }
@@ -5689,13 +5690,22 @@ export class IrReviewView extends ItemView {
         fm = { ...f };
       });
       const now = Date.now();
-      const events = migrateNotes(
-        [{ path: result.file.path, frontmatter: fm }],
+      const snap = await this.ledger.loadSnapshot();
+      const recorded = buildRecordedNoteEvents(
+        { path: result.file.path, frontmatter: fm },
         now,
+        {
+          liveElements: snap.state.elements.values(),
+          historicalEvents: snap.events,
+        },
       );
+      if (recorded.events.length === 0 && recorded.element) {
+        created = recorded.element;
+        this.elementsById.set(created.id, created);
+      }
       let lamport = Math.max(now, await this.ledger.nextLamport());
       const device = await this.ledger.getDeviceId();
-      for (const ev of events) {
+      for (const ev of recorded.events) {
         ev.lamport = lamport++;
         ev.device = device;
         if (ev.kind === "element-created") {
@@ -5718,6 +5728,9 @@ export class IrReviewView extends ItemView {
       }
     } catch (e) {
       console.error("Incremental Reading: recording child element failed", e);
+      new Notice(
+        "Incremental Reading: could not record the new child element in the ledger. See the developer console.",
+      );
     }
     if (created) {
       await this.exciteIfNeural(created.id);

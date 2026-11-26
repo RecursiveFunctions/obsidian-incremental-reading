@@ -108,6 +108,7 @@ import {
   type ObsidianDataAdapter,
 } from "./src/ir/obsidian-vault-fs";
 import { migrateNotes, elementIdForPath, type FrontmatterNote } from "./src/ir/migrate";
+import { buildRecordedNoteEvents } from "./src/ir/record-note";
 import {
   planOrphanRecoveries,
   uniquePromotedNotePath,
@@ -5050,8 +5051,8 @@ export default class IncrementalReadingPlugin extends Plugin {
     const path = uniqueMarkdownNotePath(this.app, folder, stem);
     const file = await this.app.vault.create(path, trimmedText + "\n");
     await markAsTopic(this.app, file, this.settings);
-    await this.recordElement(file);
-    return elementIdForPath(file.path);
+    const created = await this.recordElement(file);
+    return created?.id ?? elementIdForPath(file.path);
   }
 
   private async buildVaultDuplicateIndex(): Promise<DuplicateIndex> {
@@ -7313,14 +7314,11 @@ export default class IncrementalReadingPlugin extends Plugin {
           writeTopicToFrontmatter(fm, newTopicState(this.settings, new Date(now)));
         }
       });
-      await this.recordElement(nf);
+      const created = await this.recordElement(nf);
+      if (!created) return;
       new Notice(`Incremental Reading: duplicated ${el.type} to "${nf.basename}".`);
       void this.refreshStatusBar();
-      if (this.ledger) {
-        const state = await this.ledger.load();
-        const created = state.elements.get(elementIdForPath(newPath));
-        if (created) this.getActiveReviewView()?.adoptElement(created);
-      }
+      this.getActiveReviewView()?.adoptElement(created);
       return;
     }
 
@@ -8238,34 +8236,42 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async recordElement(
     file: TFile,
     opts?: { skipReconcile?: boolean },
-  ): Promise<void> {
-    if (!this.ledger) return;
+  ): Promise<IrElement | undefined> {
+    if (!this.ledger) return undefined;
     try {
       let fm: Record<string, unknown> = {};
       await this.app.fileManager.processFrontMatter(file, (f) => {
         fm = { ...f };
       });
       const now = Date.now();
-      const events = migrateNotes(
-        [{ path: file.path, frontmatter: fm }],
+      const snap = await this.ledger.loadSnapshot();
+      const recorded = buildRecordedNoteEvents(
+        { path: file.path, frontmatter: fm },
         now,
+        {
+          liveElements: snap.state.elements.values(),
+          historicalEvents: snap.events,
+        },
       );
       let lamport = Math.max(now, await this.ledger.nextLamport());
       const device = await this.ledger.getDeviceId();
-      for (const ev of events) {
+      for (const ev of recorded.events) {
         ev.lamport = lamport++;
         ev.device = device;
         await this.appendCreatedWithPlacement(ev);
       }
-      if (opts?.skipReconcile) return;
-      await this.ledger.reconcile();
-      void this.refreshStatusBar();
+      if (!opts?.skipReconcile) {
+        await this.ledger.reconcile();
+        void this.refreshStatusBar();
+      }
+      return recorded.element;
     } catch (e) {
       console.error("Incremental Reading: recording element failed", e);
       new Notice(
         "Incremental Reading: could not record the new element in the " +
           "ledger; it is still in the note. See the developer console.",
       );
+      return undefined;
     }
   }
 
