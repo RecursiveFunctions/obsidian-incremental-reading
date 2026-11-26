@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  blendQueueOrdinals,
   buildRepSortDispersionCurve,
   interleavedQueue,
   policyQueue,
@@ -9,10 +10,13 @@ import {
   type QueueEntry,
 } from "../src/queue";
 import {
+  computeBlendedQueueOrdinal,
   priorityToBucket20,
+  repSortFactorToSlider,
   simulateRepSortPositionCurve,
   sliderToRepSortFactor,
 } from "../src/sm18-ir-mechanics";
+import { importSmRepSortWeight } from "../src/ir/sm-collection-import";
 
 const NOW = 1_000_000;
 
@@ -270,4 +274,58 @@ test("sliderToRepSortFactor matches sm20.exe 0x00b2c950 curve and priorityToBuck
   const dispersedCurve = simulateRepSortPositionCurve(0.8, 11);
   assert.equal(dispersedCurve.length, 11);
   assert.notDeepEqual(dispersedCurve, strictCurve);
+});
+
+test("repSortFactorToSlider (0x00b2c9f0) inverts sliderToRepSortFactor across 0..100 and imports SM weights (#72)", () => {
+  assert.equal(repSortFactorToSlider(0), 0);
+  assert.equal(repSortFactorToSlider(0.49), 0);
+  assert.equal(repSortFactorToSlider(0.5), 0);
+  assert.equal(repSortFactorToSlider(1.0), 25);
+  assert.equal(repSortFactorToSlider(20.0), 100);
+  assert.equal(repSortFactorToSlider(1000.0), 100);
+  for (let pos = 0; pos <= 100; pos += 1) {
+    assert.equal(
+      repSortFactorToSlider(sliderToRepSortFactor(pos)),
+      pos,
+      `round-trip failed at slider position ${pos}`,
+    );
+  }
+  assert.deepEqual(importSmRepSortWeight(1.0), { sliderPos: 25, jitter01: 0.25 });
+});
+
+test("computeBlendedQueueOrdinal (0x00d649c0) & blendQueueOrdinals blend base priority and secondary queue rank (#72)", () => {
+  // Missing queuePos defaults to queueLen + 1
+  assert.equal(computeBlendedQueueOrdinal(2, null, 10, 0.5), 2 * 0.5 + 11 * 0.5);
+  assert.equal(computeBlendedQueueOrdinal(1, 5, 10, 0), 1);
+  assert.equal(computeBlendedQueueOrdinal(1, 5, 10, 1), 5);
+
+  const entries = [
+    entry({ id: "p1", priority: 10 }),
+    entry({ id: "p2", priority: 20 }),
+    entry({ id: "p3", priority: 30 }),
+  ];
+  // Secondary queue puts p3 first, p1 absent (gets len + 1 = 2)
+  const blended = blendQueueOrdinals(entries, ["p3"], 0.8);
+  assert.equal(blended[0]!.id, "p3");
+});
+
+test("policyQueue honors interleaveSimilarPriority across calendar days (#72)", () => {
+  const tied = Array.from({ length: 8 }, (_, idx) =>
+    entry({ id: `t${idx}`, priority: 25, dueMs: idx }),
+  );
+  const strict = policyQueue(tied, 86_400_000 * 10, queuePreset("strict", 1), {
+    interleaveSimilarPriority: false,
+  });
+  assert.deepEqual(
+    strict,
+    tied.map((e) => e.id),
+  );
+  const dayA = policyQueue(tied, 86_400_000 * 10, queuePreset("strict", 1), {
+    interleaveSimilarPriority: true,
+  });
+  const dayB = policyQueue(tied, 86_400_000 * 11, queuePreset("strict", 1), {
+    interleaveSimilarPriority: true,
+  });
+  assert.notDeepEqual(dayA, strict);
+  assert.notDeepEqual(dayA, dayB);
 });

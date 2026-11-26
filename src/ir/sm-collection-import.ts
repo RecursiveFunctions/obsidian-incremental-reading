@@ -15,6 +15,7 @@ import {
 } from "../sm18-format-read";
 import { decodeHex, parseSub, real48 } from "../sm18-priority-queue";
 import { priorityScaledFirstInterval } from "../topic";
+import { repSortFactorToSlider } from "../sm18-ir-mechanics";
 import {
   parseSm20Alg17DatFiles,
   snapshotSm20Matrix,
@@ -168,6 +169,18 @@ export function delphiDateToEpochMs(tDateTime: number): number | null {
   const ms = DELPHI_EPOCH_MS + Math.round(tDateTime * MS_PER_DAY);
   if (!Number.isFinite(ms) || Math.abs(ms) > MAX_VALID_EPOCH_MS) return null;
   return ms;
+}
+
+/**
+ * Convert an imported SuperMemo repetition-sort weight (`0.001..1000`) into
+ * the 0..100 slider position and 0..1 `QueuePolicy` jitter (`0x00b2c9f0`, #72).
+ */
+export function importSmRepSortWeight(weight: number): {
+  sliderPos: number;
+  jitter01: number;
+} {
+  const sliderPos = repSortFactorToSlider(weight);
+  return { sliderPos, jitter01: sliderPos / 100 };
 }
 
 function decodeWindows1252(bytes: Uint8Array): string {

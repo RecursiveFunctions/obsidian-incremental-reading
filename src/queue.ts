@@ -4,7 +4,10 @@
  * records and feeds them here.
  */
 
-import { sliderToRepSortFactor } from "./sm18-ir-mechanics";
+import {
+  computeBlendedQueueOrdinal,
+  sliderToRepSortFactor,
+} from "./sm18-ir-mechanics";
 
 export interface QueueEntry {
   /** Stable element id from the ledger (no longer a note path; see Option 1). */
@@ -84,18 +87,34 @@ export function policyQueue(
   entries: readonly QueueEntry[],
   nowMs: number,
   inputPolicy: QueuePolicy,
+  opts?: QueueOptions,
 ): string[] {
   const policy = normalizeQueuePolicy(inputPolicy);
   const eligible = entries.filter((entry) =>
     !!entry.type && !entry.dismissed &&
     (policy.scope !== "due" || (Number.isFinite(entry.dueMs) && entry.dueMs <= nowMs)));
-  const items = ranked(eligible.filter((entry) => entry.type === "item"), policy.itemJitter,
-    policy.seed ^ 0x1234abcd);
-  const reading = ranked(eligible.filter((entry) => entry.type !== "item"), policy.readingJitter,
-    policy.seed ^ 0x5678ef01);
+  const interleave = opts?.interleaveSimilarPriority ?? false;
+  const dayKey = Math.floor(nowMs / 86_400_000);
+  const items = ranked(
+    eligible.filter((entry) => entry.type === "item"),
+    policy.itemJitter,
+    policy.seed ^ 0x1234abcd,
+    interleave ? dayKey ^ 0x1234abcd : undefined,
+  );
+  const reading = ranked(
+    eligible.filter((entry) => entry.type !== "item"),
+    policy.readingJitter,
+    policy.seed ^ 0x5678ef01,
+    interleave ? dayKey ^ 0x5678ef01 : undefined,
+  );
 
   if (policy.traversal === "priority") {
-    return ranked(eligible, 0, policy.seed).map((entry) => entry.id);
+    return ranked(
+      eligible,
+      policy.itemJitter,
+      policy.seed,
+      interleave ? dayKey ^ 0x9e3779b9 : undefined,
+    ).map((entry) => entry.id);
   }
   if (policy.readingProportion <= 0) return items.map((entry) => entry.id);
   if (policy.readingProportion >= 1) return reading.map((entry) => entry.id);
@@ -155,9 +174,54 @@ export function buildRepSortDispersionCurve(steps = 20): RepSortDispersionPoint[
   return points;
 }
 
-function ranked(entries: readonly QueueEntry[], strength: number, seed: number): QueueEntry[] {
+/**
+ * Blend base priority rank (`1..N`) with an explicit secondary queue order
+ * (`0x00d649c0`); elements absent from `secondaryQueueIds` receive `queueLen + 1`.
+ */
+export function blendQueueOrdinals(
+  entries: readonly QueueEntry[],
+  secondaryQueueIds: readonly string[],
+  weight01: number,
+): QueueEntry[] {
+  const ordered = [...entries].sort((a, b) =>
+    a.priority - b.priority || a.dueMs - b.dueMs || a.id.localeCompare(b.id),
+  );
+  if (ordered.length <= 1 || weight01 <= 0) return ordered;
+  const qMap = new Map<string, number>();
+  secondaryQueueIds.forEach((id, idx) => {
+    if (!qMap.has(id)) qMap.set(id, idx + 1);
+  });
+  return ordered
+    .map((entry, idx) => ({
+      entry,
+      ordinal: computeBlendedQueueOrdinal(
+        idx + 1,
+        qMap.get(entry.id) ?? null,
+        secondaryQueueIds.length,
+        weight01,
+      ),
+      baseIdx: idx,
+    }))
+    .sort(
+      (a, b) =>
+        a.ordinal - b.ordinal ||
+        a.baseIdx - b.baseIdx ||
+        a.entry.id.localeCompare(b.entry.id),
+    )
+    .map(({ entry }) => entry);
+}
+
+function ranked(
+  entries: readonly QueueEntry[],
+  strength: number,
+  seed: number,
+  tieShuffleSeed?: number,
+): QueueEntry[] {
   const ordered = [...entries].sort((a, b) =>
     a.priority - b.priority || a.dueMs - b.dueMs || a.id.localeCompare(b.id));
+  if (tieShuffleSeed !== undefined && ordered.length > 1) {
+    shuffleWithinPriority(ordered, tieShuffleSeed);
+  }
   if (strength <= 0 || ordered.length <= 1) return ordered;
   const factor = sliderToRepSortFactor(Math.min(100, Math.max(0, strength * 100)));
   const maxDisplacement = Math.min(

@@ -117,6 +117,7 @@ export function subsetReviewQueue(
   policy: QueuePolicy,
   includeFuture = false,
   now: Date = new Date(),
+  interleaveSimilarPriority = false,
 ): ReviewSlot[] {
   const idSet = targetIds instanceof Set ? targetIds : new Set(targetIds);
   if (idSet.size === 0) return [];
@@ -143,7 +144,9 @@ export function subsetReviewQueue(
   const effectivePolicy: QueuePolicy = includeFuture
     ? { ...policy, scope: "random" }
     : { ...policy, scope: "due" };
-  return policyQueue(entries, now.getTime(), effectivePolicy)
+  return policyQueue(entries, now.getTime(), effectivePolicy, {
+    interleaveSimilarPriority,
+  })
     .map((id) => slots.get(id))
     .filter((slot): slot is ReviewSlot => slot !== undefined);
 }
@@ -153,6 +156,7 @@ export function policyReviewQueue(
   state: LogState,
   policy: QueuePolicy,
   now: Date = new Date(),
+  interleaveSimilarPriority = false,
 ): ReviewSlot[] {
   const slots = new Map<string, ReviewSlot>();
   const entries: QueueEntry[] = [];
@@ -167,7 +171,9 @@ export function policyReviewQueue(
     entries.push({ id: element.id, type: element.type, priority: element.priority,
       dueMs: dueMsOf(element), dismissed: element.dismissed });
   }
-  return policyQueue(entries, now.getTime(), policy)
+  return policyQueue(entries, now.getTime(), policy, {
+    interleaveSimilarPriority,
+  })
     .map((id) => slots.get(id))
     .filter((slot): slot is ReviewSlot => slot !== undefined);
 }

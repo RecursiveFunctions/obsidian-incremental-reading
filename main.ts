@@ -2275,7 +2275,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const now = Date.now();
     const seed = new Date(now).setHours(0, 0, 0, 0);
-    const queue = policyReviewQueue(this.app, state, this.queuePolicy("due", seed), new Date(now));
+    const queue = policyReviewQueue(
+      this.app,
+      state,
+      this.queuePolicy("due", seed),
+      new Date(now),
+      this.settings.interleaveSimilarPriority,
+    );
     if (queue.length === 0) return null;
     this.beginReviewSession();
     await this.saveNewSessionSnapshot("due", queue, seed);
@@ -2412,7 +2418,13 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.ledgerInit;
     const state = await this.ledger.load();
     const seed = Date.now() | 0;
-    const queue = policyReviewQueue(this.app, state, this.queuePolicy("random", seed));
+    const queue = policyReviewQueue(
+      this.app,
+      state,
+      this.queuePolicy("random", seed),
+      new Date(),
+      this.settings.interleaveSimilarPriority,
+    );
     if (queue.length === 0) {
       new Notice("Incremental Reading: no reviewable elements for random review.");
       return;
@@ -2440,8 +2452,13 @@ export default class IncrementalReadingPlugin extends Plugin {
         })
         .filter((slot): slot is ReviewSlot => slot !== null);
     } else {
-      queue = policyReviewQueue(this.app, state,
-        this.queuePolicy(snapshot.mode, snapshot.seed));
+      queue = policyReviewQueue(
+        this.app,
+        state,
+        this.queuePolicy(snapshot.mode, snapshot.seed),
+        new Date(),
+        this.settings.interleaveSimilarPriority,
+      );
     }
     await view.sortNow(queue);
     new Notice("Incremental Reading: unprocessed review queue sorted.");
@@ -3775,6 +3792,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       this.queuePolicy("due", new Date(now).setHours(0, 0, 0, 0)),
       includeFuture,
       new Date(now),
+      this.settings.interleaveSimilarPriority,
     );
     if (queue.length === 0) {
       new Notice(
@@ -4110,8 +4128,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
       const now = Date.now();
       await this.ensureDailyAnalytics(state, now);
-      const queue = policyReviewQueue(this.app, state,
-        this.queuePolicy("due", new Date(now).setHours(0, 0, 0, 0)), new Date(now));
+      const queue = policyReviewQueue(
+        this.app,
+        state,
+        this.queuePolicy("due", new Date(now).setHours(0, 0, 0, 0)),
+        new Date(now),
+        this.settings.interleaveSimilarPriority,
+      );
       if (queue.length === 0) {
         // Nothing due, but the collection is not empty: open the review pane
         // on its nothing-due panel so the user gets the next due time and the

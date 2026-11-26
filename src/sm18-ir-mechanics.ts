@@ -362,6 +362,30 @@ export function sliderToRepSortFactor(pos0To100: number): number {
   return x <= 0.5 ? x + 0.5 : (x - 0.5) * 38.0 + 1.0;
 }
 
+/** `ConvertRepSortWeightToTrackBarPosition` (`0x00b2c9f0`). */
+export function repSortFactorToSlider(weight: number): number {
+  if (!Number.isFinite(weight) || weight < 0.5) return 0;
+  if (weight >= 20.0) return 100;
+  const x = weight <= 1.0 ? weight - 0.5 : (weight - 1.0) / 38.0 + 0.5;
+  return Math.min(100, Math.max(0, roundHalfToEven(x * x * 100.0)));
+}
+
+/** `TDatabase_SetBlendedQueuePositionOrdinal` (`0x00d649c0`). */
+export function computeBlendedQueueOrdinal(
+  basePos: number,
+  queuePos: number | null | undefined,
+  queueLen: number,
+  weight01: number,
+): number {
+  const w = Math.min(1.0, Math.max(0.0, Number.isFinite(weight01) ? weight01 : 0.0));
+  const fallback = Math.max(0, Math.trunc(Number.isFinite(queueLen) ? queueLen : 0)) + 1;
+  const qPos =
+    typeof queuePos === "number" && Number.isFinite(queuePos) && queuePos >= 1
+      ? queuePos
+      : fallback;
+  return basePos * (1.0 - w) + qPos * w;
+}
+
 /** `FUN_00ca0ac0` (`0x00ca0ac0`). */
 export function priorityToBucket20(priority: number): number {
   const p = Math.min(100.0, Math.max(0.0, Number.isFinite(priority) ? priority : 0.0));
