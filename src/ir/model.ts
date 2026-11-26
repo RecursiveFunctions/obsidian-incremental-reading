@@ -85,6 +85,21 @@ export interface NormalizedRect {
   h: number;
 }
 
+/**
+ * Timestamp-anchored video or audio selector (Phase 3, #69).
+ * Stored purely in `.ir/` without mutating vault media files.
+ */
+export interface MediaSelector {
+  /** Vault path (e.g. "Lectures/DSP.mp4") or user-provided stream URI. */
+  mediaPathOrUrl: string;
+  /** Clip start timestamp in seconds (>= 0). */
+  startSec: number;
+  /** Optional clip end timestamp in seconds (> startSec). */
+  stopSec?: number;
+  /** Last playback position in seconds, restored on next review. */
+  resumeSec: number;
+}
+
 /** One span of a markdown multi-selection, relocatable on its own. */
 export interface AnchorSpan {
   quote: TextQuoteSelector;
@@ -106,6 +121,8 @@ export interface Anchor {
   spans?: AnchorSpan[];
   /** Present when the source is a PDF. Markdown anchors leave this unset. */
   pdf?: PdfSelector;
+  /** Present when the source is timestamped video or audio (#69). */
+  media?: MediaSelector;
 }
 
 /**
@@ -206,7 +223,8 @@ export type IrEventKind =
   | "source-restored"
   | "source-renamed"
   | "element-deleted"
-  | "text-edited";
+  | "text-edited"
+  | "media-resumed";
 
 export interface IrEvent {
   id: EventId;
@@ -226,7 +244,7 @@ const IR_EVENT_KINDS = new Set<IrEventKind>([
   "element-created", "priority-set", "dismiss-set", "graded", "grade-undone", "card-reset",
   "topic-advanced", "mercy-postponed", "mercy-undone", "anchor-repaired", "anchor-detached",
   "promoted", "demoted", "reparented", "source-tombstoned", "source-restored",
-  "source-renamed", "element-deleted", "text-edited",
+  "source-renamed", "element-deleted", "text-edited", "media-resumed",
 ]);
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -316,13 +334,29 @@ function validAnchorSpan(value: unknown): boolean {
     (span.position === undefined || validPosition(span.position));
 }
 
+function validMedia(value: unknown): boolean {
+  const media = record(value);
+  if (!media) return false;
+  if (!nonEmptyString(media.mediaPathOrUrl)) return false;
+  if (!finite(media.startSec) || (media.startSec as number) < 0) return false;
+  if (!finite(media.resumeSec) || (media.resumeSec as number) < 0) return false;
+  if (
+    media.stopSec !== undefined &&
+    (!finite(media.stopSec) || (media.stopSec as number) <= (media.startSec as number))
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function validAnchor(value: unknown): boolean {
   const anchor = record(value);
   return !!anchor && nonEmptyString(anchor.sourcePath) && validQuote(anchor.quote) &&
     (anchor.position === undefined || validPosition(anchor.position)) &&
     (anchor.blockId === undefined || nonEmptyString(anchor.blockId)) &&
     (anchor.spans === undefined || (Array.isArray(anchor.spans) && anchor.spans.every(validAnchorSpan))) &&
-    (anchor.pdf === undefined || validPdf(anchor.pdf));
+    (anchor.pdf === undefined || validPdf(anchor.pdf)) &&
+    (anchor.media === undefined || validMedia(anchor.media));
 }
 
 function validCard(value: unknown): boolean {
@@ -423,6 +457,7 @@ export function validateIrEvent(value: unknown): string | null {
     case "source-renamed": return nonEmptyString(payload.oldPath) && nonEmptyString(payload.newPath) ? null : "rename paths are required";
     case "text-edited": return typeof payload.text === "string" ? null : "text is required";
     case "anchor-repaired": return validAnchor(payload.anchor) ? null : "anchor is required";
+    case "media-resumed": return finite(payload.resumeSec) && (payload.resumeSec as number) >= 0 ? null : "resumeSec must be >= 0";
     default: return null;
   }
 }

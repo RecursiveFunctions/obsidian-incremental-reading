@@ -194,8 +194,8 @@ Planned, in order (full details in [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md
 - [x] **Rich-content collection import & duplicate-source guards:** Full HTML and image component decoding, automatic Q&A/cloze synthesis from display flags, extract-vs-topic provenance detection, read-point caret/scroll bookmark recovery, and URL/source deduplication on import.
 - [x] **Final Drill, semantic review passes & dynamic Neural Review:** End-of-session Final Drill stage for lapsed items, branch/subset/search review passes, safe Advance / Add-to-outstanding tools, and incremental spreading-activation expansion in Neural Review (`Alt+N`).
 - [x] **Queue diagnostics, leech triage & stats trends:** Visual queue-randomization probability curve in Settings, multi-criteria leech filtering and one-click triage actions in Collection and Stats.
-- [ ] **Incremental video, audio & web capture:** Timestamp-anchored media extracts (`resume / start / stop`), side-by-side review player, and a companion browser extension for one-click web import.
-- [ ] **Community directory submission & mobile polish:** Final plugin ID/name migration path from BRAT and real-device mobile refinements.
+- [x] **Incremental video & audio (`#69`):** Timestamp-anchored media topics and extracts (`resume / start / stop` in `.ir/`), bounded HTML5 review player with clip timeline markers, and offline-first privacy.
+- [ ] **Companion web capture & directory submission:** Companion browser extension for one-click web import, final plugin ID/name migration path from BRAT, and real-device mobile refinements.
 
 Under consideration: a one-way structure export for external collections.
 

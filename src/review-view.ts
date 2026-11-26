@@ -197,6 +197,17 @@ import {
   resetMobileEditLayoutBaseline,
 } from "./ir/mobile-edit-layout";
 import { isPdfPath } from "./ir/pdf-fragment";
+import {
+  buildMediaExtractEvent,
+  buildMediaResumedEvent,
+  formatMediaClipRangeLabel,
+  formatMediaTimestamp,
+  isExternalMediaRef,
+  isMediaPath,
+  isVideoPath,
+  resolveClipBounds,
+  type MediaSelector as MediaAnchorSelector,
+} from "./ir/media";
 import { DropWhileBusyGate } from "./ir/action-gate";
 import { getPdfPageForPath, openPdfAt } from "./ir/pdf-view";
 import {
@@ -1250,7 +1261,9 @@ export class IrReviewView extends ItemView {
   private canEdit(): boolean {
     const slot = this.current;
     if (!slot || this.bodyMissing) return false;
-    if (slot.file && isPdfPath(slot.file.path)) return false;
+    if (slot.file && (isPdfPath(slot.file.path) || isMediaPath(slot.file.path))) {
+      return false;
+    }
     // Anchored elements (no backing file) edit through a "text-edited" ledger
     // event; file-backed elements edit through `saveBody`. Both paths are
     // wired through `flushEdits`.
@@ -1272,6 +1285,7 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (!slot || this.bodyMissing || !this.isReading(slot)) return false;
     if (this.pdfSourcePath(slot)) return true;
+    if (this.mediaSelectorForSlot(slot)) return true;
     if (slot.file) return true;
     const body = slot.element.text?.trim() ?? "";
     if (!body) return false;
@@ -1885,6 +1899,63 @@ export class IrReviewView extends ItemView {
     return p && isPdfPath(p) ? p : null;
   }
 
+  private activeMediaPlayerEl: HTMLMediaElement | null = null;
+  private mediaDraftStartSec: number | null = null;
+  private mediaDraftStopSec: number | null = null;
+  private mediaExternalStreamApproved = new Set<ElementId>();
+
+  private mediaSelectorForSlot(slot: ReviewSlot): MediaAnchorSelector | null {
+    if (slot.element.anchor?.media) return slot.element.anchor.media;
+    if (slot.file && isMediaPath(slot.file.path)) {
+      return {
+        mediaPathOrUrl: slot.file.path,
+        startSec: 0,
+        resumeSec: 0,
+      };
+    }
+    return null;
+  }
+
+  private async persistMediaResumeIfChanged(slot: ReviewSlot | null | undefined): Promise<void> {
+    if (!slot) return;
+    const media = slot.element.anchor?.media;
+    const player = this.activeMediaPlayerEl;
+    if (!media || !player || !Number.isFinite(player.currentTime)) return;
+    const curSec = Math.max(
+      media.startSec,
+      media.stopSec !== undefined
+        ? Math.min(media.stopSec, player.currentTime)
+        : player.currentTime,
+    );
+    if (Math.abs(curSec - media.resumeSec) < 0.5) return;
+    try {
+      const now = Date.now();
+      const ev = buildMediaResumedEvent({
+        elementId: slot.id,
+        resumeSec: curSec,
+        eventId: newEventId(),
+        device: await this.ledger.getDeviceId(),
+        lamport: await this.allocLamport(now),
+        now,
+      });
+      await this.ledger.appendEvent(ev);
+      this.dirtyElementIds.add(slot.id);
+      const updatedMedia: MediaAnchorSelector = {
+        ...media,
+        resumeSec: Math.round(curSec * 100) / 100,
+      };
+      slot.element = {
+        ...slot.element,
+        anchor: slot.element.anchor
+          ? { ...slot.element.anchor, media: updatedMedia }
+          : undefined,
+      };
+      this.elementsById.set(slot.id, slot.element);
+    } catch (err) {
+      console.warn("Incremental Reading: could not persist media resume timestamp", err);
+    }
+  }
+
   /**
    * Nearest vault-backed topic/extract file for operations that still create
    * a real `.md` (cloze items) or validate IR frontmatter.
@@ -2377,7 +2448,10 @@ export class IrReviewView extends ItemView {
     this.contentEl.removeClass("ir-review--reading-fits");
     this.pendingPdfOpen = true;
     this.skipBookmarkCursor = false;
-    if (slot.file && isPdfPath(slot.file.path)) {
+    this.activeMediaPlayerEl = null;
+    this.mediaDraftStartSec = null;
+    this.mediaDraftStopSec = null;
+    if (slot.file && (isPdfPath(slot.file.path) || isMediaPath(slot.file.path))) {
       this.rawOnDisk = slot.element.text
         ? stripExtractMarks(slot.element.text)
         : "";
@@ -2442,6 +2516,7 @@ export class IrReviewView extends ItemView {
       page: number;
       selection?: [number, number, number, number];
     };
+    media?: MediaAnchorSelector;
   } | null> {
     const pdfPath = this.pdfSourcePath(slot);
     if (pdfPath) {
@@ -2467,6 +2542,20 @@ export class IrReviewView extends ItemView {
     if (!pid) return null;
     const parent = this.elementsById.get(pid);
     if (!parent) return null;
+    const parentMedia =
+      parent.anchor?.media ??
+      (parent.notePath && isMediaPath(parent.notePath)
+        ? { mediaPathOrUrl: parent.notePath, startSec: 0, resumeSec: 0 }
+        : null);
+    if (parentMedia) {
+      return {
+        title: labelFor(parent),
+        raw: parent.text ?? "",
+        path: parent.notePath ?? parent.anchor?.sourcePath ?? "",
+        siblingRanges: [],
+        media: parentMedia,
+      };
+    }
     let raw: string | null = null;
     let path = "";
     if (parent.notePath) {
@@ -2797,7 +2886,7 @@ export class IrReviewView extends ItemView {
     }
     if (this.currentRaw === this.rawOnDisk) return true;
     try {
-      if (slot.file && isPdfPath(slot.file.path)) {
+      if (slot.file && (isPdfPath(slot.file.path) || isMediaPath(slot.file.path))) {
         this.rawOnDisk = this.currentRaw;
         return true;
       }
@@ -3013,6 +3102,8 @@ export class IrReviewView extends ItemView {
             "Parent note text is hidden until you reveal this card so titles " +
             "and excerpts cannot spoil the answer.",
         });
+      } else if (sourceCtx.media) {
+        this.renderMediaSurface(ctxScroll, slot, sourceCtx.media, false);
       } else if (sourceCtx.pdf) {
         ctxScroll.createEl("p", {
           cls: "ir-review-context-placeholder",
@@ -3118,6 +3209,10 @@ export class IrReviewView extends ItemView {
         });
       }
 
+      const slotMedia = this.mediaSelectorForSlot(slot);
+      if (slotMedia && !(this.editing && this.canEdit())) {
+        this.renderMediaSurface(scroll, slot, slotMedia, reading);
+      }
       if (this.editing && this.canEdit()) {
         await this.renderEditor(scroll);
       } else if (
@@ -3131,7 +3226,9 @@ export class IrReviewView extends ItemView {
             "This topic is a PDF. Select text in the viewer and press Alt+X " +
             "to extract. Scanned pages without a text layer cannot be extracted.",
         });
-      } else {
+      } else if (
+        !(slot.file && isMediaPath(slot.file.path) && !this.currentRaw.trim())
+      ) {
         await this.renderBody(scroll, this.currentRaw, isCloze);
       }
 
@@ -4004,6 +4101,279 @@ export class IrReviewView extends ItemView {
             : "mod-cta",
       })
       .addEventListener("click", () => this.leaf.detach());
+  }
+
+  private renderMediaSurface(
+    parent: HTMLElement,
+    slot: ReviewSlot,
+    media: MediaAnchorSelector,
+    interactiveExtract: boolean,
+  ): void {
+    const wrap = parent.createDiv({ cls: "ir-review-media-player" });
+    const header = wrap.createDiv({ cls: "ir-review-media-header" });
+    header.createSpan({
+      cls: "ir-review-media-range",
+      text: `Clip ${formatMediaClipRangeLabel(media)} · Resume ${formatMediaTimestamp(media.resumeSec)}`,
+    });
+
+    const isExternal = isExternalMediaRef(media.mediaPathOrUrl);
+    let srcUrl: string | null = null;
+    if (!isExternal) {
+      const af = this.app.vault.getAbstractFileByPath(media.mediaPathOrUrl);
+      if (af instanceof TFile) {
+        srcUrl = this.app.vault.getResourcePath(af);
+      }
+    } else if (this.mediaExternalStreamApproved.has(slot.id)) {
+      srcUrl = media.mediaPathOrUrl;
+    }
+
+    if (!srcUrl) {
+      if (isExternal) {
+        const consent = wrap.createDiv({ cls: "ir-review-media-consent" });
+        consent.createEl("p", {
+          cls: "ir-review-context-placeholder",
+          text: "External media stream — kept offline until you explicitly start playback.",
+        });
+        const loadBtn = consent.createEl("button", {
+          type: "button",
+          cls: "mod-cta",
+          text: "Load external media stream",
+        });
+        loadBtn.addEventListener("click", () => {
+          this.mediaExternalStreamApproved.add(slot.id);
+          void this.renderCard();
+        });
+      } else {
+        wrap.createEl("p", {
+          cls: "ir-review-context-placeholder",
+          text: `Media file "${media.mediaPathOrUrl}" was not found in the vault.`,
+        });
+      }
+      return;
+    }
+
+    const player = wrap.createEl(
+      isVideoPath(media.mediaPathOrUrl) ? "video" : "audio",
+      {
+        cls: "ir-review-media-el",
+        attr: { controls: "true", preload: "metadata" },
+      },
+    ) as HTMLMediaElement;
+    player.src = srcUrl;
+    if (interactiveExtract) {
+      this.activeMediaPlayerEl = player;
+    }
+
+    const timeline = wrap.createDiv({ cls: "ir-review-media-timeline" });
+    const clipWindowEl = timeline.createDiv({ cls: "ir-review-media-window" });
+    const siblingClips = Array.from(this.elementsById.values()).filter(
+      (el) =>
+        !el.dismissed &&
+        el.id !== slot.id &&
+        el.anchor?.media?.mediaPathOrUrl === media.mediaPathOrUrl &&
+        el.anchor?.media?.stopSec !== undefined,
+    );
+
+    player.addEventListener("loadedmetadata", () => {
+      const dur = player.duration;
+      const targetStart =
+        this.resumeFromTop.has(slot.id)
+          ? media.startSec
+          : media.resumeSec > media.startSec
+            ? media.resumeSec
+            : media.startSec;
+      if (Number.isFinite(targetStart) && targetStart > 0) {
+        try {
+          player.currentTime = targetStart;
+        } catch {
+          /* ignore seek before buffer */
+        }
+      }
+      if (Number.isFinite(dur) && dur > 0) {
+        const leftPct = Math.min(100, Math.max(0, (media.startSec / dur) * 100));
+        const endSec = media.stopSec !== undefined ? Math.min(dur, media.stopSec) : dur;
+        const widthPct = Math.max(1, ((endSec - media.startSec) / dur) * 100);
+        clipWindowEl.style.left = `${leftPct}%`;
+        clipWindowEl.style.width = `${Math.min(100 - leftPct, widthPct)}%`;
+        for (const sib of siblingClips) {
+          const sm = sib.anchor!.media!;
+          const mEl = timeline.createDiv({
+            cls: "ir-review-media-sibling-mark",
+            attr: { title: `Extracted clip ${formatMediaClipRangeLabel(sm)}` },
+          });
+          const sLeft = Math.min(100, Math.max(0, (sm.startSec / dur) * 100));
+          const sWidth = Math.max(1, (((sm.stopSec ?? sm.startSec) - sm.startSec) / dur) * 100);
+          mEl.style.left = `${sLeft}%`;
+          mEl.style.width = `${Math.min(100 - sLeft, sWidth)}%`;
+        }
+      }
+    });
+
+    player.addEventListener("timeupdate", () => {
+      if (media.stopSec !== undefined && player.currentTime >= media.stopSec) {
+        player.pause();
+        player.currentTime = media.stopSec;
+      }
+    });
+
+    if (!interactiveExtract) return;
+
+    const controls = wrap.createDiv({ cls: "ir-review-media-actions" });
+    const draftBadge = controls.createSpan({
+      cls: "ir-review-media-draft",
+      text: this.formatMediaDraftLabel(media),
+    });
+
+    const markInBtn = controls.createEl("button", {
+      type: "button",
+      cls: "ir-review-util-btn",
+      text: "Set Start",
+    });
+    markInBtn.addEventListener("click", () => {
+      this.mediaDraftStartSec = Math.max(media.startSec, player.currentTime || 0);
+      draftBadge.setText(this.formatMediaDraftLabel(media));
+    });
+
+    const markOutBtn = controls.createEl("button", {
+      type: "button",
+      cls: "ir-review-util-btn",
+      text: "Set Stop",
+    });
+    markOutBtn.addEventListener("click", () => {
+      this.mediaDraftStopSec = player.currentTime || 0;
+      draftBadge.setText(this.formatMediaDraftLabel(media));
+    });
+
+    const replayBtn = controls.createEl("button", {
+      type: "button",
+      cls: "ir-review-util-btn",
+      text: "From clip start",
+    });
+    replayBtn.addEventListener("click", () => {
+      player.currentTime = media.startSec;
+      void player.play().catch(() => {});
+    });
+
+    const noteInput = wrap.createEl("input", {
+      type: "text",
+      cls: "ir-review-media-note-input",
+      attr: {
+        placeholder: "Optional clip note / transcript summary before Alt+X…",
+      },
+    });
+
+    const extractClipBtn = controls.createEl("button", {
+      type: "button",
+      cls: "mod-cta ir-review-util-btn",
+      text: "Extract Clip (Alt+X)",
+    });
+    extractClipBtn.addEventListener("click", () => {
+      void this.extractMediaClipFromSlot(slot, media, noteInput.value);
+    });
+  }
+
+  private formatMediaDraftLabel(media: MediaAnchorSelector): string {
+    const s =
+      this.mediaDraftStartSec !== null
+        ? formatMediaTimestamp(this.mediaDraftStartSec)
+        : formatMediaTimestamp(media.resumeSec);
+    const e =
+      this.mediaDraftStopSec !== null
+        ? formatMediaTimestamp(this.mediaDraftStopSec)
+        : "now";
+    return `Range: ${s} → ${e}`;
+  }
+
+  private async extractMediaClipFromSlot(
+    slot: ReviewSlot,
+    media: MediaAnchorSelector,
+    noteText = "",
+    opts?: { priorityOverride?: number; silent?: boolean },
+  ): Promise<IrElement | undefined> {
+    const curSec = this.activeMediaPlayerEl?.currentTime ?? this.mediaDraftStopSec ?? 0;
+    const bounds = resolveClipBounds({
+      currentTimeSec: curSec,
+      draftStartSec: this.mediaDraftStartSec,
+      draftStopSec: this.mediaDraftStopSec,
+      parentMedia: media,
+    });
+    if (!bounds) {
+      new Notice(
+        "Incremental Reading: play forward or click Set Start and Set Stop so clip end is after start.",
+      );
+      return undefined;
+    }
+    const now = Date.now();
+    const device = await this.ledger.getDeviceId();
+    const elementId = newElementId();
+    const sourcePath =
+      slot.element.anchor?.sourcePath ?? slot.file?.path ?? media.mediaPathOrUrl;
+    const approxChars = Math.max(80, Math.round((bounds.stopSec - bounds.startSec) * 12));
+    const { childSchedule, childPriority, parentAFactorAfter } =
+      this.prepareExtractScheduleAndPriority(
+        slot,
+        approxChars,
+        now,
+        opts?.priorityOverride,
+      );
+    const ev = buildMediaExtractEvent({
+      sourcePath,
+      mediaPathOrUrl: media.mediaPathOrUrl,
+      startSec: bounds.startSec,
+      stopSec: bounds.stopSec,
+      note: noteText,
+      parentId: slot.id,
+      priority: childPriority,
+      elementId,
+      eventId: newEventId(),
+      device,
+      lamport: await this.allocLamport(now),
+      now,
+      schedule: childSchedule,
+      placement: buildPriorityPlacement(
+        this.elementsById.values(),
+        elementId,
+        childPriority,
+      ),
+    });
+    await this.ledger.appendEvent(ev);
+    const created = ev.payload.element as IrElement;
+    this.dirtyElementIds.add(created.id);
+    this.elementsById.set(created.id, created);
+    await this.decaySlotParentAFactor(slot, parentAFactorAfter);
+
+    // Advance parent resumeSec to the end of the extracted clip
+    if (slot.element.anchor?.media) {
+      const resumeEv = buildMediaResumedEvent({
+        elementId: slot.id,
+        resumeSec: bounds.stopSec,
+        eventId: newEventId(),
+        device,
+        lamport: await this.allocLamport(now + 1),
+        now: now + 1,
+      });
+      await this.ledger.appendEvent(resumeEv);
+      slot.element = {
+        ...slot.element,
+        anchor: {
+          ...slot.element.anchor,
+          media: { ...slot.element.anchor.media, resumeSec: bounds.stopSec },
+        },
+      };
+      this.elementsById.set(slot.id, slot.element);
+    }
+
+    this.mediaDraftStartSec = null;
+    this.mediaDraftStopSec = null;
+    this.adoptElement(created);
+    if (!opts?.silent) {
+      this.flash(
+        `Clip ${formatMediaTimestamp(bounds.startSec)}–${formatMediaTimestamp(bounds.stopSec)} extracted · ${this.remainingInSession()} left`,
+      );
+    }
+    this.onChange?.();
+    await this.renderCard();
+    return created;
   }
 
   private renderResumeChrome(parent: HTMLElement, slot: ReviewSlot): void {
@@ -5141,6 +5511,21 @@ export class IrReviewView extends ItemView {
       !slot.file &&
       (this.resolveSelection().ok ||
         (this.multiSelect?.pending.body(this.heldKey(slot)).length ?? 0) > 0);
+    const slotMedia = this.mediaSelectorForSlot(slot);
+    const hasCardBodySelection =
+      this.resolveSelection().ok ||
+      (this.multiSelect?.pending.body(this.heldKey(slot)).length ?? 0) > 0;
+    if (slotMedia && !hasCardBodySelection) {
+      const noteInput = this.contentEl.querySelector<HTMLInputElement>(
+        ".ir-review-media-note-input",
+      );
+      return await this.extractMediaClipFromSlot(
+        slot,
+        slotMedia,
+        noteInput?.value ?? "",
+        { priorityOverride: opts?.priorityOverride, silent: opts?.silent },
+      );
+    }
     if (this.pdfSourcePath(slot) && !cardHasSelection) {
       const created = await this.commitPdfExtract?.({
         promote: opts?.promote,
@@ -5723,7 +6108,7 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (!slot) return;
     if (slot.file) {
-      if (isPdfPath(slot.file.path)) return;
+      if (isPdfPath(slot.file.path) || isMediaPath(slot.file.path)) return;
       if (this.liveEditor && this.liveEditor.filePath === slot.file.path) {
         const body = this.liveEditor.getBody();
         this.currentRaw = body;
@@ -5898,6 +6283,7 @@ export class IrReviewView extends ItemView {
   private async previousNow() {
     if (this.index === 0) return;
     if (!(await this.flushEdits())) return;
+    await this.persistMediaResumeIfChanged(this.current);
     void this.persistBookmarks();
     this.index -= 1;
     this.reportSessionState();
@@ -6400,6 +6786,7 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (!slot) return;
     if (!(await this.flushEdits())) return;
+    await this.persistMediaResumeIfChanged(slot);
 
     if (!canAdvanceReadingInSession(slot.id, this.advancedSlotIds)) {
       this.flash(`Already advanced in this session · ${this.remainingAfterCurrent()} left`);
@@ -6454,7 +6841,7 @@ export class IrReviewView extends ItemView {
       priority: nextPriority,
     };
     this.elementsById.set(slot.id, slot.element);
-    if (slot.file) {
+    if (slot.file && !isPdfPath(slot.file.path) && !isMediaPath(slot.file.path)) {
       await quietFrontmatterWrite(async () => {
         await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
           writeTopicToFrontmatter(f, advanced);
@@ -6480,6 +6867,7 @@ export class IrReviewView extends ItemView {
     const slot = this.current;
     if (!slot) return;
     if (!(await this.flushEdits())) return;
+    await this.persistMediaResumeIfChanged(slot);
 
     const cur =
       scheduleToTopicState(slot.element.schedule) ??
@@ -6499,7 +6887,7 @@ export class IrReviewView extends ItemView {
       schedule: topicStateToSchedule(postponed),
     };
     this.elementsById.set(slot.id, slot.element);
-    if (slot.file) {
+    if (slot.file && !isPdfPath(slot.file.path) && !isMediaPath(slot.file.path)) {
       await quietFrontmatterWrite(async () => {
         await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
           writeTopicToFrontmatter(f, postponed);
@@ -6525,7 +6913,7 @@ export class IrReviewView extends ItemView {
     await this.emit("dismiss-set", slot.id, { dismissed: true });
     slot.element = { ...slot.element, dismissed: true };
     this.elementsById.set(slot.id, slot.element);
-    if (slot.file) {
+    if (slot.file && !isPdfPath(slot.file.path) && !isMediaPath(slot.file.path)) {
       await quietFrontmatterWrite(
         () => setDismissed(this.app, slot.file!, true).then(() => undefined),
         "dismiss",

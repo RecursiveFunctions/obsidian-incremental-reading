@@ -134,6 +134,7 @@ export function renderElementTelemetryDrawer(
         drifted: "Anchor drifted",
         detached: "Source detached",
         pdf: "PDF page anchor",
+        media: "Media timestamp anchor",
       };
       addMetricCell(
         grid,

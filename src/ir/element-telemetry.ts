@@ -36,7 +36,13 @@ export interface ItemElementTelemetry {
   lastPriorityDelta: number | null;
 }
 
-export type AnchorHealthStatus = "none" | "attached" | "drifted" | "detached" | "pdf";
+export type AnchorHealthStatus =
+  | "none"
+  | "attached"
+  | "drifted"
+  | "detached"
+  | "pdf"
+  | "media";
 
 export interface ReadingElementTelemetry {
   kind: "reading";
@@ -202,7 +208,8 @@ export function computeElementTelemetry(
   let anchorStatus: AnchorHealthStatus = input.anchorStatusOverride ?? "none";
   const sourcePath = element.anchor?.sourcePath ?? element.notePath ?? null;
   if (!input.anchorStatusOverride && element.anchor) {
-    if (element.anchor.pdf) anchorStatus = "pdf";
+    if (element.anchor.media) anchorStatus = "media";
+    else if (element.anchor.pdf) anchorStatus = "pdf";
     else if (element.anchorState === "detached") anchorStatus = "detached";
     else if (element.anchorState === "needs-reanchor") anchorStatus = "drifted";
     else anchorStatus = "attached";

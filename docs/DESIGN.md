@@ -606,8 +606,9 @@ Reading-view behavior and limitations:
   persisted Final Drill (`drill.json`), dynamic Neural Queue (`neural.json`
   with Aho-Corasick title-mention matching), `Advance` / `JumpInterval`,
   bounded leech triage, and 3-tab Stats (`Overview | Triage | Models & SM-20`).
-- **Phase 3 (`docs/FUTURE-PLANS.md`):** Planned — timestamp-anchored
-  incremental video and audio (`{ resume, start, stop }` model), companion
-  browser capture extension, and Obsidian Community Plugins directory release.
+- **Phase 3 (`docs/FUTURE-PLANS.md`):** Timestamp-anchored incremental video
+  and audio (`{ resume, start, stop }` model in `src/ir/media.ts`, SHIPPED in
+  `v0.16.0`); planned: companion browser capture extension and Obsidian
+  Community Plugins directory release.
 - **Deliberately not pursued:** Day-planner/tasklist, sleep/circadian,
   propagating reference registry, and streak/guilt mechanics.

@@ -258,6 +258,12 @@ import {
 } from "./src/ir/extract-decorations";
 import { isPdfPath, formatPdfLinktext } from "./src/ir/pdf-fragment";
 import { buildPdfTopicEvent } from "./src/ir/pdf-topic";
+import {
+  buildMediaTopicEvent,
+  isMediaExtension,
+  isMediaPath,
+  parseMediaDescriptorFrontmatter,
+} from "./src/ir/media";
 import { pdfMarksBySourcePath, type PdfExtractMark } from "./src/ir/pdf-marks";
 import { PdfHighlightPainter } from "./src/ir/pdf-decorations";
 import {
@@ -1684,6 +1690,11 @@ export default class IncrementalReadingPlugin extends Plugin {
           if (!this.irPdfPaths.has(file.path)) {
             this.addMarkTopicMenuItems(menu, file);
           }
+          this.addMobileIrFileMenuNav(menu);
+          return;
+        }
+        if (isMediaExtension(file.extension)) {
+          this.addMarkTopicMenuItems(menu, file);
           this.addMobileIrFileMenuNav(menu);
           return;
         }
@@ -7541,8 +7552,21 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.markPdfAsTopic(target, { priority });
       return;
     }
+    if (isMediaExtension(target.extension)) {
+      await this.markMediaAsTopic(target, { priority });
+      return;
+    }
     if (target.extension !== "md") {
-      new Notice("Incremental Reading: no active Markdown note.");
+      new Notice("Incremental Reading: no active Markdown note, PDF, or media file.");
+      return;
+    }
+
+    const fmCache = this.app.metadataCache.getFileCache(target)?.frontmatter as
+      | Record<string, unknown>
+      | undefined;
+    const descriptorMedia = parseMediaDescriptorFrontmatter(fmCache);
+    if (descriptorMedia) {
+      await this.markMediaDescriptorNoteAsTopic(target, descriptorMedia, { priority });
       return;
     }
 
@@ -7562,7 +7586,7 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async openMarkWithPriority(file: TFile): Promise<void> {
     const alreadyIr =
       (file.extension === "md" && Boolean(getIrType(this.app, file))) ||
-      (file.extension === "pdf" &&
+      ((file.extension === "pdf" || isMediaExtension(file.extension)) &&
         Boolean(await this.resolveElementIdForFile(file)));
     if (alreadyIr) {
       await this.openTreeAndFocusPriorityEditor(file);
@@ -7625,6 +7649,12 @@ export default class IncrementalReadingPlugin extends Plugin {
       try {
         if (abs.extension === "pdf") {
           if (await this.markPdfAsTopic(abs, { silent: true, priority })) {
+            marked += 1;
+          } else {
+            failures.push(`${ref.path}: already IR or ledger unavailable`);
+          }
+        } else if (isMediaExtension(abs.extension)) {
+          if (await this.markMediaAsTopic(abs, { silent: true, priority })) {
             marked += 1;
           } else {
             failures.push(`${ref.path}: already IR or ledger unavailable`);
@@ -8281,6 +8311,99 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
       return false;
     }
+  }
+
+  private async markMediaAsTopic(
+    file: TFile,
+    opts?: { silent?: boolean; priority?: number },
+  ): Promise<boolean> {
+    if (!this.ledger || !isMediaPath(file.path)) return false;
+    const existing = await this.resolveElementIdForFile(file);
+    if (existing) {
+      if (!opts?.silent) {
+        new Notice(`"${file.basename}" is already an IR media topic.`);
+      }
+      return false;
+    }
+    const now = Date.now();
+    try {
+      const snap = await this.ledger.loadSnapshot();
+      const baseId = elementIdForPath(file.path);
+      const idTaken =
+        snap.state.elements.has(baseId) ||
+        snap.events.some((ev) => ev.target === baseId);
+      const elementId = idTaken ? newElementId() : baseId;
+      const ev = buildMediaTopicEvent({
+        mediaPathOrUrl: file.path,
+        notePath: file.path,
+        elementId,
+        eventId: newEventId(),
+        device: await this.ledger.getDeviceId(),
+        lamport: await this.allocLamport(now),
+        now,
+        priority: opts?.priority ?? this.settings.defaultPriority,
+        schedule: topicStateToSchedule(
+          newTopicState(this.settings, new Date(now)),
+        ),
+      });
+      await this.appendCreatedWithPlacement(ev);
+      await this.ledger.reconcile();
+      void this.refreshStatusBar();
+      if (!opts?.silent) {
+        new Notice(`Marked "${file.basename}" as an IR media topic.`);
+      }
+      return true;
+    } catch (e) {
+      console.error("Incremental Reading: marking media as topic failed", e);
+      if (!opts?.silent) {
+        new Notice(
+          "Incremental Reading: could not record the media topic. See the developer console.",
+        );
+      }
+      return false;
+    }
+  }
+
+  private async markMediaDescriptorNoteAsTopic(
+    file: TFile,
+    media: ReturnType<typeof parseMediaDescriptorFrontmatter> & object,
+    opts?: { priority?: number },
+  ): Promise<boolean> {
+    if (!this.ledger) return false;
+    const existing = await this.resolveElementIdForFile(file);
+    if (existing) {
+      new Notice(`"${file.basename}" is already an IR topic.`);
+      return false;
+    }
+    const marked = await markAsTopic(this.app, file, this.settings, opts?.priority);
+    if (!marked) return false;
+    const now = Date.now();
+    const snap = await this.ledger.loadSnapshot();
+    const baseId = elementIdForPath(file.path);
+    const idTaken =
+      snap.state.elements.has(baseId) ||
+      snap.events.some((ev) => ev.target === baseId);
+    const elementId = idTaken ? newElementId() : baseId;
+    const ev = buildMediaTopicEvent({
+      mediaPathOrUrl: media.mediaPathOrUrl,
+      notePath: file.path,
+      startSec: media.startSec,
+      stopSec: media.stopSec,
+      elementId,
+      eventId: newEventId(),
+      device: await this.ledger.getDeviceId(),
+      lamport: await this.allocLamport(now),
+      now,
+      priority: opts?.priority ?? this.settings.defaultPriority,
+      schedule: topicStateToSchedule(
+        newTopicState(this.settings, new Date(now)),
+      ),
+    });
+    await this.appendCreatedWithPlacement(ev);
+    await this.ledger.reconcile();
+    void this.refreshStatusBar();
+    new Notice(`Marked "${file.basename}" as an IR media topic.`);
+    return true;
   }
 
   /**

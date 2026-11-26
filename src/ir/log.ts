@@ -332,8 +332,33 @@ export function foldFrom(
             element.notePath = newPath;
           }
           if (element.anchor?.sourcePath === oldPath) {
-            element.anchor = { ...element.anchor, sourcePath: newPath };
+            const nextMedia =
+              element.anchor.media?.mediaPathOrUrl === oldPath
+                ? { ...element.anchor.media, mediaPathOrUrl: newPath }
+                : element.anchor.media;
+            element.anchor = {
+              ...element.anchor,
+              sourcePath: newPath,
+              ...(nextMedia ? { media: nextMedia } : {}),
+            };
           }
+        }
+        break;
+      }
+
+      case "media-resumed": {
+        if (element?.anchor?.media && typeof event.payload.resumeSec === "number") {
+          const media = element.anchor.media;
+          const clamped = Math.max(
+            media.startSec,
+            media.stopSec !== undefined
+              ? Math.min(media.stopSec, event.payload.resumeSec)
+              : event.payload.resumeSec,
+          );
+          element.anchor = {
+            ...element.anchor,
+            media: { ...media, resumeSec: clamped },
+          };
         }
         break;
       }

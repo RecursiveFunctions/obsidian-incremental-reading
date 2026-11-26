@@ -55,7 +55,7 @@ All Phase 2 items are implemented and shipped:
 
 ## 4. Phase 3 — Incremental Video, Audio & Web Capture
 
-### 4.1 Timestamp-Anchored Media IR
+### 4.1 Timestamp-Anchored Media IR (Shipped in v0.16.0)
 - **Resume / Start / Stop Event Model:**
   - Ground video and audio extracts in explicit `{ resume, start, stop }` timestamp anchors stored in the `.ir/` ledger.
   - **Topic:** Vault media file (`mp4`, `mp3`, `m4a`) or structured stream descriptor note (YouTube / podcast URL) with automatic resume-position bookmarking.
