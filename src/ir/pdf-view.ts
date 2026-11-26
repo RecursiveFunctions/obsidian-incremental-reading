@@ -12,12 +12,14 @@
  */
 
 import type { App, TFile, WorkspaceLeaf } from "obsidian";
+import type { PdfSegment } from "./model";
 import {
   formatPdfLinktext,
   parsePdfFragment,
   pdfSelectionIsRange,
   planPdfNavigation,
 } from "./pdf-fragment";
+import { mergeContiguousPdfSegments, selectLeafPdfTextSpans } from "./pdf-marks";
 
 export const PDF_VIEW_TYPE = "pdf";
 
@@ -58,6 +60,7 @@ export interface PdfTextSelection {
   text: string;
   page: number;
   selection: [number, number, number, number];
+  segments?: PdfSegment[];
 }
 
 function asPdfView(view: unknown): PdfViewLike | null {
@@ -190,6 +193,88 @@ function selectionFromDom(
   return [endIndex, endOffset, beginIndex, beginOffset];
 }
 
+function queryPageLeafItems(pageEl: HTMLElement): HTMLElement[] {
+  const withIdx = Array.from(pageEl.querySelectorAll<HTMLElement>("[data-idx]"));
+  if (withIdx.length > 0) return withIdx;
+  const layer = pageEl.querySelector(".textLayer");
+  return layer
+    ? selectLeafPdfTextSpans(layer.querySelectorAll<HTMLElement>("span"))
+    : [];
+}
+
+function rangeOverlapsItem(range: Range, el: HTMLElement): {
+  startOffset: number;
+  endOffset: number;
+} | null {
+  if (typeof range.intersectsNode !== "function" || !range.intersectsNode(el)) {
+    return null;
+  }
+  const textLen = el.textContent?.length ?? 0;
+  if (textLen === 0) return null;
+
+  const startInside = el.contains(range.startContainer);
+  const endInside = el.contains(range.endContainer);
+
+  if (endInside && !startInside && range.endOffset === 0) {
+    // Selection stopped at offset 0 of el's first node without selecting any char in el
+    if (range.endContainer === el || range.endContainer === el.firstChild) {
+      return null;
+    }
+  }
+  if (startInside && !endInside) {
+    const startLen = range.startContainer.textContent?.length ?? 0;
+    if (
+      range.startOffset >= startLen &&
+      (range.startContainer === el || range.startContainer === el.lastChild)
+    ) {
+      return null;
+    }
+  }
+
+  const startOffset = startInside ? Math.min(textLen, Math.max(0, range.startOffset)) : 0;
+  const endOffset = endInside ? Math.min(textLen, Math.max(startOffset, range.endOffset)) : textLen;
+  if (startInside && endInside && endOffset <= startOffset) return null;
+  return { startOffset, endOffset: Math.max(1, endOffset) };
+}
+
+function segmentsFromDomRange(
+  sel: Selection,
+  container: HTMLElement | null,
+  fallbackPageEl: HTMLElement,
+): PdfSegment[] {
+  if (sel.rangeCount === 0) return [];
+  const range = sel.getRangeAt(0);
+  const pages = container
+    ? Array.from(container.querySelectorAll<HTMLElement>(".page"))
+    : [fallbackPageEl];
+  const targetPages = pages.length > 0 ? pages : [fallbackPageEl];
+  const allSegments: PdfSegment[] = [];
+
+  for (const pEl of targetPages) {
+    if (typeof range.intersectsNode === "function" && !range.intersectsNode(pEl)) {
+      continue;
+    }
+    const pNum = Number(pEl.getAttribute("data-page-number"));
+    if (!Number.isInteger(pNum) || pNum < 1) continue;
+    const items = queryPageLeafItems(pEl);
+    const hits: Array<{ idx: number; startOffset: number; endOffset: number }> = [];
+    items.forEach((el, i) => {
+      const ov = rangeOverlapsItem(range, el);
+      if (!ov) return;
+      const rawIdx = el.dataset.idx;
+      const parsed =
+        rawIdx !== undefined && rawIdx !== "" ? Number(rawIdx) : Number.NaN;
+      const idx = Number.isInteger(parsed) ? parsed : i;
+      hits.push({ idx, startOffset: ov.startOffset, endOffset: ov.endOffset });
+    });
+    const merged = mergeContiguousPdfSegments(pNum, hits);
+    for (const seg of merged) {
+      if (pdfSelectionIsRange(seg.selection)) allSegments.push(seg);
+    }
+  }
+  return allSegments;
+}
+
 export function getPdfTextSelection(view: unknown): PdfTextSelection | null {
   const file = pdfFileFromView(view);
   if (!file) return null;
@@ -200,8 +285,25 @@ export function getPdfTextSelection(view: unknown): PdfTextSelection | null {
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
   const text = sel.toString().trim();
   if (!text) return null;
-  const pageEl = pageElForNode(sel.anchorNode) ?? pageElForNode(sel.focusNode);
+  const range = sel.getRangeAt(0);
+  const pageEl =
+    pageElForNode(sel.anchorNode) ??
+    pageElForNode(sel.focusNode) ??
+    pageElForNode(range.commonAncestorContainer) ??
+    container?.querySelector<HTMLElement>(".page") ??
+    null;
   if (!pageEl) return null;
+  const domSegments = segmentsFromDomRange(sel, container, pageEl);
+  if (domSegments.length > 0) {
+    const first = domSegments[0]!;
+    return {
+      file,
+      text,
+      page: first.page,
+      selection: first.selection,
+      ...(domSegments.length > 1 ? { segments: domSegments } : {}),
+    };
+  }
   const page = Number(pageEl.getAttribute("data-page-number"));
   if (!Number.isInteger(page) || page < 1) return null;
   const tuple =

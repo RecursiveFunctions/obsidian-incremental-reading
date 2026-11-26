@@ -10,7 +10,11 @@
  */
 
 import type { App } from "obsidian";
-import { pdfTextItemPaint, type PdfExtractMark } from "./pdf-marks";
+import {
+  pdfTextItemPaint,
+  selectLeafPdfTextSpans,
+  type PdfExtractMark,
+} from "./pdf-marks";
 import {
   PDF_VIEW_TYPE,
   pdfContainerEl,
@@ -65,14 +69,14 @@ export function paintOverlayRects(
   else pageEl.appendChild(layer);
 }
 
-function textLayerItems(pageEl: HTMLElement): HTMLElement[] {
+export function textLayerItems(pageEl: HTMLElement): HTMLElement[] {
   const withIdx = Array.from(
     pageEl.querySelectorAll<HTMLElement>("[data-idx]"),
   );
   if (withIdx.length > 0) return withIdx;
   const layer = pageEl.querySelector(".textLayer");
   return layer
-    ? Array.from(layer.querySelectorAll<HTMLElement>(":scope > span"))
+    ? selectLeafPdfTextSpans(layer.querySelectorAll<HTMLElement>("span"))
     : [];
 }
 
@@ -84,7 +88,9 @@ function paintPage(
   const items = textLayerItems(pageEl);
   const rects: Array<{ el: HTMLElement; focus: boolean }> = [];
   items.forEach((el, i) => {
-    const fromAttr = Number(el.dataset.idx);
+    const rawIdx = el.dataset.idx;
+    const fromAttr =
+      rawIdx !== undefined && rawIdx !== "" ? Number(rawIdx) : Number.NaN;
     const idx = Number.isInteger(fromAttr) ? fromAttr : i;
     const paint = pdfTextItemPaint(idx, marks, emphasizeId);
     if (paint.source) el.classList.add(SOURCE_CLASS);

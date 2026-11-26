@@ -2942,12 +2942,15 @@ export default class IncrementalReadingPlugin extends Plugin {
             kind: "pdf",
             pdfPath: file.path,
             text: sel.text,
-            segments: [{ page: sel.page, selection: sel.selection }],
+            segments:
+              sel.segments && sel.segments.length > 0
+                ? sel.segments
+                : [{ page: sel.page, selection: sel.selection }],
           }
         : null;
     const spans = mergeWithLive(this.multiSelect.pending.pdf(file.path), live);
     if (spans.length === 0) return undefined;
-    const segments = spans.map((s) => s.segments[0]!);
+    const segments = spans.flatMap((s) => s.segments);
     const first = segments[0]!;
     const pdf: PdfSelector = {
       page: first.page,
@@ -7794,7 +7797,10 @@ export default class IncrementalReadingPlugin extends Plugin {
           kind: "pdf",
           pdfPath: pdf.file.path,
           text: pdf.text,
-          segments: [{ page: pdf.page, selection: pdf.selection }],
+          segments:
+            pdf.segments && pdf.segments.length > 0
+              ? pdf.segments
+              : [{ page: pdf.page, selection: pdf.selection }],
         };
         const sel = document.getSelection();
         const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
