@@ -167,6 +167,7 @@ import {
   parseJumpIntervalInput,
   planAdvanceElements,
   planManualSchedule,
+  selectSoonestFutureBatch,
 } from "./src/ir/manual-schedule";
 import { readCoreSearchMatchedPaths } from "./src/ir/search-view";
 import { collectBranchIds } from "./src/ir/tree";
@@ -1038,6 +1039,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       name: "Start Final Drill",
       icon: "repeat",
       callback: () => void this.startFinalDrill(),
+    });
+
+    this.irCommand({
+      id: "advance-next-batch",
+      name: "Advance next batch into today's queue",
+      icon: "fast-forward",
+      hotkeys: [{ modifiers: ["Alt", "Shift"], key: "a" }],
+      callback: () => void this.advanceNextFutureBatchAndReview(),
     });
 
     this.irCommand({
@@ -3972,6 +3981,28 @@ export default class IncrementalReadingPlugin extends Plugin {
       }).`,
     );
     return true;
+  }
+
+  private async advanceNextFutureBatchAndReview(): Promise<void> {
+    if (!this.ledger) {
+      new Notice("Incremental Reading: ledger is not ready.");
+      return;
+    }
+    await this.ledgerInit;
+    const state = await this.ledger.load();
+    const limit =
+      Number.isFinite(this.settings.mercyCeiling) && this.settings.mercyCeiling > 0
+        ? Math.trunc(this.settings.mercyCeiling)
+        : 50;
+    const batch = selectSoonestFutureBatch(state.elements.values(), Date.now(), limit);
+    if (batch.selectedIds.length === 0) {
+      new Notice("Incremental Reading: no future-scheduled elements to advance.");
+      return;
+    }
+    const ok = await this.applyAdvanceElements(batch.selectedIds, "0");
+    if (ok) {
+      await this.startReview();
+    }
   }
 
   private async reviewObsidianSearchResults(includeFuture: boolean): Promise<void> {

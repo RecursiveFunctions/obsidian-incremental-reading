@@ -65,6 +65,7 @@ import {
 import type { IrSettings } from "./settings";
 import type { IrLedger } from "./ir/ledger";
 import { planLeechReviewIntervention } from "./ir/leech";
+import { selectSoonestFutureBatch } from "./ir/manual-schedule";
 import { elementIdForPath } from "./ir/migrate";
 import { buildRecordedNoteEvents } from "./ir/record-note";
 import {
@@ -3848,6 +3849,29 @@ export class IrReviewView extends ItemView {
    * cards forward is a scheduler decision with its own semantics, not a
    * consolation prize for an empty queue.
    */
+  private advanceBatchLimit(): number {
+    const ceiling = this.settings.mercyCeiling;
+    return Number.isFinite(ceiling) && ceiling > 0 ? Math.trunc(ceiling) : 50;
+  }
+
+  public async advanceNextFutureBatch(): Promise<boolean> {
+    if (!this.commitAdvance) return false;
+    const batch = selectSoonestFutureBatch(
+      this.elementsById.values(),
+      Date.now(),
+      this.advanceBatchLimit(),
+    );
+    if (batch.selectedIds.length === 0) {
+      new Notice("Incremental Reading: no future-scheduled elements to advance.");
+      return false;
+    }
+    const ok = await this.commitAdvance(batch.selectedIds, "0");
+    if (ok) {
+      this.startOutstandingDue?.();
+    }
+    return ok;
+  }
+
   private renderNothingDue(host: HTMLElement, info: UpcomingLoad): void {
     const scroll = host.createDiv({ cls: "ir-review-scroll" });
     scroll.createEl("h3", { text: "Nothing due right now" });
@@ -3885,9 +3909,31 @@ export class IrReviewView extends ItemView {
       text: "Escape or Close leaves this tab.",
     });
 
+    const futureBatch = this.commitAdvance
+      ? selectSoonestFutureBatch(
+          this.elementsById.values(),
+          Date.now(),
+          this.advanceBatchLimit(),
+        )
+      : { selectedIds: [], totalFutureCount: 0 };
+    const canAdvanceBatch = futureBatch.selectedIds.length > 0;
+
     const row = scroll.createDiv({ cls: "ir-review-buttons" });
+    if (canAdvanceBatch) {
+      row
+        .createEl("button", {
+          text: `Advance next ${futureBatch.selectedIds.length} due soonest (Alt+Shift+A)`,
+          cls: "mod-cta",
+        })
+        .addEventListener("click", () => {
+          void this.advanceNextFutureBatch();
+        });
+    }
     row
-      .createEl("button", { text: "Open Collection (Alt+I)", cls: "mod-cta" })
+      .createEl("button", {
+        text: "Open Collection (Alt+I)",
+        cls: canAdvanceBatch ? "" : "mod-cta",
+      })
       .addEventListener("click", () => this.openTreeFromIdlePane?.());
     row
       .createEl("button", { text: "Close" })
@@ -3920,20 +3966,42 @@ export class IrReviewView extends ItemView {
       cls: "ir-review-complete-hint",
       text: neural
         ? "Start outstanding (Alt+R) for today's due queue. Escape or Close leaves this tab."
-        : "Alt+R starts remaining due. Escape or Close leaves this tab.",
+        : "Alt+R starts remaining due · Alt+Shift+A advances next batch · Escape leaves this tab.",
     });
+    const futureBatch =
+      !neural && this.commitAdvance
+        ? selectSoonestFutureBatch(
+            this.elementsById.values(),
+            Date.now(),
+            this.advanceBatchLimit(),
+          )
+        : { selectedIds: [], totalFutureCount: 0 };
+    const canAdvanceBatch = futureBatch.selectedIds.length > 0;
+    const row = scroll.createDiv({ cls: "ir-review-buttons" });
     if (neural && this.startOutstandingDue) {
-      scroll
+      row
         .createEl("button", {
           text: "Start outstanding (Alt+R)",
           cls: "mod-cta",
         })
         .addEventListener("click", () => this.startOutstandingDue?.());
+    } else if (canAdvanceBatch) {
+      row
+        .createEl("button", {
+          text: `Advance next ${futureBatch.selectedIds.length} due soonest (Alt+Shift+A)`,
+          cls: "mod-cta",
+        })
+        .addEventListener("click", () => {
+          void this.advanceNextFutureBatch();
+        });
     }
-    scroll
+    row
       .createEl("button", {
         text: "Close",
-        cls: neural && this.startOutstandingDue ? "" : "mod-cta",
+        cls:
+          (neural && this.startOutstandingDue) || canAdvanceBatch
+            ? ""
+            : "mod-cta",
       })
       .addEventListener("click", () => this.leaf.detach());
   }

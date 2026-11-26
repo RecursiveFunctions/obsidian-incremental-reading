@@ -6,6 +6,7 @@ import {
   parseJumpIntervalInput,
   planAdvanceElements,
   planManualSchedule,
+  selectSoonestFutureBatch,
 } from "../src/ir/manual-schedule";
 import { readCoreSearchMatchedPaths } from "../src/ir/search-view";
 import { fold } from "../src/ir/log";
@@ -179,4 +180,35 @@ test("readCoreSearchMatchedPaths reads resultDomLookup Map and DOM .tree-item-se
     vault: { getFiles: () => [] },
   };
   assert.deepEqual(readCoreSearchMatchedPaths(fakeAppDom as never), ["Notes/C.md", "Notes/D.md"]);
+});
+
+test("selectSoonestFutureBatch selects up to limit future-due non-dismissed elements ordered by soonest due then priority (#96)", () => {
+  const now = 1_760_000_000_000;
+  const dayMs = 86_400_000;
+
+  const mkTopic = (id: string, dueOffsetDays: number, priority: number, dismissed = false) => {
+    const el = newElement({ id: id as ElementId, type: "topic", priority, now: 0 });
+    el.dismissed = dismissed;
+    el.schedule = { due: now + dueOffsetDays * dayMs, interval: 5, aFactor: 2 };
+    return el;
+  };
+
+  const alreadyDue = mkTopic("due-now", 0, 10);
+  const dismissedTomorrow = mkTopic("dismissed", 1, 5, true);
+  const t1LowPri = mkTopic("t1-low", 1, 60);
+  const t1HighPri = mkTopic("t1-high", 1, 15);
+  const t3 = mkTopic("t3", 3, 20);
+  const t7 = mkTopic("t7", 7, 10);
+
+  const batch = selectSoonestFutureBatch(
+    [alreadyDue, dismissedTomorrow, t1LowPri, t1HighPri, t3, t7],
+    now,
+    3,
+  );
+  assert.deepEqual(batch.selectedIds, ["t1-high", "t1-low", "t3"]);
+  assert.equal(batch.totalFutureCount, 4);
+
+  const empty = selectSoonestFutureBatch([alreadyDue, dismissedTomorrow], now, 40);
+  assert.deepEqual(empty.selectedIds, []);
+  assert.equal(empty.totalFutureCount, 0);
 });

@@ -234,3 +234,41 @@ export function buildAdvanceEvents(
     },
   }));
 }
+
+export interface SoonestFutureBatch {
+  selectedIds: ElementId[];
+  totalFutureCount: number;
+}
+
+/**
+ * Select up to `limit` future-due (`due > nowMs`) non-dismissed elements
+ * ordered by soonest due date, breaking ties by highest priority (lowest P)
+ * then `id`, for one-click queue continuation when today's queue finishes (#96).
+ */
+export function selectSoonestFutureBatch(
+  elements: Iterable<IrElement>,
+  nowMs: number,
+  limit = 50,
+): SoonestFutureBatch {
+  const cap = Number.isFinite(limit) && limit > 0 ? Math.trunc(limit) : 50;
+  const future: Array<{ el: IrElement; due: number }> = [];
+  for (const el of elements) {
+    if (el.dismissed) continue;
+    const due = el.card?.due ?? el.schedule?.due;
+    if (due === undefined || !Number.isFinite(due) || due <= nowMs) continue;
+    future.push({ el, due });
+  }
+  if (future.length === 0) {
+    return { selectedIds: [], totalFutureCount: 0 };
+  }
+  future.sort(
+    (a, b) =>
+      a.due - b.due ||
+      a.el.priority - b.el.priority ||
+      a.el.id.localeCompare(b.el.id),
+  );
+  return {
+    selectedIds: future.slice(0, cap).map((f) => f.el.id),
+    totalFutureCount: future.length,
+  };
+}
