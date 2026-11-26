@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] — 2026-11-26
+
+### Added
+
+- **Timestamp-anchored video & audio IR** (#69): Mark vault audio/video (`mp4`, `webm`, `mp3`, `m4a`, `ogg`, `wav`) or media descriptor notes as IR topics, review with an inline/side-by-side HTML5 player that restores `resumeSec` and pauses at clip bounds, extract `[start, stop]` clips (`Alt+X`) with timeline markers, and keep external streams opt-in with zero network code in `main.js`.
+- **One-click batch advance on finished due queues** (#96): `Nothing due right now` and `Session complete` screens (plus `Alt+Shift+A`) advance up to the daily ceiling of soonest-due elements into today's queue in one undoable batch.
+- **SM-20 semi-leeches, queue ordinals & diagnostic exports** (#67, #71, #72): Added semi-leech early-warning detection and mutually exclusive leech policies (`manual`, `semi-leeches`, `auto-postpone`, `auto-forget`), 13-bucket log2 interval distribution (`0x00cfc860`) plus `RecallData.csv` (`0x00ce5500`) and `DifficultyDeviation.csv` (`0x00bc6410`) exports in Stats, and `repSortFactorToSlider` (`0x00b2c9f0`), `computeBlendedQueueOrdinal` (`0x00d649c0`), and `interleaveSimilarPriority` support in `policyQueue`.
+
+### Fixed
+
+- **PDF multi-bullet & full-page extract highlights** (#119, #125): Unwrapped PDF.js `.markedContent` (`display: contents`) spans, decomposed DOM `Range` intersections into sorted `PdfSegment` runs, normalized reversed `data-idx` tuples, and reused the review-owned PDF leaf across cards.
+- **Single-source Ctrl multi-select & reused note paths** (#101, #105, #111, #117, #118, #122, #123, #124): Enforced single-source batching on `PendingSelections` so cross-note `Alt+X` never drops held spans, minted fresh `ElementId`/`EventId`s when creating notes at renamed/reused paths, anchored editor multi-cursor spans and overlapping quotes, and hardened orphan recovery and SM import path/history repairs (#73, #103).
+
 ## [0.15.4] — 2026-11-23
 
 ### Fixed
