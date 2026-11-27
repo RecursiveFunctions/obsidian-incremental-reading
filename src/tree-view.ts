@@ -188,6 +188,7 @@ import {
   type Sm20ElementFilter,
 } from "./ir/sm20-collection-ops";
 import { slugifyConceptId, upsertConceptGroup } from "./ir/concepts-references";
+import { isSafeVaultRelativePath } from "./ir/source-paths";
 import { formatDueLabel } from "./ir/due-label";
 export { formatDueLabel };
 
@@ -3343,12 +3344,17 @@ export class IrTreeView extends ItemView {
           new Notice("Incremental Reading: enter a concept name.");
           return;
         }
+        const rawFolder = folderIn.value.trim().replace(/^\/+|\/+$/g, "");
+        if (rawFolder && !isSafeVaultRelativePath(rawFolder)) {
+          new Notice("Incremental Reading: target folder must be a safe vault-relative folder path.");
+          return;
+        }
         const cur = await this.ledger.readConcepts();
         const prioNum = Number(prioIn.value);
         const updated = upsertConceptGroup(cur, {
           id: slugifyConceptId(name),
           name,
-          ...(folderIn.value.trim() ? { targetFolder: folderIn.value.trim() } : {}),
+          ...(rawFolder ? { targetFolder: rawFolder } : {}),
           ...(Number.isFinite(prioNum) ? { defaultPriority: prioNum } : {}),
           ...(tplIn.value.trim() ? { itemTemplate: tplIn.value.trim() } : {}),
           updatedAt: Date.now(),

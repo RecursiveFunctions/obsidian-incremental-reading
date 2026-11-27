@@ -115,11 +115,10 @@ import {
   gradeMcqSelection,
   gradeOrderedSequence,
   MCQ_LANG,
-  moveOrderItem,
   ORDER_LANG,
   parseMcqPayload,
   parseOrderPayload,
-  scrambleOrderItems,
+  QuizSessionStore,
   shuffleMcqOptions,
   wrapTypedCloze,
 } from "./src/ir/interactive-items";
@@ -492,6 +491,7 @@ export default class IncrementalReadingPlugin extends Plugin {
    */
   private ledger?: IrLedger;
   private sm20Matrix?: Sm20Matrix;
+  private readonly quizStore = new QuizSessionStore();
   private sm20MatrixMeta?: Pick<Sm20MatrixFileV1, "baseline" | "baselineCursorEventId" | "headEventId" | "eventCount">;
 
   /**
@@ -619,11 +619,11 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.registerMarkdownCodeBlockProcessor(OCCLUSION_LANG, (src, el, ctx) =>
       this.renderOcclusionBlock(src, el, ctx.sourcePath),
     );
-    this.registerMarkdownCodeBlockProcessor(MCQ_LANG, (src, el) =>
-      this.renderMcqBlock(src, el),
+    this.registerMarkdownCodeBlockProcessor(MCQ_LANG, (src, el, ctx) =>
+      this.renderMcqBlock(src, el, ctx.sourcePath),
     );
-    this.registerMarkdownCodeBlockProcessor(ORDER_LANG, (src, el) =>
-      this.renderOrderBlock(src, el),
+    this.registerMarkdownCodeBlockProcessor(ORDER_LANG, (src, el, ctx) =>
+      this.renderOrderBlock(src, el, ctx.sourcePath),
     );
     this.registerDomEvent(
       document,
@@ -2875,13 +2875,14 @@ export default class IncrementalReadingPlugin extends Plugin {
     if (!(await this.ensureIrSource(file))) return;
     const hintR = await promptClozeHintInline(mv.contentEl);
     if (!hintR.ok) return;
+    const conceptRegistry = this.ledger ? await this.ledger.readConcepts() : undefined;
     const result = await createClozeFromText(
       this.app,
       file,
       body,
       mapped.start,
       mapped.end,
-      this.settings,
+      { ...this.settings, conceptRegistry },
       hintR.hint,
     );
     await this.openResult(result, "Cloze item created:");
@@ -9124,12 +9125,10 @@ export default class IncrementalReadingPlugin extends Plugin {
         const af = this.app.vault.getAbstractFileByPath(m.notePath);
         if (af instanceof TFile) {
           try {
-            const raw = await this.app.vault.read(af);
-            const escaped = findText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const pat = options.wholeWord ? `\\b${escaped}\\b` : escaped;
-            const re = new RegExp(pat, options.caseSensitive ? "g" : "gi");
-            const updated = raw.replace(re, replaceText);
-            if (updated !== raw) await this.app.vault.modify(af, updated);
+            await quietFrontmatterWrite(
+              () => saveBody(this.app, af, m.afterText),
+              "subset-replace",
+            );
           } catch (e) {
             console.warn("Incremental Reading: could not update note during subset replace", e);
           }
@@ -9178,10 +9177,6 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async reconcileFrontmatterMetadataForFile(file: TFile): Promise<void> {
     if (!this.ledger) return;
     const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-    if (!fm) return;
-    if (!("ir_concept" in fm) && !("ir-concept" in fm) && !("ir_ref" in fm) && !("ir-ref" in fm)) {
-      return;
-    }
     const [view, concepts] = await Promise.all([
       this.ledger.loadView(),
       this.ledger.readConcepts(),
@@ -9194,8 +9189,16 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     }
     if (!targetEl) return;
+    const hasFmKeys =
+      Boolean(fm) &&
+      ("ir_concept" in fm! || "ir-concept" in fm! || "ir_ref" in fm! || "ir-ref" in fm!);
+    if (!hasFmKeys && !targetEl.conceptId && !targetEl.reference) {
+      return;
+    }
     const now = Date.now();
-    const rec = reconcileNoteFrontmatterWithLedger(targetEl, fm, concepts, now);
+    const rec = reconcileNoteFrontmatterWithLedger(targetEl, fm, concepts, now, {
+      authoritativeRemove: true,
+    });
     if (!rec.changed) return;
     if (rec.nextRegistry !== concepts) {
       await this.ledger.writeConcepts(rec.nextRegistry);
@@ -9216,7 +9219,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.refreshAuxiliaryViews();
   }
 
-  private renderMcqBlock(src: string, el: HTMLElement): void {
+  private renderMcqBlock(src: string, el: HTMLElement, sourcePath = ""): void {
     const spec = parseMcqPayload(src);
     if (!spec) {
       el.createEl("pre", { text: "Invalid ir-mcq block." });
@@ -9224,12 +9227,16 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const reviewBody = el.closest<HTMLElement>(".ir-review-main-body");
     let revealed = reviewBody ? reviewBody.classList.contains("ir-review-revealed") : false;
+    const activeReviewId = reviewBody
+      ? (this.getActiveReviewView()?.getCurrentElementId() ?? "")
+      : "";
+    const sessionKey = `${activeReviewId || sourcePath}::mcq::${src}`;
     const daySeed = Math.floor(Date.now() / 86_400_000);
     const options = shuffleMcqOptions(spec.options, daySeed);
-    const selected = new Set<number>();
 
     const paint = () => {
       el.empty();
+      const selected = this.quizStore.getMcqSelection(sessionKey);
       const box = el.createDiv({ cls: "ir-quiz-block ir-quiz-mcq" });
       if (spec.prompt) {
         box.createDiv({ cls: "ir-stats-section-title", text: spec.prompt });
@@ -9250,8 +9257,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         btn.style.marginBottom = "4px";
         btn.onclick = () => {
           if (revealed) return;
-          if (selected.has(idx)) selected.delete(idx);
-          else selected.add(idx);
+          this.quizStore.toggleMcqOption(sessionKey, idx);
           paint();
         };
       });
@@ -9261,23 +9267,27 @@ export default class IncrementalReadingPlugin extends Plugin {
           text: revealed ? "Reset" : "Check answer",
         });
         checkBtn.onclick = () => {
+          if (revealed) this.quizStore.resetKey(sessionKey);
           revealed = !revealed;
           paint();
         };
-      } else if (revealed && selected.size > 0) {
+      } else if (revealed) {
         const res = gradeMcqSelection(options, [...selected]);
         box.createDiv({
           cls: "setting-item-description",
-          text: res.correct
-            ? `Correct (suggested grade ${res.suggestedSmGrade})`
-            : `Incorrect (suggested grade ${res.suggestedSmGrade})`,
+          text:
+            selected.size === 0
+              ? "No option selected prior to reveal."
+              : res.correct
+                ? `Correct (suggested grade ${res.suggestedSmGrade})`
+                : `Incorrect (suggested grade ${res.suggestedSmGrade})`,
         });
       }
     };
     paint();
   }
 
-  private renderOrderBlock(src: string, el: HTMLElement): void {
+  private renderOrderBlock(src: string, el: HTMLElement, sourcePath = ""): void {
     const spec = parseOrderPayload(src);
     if (!spec) {
       el.createEl("pre", { text: "Invalid ir-order block." });
@@ -9285,11 +9295,15 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     const reviewBody = el.closest<HTMLElement>(".ir-review-main-body");
     let revealed = reviewBody ? reviewBody.classList.contains("ir-review-revealed") : false;
+    const activeReviewId = reviewBody
+      ? (this.getActiveReviewView()?.getCurrentElementId() ?? "")
+      : "";
+    const sessionKey = `${activeReviewId || sourcePath}::order::${src}`;
     const daySeed = Math.floor(Date.now() / 86_400_000);
-    let currentOrder = scrambleOrderItems(spec.items, daySeed);
 
     const paint = () => {
       el.empty();
+      const currentOrder = this.quizStore.getOrInitOrder(sessionKey, spec.items, daySeed);
       const box = el.createDiv({ cls: "ir-quiz-block ir-quiz-order" });
       if (spec.prompt) {
         box.createDiv({ cls: "ir-stats-section-title", text: spec.prompt });
@@ -9308,13 +9322,13 @@ export default class IncrementalReadingPlugin extends Plugin {
           const upBtn = row.createEl("button", { type: "button", text: "↑" });
           upBtn.disabled = idx === 0;
           upBtn.onclick = () => {
-            currentOrder = moveOrderItem(currentOrder, idx, idx - 1);
+            this.quizStore.moveOrder(sessionKey, idx, idx - 1);
             paint();
           };
           const downBtn = row.createEl("button", { type: "button", text: "↓" });
           downBtn.disabled = idx === shownOrder.length - 1;
           downBtn.onclick = () => {
-            currentOrder = moveOrderItem(currentOrder, idx, idx + 1);
+            this.quizStore.moveOrder(sessionKey, idx, idx + 1);
             paint();
           };
         }
@@ -9325,6 +9339,7 @@ export default class IncrementalReadingPlugin extends Plugin {
           text: revealed ? "Scramble again" : "Check order",
         });
         checkBtn.onclick = () => {
+          if (revealed) this.quizStore.resetKey(sessionKey);
           revealed = !revealed;
           paint();
         };
@@ -9455,7 +9470,20 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     const full = await this.flushEditorToVault(editor, file);
     const cursorOff = bodyOffsetFromFullOffset(full, editor.posToOffset(editor.getCursor()));
-    const protectedSpans = this.decorationCache.rangesFor(file.path);
+    const freshBody = stripFrontmatter(full);
+    const protectedSpans: Array<{ start: number; end: number }> = [
+      ...this.decorationCache.rangesFor(file.path),
+    ];
+    if (this.ledger) {
+      const state = await this.ledger.load();
+      for (const el of state.elements.values()) {
+        if (el.dismissed || !el.anchor || el.anchor.sourcePath !== file.path) continue;
+        const resolved = resolveAnchor(el.anchor, freshBody);
+        if (resolved.status === "ok") {
+          protectedSpans.push({ start: resolved.start, end: resolved.end });
+        }
+      }
+    }
     const res =
       direction === "before"
         ? chopReadingTextBeforeOffset(full, cursorOff, protectedSpans)
@@ -9482,6 +9510,8 @@ export default class IncrementalReadingPlugin extends Plugin {
           break;
         }
       }
+      await refreshIrDecorationCache(this.app, this.ledger, this.decorationCache).catch(() => undefined);
+      pushIrDecorations(this.app, this.decorationCache);
     }
     new Notice(
       direction === "before"

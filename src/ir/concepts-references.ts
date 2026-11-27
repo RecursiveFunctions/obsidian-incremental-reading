@@ -7,8 +7,16 @@
 
 import type { ElementId } from "./ids";
 import { clampPriority, type IrElement, type ReferenceMetadata } from "./model";
+import { isSafeVaultRelativePath } from "./source-paths";
 
 export type { ReferenceMetadata };
+
+function sanitizeTargetFolder(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim().replace(/\/+$/g, "");
+  if (!trimmed || !isSafeVaultRelativePath(trimmed)) return undefined;
+  return trimmed;
+}
 
 export interface ConceptGroup {
   id: string;
@@ -52,13 +60,12 @@ export function normalizeConceptRegistry(raw: unknown): ConceptRegistryState {
     const id = typeof c.id === "string" && c.id.trim() ? c.id.trim() : slugifyConceptId(c.name);
     if (seen.has(id)) continue;
     seen.add(id);
+    const cleanFolder = sanitizeTargetFolder(c.targetFolder);
     concepts.push({
       id,
       name: c.name.trim(),
       ...(c.rootElementId !== undefined ? { rootElementId: c.rootElementId } : {}),
-      ...(typeof c.targetFolder === "string" && c.targetFolder.trim()
-        ? { targetFolder: c.targetFolder.trim() }
-        : {}),
+      ...(cleanFolder ? { targetFolder: cleanFolder } : {}),
       ...(typeof c.defaultPriority === "number" && Number.isFinite(c.defaultPriority)
         ? { defaultPriority: clampPriority(c.defaultPriority) }
         : {}),
@@ -79,10 +86,13 @@ export function upsertConceptGroup(
   group: ConceptGroup,
 ): ConceptRegistryState {
   const id = group.id.trim() || slugifyConceptId(group.name);
+  const cleanFolder = sanitizeTargetFolder(group.targetFolder);
+  const { targetFolder: _dropped, ...rest } = group;
   const clean: ConceptGroup = {
-    ...group,
+    ...rest,
     id,
     name: group.name.trim(),
+    ...(cleanFolder ? { targetFolder: cleanFolder } : {}),
   };
   const next = state.concepts.filter((c) => c.id !== id);
   next.push(clean);
@@ -132,7 +142,8 @@ export function resolveChildConceptRouting(
       body: rawBody,
     };
   }
-  const folder = concept.targetFolder?.trim() || fallbackFolder;
+  const safeConceptFolder = sanitizeTargetFolder(concept.targetFolder);
+  const folder = safeConceptFolder || fallbackFolder;
   const priority =
     concept.defaultPriority !== undefined && Number.isFinite(concept.defaultPriority)
       ? clampPriority(concept.defaultPriority)
@@ -335,6 +346,7 @@ export function reconcileNoteFrontmatterWithLedger(
   frontmatter: Record<string, unknown> | null | undefined,
   registry: ConceptRegistryState,
   nowMs: number,
+  options?: { authoritativeRemove?: boolean },
 ): {
   changed: boolean;
   conceptId: string | null;
@@ -343,6 +355,7 @@ export function reconcileNoteFrontmatterWithLedger(
 } {
   let nextRegistry = registry;
   const fmConceptRaw = readConceptFromFrontmatter(frontmatter);
+  const authRemove = options?.authoritativeRemove === true;
   let targetConceptId: string | null = element.conceptId ?? null;
 
   if (fmConceptRaw !== null) {
@@ -356,7 +369,10 @@ export function reconcileNoteFrontmatterWithLedger(
       nextRegistry = upsertConceptGroup(nextRegistry, group);
     }
     targetConceptId = group.id;
-  } else if (frontmatter && ("ir_concept" in frontmatter || "ir-concept" in frontmatter)) {
+  } else if (
+    authRemove ||
+    (frontmatter && ("ir_concept" in frontmatter || "ir-concept" in frontmatter))
+  ) {
     targetConceptId = null;
   }
 
@@ -366,7 +382,7 @@ export function reconcileNoteFrontmatterWithLedger(
   const targetRef: ReferenceMetadata | null =
     parsedRef !== null
       ? parsedRef
-      : hasExplicitRefKey
+      : authRemove || hasExplicitRefKey
         ? null
         : normalizeReference(element.reference);
 

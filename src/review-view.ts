@@ -23,6 +23,7 @@ import {
   type DivergenceScale,
 } from "./ir/divergence-track";
 import {
+  computeSixPointDrillPreview,
   formatIntervalShort,
   previewGradeDelays,
   previewSmGradeDelays,
@@ -959,6 +960,23 @@ export class IrReviewView extends ItemView {
           void this.renderCard();
         }
         return;
+      }
+
+      // Before reveal on an MCQ card, keys 1..9 toggle the corresponding choice button.
+      if (
+        !this.revealed &&
+        !typing &&
+        slot &&
+        !this.isReading(slot) &&
+        /^[1-9]$/.test(evt.key)
+      ) {
+        const mcqBtns = this.contentEl.querySelectorAll<HTMLButtonElement>(".ir-quiz-mcq button");
+        const targetBtn = mcqBtns[Number(evt.key) - 1];
+        if (targetBtn) {
+          evt.preventDefault();
+          targetBtn.click();
+          return;
+        }
       }
 
       // Grade keys: 0-5 in SuperMemo 6-point mode, 1-4 in standard 4-point mode.
@@ -4919,56 +4937,62 @@ export class IrReviewView extends ItemView {
     if (slot && hasTypedCloze(raw)) {
       const typedGroups = extractTypedClozes(raw);
       if (typedGroups.length > 0) {
-        const expected = typedGroups[0]!.answer;
         const spellBar = body.createDiv({ cls: "ir-spell-bar ir-telemetry-controls" });
         if (!this.revealed) {
-          const spellIn = spellBar.createEl("input", {
-            cls: "ir-priority-input",
-            attr: {
-              type: "text",
-              placeholder: typedGroups[0]!.hint
-                ? `Type answer (${typedGroups[0]!.hint})…`
-                : "Type answer (Enter to check)…",
-              "aria-label": "Typed cloze answer",
-            },
-          });
-          spellIn.style.minWidth = "14em";
-          spellIn.value = this.lastTypedAnswerBySlot.get(slot.id) ?? "";
-          spellIn.addEventListener("input", () => {
-            this.lastTypedAnswerBySlot.set(slot.id, spellIn.value);
-          });
-          spellIn.addEventListener("keydown", (ev) => {
-            if (ev.key === "Enter") {
-              ev.preventDefault();
-              ev.stopPropagation();
-              this.lastTypedAnswerBySlot.set(slot.id, spellIn.value);
-              this.revealed = true;
-              void this.renderCard();
-            }
+          typedGroups.forEach((grp, gIdx) => {
+            const stateKey = `${slot.id}:${gIdx}`;
+            const spellIn = spellBar.createEl("input", {
+              cls: "ir-priority-input",
+              attr: {
+                type: "text",
+                placeholder: grp.hint
+                  ? `Type answer ${typedGroups.length > 1 ? `#${gIdx + 1} ` : ""}(${grp.hint})…`
+                  : `Type answer${typedGroups.length > 1 ? ` #${gIdx + 1}` : ""} (Enter to check)…`,
+                "aria-label": `Typed cloze answer ${gIdx + 1}`,
+              },
+            });
+            spellIn.style.minWidth = "14em";
+            spellIn.value = this.lastTypedAnswerBySlot.get(stateKey) ?? "";
+            spellIn.addEventListener("input", () => {
+              this.lastTypedAnswerBySlot.set(stateKey, spellIn.value);
+            });
+            spellIn.addEventListener("keydown", (ev) => {
+              if (ev.key === "Enter") {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.lastTypedAnswerBySlot.set(stateKey, spellIn.value);
+                this.revealed = true;
+                void this.renderCard();
+              }
+            });
           });
         } else {
-          const typedVal = this.lastTypedAnswerBySlot.get(slot.id) ?? "";
-          const evalRes = diffTypedAnswer(expected, typedVal);
-          const diffRow = spellBar.createDiv({ cls: "ir-spell-diff" });
-          diffRow.createSpan({
-            text: typedVal
-              ? `Typed "${typedVal}" (${Math.round(evalRes.accuracy * 100)}% match, suggested G${evalRes.suggestedSmGrade}): `
-              : `Expected: ${expected}`,
-          });
-          if (typedVal) {
-            for (const seg of evalRes.segments) {
-              const span = diffRow.createSpan({ text: seg.text });
-              if (seg.kind === "missing") {
-                span.style.textDecoration = "underline";
-                span.style.color = "var(--text-error)";
-              } else if (seg.kind === "extra") {
-                span.style.textDecoration = "line-through";
-                span.style.color = "var(--text-faint)";
-              } else {
-                span.style.color = "var(--text-success)";
+          typedGroups.forEach((grp, gIdx) => {
+            const stateKey = `${slot.id}:${gIdx}`;
+            const typedVal = this.lastTypedAnswerBySlot.get(stateKey) ?? "";
+            const evalRes = diffTypedAnswer(grp.answer, typedVal);
+            const diffRow = spellBar.createDiv({ cls: "ir-spell-diff" });
+            const prefix = typedGroups.length > 1 ? `#${gIdx + 1} ` : "";
+            diffRow.createSpan({
+              text: typedVal
+                ? `${prefix}Typed "${typedVal}" (${Math.round(evalRes.accuracy * 100)}% match, suggested G${evalRes.suggestedSmGrade}): `
+                : `${prefix}Expected: ${grp.answer}`,
+            });
+            if (typedVal) {
+              for (const seg of evalRes.segments) {
+                const span = diffRow.createSpan({ text: seg.text });
+                if (seg.kind === "missing") {
+                  span.style.textDecoration = "underline";
+                  span.style.color = "var(--text-error)";
+                } else if (seg.kind === "extra") {
+                  span.style.textDecoration = "line-through";
+                  span.style.color = "var(--text-faint)";
+                } else {
+                  span.style.color = "var(--text-success)";
+                }
               }
             }
-          }
+          });
         }
       }
     }
@@ -6147,13 +6171,14 @@ export class IrReviewView extends ItemView {
       return;
     }
     if (!(await this.flushEdits())) return;
+    const conceptRegistry = await this.ledger.readConcepts();
     const result = await createClozeFromText(
       this.app,
       placement,
       this.currentRaw,
       sel.start,
       sel.end,
-      this.settings,
+      { ...this.settings, conceptRegistry },
       hint,
     );
     const created = await this.afterChildCreated(result);
@@ -6517,7 +6542,7 @@ export class IrReviewView extends ItemView {
       return null;
     }
     if (this.sessionPhase === "drill") {
-      return { 0: "stay", 1: "stay", 2: "stay", 3: "pass", 4: "pass", 5: "pass" };
+      return computeSixPointDrillPreview(this.settings.finalDrillMode);
     }
     const now = Date.now();
     const policy = this.settings.prioritySchedulingPolicy;
@@ -6682,7 +6707,7 @@ export class IrReviewView extends ItemView {
         : null;
 
     if (div) {
-      this.showDivergencePicker(slot, g, next, stored, div, effectiveRetention);
+      this.showDivergencePicker(slot, g, next, stored, div, effectiveRetention, smGrade);
       return;
     }
 
@@ -6855,6 +6880,7 @@ export class IrReviewView extends ItemView {
     primaryStored: import("./ir/model").StoredCard,
     div: DivergenceCheck,
     effectiveRetention: number,
+    explicitSmGrade?: SmGrade,
   ) {
     const existing = this.contentEl.querySelector(".ir-divergence-bar");
     if (existing) existing.remove();
@@ -6869,6 +6895,7 @@ export class IrReviewView extends ItemView {
         false,
         effectiveRetention,
         div.primaryScheduler,
+        explicitSmGrade,
       );
       return;
     }
@@ -6889,6 +6916,7 @@ export class IrReviewView extends ItemView {
             false,
             effectiveRetention,
             div.primaryScheduler,
+            explicitSmGrade,
           ),
         );
         return;
@@ -6934,6 +6962,7 @@ export class IrReviewView extends ItemView {
           true,
           effectiveRetention,
           div.primaryScheduler,
+          explicitSmGrade,
         ),
       );
     };

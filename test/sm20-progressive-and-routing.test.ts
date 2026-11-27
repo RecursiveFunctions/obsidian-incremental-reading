@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   resolveChildConceptRouting,
+  reconcileNoteFrontmatterWithLedger,
   upsertConceptGroup,
+  normalizeConceptRegistry,
   createEmptyConceptRegistry,
 } from "../src/ir/concepts-references";
 import { finalizeDraftPolygon } from "../src/ir/occlusion";
@@ -12,6 +14,11 @@ import {
   computeSm20SincHeatmap20x20,
 } from "../src/ir/sm20-reading-tools";
 import { createEmptySm20Matrix } from "../src/ir/sm20-matrix";
+import { computeSixPointDrillPreview } from "../src/ir/grade-preview";
+import { QuizSessionStore } from "../src/ir/interactive-items";
+import { planSubsetSearchAndReplace } from "../src/ir/sm20-collection-ops";
+import { newElementId } from "../src/ir/ids";
+import { newElement } from "../src/ir/model";
 
 test("resolveChildConceptRouting applies ConceptGroup targetFolder, defaultPriority, and item/topic templates", () => {
   let reg = createEmptyConceptRegistry();
@@ -128,4 +135,96 @@ test("finalizeDraftPolygon clamps vertices, rejects <3 or degenerate collinear p
   assert.ok(valid !== null);
   assert.equal(valid.n, 3);
   assert.equal(valid.points.length, 3);
+});
+
+test("Security: ConceptGroup.targetFolder rejects ../, absolute, drive-colon, and backslash traversal", () => {
+  for (const unsafe of ["../escape", "notes/../../etc", "/abs/path", "C:\\win", "bad\\slash", "nul\0byte"]) {
+    const reg = upsertConceptGroup(createEmptyConceptRegistry(), {
+      id: "concept_bad",
+      name: "Bad",
+      targetFolder: unsafe,
+      updatedAt: 100,
+    });
+    assert.equal(reg.concepts[0]!.targetFolder, undefined, `expected unsafe folder "${unsafe}" to be stripped`);
+
+    const norm = normalizeConceptRegistry({
+      version: 1,
+      concepts: [{ id: "c1", name: "Bad", targetFolder: unsafe, updatedAt: 100 }],
+    });
+    assert.equal(norm.concepts[0]!.targetFolder, undefined);
+
+    const routed = resolveChildConceptRouting(
+      { ir_concept: "Bad" },
+      norm,
+      "item",
+      "Safe {{c1::body}}",
+      "SafeFallback",
+      33,
+    );
+    assert.equal(routed.folder, "SafeFallback");
+  }
+});
+
+test("computeSixPointDrillPreview marks grade 3 as stay in again-and-hard mode and pass in again mode", () => {
+  const strict = computeSixPointDrillPreview("again-and-hard");
+  assert.deepEqual(strict, {
+    0: "stay",
+    1: "stay",
+    2: "stay",
+    3: "stay",
+    4: "pass",
+    5: "pass",
+  });
+
+  const lenient = computeSixPointDrillPreview("again");
+  assert.deepEqual(lenient, {
+    0: "stay",
+    1: "stay",
+    2: "stay",
+    3: "pass",
+    4: "pass",
+    5: "pass",
+  });
+});
+
+test("QuizSessionStore preserves MCQ selections and Order sequence across reveal re-renders", () => {
+  const store = new QuizSessionStore();
+  store.toggleMcqOption("slot1:q1", 2);
+  assert.deepEqual([...store.getMcqSelection("slot1:q1")], [2]);
+
+  const initOrder = store.getOrInitOrder("slot1:ord1", ["Prophase", "Metaphase", "Anaphase", "Telophase"], 42);
+  const moved = store.moveOrder("slot1:ord1", 0, 2);
+  // Re-reading on reveal returns the user's moved sequence, NOT a fresh scramble!
+  assert.deepEqual(store.getOrInitOrder("slot1:ord1", ["Prophase", "Metaphase", "Anaphase", "Telophase"], 42), moved);
+  assert.notDeepEqual(moved, initOrder);
+});
+
+test("reconcileNoteFrontmatterWithLedger clears conceptId & reference when deleted from note YAML in authoritative mode", () => {
+  const el = {
+    ...newElement({ id: newElementId(), type: "topic", priority: 25, now: 1000 }),
+    conceptId: "concept_neuro",
+    reference: { author: "Kandel", title: "Neural Science" },
+  };
+  const reg = upsertConceptGroup(createEmptyConceptRegistry(), {
+    id: "concept_neuro",
+    name: "Neuro",
+    updatedAt: 1000,
+  });
+
+  // Note frontmatter had ir_concept and ir_ref deleted by user
+  const rec = reconcileNoteFrontmatterWithLedger(el, { "ir-type": "topic" }, reg, 2000, {
+    authoritativeRemove: true,
+  });
+  assert.equal(rec.changed, true);
+  assert.equal(rec.conceptId, null);
+  assert.equal(rec.reference, null);
+});
+
+test("planSubsetSearchAndReplace preserves literal $ tokens in replacement text", () => {
+  const el = {
+    ...newElement({ id: newElementId(), type: "extract", priority: 20, now: 1000 }),
+    text: "Cost is PRICE.",
+  };
+  const plan = planSubsetSearchAndReplace([el], "PRICE", "$& $$100");
+  assert.equal(plan.matches[0]!.afterText, "Cost is $& $$100.");
 });

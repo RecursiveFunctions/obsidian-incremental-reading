@@ -31,6 +31,7 @@ import {
   resolveChildConceptRouting,
   type ConceptRegistryState,
 } from "./ir/concepts-references";
+import { isSafeVaultRelativePath } from "./ir/source-paths";
 
 /**
  * Slash-only stand-in for Obsidian's `normalizePath`: collapse repeats,
@@ -271,7 +272,13 @@ async function createChildNote(
     baseFolder,
     parentPriority,
   );
-  const folder = routed.folder ? normalizePath(routed.folder) : "";
+  const candidateFolder = routed.folder ? normalizePath(routed.folder) : "";
+  const folder =
+    candidateFolder && isSafeVaultRelativePath(candidateFolder)
+      ? candidateFolder
+      : baseFolder && isSafeVaultRelativePath(baseFolder)
+        ? baseFolder
+        : "";
   if (folder && !app.vault.getAbstractFileByPath(folder)) {
     await app.vault.createFolder(folder);
   }

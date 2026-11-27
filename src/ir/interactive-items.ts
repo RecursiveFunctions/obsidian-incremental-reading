@@ -424,3 +424,51 @@ export function formatTypedClozeHtml(
     : `<mark class="ir-cloze-elision"><span class="ir-cloze-gap">[ type${group.hint ? `: ${escapeClozeHtmlFragment(group.hint)}` : ""} ]</span></mark>`;
   return inCodeSpan ? `<code>${html}</code>` : html;
 }
+
+/**
+ * Ephemeral in-memory store preserving `ir-mcq` option toggles and `ir-order`
+ * sequence moves across Markdown re-renders (e.g. when revealing an answer in
+ * `IrReviewView`).
+ */
+export class QuizSessionStore {
+  private readonly mcqSelections = new Map<string, Set<number>>();
+  private readonly orderSequences = new Map<string, string[]>();
+
+  getMcqSelection(key: string): ReadonlySet<number> {
+    return this.mcqSelections.get(key) ?? new Set<number>();
+  }
+
+  toggleMcqOption(key: string, optionIndex: number): ReadonlySet<number> {
+    let set = this.mcqSelections.get(key);
+    if (!set) {
+      set = new Set<number>();
+      this.mcqSelections.set(key, set);
+    }
+    if (set.has(optionIndex)) set.delete(optionIndex);
+    else set.add(optionIndex);
+    return set;
+  }
+
+  getOrInitOrder(key: string, canonicalItems: readonly string[], seed = 1): string[] {
+    const existing = this.orderSequences.get(key);
+    if (existing && existing.length === canonicalItems.length) {
+      return [...existing];
+    }
+    const scrambled = scrambleOrderItems(canonicalItems, seed);
+    this.orderSequences.set(key, scrambled);
+    return [...scrambled];
+  }
+
+  moveOrder(key: string, fromIndex: number, toIndex: number): string[] {
+    const cur = this.orderSequences.get(key);
+    if (!cur) return [];
+    const next = moveOrderItem(cur, fromIndex, toIndex);
+    this.orderSequences.set(key, next);
+    return [...next];
+  }
+
+  resetKey(key: string): void {
+    this.mcqSelections.delete(key);
+    this.orderSequences.delete(key);
+  }
+}

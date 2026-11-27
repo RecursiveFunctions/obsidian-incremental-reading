@@ -2,12 +2,23 @@ import type { Card } from "ts-fsrs";
 import type { Grade } from "../fsrs";
 import type { StoredCard } from "./model";
 import { formatDueLabel } from "./due-label";
+import { gradePassesDrill, type FinalDrillMode } from "./drill";
 import { scheduleItem, type PrimaryItemScheduler } from "./item-scheduler";
 import type { Sm20Matrix } from "./sm20-matrix";
-import type { SmGrade } from "./sm20-scheduler";
+import { smGradeToFsrsGrade, type SmGrade } from "./sm20-scheduler";
 
 export const PREVIEW_GRADES: readonly Grade[] = ["again", "hard", "good", "easy"];
 export const PREVIEW_SM_GRADES: readonly SmGrade[] = [0, 1, 2, 3, 4, 5];
+
+export function computeSixPointDrillPreview(
+  mode: FinalDrillMode,
+): Record<SmGrade, "stay" | "pass"> {
+  const out = {} as Record<SmGrade, "stay" | "pass">;
+  for (const smGrade of PREVIEW_SM_GRADES) {
+    out[smGrade] = gradePassesDrill(smGradeToFsrsGrade(smGrade), mode) ? "pass" : "stay";
+  }
+  return out;
+}
 
 export function previewSmGradeDelays(
   card: Card | StoredCard | null | undefined,
