@@ -22,6 +22,14 @@ import {
   type Sm20MatrixSnapshot,
 } from "./sm20-matrix";
 import {
+  parseSuperMemoReferenceFooter,
+  slugifyConceptId,
+  stripSuperMemoReferenceFooter,
+  writeConceptToFrontmatter,
+  writeReferenceToFrontmatter,
+  type ConceptGroup,
+} from "./concepts-references";
+import {
   MAX_LAST_REPETITION_DAY,
   hasWrongRepetitionGradeAndLapsesMatch,
   repairLastRepetitionDateInElementInfo,
@@ -40,6 +48,7 @@ const COMPON_ELEMENT_PARAM_SIZE_OFFSET = 9;
 const COMPON_ELEMENT_PARAMETERS_OFFSET = 11;
 const COMPON_PARAM_SIZE = 0x2b;
 const BINARY_IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|avif)$/i;
+const BINARY_MEDIA_EXT_RE = /\.(?:mp3|m4a|wav|ogg|flac|mp4|webm|mkv|mov)$/i;
 const TEXT_BACKING_EXT_RE = /\.(?:x?html?|htm|txt)$/i;
 const HTML_MARKUP_SNIFF_RE =
   /<\/?(?:html|head|body|div|span|p|br|hr|h[1-6]|b|i|u|s|em|strong|font|a|img|ul|ol|li|dl|dt|dd|table|thead|tbody|tr|th|td|blockquote|pre|code|sup|sub|center|small|big)\b[^>]*>/i;
@@ -50,10 +59,12 @@ export const SM_REGISTRY_KINDS = [
   "Font",
   "image",
   "Lexicon",
+  "sound",
   "Style",
   "tasklist",
   "template",
   "text",
+  "video",
 ] as const;
 
 export type SmRegistryKind = (typeof SM_REGISTRY_KINDS)[number];
@@ -145,6 +156,7 @@ export interface SmCollectionImportPlan {
   notes: SmImportedNotePlan[];
   attachments: SmImportedAttachment[];
   bookmarks: Bookmark[];
+  concepts?: ConceptGroup[];
   sm20Baseline?: Sm20MatrixSnapshot;
   baselineCursorEventId?: string;
   stats: {
@@ -591,11 +603,19 @@ export async function planSmCollectionImport(
     alg17SincCases,
     alg17Recall,
     alg17RecallCases,
+    alg17FirstInterval,
+    alg17ForgettingCurve,
+    alg17Retrievability,
+    alg17DifficultyDist,
   ] = await Promise.all([
     readCaseInsensitive(fs, "alg17", "StabilityIncrease.dat"),
     readCaseInsensitive(fs, "alg17", "StabilityIncreaseCases.dat"),
     readCaseInsensitive(fs, "alg17", "Recall.dat"),
     readCaseInsensitive(fs, "alg17", "RecallCases.dat"),
+    readCaseInsensitive(fs, "alg17", "FirstInterval.dat"),
+    readCaseInsensitive(fs, "alg17", "ForgettingCurve.dat"),
+    readCaseInsensitive(fs, "alg17", "Retrievability.dat"),
+    readCaseInsensitive(fs, "alg17", "DifficultyDistribution.dat"),
   ]);
   let sm20Baseline: Sm20MatrixSnapshot | undefined;
   if (alg17Sinc && alg17SincCases && alg17Recall && alg17RecallCases) {
@@ -605,6 +625,10 @@ export async function planSmCollectionImport(
         sincCases: alg17SincCases,
         recall: alg17Recall,
         recallCases: alg17RecallCases,
+        ...(alg17FirstInterval ? { firstInterval: alg17FirstInterval } : {}),
+        ...(alg17ForgettingCurve ? { forgettingCurve: alg17ForgettingCurve } : {}),
+        ...(alg17Retrievability ? { retrievability: alg17Retrievability } : {}),
+        ...(alg17DifficultyDist ? { difficultyDistribution: alg17DifficultyDist } : {}),
       });
       sm20Baseline = snapshotSm20Matrix(parsed);
     } catch (e) {
@@ -615,7 +639,10 @@ export async function planSmCollectionImport(
   const { slotToFiles, filesByRelKey } = await scanElementsFilespace(fs);
   const textReg = await resolveRichRegistryKind(fs, "text", slotToFiles);
   const imageReg = await resolveRichRegistryKind(fs, "image", slotToFiles);
+  const soundReg = await resolveRichRegistryKind(fs, "sound", slotToFiles);
+  const videoReg = await resolveRichRegistryKind(fs, "video", slotToFiles);
   const conceptReg = await resolveRichRegistryKind(fs, "concept", slotToFiles);
+  const conceptDatBytes = await readCaseInsensitive(fs, "registry", "concept.dat");
 
   // Build duplicate fingerprint index from existing vault elements
   const existingFingerprints = new Set<string>();
@@ -646,6 +673,36 @@ export async function planSmCollectionImport(
   const notes: SmImportedNotePlan[] = [];
   const attachments: SmImportedAttachment[] = [];
   const bookmarks: Bookmark[] = [];
+  const importedConcepts: ConceptGroup[] = [];
+  const conceptIdByMember = new Map<number, string>();
+  if (conceptDatBytes && conceptDatBytes.byteLength >= 65 && conceptDatBytes.byteLength % 65 === 0) {
+    const cView = new DataView(conceptDatBytes.buffer, conceptDatBytes.byteOffset, conceptDatBytes.byteLength);
+    const count = conceptDatBytes.byteLength / 65;
+    for (let idx = 0; idx < count; idx += 1) {
+      const base = idx * 65;
+      const memberNo = idx + 1;
+      const rootSmId = cView.getUint32(base + 0x04, true);
+      const prio = cView.getFloat64(base + 0x29, true);
+      const name = conceptReg.get(memberNo)?.text?.trim() || `Concept ${memberNo}`;
+      const cId = slugifyConceptId(name);
+      conceptIdByMember.set(memberNo, cId);
+      importedConcepts.push({
+        id: cId,
+        name,
+        ...(smToElementId.has(rootSmId) ? { rootElementId: smToElementId.get(rootSmId)! } : {}),
+        ...(Number.isFinite(prio) ? { defaultPriority: clampPriority(prio) } : {}),
+        updatedAt: nowMs,
+      });
+    }
+  } else {
+    for (const [memberNo, member] of conceptReg.entries()) {
+      const name = member.text.trim();
+      if (!name) continue;
+      const cId = slugifyConceptId(name);
+      conceptIdByMember.set(memberNo, cId);
+      importedConcepts.push({ id: cId, name, updatedAt: nowMs });
+    }
+  }
   const usedNotePaths = new Set<string>(opts.existingPaths ?? []);
   const nextNoteSuffixByStem = new Map<string, number>();
   const copiedAttachmentNames = new Set<string>();
@@ -796,11 +853,32 @@ export async function planSmCollectionImport(
     const compon = componByElement.get(smId);
     const textParts: Array<{ text: string; displayAt: number }> = [];
     const imageLinks: string[] = [];
+    let mediaPathImported: string | undefined;
     const seenTextMembers = new Set<number>();
 
     if (compon) {
       for (const comp of compon.components) {
-        if (comp.componentType === 2 && comp.registryMember > 0) {
+        if ((comp.componentType === 3 || comp.componentType === 6 || comp.componentType === 10) && comp.registryMember > 0) {
+          const mediaMember =
+            comp.componentType === 3
+              ? soundReg.get(comp.registryMember)
+              : (videoReg.get(comp.registryMember) ?? soundReg.get(comp.registryMember));
+          if (mediaMember) {
+            for (const relPath of mediaMember.backingFiles) {
+              if (!BINARY_MEDIA_EXT_RE.test(relPath)) continue;
+              const ext = (relPath.split(".").pop() ?? "mp3").toLowerCase();
+              const targetFileName = reserveAttachmentFileName(
+                relPath,
+                `sm-media-${smId}-${comp.registryMember}.${ext}`,
+              );
+              const ok = await materializeAttachment(relPath, targetFileName);
+              if (!ok) continue;
+              const embedPath = attachmentFolder ? `${attachmentFolder}/${targetFileName}` : targetFileName;
+              mediaPathImported = mediaPathImported ?? embedPath;
+              imageLinks.push(`![[${embedPath}]]`);
+            }
+          }
+        } else if (comp.componentType === 2 && comp.registryMember > 0) {
           const imgMember = imageReg.get(comp.registryMember);
           if (imgMember) {
             for (const relPath of imgMember.backingFiles) {
@@ -850,6 +928,14 @@ export async function planSmCollectionImport(
       bodyText = bodyText ? `${bodyText}\n\n${imageLinks.join("\n")}` : imageLinks.join("\n");
     }
     if (!bodyText) bodyText = titleText;
+    const parsedRef = parseSuperMemoReferenceFooter(bodyText);
+    if (parsedRef) {
+      bodyText = stripSuperMemoReferenceFooter(bodyText) || titleText;
+    }
+    const conceptId =
+      rec.concept_group_member > 0 ? conceptIdByMember.get(rec.concept_group_member) : undefined;
+    const conceptName =
+      rec.concept_group_member > 0 ? conceptReg.get(rec.concept_group_member)?.text?.trim() : undefined;
 
     const fp = contentFingerprint(bodyText);
     if (existingFingerprints.has(fp)) {
@@ -930,15 +1016,14 @@ export async function planSmCollectionImport(
       usedNotePaths.add(assertVaultRelativePath(candidate));
       notePath = candidate;
 
-      const conceptTag = rec.concept_group_member > 0
-        ? conceptReg.get(rec.concept_group_member)?.text?.trim()
-        : undefined;
       const frontmatter: Record<string, unknown> = {
         "ir-type": irType,
         "ir-priority": Math.round(priority * 100) / 100,
         "ir-due": dueMs,
-        ...(conceptTag ? { tags: [conceptTag.replace(/\s+/g, "-")] } : {}),
+        ...(conceptName ? { tags: [conceptName.replace(/\s+/g, "-")] } : {}),
       };
+      if (conceptName) writeConceptToFrontmatter(frontmatter, conceptName);
+      if (parsedRef) writeReferenceToFrontmatter(frontmatter, parsedRef);
       notes.push({
         smElementNumber: smId,
         elementId,
@@ -964,9 +1049,20 @@ export async function planSmCollectionImport(
       created: createdMs,
       text: bodyText,
       anchorState: "ok",
+      ...(mediaPathImported
+        ? {
+            anchor: {
+              sourcePath: mediaPathImported,
+              quote: { exact: titleText, prefix: "", suffix: "" },
+              media: { mediaPathOrUrl: mediaPathImported, startSec: 0, resumeSec: 0 },
+            },
+          }
+        : {}),
       ...(notePath ? { notePath } : {}),
       ...(schedule ? { schedule } : {}),
       ...(card ? { card } : {}),
+      ...(conceptId ? { conceptId } : {}),
+      ...(parsedRef ? { reference: parsedRef } : {}),
     };
     elements.push(element);
     events.push({
@@ -1181,6 +1277,7 @@ export async function planSmCollectionImport(
     notes,
     attachments,
     bookmarks,
+    ...(importedConcepts.length > 0 ? { concepts: importedConcepts } : {}),
     ...(sm20Baseline ? { sm20Baseline } : {}),
     ...(baselineCursorEventId ? { baselineCursorEventId } : {}),
     stats,

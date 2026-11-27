@@ -96,9 +96,16 @@ import {
   parseSuperMemoReferenceFooter,
   reconcileNoteFrontmatterWithLedger,
   resolveInheritedConceptAndReference,
+  upsertConceptGroup,
   writeConceptToFrontmatter,
   writeReferenceToFrontmatter,
 } from "./src/ir/concepts-references";
+import {
+  exportSuperMemoQaText,
+  exportSuperMemoXmlCollection,
+  parseSuperMemoQaText,
+  parseSuperMemoXmlCollection,
+} from "./src/ir/sm20-exchange";
 import {
   gradeMcqSelection,
   gradeOrderedSequence,
@@ -1571,6 +1578,27 @@ export default class IncrementalReadingPlugin extends Plugin {
         }
         editor.replaceSelection(wrapTypedCloze(sel.trim(), 1));
       },
+    });
+
+    this.irCommand({
+      id: "import-sm-qa-or-xml",
+      name: "Import SuperMemo Q&A (.txt) or XML (.xml) from clipboard",
+      icon: "file-input",
+      callback: () => void this.importSuperMemoQaOrXmlFromClipboard(),
+    });
+
+    this.irCommand({
+      id: "export-sm-xml",
+      name: "Export IR collection to SuperMemo XML (.xml)",
+      icon: "file-code",
+      callback: () => void this.exportSuperMemoXmlToVault(),
+    });
+
+    this.irCommand({
+      id: "export-sm-qa-txt",
+      name: "Export IR items to SuperMemo Q&A text (.txt)",
+      icon: "file-text",
+      callback: () => void this.exportSuperMemoQaToVault(),
     });
 
     this.registerEvent(
@@ -5761,6 +5789,14 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.ledger.reconcileNew(newElementIds);
     }
 
+    if (plan.concepts && plan.concepts.length > 0) {
+      let reg = await this.ledger.readConcepts();
+      for (const c of plan.concepts) {
+        reg = upsertConceptGroup(reg, c);
+      }
+      await this.ledger.writeConcepts(reg);
+    }
+
     if (plan.sm20Baseline) {
       const allEvents = await this.ledger.loadEvents();
       const sorted = [...allEvents].sort((a, b) => a.lamport - b.lamport || a.id.localeCompare(b.id));
@@ -9258,5 +9294,75 @@ export default class IncrementalReadingPlugin extends Plugin {
       }
     };
     paint();
+  }
+
+  private async importSuperMemoQaOrXmlFromClipboard(): Promise<void> {
+    if (!this.ledger) return;
+    let raw = "";
+    try {
+      raw = await navigator.clipboard.readText();
+    } catch {
+      new Notice("Incremental Reading: could not read clipboard.");
+      return;
+    }
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      new Notice("Incremental Reading: clipboard is empty.");
+      return;
+    }
+    const now = Date.now();
+    const device = await this.ledger.getDeviceId();
+    const isXml = trimmed.startsWith("<?xml") || trimmed.includes("<SuperMemoCollection") || trimmed.includes("<SuperMemoElement>");
+    const parsed = isXml
+      ? parseSuperMemoXmlCollection(trimmed, now, device)
+      : { ...parseSuperMemoQaText(trimmed, now, device, this.settings.defaultPriority), concepts: [] };
+
+    if (parsed.events.length === 0) {
+      new Notice("Incremental Reading: no SuperMemo Q&A or XML elements found in clipboard.");
+      return;
+    }
+    let lamport = await this.ledger.nextLamport();
+    const stamped = parsed.events.map((ev) => ({ ...ev, lamport: lamport++ }));
+    await this.ledger.appendEvents(stamped);
+    if (parsed.concepts.length > 0) {
+      let reg = await this.ledger.readConcepts();
+      for (const c of parsed.concepts) reg = upsertConceptGroup(reg, c);
+      await this.ledger.writeConcepts(reg);
+    }
+    await this.ledger.reconcileNew(new Set(parsed.elements.map((e) => e.id)));
+    await this.refreshStatusBar();
+    this.refreshAuxiliaryViews();
+    new Notice(`Incremental Reading: imported ${parsed.elements.length} SuperMemo element(s).`);
+  }
+
+  private async exportSuperMemoXmlToVault(): Promise<void> {
+    if (!this.ledger) return;
+    const [state, concepts] = await Promise.all([
+      this.ledger.load(),
+      this.ledger.readConcepts(),
+    ]);
+    const xml = exportSuperMemoXmlCollection(state.elements.values(), concepts.concepts, Date.now());
+    const outPath = `IR Export ${new Date().toISOString().slice(0, 10)}.xml`;
+    const existing = this.app.vault.getAbstractFileByPath(outPath);
+    if (existing instanceof TFile) {
+      await this.app.vault.modify(existing, xml);
+    } else {
+      await this.app.vault.create(outPath, xml);
+    }
+    new Notice(`Incremental Reading: exported SuperMemo XML to ${outPath}.`);
+  }
+
+  private async exportSuperMemoQaToVault(): Promise<void> {
+    if (!this.ledger) return;
+    const state = await this.ledger.load();
+    const qa = exportSuperMemoQaText(state.elements.values());
+    const outPath = `IR QA Export ${new Date().toISOString().slice(0, 10)}.txt`;
+    const existing = this.app.vault.getAbstractFileByPath(outPath);
+    if (existing instanceof TFile) {
+      await this.app.vault.modify(existing, qa);
+    } else {
+      await this.app.vault.create(outPath, qa);
+    }
+    new Notice(`Incremental Reading: exported SuperMemo Q&A text to ${outPath}.`);
   }
 }

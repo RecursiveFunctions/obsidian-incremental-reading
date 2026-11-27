@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Full SuperMemo 20 scheduling & optional 0–5 grading**: Replaced all remaining placeholder weights and difficulty approximations with SuperMemo 20's exact scheduling curves and full set of calibration tables. Existing vaults automatically rebuild their learning tables in the background without shifting any of your current due dates, and you can now switch between classic 4-button grading (`Again / Hard / Good / Easy`) and SuperMemo's 6-point (`0–5`) grading scale in Settings.
+- **Long-range workload simulator, card forgetting curves, and model comparisons**: Added a Simulator tab in IR stats to preview daily reviews, backlog, and retention up to 3 years ahead, a live forgetting-curve chart inside Element Info (`I`), side-by-side accuracy benchmarks across schedulers, weighted-average and minimum picks in the interval divergence bar, and a full repetition log CSV export.
+- **Richer Collection filters, priority spreading, and one-click repair**: Filter your collection by numeric ranges (priority, interval, A-Factor, stability, difficulty, retrievability, reps, lapses), redistribute priorities across a subset, run subset search-and-replace, and audit or auto-repair collection health from the command palette.
+- **Concept groups, source references, new quiz types, and Q&A / XML round-trips**: Added Concept Groups and inherited source references synced between `ir_concept` / `ir_ref` frontmatter and `.ir/`, typed-answer Spell-Pad clozes (`{{c1:=answer}}`), multiple-choice (`ir-mcq`), sequence ordering (`ir-order`), polygon image occlusion, audio/video registry imports, and SuperMemo Q&A (`.txt`) and XML (`.xml`) import/export.
+
 ## [0.16.0] — 2026-11-26
 
 ### Added
