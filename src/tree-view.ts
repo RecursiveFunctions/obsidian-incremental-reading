@@ -166,6 +166,11 @@ export interface IrTreeViewHost {
     preview: PriorityPlacementPreview,
     file: TFile | null,
   ) => Promise<void>;
+  commitSubsetReplace?: (
+    findText: string,
+    replaceText: string,
+    options: { caseSensitive: boolean; wholeWord: boolean; subsetIds?: ReadonlySet<string> },
+  ) => Promise<number>;
   initialCurrentElementId?: ElementId | null;
 }
 
@@ -175,6 +180,13 @@ const ICONS: Record<IrType, string> = {
   item: "brackets",
 };
 
+import {
+  computeSpreadPrioritiesSchedule,
+  countActiveElementFilterRules,
+  matchesElementFilter,
+  planSubsetSearchAndReplace,
+  type Sm20ElementFilter,
+} from "./ir/sm20-collection-ops";
 import { formatDueLabel } from "./ir/due-label";
 export { formatDueLabel };
 
@@ -195,6 +207,9 @@ export class IrTreeView extends ItemView {
 
   /** Current search/filter text (case-insensitive substring match). */
   private filterText = "";
+  private advancedFilter: Sm20ElementFilter = {};
+  private activeInlineTool: "none" | "range-filter" | "spread" | "replace" = "none";
+  private readonly commitSubsetReplace?: IrTreeViewHost["commitSubsetReplace"];
 
   /**
    * Element types currently visible. All three on means "no type filter".
@@ -331,6 +346,7 @@ export class IrTreeView extends ItemView {
     this.displayMode = host.displayMode ?? "priority";
     this.saveDisplayMode = host.saveDisplayMode;
     this.commitPriorityPlan = host.commitPriorityPlan;
+    this.commitSubsetReplace = host.commitSubsetReplace;
     this.commitPriorityPreview = host.commitPriorityPreview;
     this.currentElementId = host.initialCurrentElementId ?? null;
   }
@@ -549,9 +565,10 @@ export class IrTreeView extends ItemView {
       }
       void this.render();
     };
+    const activeRangeRules = countActiveElementFilterRules(this.advancedFilter);
     const activeFilterCount = (3 - this.visibleTypes.size) +
       (3 - this.visibleStates.size) + (this.showDismissed ? 1 : 0) +
-      (this.leechesOnly ? 1 : 0);
+      (this.leechesOnly ? 1 : 0) + activeRangeRules;
     const filters = actions.createEl("button", {
       cls: "ir-collection-filter-button",
       text: activeFilterCount > 0 ? `Filters ${activeFilterCount}` : "Filters",
@@ -722,14 +739,22 @@ export class IrTreeView extends ItemView {
     const hasTextFilter = queryRaw.length > 0;
     const hasTypeFilter = this.visibleTypes.size < 3;
     const hasStateFilter = this.visibleStates.size < 3 || !this.showDismissed;
-    if (hasTextFilter || hasTypeFilter || hasStateFilter || this.leechesOnly) {
+    const hasRangeFilter = activeRangeRules > 0;
+    if (this.activeInlineTool !== "none") {
+      this.renderInlineCollectionToolDrawer(body, elements);
+    }
+    if (hasTextFilter || hasTypeFilter || hasStateFilter || this.leechesOnly || hasRangeFilter) {
       this.lastMatchedIds = new Set<string>();
+      const filterNowMs = Date.now();
       roots = filterTreeByPredicate(roots, (node) => {
         if (!this.visibleTypes.has(node.type)) return false;
         if (node.element.dismissed) return this.showDismissed;
         if (this.leechesOnly && !this.leechesById.has(node.id)) return false;
+        if (hasRangeFilter && !matchesElementFilter(node.element, this.advancedFilter, filterNowMs)) {
+          return false;
+        }
         const due = dueMsOf(node.element);
-        const state = !Number.isFinite(due) ? "unscheduled" : due <= Date.now() ? "due" : "future";
+        const state = !Number.isFinite(due) ? "unscheduled" : due <= filterNowMs ? "due" : "future";
         if (!this.visibleStates.has(state)) return false;
         const matches = !hasTextFilter || this.rowLabel(node.element).toLowerCase().includes(query);
         if (matches) this.lastMatchedIds.add(node.id);
@@ -1016,6 +1041,32 @@ export class IrTreeView extends ItemView {
           void this.render();
         }));
     }
+    menu.addSeparator();
+    menu.addItem((item) => item
+      .setTitle("Numeric & metric range filter…")
+      .setIcon("sliders-horizontal")
+      .onClick(() => {
+        this.activeInlineTool = this.activeInlineTool === "range-filter" ? "none" : "range-filter";
+        void this.render();
+      }));
+    if (this.commitPriority) {
+      menu.addItem((item) => item
+        .setTitle("Spread priorities…")
+        .setIcon("arrow-up-down")
+        .onClick(() => {
+          this.activeInlineTool = this.activeInlineTool === "spread" ? "none" : "spread";
+          void this.render();
+        }));
+    }
+    if (this.commitSubsetReplace) {
+      menu.addItem((item) => item
+        .setTitle("Search & replace in subset…")
+        .setIcon("replace")
+        .onClick(() => {
+          this.activeInlineTool = this.activeInlineTool === "replace" ? "none" : "replace";
+          void this.render();
+        }));
+    }
     menu.showAtMouseEvent(event);
   }
 
@@ -1050,12 +1101,18 @@ export class IrTreeView extends ItemView {
       .onClick(() => { this.showDismissed = !this.showDismissed; void this.render(); }));
     menu.addItem((item) => item.setTitle("Leeches only").setChecked(this.leechesOnly)
       .onClick(() => { this.leechesOnly = !this.leechesOnly; void this.render(); }));
+    menu.addItem((item) => item.setTitle("Numeric & metric ranges…").setIcon("sliders-horizontal")
+      .onClick(() => {
+        this.activeInlineTool = this.activeInlineTool === "range-filter" ? "none" : "range-filter";
+        void this.render();
+      }));
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Reset filters").setIcon("rotate-ccw").onClick(() => {
       this.visibleTypes = new Set(["topic", "extract", "item"]);
       this.visibleStates = new Set(["due", "future", "unscheduled"]);
       this.showDismissed = false;
       this.leechesOnly = false;
+      this.advancedFilter = {};
       void this.render();
     }));
     menu.showAtMouseEvent(event);
@@ -3048,5 +3105,194 @@ export class IrTreeView extends ItemView {
         ? openState
         : undefined;
     await this.app.workspace.getLeaf(false).openFile(file, payload);
+  }
+
+  private renderInlineCollectionToolDrawer(
+    body: HTMLElement,
+    elements: readonly IrElement[],
+  ): void {
+    const drawer = body.createDiv({ cls: "ir-telemetry-drawer ir-telemetry-drawer--inline" });
+    const header = drawer.createDiv({ cls: "ir-telemetry-header" });
+    const titles: Record<Exclude<typeof this.activeInlineTool, "none">, string> = {
+      "range-filter": "Numeric & metric range filter",
+      spread: "Spread priorities",
+      replace: "Search & replace in subset",
+    };
+    header.createSpan({
+      cls: "ir-telemetry-title",
+      text: titles[this.activeInlineTool as Exclude<typeof this.activeInlineTool, "none">],
+    });
+    const closeBtn = header.createEl("button", {
+      cls: "ir-telemetry-close",
+      type: "button",
+      text: "Close",
+    });
+    closeBtn.onclick = () => {
+      this.activeInlineTool = "none";
+      void this.render();
+    };
+
+    const subsetIds: ReadonlySet<string> | undefined =
+      this.selectedIds.size > 0
+        ? new Set(this.selectedIds)
+        : this.lastMatchedIds.size > 0
+          ? new Set(this.lastMatchedIds)
+          : undefined;
+
+    if (this.activeInlineTool === "range-filter") {
+      const grid = drawer.createDiv({ cls: "ir-telemetry-grid" });
+      const addRangePair = (
+        label: string,
+        key: "priority" | "intervalDays" | "aFactor" | "stabilityDays" | "difficulty10" | "retrievabilityPct" | "reps" | "lapses",
+      ) => {
+        const cell = grid.createDiv({ cls: "ir-telemetry-cell" });
+        cell.createDiv({ cls: "ir-telemetry-cell-label", text: label });
+        const row = cell.createDiv({ cls: "ir-bulk-range" });
+        const cur = this.advancedFilter[key] ?? {};
+        const minIn = row.createEl("input", {
+          type: "number",
+          placeholder: "min",
+          attr: { "aria-label": `${label} min` },
+        });
+        const maxIn = row.createEl("input", {
+          type: "number",
+          placeholder: "max",
+          attr: { "aria-label": `${label} max` },
+        });
+        if (cur.min !== undefined) minIn.value = String(cur.min);
+        if (cur.max !== undefined) maxIn.value = String(cur.max);
+        const applyChange = () => {
+          const minVal = minIn.value.trim() === "" ? undefined : Number(minIn.value);
+          const maxVal = maxIn.value.trim() === "" ? undefined : Number(maxIn.value);
+          if (minVal === undefined && maxVal === undefined) {
+            delete this.advancedFilter[key];
+          } else {
+            this.advancedFilter[key] = {
+              ...(minVal !== undefined && Number.isFinite(minVal) ? { min: minVal } : {}),
+              ...(maxVal !== undefined && Number.isFinite(maxVal) ? { max: maxVal } : {}),
+            };
+          }
+          void this.render();
+        };
+        minIn.addEventListener("change", applyChange);
+        maxIn.addEventListener("change", applyChange);
+      };
+
+      addRangePair("Priority %", "priority");
+      addRangePair("Interval (d)", "intervalDays");
+      addRangePair("A-Factor", "aFactor");
+      addRangePair("Stability (d)", "stabilityDays");
+      addRangePair("Difficulty (1-10)", "difficulty10");
+      addRangePair("Retrievability %", "retrievabilityPct");
+      addRangePair("Repetitions", "reps");
+      addRangePair("Lapses", "lapses");
+
+      const actions = drawer.createDiv({ cls: "ir-priority-actions" });
+      actions.createEl("button", { text: "Clear ranges", type: "button" }).onclick = () => {
+        this.advancedFilter = {};
+        void this.render();
+      };
+      return;
+    }
+
+    if (this.activeInlineTool === "spread") {
+      const range = drawer.createDiv({ cls: "ir-bulk-range" });
+      const minIn = range.createEl("input", {
+        type: "number",
+        value: "5",
+        attr: { min: "0", max: "99", step: "0.5", "aria-label": "Min priority %" },
+      });
+      const maxIn = range.createEl("input", {
+        type: "number",
+        value: "95",
+        attr: { min: "1", max: "100", step: "0.5", "aria-label": "Max priority %" },
+      });
+      const stepIn = range.createEl("input", {
+        type: "number",
+        placeholder: "auto step",
+        attr: { min: "0", max: "50", step: "0.1", "aria-label": "Optional step %" },
+      });
+      const summary = drawer.createDiv({ cls: "ir-bulk-preview-summary" });
+      const updatePreview = () => {
+        const stepNum = stepIn.value.trim() === "" ? undefined : Number(stepIn.value);
+        const res = computeSpreadPrioritiesSchedule(elements, {
+          minPriority: Number(minIn.value),
+          maxPriority: Number(maxIn.value),
+          step: stepNum,
+          subsetIds,
+        });
+        summary.setText(
+          `${res.updates.length} target element(s) · ${res.minPriority}% to ${res.maxPriority}%`,
+        );
+        return res;
+      };
+      minIn.oninput = maxIn.oninput = stepIn.oninput = () => {
+        updatePreview();
+      };
+      updatePreview();
+      const actions = drawer.createDiv({ cls: "ir-priority-actions" });
+      actions.createEl("button", { text: "Spread", cls: "mod-cta", type: "button" }).onclick = async () => {
+        if (!this.commitPriority) return;
+        const res = updatePreview();
+        const state = await this.ledger.load();
+        for (const u of res.updates) {
+          await this.commitPriority(u.elementId, this.fileForElement(state, u.elementId), u.newPriority);
+        }
+        this.activeInlineTool = "none";
+        new Notice(`Incremental Reading: spread priorities across ${res.updates.length} element(s).`);
+        void this.render();
+      };
+      return;
+    }
+
+    if (this.activeInlineTool === "replace") {
+      const row = drawer.createDiv({ cls: "ir-bulk-range" });
+      const findIn = row.createEl("input", {
+        type: "text",
+        placeholder: "Find text…",
+        attr: { "aria-label": "Find text" },
+      });
+      const repIn = row.createEl("input", {
+        type: "text",
+        placeholder: "Replace with…",
+        attr: { "aria-label": "Replace text" },
+      });
+      const caseChk = row.createEl("input", {
+        type: "checkbox",
+        attr: { "aria-label": "Case sensitive", title: "Case sensitive" },
+      });
+      const wordChk = row.createEl("input", {
+        type: "checkbox",
+        attr: { "aria-label": "Whole word", title: "Whole word" },
+      });
+      const summary = drawer.createDiv({ cls: "ir-bulk-preview-summary" });
+      const updatePreview = () => {
+        const plan = planSubsetSearchAndReplace(elements, findIn.value, repIn.value, {
+          caseSensitive: caseChk.checked,
+          wholeWord: wordChk.checked,
+          subsetIds,
+        });
+        summary.setText(
+          `${plan.totalReplacements} replacement(s) across ${plan.matches.length} element(s)`,
+        );
+        return plan;
+      };
+      findIn.oninput = repIn.oninput = caseChk.onchange = wordChk.onchange = () => {
+        updatePreview();
+      };
+      updatePreview();
+      const actions = drawer.createDiv({ cls: "ir-priority-actions" });
+      actions.createEl("button", { text: "Replace all", cls: "mod-cta", type: "button" }).onclick = async () => {
+        if (!this.commitSubsetReplace) return;
+        const count = await this.commitSubsetReplace(findIn.value, repIn.value, {
+          caseSensitive: caseChk.checked,
+          wholeWord: wordChk.checked,
+          subsetIds,
+        });
+        this.activeInlineTool = "none";
+        new Notice(`Incremental Reading: replaced ${count} occurrence(s).`);
+        void this.render();
+      };
+    }
   }
 }

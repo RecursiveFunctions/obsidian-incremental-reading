@@ -88,6 +88,10 @@ import {
   type Sm20MatrixStats,
 } from "./src/ir/sm20-matrix";
 import {
+  auditAndRepairCollectionIntegrity,
+  planSubsetSearchAndReplace,
+} from "./src/ir/sm20-collection-ops";
+import {
   computeSm20Retrievability,
   SM20_RETRIEVABILITY_MAX,
   SM20_STABILITY_MIN,
@@ -859,6 +863,8 @@ export default class IncrementalReadingPlugin extends Plugin {
           commitPriorityPlan: (plan) => this.applyPriorityPlan(plan),
           commitPriorityPreview: (preview, file) =>
             this.applyIrPriorityPreview(preview, file),
+          commitSubsetReplace: (findText, replaceText, options) =>
+            this.applySubsetSearchAndReplace(findText, replaceText, options),
           initialCurrentElementId:
             this.getActiveReviewView()?.getCurrentElementId() ?? null,
         });
@@ -1018,8 +1024,8 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.refreshActiveNeuralSlots(visitedPrefixIds),
           saveSettings: () => this.saveSettings(),
           getSm20Matrix: () => this.sm20Matrix,
-          onSm20Grade: (eventId, prevCard, nextCard, grade, overridden) =>
-            this.recordSm20Grade(eventId, prevCard, nextCard, grade, overridden),
+          onSm20Grade: (eventId, prevCard, nextCard, grade, overridden, smGrade) =>
+            this.recordSm20Grade(eventId, prevCard, nextCard, grade, overridden, smGrade),
         });
         view.multiSelect = this.multiSelect;
         return view;
@@ -1518,6 +1524,13 @@ export default class IncrementalReadingPlugin extends Plugin {
       name: "Rebuild SM-20 optimization matrix",
       icon: "refresh-cw",
       callback: () => void this.rebuildSm20MatrixFromHistory(true),
+    });
+
+    this.irCommand({
+      id: "audit-repair-collection",
+      name: "Audit & repair collection integrity",
+      icon: "shield-check",
+      callback: () => void this.auditAndRepairCollection(),
     });
 
     this.registerEvent(
@@ -8909,5 +8922,84 @@ export default class IncrementalReadingPlugin extends Plugin {
 
     void this.refreshStatusBar();
     return true;
+  }
+
+  private async applySubsetSearchAndReplace(
+    findText: string,
+    replaceText: string,
+    options: { caseSensitive: boolean; wholeWord: boolean; subsetIds?: ReadonlySet<string> },
+  ): Promise<number> {
+    if (!this.ledger) return 0;
+    const view = await this.ledger.loadView();
+    const plan = planSubsetSearchAndReplace(view.state.elements.values(), findText, replaceText, options);
+    if (plan.matches.length === 0) return 0;
+
+    const device = await this.ledger.getDeviceId();
+    let lamport = view.maxLamport + 1;
+    const now = Date.now();
+    const events: IrEvent[] = [];
+    for (const m of plan.matches) {
+      events.push({
+        id: newEventId(),
+        ts: now,
+        lamport: lamport++,
+        device,
+        kind: "text-edited",
+        target: m.elementId,
+        payload: { text: m.afterText },
+      });
+      if (m.notePath) {
+        const af = this.app.vault.getAbstractFileByPath(m.notePath);
+        if (af instanceof TFile) {
+          try {
+            const raw = await this.app.vault.read(af);
+            const escaped = findText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const pat = options.wholeWord ? `\\b${escaped}\\b` : escaped;
+            const re = new RegExp(pat, options.caseSensitive ? "g" : "gi");
+            const updated = raw.replace(re, replaceText);
+            if (updated !== raw) await this.app.vault.modify(af, updated);
+          } catch (e) {
+            console.warn("Incremental Reading: could not update note during subset replace", e);
+          }
+        }
+      }
+    }
+    await this.ledger.appendEvents(events);
+    await this.refreshStatusBar();
+    this.refreshAuxiliaryViews();
+    return plan.totalReplacements;
+  }
+
+  private async auditAndRepairCollection(): Promise<void> {
+    if (!this.ledger) return;
+    const [view, events] = await Promise.all([
+      this.ledger.loadView(),
+      this.ledger.loadEvents(),
+    ]);
+    const device = await this.ledger.getDeviceId();
+    const existingVaultPaths = new Set<string>(
+      this.app.vault.getFiles().map((f) => f.path),
+    );
+    const report = auditAndRepairCollectionIntegrity({
+      elements: view.state.elements,
+      events,
+      nowMs: Date.now(),
+      device,
+      startingLamport: view.maxLamport + 1,
+      existingVaultPaths,
+    });
+    if (report.repairEvents.length > 0) {
+      await this.ledger.appendEvents(report.repairEvents);
+      await this.rebuildSm20MatrixFromHistory(false);
+      await this.refreshStatusBar();
+      this.refreshAuxiliaryViews();
+    }
+    if (report.issues.length === 0) {
+      new Notice("Incremental Reading: collection integrity check passed (0 issues).");
+    } else {
+      new Notice(
+        `Incremental Reading: audited collection — ${report.issues.length} issue(s) found, ${report.repairEvents.length} auto-repaired.`,
+      );
+    }
   }
 }
