@@ -10,6 +10,7 @@ import {
   Card,
   Grade as FsrsGrade,
   Rating,
+  S_MAX,
   State,
   createEmptyCard,
   fsrs,
@@ -169,6 +170,19 @@ export function readCardFromFrontmatter(
     state: num(IR_KEYS.state, base.state) as State,
     learning_steps: num(IR_KEYS.learningSteps, base.learning_steps),
   };
+
+  const rawState = num(IR_KEYS.state, base.state);
+  const state =
+    Number.isInteger(rawState) && rawState >= 0 && rawState <= 3 ? rawState : 0;
+  card.state = state as State;
+  if (state === 0) {
+    // A New card legitimately has zero stability/difficulty from newCard().
+    card.stability = 0;
+    card.difficulty = 0;
+  } else {
+    card.stability = Math.min(S_MAX, Math.max(0.7, card.stability));
+    card.difficulty = Math.min(10, Math.max(1, card.difficulty));
+  }
 
   const lr = fm[IR_KEYS.lastReview];
   if (typeof lr === "string" || lr instanceof Date) {
