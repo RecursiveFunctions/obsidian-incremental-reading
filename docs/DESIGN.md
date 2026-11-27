@@ -5,15 +5,15 @@ These are locked for v1 unless a decision explicitly says otherwise.
 
 ## Current v1 invariants
 
-- Topics, cloze items, and image-occlusion items are Markdown notes; PDF topics and anchored extracts may be ledger-only.
-- The ledger under `.ir/` is authoritative for scheduling, review history, bookmarks, tombstones, anchor state, generation-scoped sidecars (`drill.json`, `neural.json`, `sm20-matrix.json`), and root-level runtime state (`session.json`, `auto-postpone.json`, `analytics/`). `ir-` frontmatter remains a migration fallback and compatibility copy, not the queue's source of truth.
-- New vaults default to **SM-20** (`primaryScheduler: "sm20"`) for items, while existing vaults grandfather to **FSRS-6** (`"fsrs"`) with a one-time upgrade offer modal (`Sm20SchedulerOfferModal`). Both schedulers share `StoredCard` state and can be switched losslessly in Settings. Topics and extracts use SM-20's decompiled reading and priority algorithms.
+- Topics, cloze/quiz items, and image-occlusion items are Markdown notes; PDF topics, vault audio/video topics (`mp4`, `webm`, `mp3`, `m4a`, `ogg`, `wav`), and anchored text/crop/timestamp extracts may be ledger-only.
+- The ledger under `.ir/` is authoritative for scheduling, review history, bookmarks, tombstones, anchor state, Concept Groups (`concepts.json`), generation-scoped sidecars (`drill.json`, `neural.json`, `sm20-matrix.json` schema v4), and root-level runtime state (`session.json`, `auto-postpone.json`, `analytics/`). `ir-` frontmatter remains a migration fallback and compatibility copy, while `ir_concept` / `ir_ref` YAML frontmatter syncs bidirectionally with `.ir/` so child extracts and items inherit Concept Groups and source citations automatically.
+- New vaults default to **SM-20** (`primaryScheduler: "sm20"`, running the 5-algorithm Algorithm Arena across `SM-2`, `SM-15`, `SM-19`, `SM-20`, and `FSRS`) for items, while existing vaults grandfather to **FSRS-6** (`"fsrs"`) with a one-time upgrade offer modal (`Sm20SchedulerOfferModal`). Both schedulers share `StoredCard` state, support 4-point (`1–4`) or SuperMemo 6-point (`0–5`) grading, and can be switched losslessly in Settings. Topics and extracts use SM-20's decompiled reading and priority algorithms.
 - Each completed migration, reset, and nuke uses generation metadata to isolate its live logs from stale root or prior-generation data.
 - The live plugin folds concurrent event streams in clock order (using per-device fold checkpoints when the stream exceeds 250 events); there is no user-facing setting that switches it to conservative scheduling.
 - Compaction writes and verifies a complete transaction archive before rewriting its live shard. A matching archive can recover only the validated prefix before an interrupted final JSONL event.
 - Source notes are never rewritten to paint extract or cloze highlights.
-- Anchored extracts become files only when explicitly promoted. Image-region extracts (`Alt+Shift+I` on PDFs, right-click crop on embedded images) and image occlusion (`Alt+Shift+O` / `Alt+O`) are shipped workflows.
-- Anki export is one-way and omits image-occlusion items it cannot import, reporting the skipped count.
+- Anchored extracts become files only when explicitly promoted. Image-region extracts (`Alt+Shift+I` on PDFs, right-click crop on embedded images), rectangle & polygon image occlusion (`Alt+Shift+O` / `Alt+O`), interactive Markdown items (`{{cN:=...}}` Spell-Pad, `ir-mcq`, `ir-order`), and timestamp-anchored media clips are shipped workflows.
+- Anki TSV export is one-way and omits image-occlusion items it cannot import (reporting the skipped count), whereas SuperMemo XML (`.xml`), Q&A text (`.txt`), and SM-20 binary collection exports support two-way collection/schedule/concept/reference round-trips.
 - Reading-view highlights use a formatting-tolerant fallback that crosses inline formatting boundaries.
 - Historical notes below explain how these decisions evolved; when they conflict, this section is current.
 
@@ -144,14 +144,14 @@ model above, without a second anchoring scheme.
   and `pdf.rect`; its text is the `![[crop.png]]` embed. Images inside
   notes are extracted byte-exactly on their embed markup
   (`image-embed.ts`), so decorations and relocation are unchanged.
-- **Occlusion.** Follows the cloze precedent: one item note per card, body
-  is a single `ir-occlusion` fenced JSON block (normalized rects, `active`
-  = tested rect, `mode` hide-all / hide-one; `src/ir/occlusion.ts`). A
-  code-block processor renders it everywhere; in the review pane the block
+- **Occlusion & interactive items.** Follows the cloze precedent: one item note per card, body
+  is a single `ir-occlusion` fenced JSON block (normalized `rects` and/or multi-vertex `polygons` for `THitEditor` parity, `active`
+  = tested mask, `mode` hide-all / hide-one; `src/ir/occlusion.ts`), or Markdown interactive quiz syntax (`{{cN:=answer::hint}}` Spell-Pad typed clozes, `ir-mcq` multiple-choice blocks, and `ir-order` sequence-ordering blocks; `src/ir/interactive-items.ts`). A
+  code-block processor renders each block everywhere; in the review pane the block
   reads `.ir-review-revealed` on the card body so reveal stays with the
-  pane's Space/swipe/grade flow (`isClozeLike = hasCloze || hasOcclusion`).
+  pane's Space/swipe/grade flow (`isClozeLike = hasCloze || hasOcclusion || hasInteractiveQuiz`), and interactive quizzes highlight their suggested grade on the dock so `Space` / `Enter` confirms it without surprising auto-advance.
   Items need a markdown parent, so a PDF crop is promoted to a note first
-  (same "extract, then cloze the extract" rule). The editor is an
+  (same "extract, then cloze the extract" rule). The occlusion editor is an
   `ItemView` leaf (UI commitment #6) and keyboard-complete (#1).
 
 Known limits: paragraph breaks inside a PDF selection are not recoverable
@@ -194,17 +194,23 @@ dispersion), because nothing in the Obsidian ecosystem provides an IR queue and
 the queue is the core of the product.
 
 Rationale: SM-20 and FSRS-6 share the DSR lineage (SM-17 -> FSRS-6 / SM-20).
-For items under SM-20, stability updates use the 21x21x21 `SInc` and recall
-matrices (`sm20-matrix.json`, schema v2) with analytical priors, 3D neighbor
-smoothing (`smoothSm20SincCube`, `0x00a93480`/`0x00a93510`), difficulty-and-lapse
-post-lapse baseline stability (`computeInitialRepetitionStabilityFactor`,
-`0x00ce0600`), bankers-rounded 1..20 difficulty/stability/repetition axis
-transforms, early-review R damping (bypassing the `1.1x` minimum interval
-growth floor when `elapsedDays < prevS` and `retrievability > desiredRetention`),
-adjacent-bin outlier reconciliation (`reconcileRetentionMatrixOutliers`,
-`0x00c243f0`) ahead of `round(cases) + 1e-5` weighted retrievability
-calibration, and blended forgetting-curve scaling
-(`computeBlendedForgettingCurveRetention`, `0x00cad6a0`). For ungraded reading
+For items under SM-20, scheduling runs SuperMemo 20's full **5-algorithm Algorithm Arena**
+(`0x00d97fc0` -> `0x00cf2b80` / `0x00d8b990`: `6% SM-2 + 14% SM-15 + 45% SM-19 + 25% SM-20 + 10% FSRS`
+baseline weights, auto-adapting over 100–200 reviews from live `LSRM` recall prediction error
+and configurable in Settings) backed by `.ir/sm20-matrix.json` (**schema v4**) across all 8
+non-sleep `alg17` structures: the 21x21x21 `StabilityIncrease.dat` and `Recall.dat` cubes
+(`0x00cdeb50` analytical priors, `0x00ce6470` `sat(cases, 300)` + `0x00ce66e0` `(175, 0.01, 100, 0.1)`
+matrix stability blend, 3D neighbor smoothing `smoothSm20SincCube` `0x00a93480`/`0x00a93510`),
+`FirstInterval.dat` (`2x21x21x36` `uint32`, read via `0x00cdfb60` alongside `0x00ce0230` on post-lapse rep 1),
+`ForgettingCurve.dat` (`2x36` `uint32` with `0x00cf5290` log-1.4 time bins, read via `0x00cf5590`),
+`Retrievability.dat` (Half A `76x30` `int32` case counts + Half B `38x30` `float64` recall sums per `0x00cc69e0`),
+and `DifficultyDistribution.dat` (`20` `uint32`), plus all 35 IEEE-754 weights of the SM-20 ML
+evaluator (`*0x011a5bd0` / `0x00ce4810`, `0x00cad1b0`..`0x00cad8d0`), SplitMix32-seeded `0x00cf2f30`
+interval dispersion (`hash(elementId, reps, lapses, smGrade, undoRollCount)` matching button previews and
+re-rolling on Undo), early-review R damping across all 5 Arena candidates, adjacent-bin outlier
+reconciliation (`reconcileRetentionMatrixOutliers`, `0x00c243f0`), minimum interval growth floor
+(`0x00cf29c0`), and full item history replay (`replaySm20CardsFromEvents`, `0x00ce6f40` -> `0x00ce94a0`)
+preserving existing `due` timestamps. For ungraded reading
 elements (topics and extracts) and priority dynamics, we use the exact formulas
 recovered from SuperMemo 20 (`sm20.exe`):
 
@@ -234,14 +240,16 @@ recovered from SuperMemo 20 (`sm20.exe`):
   candidate that fails to beat defaults on held-out log-loss cannot be applied,
   and `card-reset` events exclude pre-reset reviews from optimizer fitting and
   post-reset fail-rate calculations.
-- **Interop:** **Anki export** for the item layer as an optional,
-  one-directional escape hatch (omitting image-occlusion items). No runtime
-  coupling to the `obsidian-spaced-repetition` plugin.
+- **Interop:** Two-way SuperMemo XML (`.xml`), Q&A text (`.txt`), and SM-20 binary
+  collection import/export (`src/ir/sm20-exchange.ts`, `src/ir/sm-collection-import.ts`)
+  plus **Anki TSV export** as a one-directional escape hatch (omitting image-occlusion
+  items). No runtime coupling to the `obsidian-spaced-repetition` plugin.
 
 ## 5. Multi-scheduler picker
 
-Replicates SuperMemo's divergence-triggered algorithm chooser as a 4-model
-parallel ensemble (`src/ir/grade-divergence.ts`) plus manual override.
+Replicates SuperMemo's divergence-triggered algorithm chooser (`TIntervalChoiceForm`
+`0x00cec060`) as a parallel ensemble (`src/ir/grade-divergence.ts`, `src/ir/sm20-analytics.ts`)
+with weighted-average, minimum-interval, and left/right SD metrics plus manual override.
 
 - **Ensemble members:** `SM-20` (adaptive SInc matrix), `FSRS` (FSRS-6 with
   user-fitted or default weights), `DSR` (power-law SM-18/20 analytical
@@ -590,13 +598,14 @@ Reading-view behavior and limitations:
 
 ## Open items
 
-- **SM-20 & 4-model ensemble:** SHIPPED (`v0.14.0`–`v0.15.0`). SM-20 (`SInc`
-  21x21x21 matrix with 3D neighbor smoothing, difficulty/lapse post-lapse
-  curve, retention outlier reconciliation, early-review R damping,
-  priority-scaled intervals) is the default item scheduler for new vaults
-  alongside FSRS-6 with the local parameter optimizer (`src/ir/optimizer/`),
-  and Section 5 ships the 4-model divergence picker (`SM-20`, `FSRS`, `DSR`,
-  `SM-2`).
+- **SM-20 Algorithm Arena, v4 `alg17` & full parity:** SHIPPED (`v0.14.0`–`v0.16.0` + `main`).
+  SM-20 runs the 5-algorithm Algorithm Arena (`SM-2`, `SM-15`, `SM-19`, `SM-20`, `FSRS`),
+  schema v4 `alg17` matrices (all 8 non-sleep `.dat` structures), SplitMix32-seeded `0x00cf2f30`
+  dispersion with Undo re-roll, optional `0–5` 6-point grading, interactive quiz items
+  (`Spell-Pad`, `ir-mcq`, `ir-order`, polygon occlusion), Concept Groups & propagating
+  Reference metadata (`src/ir/concepts-references.ts`), Collection numeric range filters /
+  Spread Priorities / Subset Search & Replace / Integrity Repair, and two-way SuperMemo `.xml`,
+  Q&A `.txt`, and binary collection exchange (`docs/SCOPE-SM20-FULL-PARITY.md`).
 - **Phase 1 & Phase 2 (`docs/FUTURE-PLANS.md`):** SHIPPED (`v0.14.0`–`v0.15.0`)
   — rich SM18/SM20 collection import (`src/ir/sm-collection-import.ts` with
   non-positive interval and grade/lapse history verification), EPUB/HTML import
@@ -605,10 +614,10 @@ Reading-view behavior and limitations:
   3-layer progressive disclosure UX across Review/Stats/Settings/Mobile,
   persisted Final Drill (`drill.json`), dynamic Neural Queue (`neural.json`
   with Aho-Corasick title-mention matching), `Advance` / `JumpInterval`,
-  bounded leech triage, and 3-tab Stats (`Overview | Triage | Models & SM-20`).
+  bounded leech triage, and 4-tab Stats (`Overview | Triage | Simulator | Models & SM-20`).
 - **Phase 3 (`docs/FUTURE-PLANS.md`):** Timestamp-anchored incremental video
   and audio (`{ resume, start, stop }` model in `src/ir/media.ts`, SHIPPED in
   `v0.16.0`); planned: companion browser capture extension and Obsidian
   Community Plugins directory release.
 - **Deliberately not pursued:** Day-planner/tasklist, sleep/circadian,
-  propagating reference registry, and streak/guilt mechanics.
+  and streak/guilt mechanics.

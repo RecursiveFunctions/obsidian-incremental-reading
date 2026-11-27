@@ -1,5 +1,12 @@
 # Scope & Problem-Space Analysis: Full SuperMemo 20 Parity
 
+> **Implemented on `main` (pending next release).** All six capability phases,
+> STRIDE security hardening (`docs/SECURITY-THREAT-MODEL.md`), progressive UX
+> polish, Schema v4 `alg17` binary parity, and the 5-algorithm Algorithm Arena
+> with seeded dispersion and history replay are implemented and verified on
+> `main`. This document preserves the problem-space analysis and architectural
+> specification.
+
 Grounded in the 100% decompiled and traced `sm20.exe` corpus (`~/code/sm20-re`, 15,468 SuperMemo functions across all Delphi units) and locked scoping decisions.
 
 ---

@@ -24,13 +24,14 @@ When the queue runs away, Mercy (`Alt+M`) previews a fix before applying it: it 
 
 ## What it does
 
-- Element tree with source → extract → item lineage in Collection
+- Element tree with source → extract → item lineage in Collection, plus inline numeric range filters, Spread Priorities, subset search-and-replace, Concept Groups, and two-way SuperMemo `.xml` / Q&A `.txt` / binary import & export
 - Priority queue (0 to 100, lower is more important) with global and nested views, plus non-modal placement-priority panels for marking, bulk staging, and extracting
+- Inherited Concept Groups and source citations (`ir_concept`, `ir_ref`) synced between YAML frontmatter and `.ir/`
 - Mercy with load visibility: due, postponed, and seven-day inflow in the status bar
-- Calm 3-layer progressive disclosure across desktop, tablet, and phone (with an on-demand `Element Info (I)` telemetry drawer, 3-tab Stats, unified Mobile Hub FAB, and Touch Selection Bar)
-- PDF topics and extracts, image extracts, and image-occlusion cards
-- SM-20 default item scheduling alongside FSRS-6 with a local parameter optimizer that fits to your own review log, plus same-day Final Drill and SM18/SM20 & EPUB/HTML import
-- Offline operation: no network calls, no telemetry, one runtime dependency
+- Calm progressive disclosure across desktop, tablet, and phone (with an on-demand `Element Info (I)` forgetting-curve drawer, 4-tab Stats with a 3-year Workload Simulator, unified Mobile Hub FAB, and Touch Selection Bar)
+- Markdown, PDF, EPUB/HTML, and local/streamed audio & video topics (`mp4`, `mp3`, timestamped clip extracts), plus cloze, typed Spell-Pad (`{{c1:=...}}`), multiple-choice (`ir-mcq`), sequence-ordering (`ir-order`), and rectangle/polygon image-occlusion cards
+- SuperMemo 20 default item scheduling (5-model Algorithm Arena across `SM-2`, `SM-15`, `SM-19`, `SM-20`, and `FSRS`, optional `0–5` grading) alongside FSRS-6 with a local parameter optimizer that fits to your own review log, plus same-day Final Drill and spreading-activation Neural Review (`Alt+N`)
+- Offline operation: no network calls in plugin code, no telemetry, one runtime dependency
 
 ## Honest limitations
 
