@@ -109,6 +109,39 @@ export function applyConceptTemplate(template: string | undefined, content: stri
   return `${template.trimEnd()}\n\n${content}`;
 }
 
+export function resolveChildConceptRouting(
+  sourceFrontmatter: Record<string, unknown> | null | undefined,
+  registry: ConceptRegistryState | undefined,
+  childType: "extract" | "item",
+  rawBody: string,
+  fallbackFolder: string,
+  fallbackPriority: number,
+): {
+  concept?: ConceptGroup;
+  folder: string;
+  priority: number;
+  body: string;
+} {
+  const fmConcept = readConceptFromFrontmatter(sourceFrontmatter);
+  const concept =
+    fmConcept && registry ? findConceptByNameOrId(registry, fmConcept) : undefined;
+  if (!concept) {
+    return {
+      folder: fallbackFolder,
+      priority: fallbackPriority,
+      body: rawBody,
+    };
+  }
+  const folder = concept.targetFolder?.trim() || fallbackFolder;
+  const priority =
+    concept.defaultPriority !== undefined && Number.isFinite(concept.defaultPriority)
+      ? clampPriority(concept.defaultPriority)
+      : fallbackPriority;
+  const tpl = childType === "item" ? concept.itemTemplate : concept.topicTemplate;
+  const body = applyConceptTemplate(tpl, rawBody);
+  return { concept, folder, priority, body };
+}
+
 // --- SuperMemo `#SuperMemo Reference:` footer codec -------------------------
 
 const SM_REF_HEADER_RE = /(?:^|\r?\n)#SuperMemo Reference:\s*(?:\r?\n|$)/i;

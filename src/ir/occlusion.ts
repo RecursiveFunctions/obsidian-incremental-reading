@@ -258,3 +258,38 @@ export function nextRectNumber(
   for (const p of polygons) if (p.n > max) max = p.n;
   return max + 1;
 }
+
+/**
+ * Validates and finalizes an interactive polygon draft (`THitEditor`), clamping
+ * vertices to `[0, 1]^2` and rejecting `< 3` points or near-zero shoelace area.
+ */
+export function finalizeDraftPolygon(
+  draftPoints: ReadonlyArray<readonly [number, number]>,
+  existingRects: ReadonlyArray<OcclusionRect>,
+  existingPolygons: ReadonlyArray<OcclusionPolygon>,
+  minArea = 0.0002,
+): OcclusionPolygon | null {
+  const pts: Array<[number, number]> = [];
+  for (const [rx, ry] of draftPoints) {
+    if (!Number.isFinite(rx) || !Number.isFinite(ry)) continue;
+    const x = Math.min(1, Math.max(0, rx));
+    const y = Math.min(1, Math.max(0, ry));
+    const prev = pts[pts.length - 1];
+    if (prev && Math.hypot(x - prev[0], y - prev[1]) < 0.004) continue;
+    pts.push([x, y]);
+  }
+  if (pts.length < 3) return null;
+
+  let doubleArea = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const [x1, y1] = pts[i]!;
+    const [x2, y2] = pts[(i + 1) % pts.length]!;
+    doubleArea += x1 * y2 - x2 * y1;
+  }
+  if (Math.abs(doubleArea) * 0.5 < minArea) return null;
+
+  return {
+    n: nextRectNumber(existingRects, existingPolygons),
+    points: pts,
+  };
+}

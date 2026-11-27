@@ -48,6 +48,7 @@ import {
   formatSm20RepetitionLogCsv,
   simulateLongHorizonWorkload,
 } from "./ir/sm20-analytics";
+import { computeSm20SincHeatmap20x20 } from "./ir/sm20-reading-tools";
 import {
   buildActionablePriorityFiBuckets,
   type StatsTabId,
@@ -272,6 +273,7 @@ export class IrStatsView extends ItemView {
       this.renderWorkloadSimulator(body, elements, now);
     } else {
       this.renderScheduler(body, events, state);
+      this.renderSm20SincHeatmap(body);
       this.renderCalibrationBenchmark(body, events);
       this.renderPriorityForgettingIndex(body, priorityGrades, elements);
     }
@@ -1378,6 +1380,34 @@ export class IrStatsView extends ItemView {
           `Pred ${(b.predictedMean * 100).toFixed(1)}% vs Actual ${(b.actualRecallRate * 100).toFixed(1)}%`,
         ]),
       );
+    }
+  }
+
+  private renderSm20SincHeatmap(body: HTMLElement): void {
+    const matrix = this.host.getSm20Matrix?.();
+    const hm = computeSm20SincHeatmap20x20(matrix, this.host.settings.desiredRetention);
+    const section = body.createDiv({ cls: "ir-stats-section" });
+    section.createDiv({
+      cls: "ir-stats-section-title",
+      text: `SM-20 SInc surface (20×20 D×S · range ×${hm.minSinc.toFixed(2)}–×${hm.maxSinc.toFixed(2)})`,
+    });
+
+    const wrap = section.createDiv({ cls: "ir-sinc-heatmap" });
+    const span = Math.max(0.01, hm.maxSinc - hm.minSinc);
+    for (let d = 0; d < 20; d += 2) {
+      const rowEl = wrap.createDiv({ cls: "ir-sinc-heatmap-row" });
+      rowEl.createSpan({ cls: "ir-sinc-heatmap-axis", text: hm.difficultyLabels[d]! });
+      for (let s = 0; s < 20; s += 1) {
+        const val = hm.rows[d]![s]!;
+        const ratio = Math.round(((val - hm.minSinc) / span) * 85) + 10;
+        const cell = rowEl.createDiv({
+          cls: "ir-sinc-heatmap-cell",
+          attr: {
+            title: `${hm.difficultyLabels[d]} · S=${hm.stabilityLabels[s]}: SInc ×${val.toFixed(2)}`,
+          },
+        });
+        cell.style.backgroundColor = `color-mix(in srgb, var(--interactive-accent) ${ratio}%, var(--background-secondary))`;
+      }
     }
   }
 

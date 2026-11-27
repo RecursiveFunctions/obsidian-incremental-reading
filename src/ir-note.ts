@@ -27,6 +27,10 @@ import {
   spreadExtractPriority,
 } from "./sm18-ir-mechanics";
 import { expandSelectionAroundLinks } from "./ir/selection-map";
+import {
+  resolveChildConceptRouting,
+  type ConceptRegistryState,
+} from "./ir/concepts-references";
 
 /**
  * Slash-only stand-in for Obsidian's `normalizePath`: collapse repeats,
@@ -62,6 +66,8 @@ export interface IrNoteSettings extends TopicScheduleSettings {
   extractFolder: string;
   /** Optional RNG for SM20 extract priority spreading (`0x00ca1140`). */
   extractPriorityRng?: () => number;
+  /** Optional Concept Group registry for targetFolder / defaultPriority / template routing. */
+  conceptRegistry?: ConceptRegistryState;
 }
 
 /**
@@ -251,32 +257,43 @@ async function createChildNote(
     };
   }
 
+  const sourceFm = app.metadataCache.getFileCache(source)?.frontmatter;
   const configured = settings.extractFolder.trim();
-  const folder = configured
+  const baseFolder = configured
     ? normalizePath(configured)
     : (source.parent?.path ?? "");
+  const parentPriority = getPriority(app, source, settings.defaultPriority);
+  const routed = resolveChildConceptRouting(
+    sourceFm,
+    settings.conceptRegistry,
+    type,
+    body.trim(),
+    baseFolder,
+    parentPriority,
+  );
+  const folder = routed.folder ? normalizePath(routed.folder) : "";
   if (folder && !app.vault.getAbstractFileByPath(folder)) {
     await app.vault.createFolder(folder);
   }
 
   const path = uniqueMarkdownNotePath(app, folder, fileStem(nameFrom));
-  const file = await app.vault.create(path, body.trim() + "\n");
+  const finalBody = routed.body;
+  const file = await app.vault.create(path, finalBody + "\n");
 
-  const parentPriority = getPriority(app, source, settings.defaultPriority);
-  const sourceFm = app.metadataCache.getFileCache(source)?.frontmatter;
   const inheritedMeta = inheritableFrontmatter(sourceFm);
   const parentTopicState = readTopicFromFrontmatter(sourceFm, settings);
-  const cleanBodyLen = body.trim().length;
+  const cleanBodyLen = finalBody.length;
   const extractAfPair =
     type === "extract"
       ? computeExtractAFactorPair(parentTopicState.aFactor, cleanBodyLen)
       : null;
+  const basePriority = routed.priority;
   const childPriority =
     type === "extract" && settings.extractPriorityRng
       ? clampPriority(
-          spreadExtractPriority(parentPriority, cleanBodyLen, settings.extractPriorityRng),
+          spreadExtractPriority(basePriority, cleanBodyLen, settings.extractPriorityRng),
         )
-      : parentPriority;
+      : basePriority;
 
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm[IR_KEYS.type] = type satisfies IrType;

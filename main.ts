@@ -101,11 +101,16 @@ import {
   writeReferenceToFrontmatter,
 } from "./src/ir/concepts-references";
 import {
+  exportSm20BinaryPackage,
   exportSuperMemoQaText,
   exportSuperMemoXmlCollection,
   parseSuperMemoQaText,
   parseSuperMemoXmlCollection,
 } from "./src/ir/sm20-exchange";
+import {
+  chopReadingTextAfterOffset,
+  chopReadingTextBeforeOffset,
+} from "./src/ir/sm20-reading-tools";
 import {
   gradeMcqSelection,
   gradeOrderedSequence,
@@ -273,6 +278,7 @@ import {
   occlusionNoteStem,
   parseOcclusionJson,
   type OcclusionMode,
+  type OcclusionPolygon,
   type OcclusionRect,
 } from "./src/ir/occlusion";
 import { renderOcclusion } from "./src/ir/occlusion-render";
@@ -307,6 +313,7 @@ import {
   activeIrFile,
 } from "./src/ir/pdf-view";
 import {
+  bodyOffsetFromFullOffset,
   bodyOffsetsFromFullOffsets,
   fullOffsetsFromBodyOffsets,
   mapBodySpans,
@@ -1599,6 +1606,31 @@ export default class IncrementalReadingPlugin extends Plugin {
       name: "Export IR items to SuperMemo Q&A text (.txt)",
       icon: "file-text",
       callback: () => void this.exportSuperMemoQaToVault(),
+    });
+
+    this.irCommand({
+      id: "export-sm20-binary",
+      name: "Export IR collection to SuperMemo 20 binary folder",
+      icon: "folder-output",
+      callback: () => void this.exportSm20BinaryToVault(),
+    });
+
+    this.irCommand({
+      id: "chop-before-cursor",
+      name: "Delete reading text before cursor (IR chop)",
+      icon: "scissors-line-dashed",
+      editorCallback: (editor, ctx) => {
+        if (ctx.file) void this.chopActiveReadingNote(editor, ctx.file, "before");
+      },
+    });
+
+    this.irCommand({
+      id: "chop-after-cursor",
+      name: "Delete reading text after cursor (IR chop)",
+      icon: "scissors-line-dashed",
+      editorCallback: (editor, ctx) => {
+        if (ctx.file) void this.chopActiveReadingNote(editor, ctx.file, "after");
+      },
     });
 
     this.registerEvent(
@@ -3565,11 +3597,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     const fullBefore = await this.flushEditorToVault(editor, source);
     const body = stripFrontmatter(fullBefore);
     const off = this.bodyOffsetsForEditorSelection(editor);
+    const conceptRegistry = this.ledger ? await this.ledger.readConcepts() : undefined;
     const result = await createCloze(
       this.app,
       source,
       editor,
-      this.settings,
+      { ...this.settings, conceptRegistry },
       hintR.hint,
     );
     await this.openResult(result, "Cloze item created:");
@@ -7407,11 +7440,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     const off = sourceIsEditor
       ? this.bodyOffsetsForEditorSelection(editor)
       : null;
+    const conceptRegistry = this.ledger ? await this.ledger.readConcepts() : undefined;
     const result = await createCloze(
       this.app,
       parentFile,
       editor,
-      this.settings,
+      { ...this.settings, conceptRegistry },
       hintR.hint,
     );
     await this.openResult(result, "New cloze item created:");
@@ -7461,6 +7495,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     }
     if (!(await this.ensureIrSource(parentAbs))) return;
 
+    const conceptRegistry = this.ledger ? await this.ledger.readConcepts() : undefined;
     let created = 0;
     for (const n of groups) {
       const piece = bodyWithSingleClozeGroup(body, n);
@@ -7470,7 +7505,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         parentAbs,
         piece,
         stem,
-        this.settings,
+        { ...this.settings, conceptRegistry },
       );
       if (!result.file) {
         new Notice(`Incremental Reading: ${result.error}`);
@@ -8211,7 +8246,8 @@ export default class IncrementalReadingPlugin extends Plugin {
       imageUrl: this.app.vault.getResourcePath(image),
       parentLabel: parent.basename,
       mode: this.settings.occlusionDefaultMode,
-      onCreate: (rects, mode) => this.createOcclusionCards(image, parent, rects, mode),
+      onCreate: (rects, mode, polygons) =>
+        this.createOcclusionCards(image, parent, rects, mode, polygons),
     });
     this.app.workspace.revealLeaf(leaf);
   }
@@ -8221,8 +8257,15 @@ export default class IncrementalReadingPlugin extends Plugin {
     parent: TFile,
     rects: OcclusionRect[],
     mode: OcclusionMode,
+    polygons?: OcclusionPolygon[],
   ): Promise<void> {
-    const bodies = occlusionBodies({ image: image.path, mode, rects });
+    const bodies = occlusionBodies({
+      image: image.path,
+      mode,
+      rects,
+      ...(polygons && polygons.length > 0 ? { polygons } : {}),
+    });
+    const conceptRegistry = this.ledger ? await this.ledger.readConcepts() : undefined;
     let made = 0;
     for (const b of bodies) {
       const result = await createIrItemChildNote(
@@ -8230,7 +8273,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         parent,
         b.body,
         occlusionNoteStem(image.path, b.n),
-        this.settings,
+        { ...this.settings, conceptRegistry },
       );
       if (!result.file) {
         new Notice(`Incremental Reading: ${result.error}`);
@@ -9364,5 +9407,86 @@ export default class IncrementalReadingPlugin extends Plugin {
       await this.app.vault.create(outPath, qa);
     }
     new Notice(`Incremental Reading: exported SuperMemo Q&A text to ${outPath}.`);
+  }
+
+  private async exportSm20BinaryToVault(): Promise<void> {
+    if (!this.ledger) return;
+    const [state, concepts, matrix] = await Promise.all([
+      this.ledger.load(),
+      this.ledger.readConcepts(),
+      this.ensureSm20Matrix(),
+    ]);
+    const pkg = exportSm20BinaryPackage({
+      elements: state.elements.values(),
+      concepts: concepts.concepts,
+      matrix,
+      nowMs: Date.now(),
+    });
+    const baseDir = `SM20 Export ${new Date().toISOString().slice(0, 10)}`;
+    const ensureDir = async (dirPath: string) => {
+      const parts = dirPath.split("/").filter(Boolean);
+      let acc = "";
+      for (const part of parts) {
+        acc = acc ? `${acc}/${part}` : part;
+        if (!this.app.vault.getAbstractFileByPath(acc)) {
+          await this.app.vault.createFolder(acc).catch(() => undefined);
+        }
+      }
+    };
+    for (const [relPath, bytes] of pkg.entries()) {
+      const fullPath = assertVaultRelativePath(`${baseDir}/${relPath}`);
+      const slash = fullPath.lastIndexOf("/");
+      if (slash > 0) await ensureDir(fullPath.slice(0, slash));
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const existing = this.app.vault.getAbstractFileByPath(fullPath);
+      if (existing instanceof TFile) {
+        await this.app.vault.modifyBinary(existing, buf);
+      } else {
+        await this.app.vault.createBinary(fullPath, buf);
+      }
+    }
+    new Notice(`Incremental Reading: exported SuperMemo 20 binary collection (${pkg.size} files) to ${baseDir}.`);
+  }
+
+  private async chopActiveReadingNote(
+    editor: Editor,
+    file: TFile,
+    direction: "before" | "after",
+  ): Promise<void> {
+    const full = await this.flushEditorToVault(editor, file);
+    const cursorOff = bodyOffsetFromFullOffset(full, editor.posToOffset(editor.getCursor()));
+    const protectedSpans = this.decorationCache.rangesFor(file.path);
+    const res =
+      direction === "before"
+        ? chopReadingTextBeforeOffset(full, cursorOff, protectedSpans)
+        : chopReadingTextAfterOffset(full, cursorOff, protectedSpans);
+    if (!res.ok || !res.updatedFile) {
+      new Notice(`Incremental Reading: ${res.reason ?? "Nothing to chop."}`);
+      return;
+    }
+    await this.app.vault.modify(file, res.updatedFile);
+    editor.setValue(res.updatedFile);
+    if (this.ledger && res.updatedBody !== undefined) {
+      const view = await this.ledger.loadView();
+      for (const el of view.state.elements.values()) {
+        if (el.notePath === file.path) {
+          await this.ledger.appendEvent({
+            id: newEventId(),
+            ts: Date.now(),
+            lamport: view.maxLamport + 1,
+            device: await this.ledger.getDeviceId(),
+            kind: "text-edited",
+            target: el.id,
+            payload: { text: res.updatedBody },
+          });
+          break;
+        }
+      }
+    }
+    new Notice(
+      direction === "before"
+        ? "Incremental Reading: deleted reading text before cursor."
+        : "Incremental Reading: deleted reading text after cursor.",
+    );
   }
 }

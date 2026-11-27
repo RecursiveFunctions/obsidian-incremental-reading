@@ -187,6 +187,7 @@ import {
   planSubsetSearchAndReplace,
   type Sm20ElementFilter,
 } from "./ir/sm20-collection-ops";
+import { slugifyConceptId, upsertConceptGroup } from "./ir/concepts-references";
 import { formatDueLabel } from "./ir/due-label";
 export { formatDueLabel };
 
@@ -208,7 +209,7 @@ export class IrTreeView extends ItemView {
   /** Current search/filter text (case-insensitive substring match). */
   private filterText = "";
   private advancedFilter: Sm20ElementFilter = {};
-  private activeInlineTool: "none" | "range-filter" | "spread" | "replace" = "none";
+  private activeInlineTool: "none" | "range-filter" | "spread" | "replace" | "concepts" = "none";
   private readonly commitSubsetReplace?: IrTreeViewHost["commitSubsetReplace"];
 
   /**
@@ -1067,6 +1068,13 @@ export class IrTreeView extends ItemView {
           void this.render();
         }));
     }
+    menu.addItem((item) => item
+      .setTitle("Concept groups…")
+      .setIcon("folder-tree")
+      .onClick(() => {
+        this.activeInlineTool = this.activeInlineTool === "concepts" ? "none" : "concepts";
+        void this.render();
+      }));
     menu.showAtMouseEvent(event);
   }
 
@@ -3117,6 +3125,7 @@ export class IrTreeView extends ItemView {
       "range-filter": "Numeric & metric range filter",
       spread: "Spread priorities",
       replace: "Search & replace in subset",
+      concepts: "Concept groups (folders, priorities & templates)",
     };
     header.createSpan({
       cls: "ir-telemetry-title",
@@ -3291,6 +3300,61 @@ export class IrTreeView extends ItemView {
         });
         this.activeInlineTool = "none";
         new Notice(`Incremental Reading: replaced ${count} occurrence(s).`);
+        void this.render();
+      };
+      return;
+    }
+
+    if (this.activeInlineTool === "concepts") {
+      const listWrap = drawer.createDiv({ cls: "ir-bulk-preview-summary" });
+      void this.ledger.readConcepts().then((reg) => {
+        if (!listWrap.isConnected) return;
+        listWrap.setText(
+          reg.concepts.length > 0
+            ? `Saved concepts: ${reg.concepts.map((c) => `${c.name}${c.targetFolder ? ` → ${c.targetFolder}` : ""}`).join(" · ")}`
+            : "No concept groups yet. Add one below (or set ir_concept in note frontmatter).",
+        );
+      });
+      const row = drawer.createDiv({ cls: "ir-bulk-range" });
+      const nameIn = row.createEl("input", {
+        type: "text",
+        placeholder: "Concept name (e.g. Cardiology)",
+        attr: { "aria-label": "Concept name" },
+      });
+      const folderIn = row.createEl("input", {
+        type: "text",
+        placeholder: "Target folder (optional)",
+        attr: { "aria-label": "Concept target folder" },
+      });
+      const prioIn = row.createEl("input", {
+        type: "number",
+        value: "25",
+        attr: { min: "0", max: "100", step: "1", "aria-label": "Concept default priority" },
+      });
+      const tplIn = row.createEl("input", {
+        type: "text",
+        placeholder: "Item template (optional, uses {{content}})",
+        attr: { "aria-label": "Concept item template" },
+      });
+      const actions = drawer.createDiv({ cls: "ir-priority-actions" });
+      actions.createEl("button", { text: "Save concept", cls: "mod-cta", type: "button" }).onclick = async () => {
+        const name = nameIn.value.trim();
+        if (!name) {
+          new Notice("Incremental Reading: enter a concept name.");
+          return;
+        }
+        const cur = await this.ledger.readConcepts();
+        const prioNum = Number(prioIn.value);
+        const updated = upsertConceptGroup(cur, {
+          id: slugifyConceptId(name),
+          name,
+          ...(folderIn.value.trim() ? { targetFolder: folderIn.value.trim() } : {}),
+          ...(Number.isFinite(prioNum) ? { defaultPriority: prioNum } : {}),
+          ...(tplIn.value.trim() ? { itemTemplate: tplIn.value.trim() } : {}),
+          updatedAt: Date.now(),
+        });
+        await this.ledger.writeConcepts(updated);
+        new Notice(`Incremental Reading: saved concept "${name}".`);
         void this.render();
       };
     }
