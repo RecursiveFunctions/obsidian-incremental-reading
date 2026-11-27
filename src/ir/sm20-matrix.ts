@@ -212,15 +212,35 @@ export function restoreSm20Matrix(snapshot: Sm20MatrixSnapshot): Sm20Matrix {
     return raw;
   };
 
-  const sinc = Float64Array.from(parseArr(snapshot.sinc, SM20_MATRIX_CELLS, empty.sinc));
-  const sincCases = Uint32Array.from(parseArr(snapshot.sincCases, SM20_MATRIX_CELLS, empty.sincCases));
-  const recall = Uint32Array.from(parseArr(snapshot.recall, SM20_MATRIX_CELLS, empty.recall));
-  const recallCases = Uint32Array.from(parseArr(snapshot.recallCases, SM20_MATRIX_CELLS, empty.recallCases));
+  const rawSinc = parseArr(snapshot.sinc, SM20_MATRIX_CELLS, empty.sinc);
+  const sinc = new Float64Array(SM20_MATRIX_CELLS);
+  for (let i = 0; i < SM20_MATRIX_CELLS; i += 1) {
+    const v = rawSinc[i]!;
+    sinc[i] = Number.isFinite(v) && v >= 0.5 && v <= 20.0 ? v : empty.sinc[i]!;
+  }
+  const sanitizeUint = (arr: readonly number[], len: number): Uint32Array => {
+    const out = new Uint32Array(len);
+    for (let i = 0; i < len; i += 1) {
+      const v = arr[i]!;
+      out[i] = Number.isFinite(v) && v > 0 ? Math.min(0x7fffffff, Math.floor(v)) : 0;
+    }
+    return out;
+  };
+  const sincCases = sanitizeUint(parseArr(snapshot.sincCases, SM20_MATRIX_CELLS, empty.sincCases), SM20_MATRIX_CELLS);
+  const recall = sanitizeUint(parseArr(snapshot.recall, SM20_MATRIX_CELLS, empty.recall), SM20_MATRIX_CELLS);
+  const recallCases = sanitizeUint(parseArr(snapshot.recallCases, SM20_MATRIX_CELLS, empty.recallCases), SM20_MATRIX_CELLS);
 
   const optUint32 = (arr: number[] | undefined, len: number): Uint32Array =>
-    Array.isArray(arr) && arr.length === len ? Uint32Array.from(arr) : new Uint32Array(len);
-  const optFloat64 = (arr: number[] | undefined, len: number): Float64Array =>
-    Array.isArray(arr) && arr.length === len ? Float64Array.from(arr) : new Float64Array(len);
+    Array.isArray(arr) && arr.length === len ? sanitizeUint(arr, len) : new Uint32Array(len);
+  const optFloat64 = (arr: number[] | undefined, len: number): Float64Array => {
+    const out = new Float64Array(len);
+    if (!Array.isArray(arr) || arr.length !== len) return out;
+    for (let i = 0; i < len; i += 1) {
+      const v = arr[i]!;
+      out[i] = Number.isFinite(v) && v >= 0 ? Math.min(1e9, v) : 0;
+    }
+    return out;
+  };
 
   return {
     sinc,

@@ -4,6 +4,8 @@
  * literals (`scripts/check-zero-network.mjs`).
  */
 
+import { isSafeVaultRelativePath } from "./source-paths";
+
 export interface HtmlToMarkdownOptions {
   /**
    * Resolve an `<img src>` or SVG `<image href>` target to a vault-relative
@@ -139,7 +141,11 @@ function formatImageEmbed(
   if (/^data:/i.test(rawSrc) || /^[a-z][a-z0-9+.-]*:/i.test(rawSrc)) {
     return alt;
   }
-  return `\n\n![[${rawSrc}]]\n\n`;
+  const cleanSrc = rawSrc.trim().replace(/^\/+/, "");
+  if (!isSafeVaultRelativePath(cleanSrc)) {
+    return alt;
+  }
+  return `\n\n![[${cleanSrc}]]\n\n`;
 }
 
 export function htmlToMarkdown(
@@ -158,7 +164,8 @@ export function htmlToMarkdown(
   let s = html
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, "")
-    .replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
+    .replace(/<(script|style|noscript|iframe|object|embed|applet)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<(?:iframe|object|embed|applet|meta|link|base)\b[^>]*\/?>/gi, "");
 
   // Fenced code blocks (<pre><code ...>...</code></pre> and bare <pre>...</pre>)
   s = s.replace(

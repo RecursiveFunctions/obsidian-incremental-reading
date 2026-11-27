@@ -6,10 +6,32 @@
  */
 
 import type { ElementId } from "./ids";
-import { clampPriority, type IrElement, type ReferenceMetadata } from "./model";
+import {
+  clampPriority,
+  SAFE_LEDGER_ID_RE,
+  type IrElement,
+  type ReferenceMetadata,
+} from "./model";
 import { isSafeVaultRelativePath } from "./source-paths";
 
 export type { ReferenceMetadata };
+
+const FORBIDDEN_IDS = new Set(["__proto__", "constructor", "prototype"]);
+const MAX_CONCEPTS = 2_000;
+const MAX_CONCEPT_NAME_LEN = 200;
+const MAX_TEMPLATE_LEN = 10_000;
+const MAX_REF_FIELD_LEN = 2_048;
+
+function sanitizeConceptId(rawId: unknown, fallbackName: string): string {
+  if (
+    typeof rawId === "string" &&
+    SAFE_LEDGER_ID_RE.test(rawId) &&
+    !FORBIDDEN_IDS.has(rawId)
+  ) {
+    return rawId;
+  }
+  return slugifyConceptId(fallbackName);
+}
 
 function sanitizeTargetFolder(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
@@ -54,26 +76,29 @@ export function normalizeConceptRegistry(raw: unknown): ConceptRegistryState {
   const concepts: ConceptGroup[] = [];
   const seen = new Set<string>();
   for (const item of rec.concepts) {
+    if (concepts.length >= MAX_CONCEPTS) break;
     if (!item || typeof item !== "object") continue;
     const c = item as Partial<ConceptGroup>;
     if (typeof c.name !== "string" || !c.name.trim()) continue;
-    const id = typeof c.id === "string" && c.id.trim() ? c.id.trim() : slugifyConceptId(c.name);
+    const cleanName = c.name.replace(/\0/g, "").trim().slice(0, MAX_CONCEPT_NAME_LEN);
+    if (!cleanName) continue;
+    const id = sanitizeConceptId(c.id, cleanName);
     if (seen.has(id)) continue;
     seen.add(id);
     const cleanFolder = sanitizeTargetFolder(c.targetFolder);
     concepts.push({
       id,
-      name: c.name.trim(),
+      name: cleanName,
       ...(c.rootElementId !== undefined ? { rootElementId: c.rootElementId } : {}),
       ...(cleanFolder ? { targetFolder: cleanFolder } : {}),
       ...(typeof c.defaultPriority === "number" && Number.isFinite(c.defaultPriority)
         ? { defaultPriority: clampPriority(c.defaultPriority) }
         : {}),
       ...(typeof c.topicTemplate === "string" && c.topicTemplate
-        ? { topicTemplate: c.topicTemplate }
+        ? { topicTemplate: c.topicTemplate.slice(0, MAX_TEMPLATE_LEN) }
         : {}),
       ...(typeof c.itemTemplate === "string" && c.itemTemplate
-        ? { itemTemplate: c.itemTemplate }
+        ? { itemTemplate: c.itemTemplate.slice(0, MAX_TEMPLATE_LEN) }
         : {}),
       updatedAt: typeof c.updatedAt === "number" && Number.isFinite(c.updatedAt) ? c.updatedAt : 0,
     });
@@ -85,16 +110,19 @@ export function upsertConceptGroup(
   state: ConceptRegistryState,
   group: ConceptGroup,
 ): ConceptRegistryState {
-  const id = group.id.trim() || slugifyConceptId(group.name);
+  const cleanName = group.name.replace(/\0/g, "").trim().slice(0, MAX_CONCEPT_NAME_LEN);
+  const id = sanitizeConceptId(group.id, cleanName);
   const cleanFolder = sanitizeTargetFolder(group.targetFolder);
-  const { targetFolder: _dropped, ...rest } = group;
+  const { targetFolder: _dropped, topicTemplate, itemTemplate, ...rest } = group;
   const clean: ConceptGroup = {
     ...rest,
     id,
-    name: group.name.trim(),
+    name: cleanName,
     ...(cleanFolder ? { targetFolder: cleanFolder } : {}),
+    ...(topicTemplate ? { topicTemplate: topicTemplate.slice(0, MAX_TEMPLATE_LEN) } : {}),
+    ...(itemTemplate ? { itemTemplate: itemTemplate.slice(0, MAX_TEMPLATE_LEN) } : {}),
   };
-  const next = state.concepts.filter((c) => c.id !== id);
+  const next = state.concepts.filter((c) => c.id !== id).slice(0, MAX_CONCEPTS - 1);
   next.push(clean);
   return { version: 1, concepts: next };
 }
@@ -164,9 +192,12 @@ export function normalizeReference(ref: Partial<ReferenceMetadata> | null | unde
   let any = false;
   for (const k of keys) {
     const val = ref[k];
-    if (typeof val === "string" && val.trim().length > 0) {
-      out[k] = val.trim();
-      any = true;
+    if (typeof val === "string") {
+      const cleaned = val.replace(/[\0\x01-\x08\x0b\x0c\x0e-\x1f]/g, "").trim().slice(0, MAX_REF_FIELD_LEN);
+      if (cleaned.length > 0) {
+        out[k] = cleaned;
+        any = true;
+      }
     }
   }
   return any ? out : null;

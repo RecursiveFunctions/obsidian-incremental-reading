@@ -1342,7 +1342,9 @@ export class IrLedger {
     const { sm20Matrix } = await this.paths();
     if (!(await this.fs.exists(sm20Matrix))) return null;
     try {
-      const parsed = JSON.parse(await this.fs.read(sm20Matrix)) as Partial<Sm20MatrixFileV1>;
+      const raw = await this.fs.read(sm20Matrix);
+      if (raw.length > 16 * 1024 * 1024) return null;
+      const parsed = JSON.parse(raw) as Partial<Sm20MatrixFileV1>;
       if ((parsed.schemaVersion !== 2 && parsed.schemaVersion !== 3) || !parsed.matrix) return null;
       return parsed as Sm20MatrixFileV1;
     } catch {
@@ -1360,7 +1362,9 @@ export class IrLedger {
     const { concepts } = await this.paths();
     if (!(await this.fs.exists(concepts))) return createEmptyConceptRegistry();
     try {
-      return normalizeConceptRegistry(JSON.parse(await this.fs.read(concepts)));
+      const raw = await this.fs.read(concepts);
+      if (raw.length > 8 * 1024 * 1024) return createEmptyConceptRegistry();
+      return normalizeConceptRegistry(JSON.parse(raw));
     } catch {
       return createEmptyConceptRegistry();
     }

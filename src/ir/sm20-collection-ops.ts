@@ -169,7 +169,12 @@ export function planSubsetSearchAndReplace(
   replaceText: string,
   options: SubsetSearchReplaceOptions = {},
 ): SubsetSearchReplacePlan {
-  if (!findText || findText === replaceText) {
+  if (
+    !findText ||
+    findText.length > 2_000 ||
+    replaceText.length > 20_000 ||
+    findText === replaceText
+  ) {
     return { findText, replaceText, matches: [], totalReplacements: 0 };
   }
   const caseSensitive = options.caseSensitive ?? false;

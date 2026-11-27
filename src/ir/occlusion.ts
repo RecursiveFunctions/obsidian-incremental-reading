@@ -6,6 +6,10 @@
  */
 
 import type { NormalizedRect } from "./model";
+import { isSafeVaultRelativePath } from "./source-paths";
+
+const MAX_OCCLUSION_SHAPES = 200;
+const MAX_POLYGON_VERTICES = 500;
 
 export type OcclusionMode = "hide-all" | "hide-one";
 
@@ -79,10 +83,12 @@ export function parseOcclusionJson(json: string): OcclusionSpec | null {
   if (!obj || typeof obj !== "object") return null;
   const o = obj as Record<string, unknown>;
   if (typeof o.image !== "string" || !o.image.trim()) return null;
+  const cleanImage = o.image.trim();
+  if (!isSafeVaultRelativePath(cleanImage)) return null;
   const mode: OcclusionMode = o.mode === "hide-one" ? "hide-one" : "hide-all";
   const rects: OcclusionRect[] = [];
   if (Array.isArray(o.rects)) {
-    for (const r of o.rects) {
+    for (const r of o.rects.slice(0, MAX_OCCLUSION_SHAPES)) {
       if (!r || typeof r !== "object") continue;
       const rr = r as Record<string, unknown>;
       const x = clamp01(rr.x);
@@ -102,13 +108,13 @@ export function parseOcclusionJson(json: string): OcclusionSpec | null {
 
   const polygons: OcclusionPolygon[] = [];
   if (Array.isArray(o.polygons)) {
-    for (const p of o.polygons) {
+    for (const p of o.polygons.slice(0, MAX_OCCLUSION_SHAPES)) {
       if (!p || typeof p !== "object") continue;
       const pp = p as Record<string, unknown>;
       const n = typeof pp.n === "number" ? Math.floor(pp.n) : NaN;
       if (!Number.isFinite(n) || n < 1 || !Array.isArray(pp.points)) continue;
       const pts: Array<[number, number]> = [];
-      for (const pt of pp.points) {
+      for (const pt of pp.points.slice(0, MAX_POLYGON_VERTICES)) {
         if (!Array.isArray(pt) || pt.length < 2) continue;
         const px = clamp01(pt[0]);
         const py = clamp01(pt[1]);

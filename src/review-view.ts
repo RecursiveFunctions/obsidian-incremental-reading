@@ -4228,10 +4228,14 @@ export class IrReviewView extends ItemView {
 
     if (!srcUrl) {
       if (isExternal) {
+        const shownUrl =
+          media.mediaPathOrUrl.length > 120
+            ? `${media.mediaPathOrUrl.slice(0, 117)}…`
+            : media.mediaPathOrUrl;
         const consent = wrap.createDiv({ cls: "ir-review-media-consent" });
         consent.createEl("p", {
           cls: "ir-review-context-placeholder",
-          text: "External media stream — kept offline until you explicitly start playback.",
+          text: `External media stream (${shownUrl}) — kept offline until you explicitly start playback.`,
         });
         const loadBtn = consent.createEl("button", {
           type: "button",

@@ -81,7 +81,11 @@ identically to the published release asset
 - "Zero network" describes the plugin's code. Obsidian may render
   remote images found in your own notes through its normal markdown
   pipeline; that behavior belongs to Obsidian, not this plugin, and
-  exists whether or not this plugin is installed.
+  exists whether or not this plugin is installed. Imported SuperMemo
+  collections, XML, Q&A text, and EPUBs strip remote image embeds,
+  scripts, and frames during import — see
+  [`docs/SECURITY-THREAT-MODEL.md`](docs/SECURITY-THREAT-MODEL.md) for
+  the full STRIDE threat model, trust boundaries, and TCB analysis.
 
 ## Reporting a vulnerability
 

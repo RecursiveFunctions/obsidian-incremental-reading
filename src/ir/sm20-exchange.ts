@@ -22,6 +22,7 @@ import {
   type ConceptGroup,
 } from "./concepts-references";
 import { newElementId, newEventId, type DeviceId, type ElementId } from "./ids";
+import { htmlToMarkdown } from "./html-to-markdown";
 import { extractTypedClozes, hasTypedCloze } from "./interactive-items";
 import {
   clampPriority,
@@ -37,6 +38,16 @@ const MS_PER_DAY = 86_400_000;
 const DELPHI_EPOCH_MS = Date.UTC(1899, 11, 30);
 const REAL48_BIAS = 129;
 const REAL48_MANTISSA_SCALE = Math.pow(2, 39);
+const MAX_EXCHANGE_CHARS = 32 * 1024 * 1024;
+const MAX_XML_NESTING_DEPTH = 64;
+const MAX_EXCHANGE_ELEMENTS = 50_000;
+const HTML_TAG_DETECT_RE = /<[a-z!/][^>]*>/i;
+
+function sanitizeImportedRichText(raw: string): string {
+  const clean = raw.replace(/\0/g, "");
+  if (!HTML_TAG_DETECT_RE.test(clean)) return clean;
+  return htmlToMarkdown(clean);
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
@@ -59,6 +70,9 @@ export function parseSuperMemoQaText(
   deviceId: DeviceId,
   defaultPriority = 33,
 ): QaImportResult {
+  if (rawText.length > MAX_EXCHANGE_CHARS) {
+    throw new Error("Q&A import exceeds maximum allowed size (32 MB)");
+  }
   const blocks = rawText
     .replace(/\r\n/g, "\n")
     .split(/\n\s*\n+/)
@@ -70,6 +84,7 @@ export function parseSuperMemoQaText(
   let lamport = 1;
 
   for (const block of blocks) {
+    if (elements.length >= MAX_EXCHANGE_ELEMENTS) break;
     const ref = parseSuperMemoReferenceFooter(block);
     const cleanedBlock = stripSuperMemoReferenceFooter(block);
     const lines = cleanedBlock.split("\n");
@@ -94,8 +109,8 @@ export function parseSuperMemoQaText(
       else if (mode === "a") aLines.push(rawLine);
     }
 
-    const question = qLines.join("\n").trim();
-    const answer = aLines.join("\n").trim();
+    const question = sanitizeImportedRichText(qLines.join("\n").trim());
+    const answer = sanitizeImportedRichText(aLines.join("\n").trim());
     if (!question && !answer) continue;
 
     let itemText: string;
@@ -252,27 +267,38 @@ export function parseSuperMemoXmlCollection(
   nowMs: number,
   deviceId: DeviceId,
 ): SmXmlImportResult {
+  if (xmlText.length > MAX_EXCHANGE_CHARS) {
+    throw new Error("SuperMemo XML import exceeds maximum allowed size (32 MB)");
+  }
   const tree = scanSuperMemoXmlElements(xmlText);
   const elements: IrElement[] = [];
   const events: IrEvent[] = [];
   const conceptsById = new Map<string, ConceptGroup>();
   let lamport = 1;
 
-  const visit = (node: ParsedXmlNode, parentId: ElementId | null): void => {
+  const workStack: Array<{ node: ParsedXmlNode; parentId: ElementId | null; depth: number }> = [];
+  for (let i = tree.length - 1; i >= 0; i -= 1) {
+    workStack.push({ node: tree[i]!, parentId: null, depth: 1 });
+  }
+
+  while (workStack.length > 0 && elements.length < MAX_EXCHANGE_ELEMENTS) {
+    const { node, parentId, depth } = workStack.pop()!;
+    if (depth > MAX_XML_NESTING_DEPTH) continue;
+
     const hdr = node.headerXml;
     const rawType = (readDirectXmlTag(hdr, "Type") ?? "Topic").toLowerCase();
     const irType: IrType =
       rawType === "item" ? "item" : parentId !== null && rawType === "extract" ? "extract" : "topic";
 
-    const title = readDirectXmlTag(hdr, "Title") ?? "";
+    const title = sanitizeImportedRichText(readDirectXmlTag(hdr, "Title") ?? "");
     const contentChunk = readDirectXmlTag(hdr, "Content") ?? hdr;
     const rawQuestion = readDirectXmlTag(hdr, "Question") ?? readDirectXmlTag(contentChunk, "Question") ?? "";
     const rawAnswer = readDirectXmlTag(hdr, "Answer") ?? readDirectXmlTag(contentChunk, "Answer") ?? "";
 
     const combinedRaw = [rawQuestion, rawAnswer].filter(Boolean).join("\n\n") || title;
     const ref = parseSuperMemoReferenceFooter(combinedRaw);
-    const cleanQ = stripSuperMemoReferenceFooter(rawQuestion);
-    const cleanA = stripSuperMemoReferenceFooter(rawAnswer);
+    const cleanQ = sanitizeImportedRichText(stripSuperMemoReferenceFooter(rawQuestion));
+    const cleanA = sanitizeImportedRichText(stripSuperMemoReferenceFooter(rawAnswer));
 
     let bodyText: string;
     if (irType === "item") {
@@ -297,7 +323,7 @@ export function parseSuperMemoXmlCollection(
       if (!conceptsById.has(conceptId)) {
         conceptsById.set(conceptId, {
           id: conceptId,
-          name: conceptName,
+          name: conceptName.slice(0, 200),
           rootElementId: parentId === null ? id : undefined,
           defaultPriority: priority,
           updatedAt: nowMs,
@@ -356,13 +382,11 @@ export function parseSuperMemoXmlCollection(
       payload: { element: el },
     });
 
-    for (const child of node.children) {
-      visit(child, id);
+    if (depth < MAX_XML_NESTING_DEPTH) {
+      for (let i = node.children.length - 1; i >= 0; i -= 1) {
+        workStack.push({ node: node.children[i]!, parentId: id, depth: depth + 1 });
+      }
     }
-  };
-
-  for (const root of tree) {
-    visit(root, null);
   }
 
   return {
