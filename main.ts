@@ -96,6 +96,7 @@ import {
   parseSuperMemoReferenceFooter,
   reconcileNoteFrontmatterWithLedger,
   resolveInheritedConceptAndReference,
+  slugifyConceptId,
   upsertConceptGroup,
   writeConceptToFrontmatter,
   writeReferenceToFrontmatter,
@@ -104,6 +105,7 @@ import {
   exportSm20BinaryPackage,
   exportSuperMemoQaText,
   exportSuperMemoXmlCollection,
+  isSuperMemoXmlText,
   parseSuperMemoQaText,
   parseSuperMemoXmlCollection,
 } from "./src/ir/sm20-exchange";
@@ -112,6 +114,8 @@ import {
   chopReadingTextBeforeOffset,
 } from "./src/ir/sm20-reading-tools";
 import {
+  buildMcqAuthoringBlock,
+  buildOrderAuthoringBlock,
   gradeMcqSelection,
   gradeOrderedSequence,
   MCQ_LANG,
@@ -154,6 +158,7 @@ import { isOcclusionItem, toAnkiTsv } from "./src/ir/anki-export";
 import { planClearTombstone, planSourceDeletion, planSourceRelink, planSourceTombstoneOnly, planUndoSourceDeletion, missingSourcePaths, relinkCandidates, titleFromSourcePath, tombstonesOwnedBy, liveParentForDelete } from "./src/ir/deletion";
 import {
   assertVaultRelativePath,
+  isSafeVaultRelativePath,
   basenameOf,
   inferPrefixRewrite,
   pathIsUnder,
@@ -905,6 +910,10 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.applyIrPriorityPreview(preview, file),
           commitSubsetReplace: (findText, replaceText, options) =>
             this.applySubsetSearchAndReplace(findText, replaceText, options),
+          commitExchangeImport: (rawText, options) =>
+            this.importSuperMemoQaOrXmlText(rawText, options),
+          commitExchangeExport: (format, options) =>
+            this.exportSuperMemoByFormat(format, options),
           initialCurrentElementId:
             this.getActiveReviewView()?.getCurrentElementId() ?? null,
         });
@@ -1064,6 +1073,7 @@ export default class IncrementalReadingPlugin extends Plugin {
             this.refreshActiveNeuralSlots(visitedPrefixIds),
           saveSettings: () => this.saveSettings(),
           getSm20Matrix: () => this.sm20Matrix,
+          quizStore: this.quizStore,
           onSm20Grade: (eventId, prevCard, nextCard, grade, overridden, smGrade) =>
             this.recordSm20Grade(eventId, prevCard, nextCard, grade, overridden, smGrade),
         });
@@ -1588,10 +1598,28 @@ export default class IncrementalReadingPlugin extends Plugin {
     });
 
     this.irCommand({
+      id: "insert-mcq-block",
+      name: "Insert multiple-choice quiz (ir-mcq)",
+      icon: "list-checks",
+      editorCallback: (editor) => {
+        editor.replaceSelection(buildMcqAuthoringBlock(editor.getSelection()));
+      },
+    });
+
+    this.irCommand({
+      id: "insert-order-block",
+      name: "Insert sequence-ordering quiz (ir-order)",
+      icon: "list-ordered",
+      editorCallback: (editor) => {
+        editor.replaceSelection(buildOrderAuthoringBlock(editor.getSelection()));
+      },
+    });
+
+    this.irCommand({
       id: "import-sm-qa-or-xml",
-      name: "Import SuperMemo Q&A (.txt) or XML (.xml) from clipboard",
+      name: "Import / export SuperMemo Q&A (.txt) or XML (.xml)…",
       icon: "file-input",
-      callback: () => void this.importSuperMemoQaOrXmlFromClipboard(),
+      callback: () => void this.openSuperMemoExchangeDrawer(),
     });
 
     this.irCommand({
@@ -9239,22 +9267,32 @@ export default class IncrementalReadingPlugin extends Plugin {
       const selected = this.quizStore.getMcqSelection(sessionKey);
       const box = el.createDiv({ cls: "ir-quiz-block ir-quiz-mcq" });
       if (spec.prompt) {
-        box.createDiv({ cls: "ir-stats-section-title", text: spec.prompt });
+        box.createDiv({ cls: "ir-quiz-prompt", text: spec.prompt });
       }
       const list = box.createDiv({ cls: "ir-quiz-options" });
       options.forEach((opt, idx) => {
         const isSel = selected.has(idx);
-        const prefix = isSel ? "[x]" : "[ ]";
-        const suffix = revealed ? (opt.correct ? " ✓" : isSel ? " ✗" : "") : "";
+        const stateCls = revealed
+          ? opt.correct
+            ? " is-correct"
+            : isSel
+              ? " is-wrong"
+              : ""
+          : isSel
+            ? " is-selected"
+            : "";
         const btn = list.createEl("button", {
           type: "button",
-          cls: `ir-review-util-btn${isSel ? " mod-cta" : ""}`,
-          text: `${idx + 1}. ${prefix} ${opt.text}${suffix}`,
+          cls: `ir-quiz-option${stateCls}`,
         });
-        btn.style.display = "block";
-        btn.style.width = "100%";
-        btn.style.textAlign = "left";
-        btn.style.marginBottom = "4px";
+        btn.createSpan({ cls: "ir-quiz-option-num", text: String(idx + 1) });
+        btn.createSpan({ cls: "ir-quiz-option-text", text: opt.text });
+        if (revealed && (opt.correct || isSel)) {
+          btn.createSpan({
+            cls: "ir-quiz-option-mark",
+            text: opt.correct ? "✓" : "✗",
+          });
+        }
         btn.onclick = () => {
           if (revealed) return;
           this.quizStore.toggleMcqOption(sessionKey, idx);
@@ -9262,8 +9300,10 @@ export default class IncrementalReadingPlugin extends Plugin {
         };
       });
       if (!reviewBody) {
-        const checkBtn = box.createEl("button", {
+        const actions = box.createDiv({ cls: "ir-priority-actions" });
+        const checkBtn = actions.createEl("button", {
           type: "button",
+          cls: revealed ? "ir-review-util-btn" : "ir-review-util-btn mod-cta",
           text: revealed ? "Reset" : "Check answer",
         });
         checkBtn.onclick = () => {
@@ -9271,16 +9311,21 @@ export default class IncrementalReadingPlugin extends Plugin {
           revealed = !revealed;
           paint();
         };
-      } else if (revealed) {
+      } else if (!revealed) {
+        box.createDiv({
+          cls: "ir-quiz-hint",
+          text: `Press 1–${options.length} or click to select · Space to reveal`,
+        });
+      } else {
         const res = gradeMcqSelection(options, [...selected]);
         box.createDiv({
-          cls: "setting-item-description",
+          cls: `ir-quiz-status ${res.correct ? "is-pass" : "is-fail"}`,
           text:
             selected.size === 0
-              ? "No option selected prior to reveal."
+              ? "No option selected prior to reveal · Space confirms highlighted grade"
               : res.correct
-                ? `Correct (suggested grade ${res.suggestedSmGrade})`
-                : `Incorrect (suggested grade ${res.suggestedSmGrade})`,
+                ? "✓ Correct · Space confirms highlighted grade"
+                : "✗ Incorrect · Space confirms highlighted grade",
         });
       }
     };
@@ -9306,36 +9351,59 @@ export default class IncrementalReadingPlugin extends Plugin {
       const currentOrder = this.quizStore.getOrInitOrder(sessionKey, spec.items, daySeed);
       const box = el.createDiv({ cls: "ir-quiz-block ir-quiz-order" });
       if (spec.prompt) {
-        box.createDiv({ cls: "ir-stats-section-title", text: spec.prompt });
+        box.createDiv({ cls: "ir-quiz-prompt", text: spec.prompt });
       }
+      const list = box.createDiv({ cls: "ir-quiz-options" });
       const shownOrder = revealed ? spec.items : currentOrder;
       shownOrder.forEach((itemText, idx) => {
-        const row = box.createDiv({ cls: "ir-opt-actions" });
-        row.style.marginBottom = "4px";
-        const matchMark = revealed
-          ? currentOrder[idx] === spec.items[idx]
-            ? " ✓"
-            : ` (yours: ${currentOrder[idx]})`
-          : "";
-        row.createSpan({ text: `${idx + 1}. ${itemText}${matchMark}` });
+        const matched = currentOrder[idx] === spec.items[idx];
+        const row = list.createDiv({
+          cls: `ir-quiz-order-row${revealed ? (matched ? " is-correct" : " is-wrong") : ""}`,
+        });
+        row.createSpan({ cls: "ir-quiz-option-num", text: String(idx + 1) });
+        row.createSpan({
+          cls: "ir-quiz-option-text",
+          text:
+            revealed && !matched
+              ? `${itemText} (yours: ${currentOrder[idx]})`
+              : itemText,
+        });
         if (!revealed) {
-          const upBtn = row.createEl("button", { type: "button", text: "↑" });
+          const moveWrap = row.createDiv({ cls: "ir-quiz-order-btns" });
+          const upBtn = moveWrap.createEl("button", {
+            type: "button",
+            cls: "ir-review-util-btn",
+            text: "↑",
+            attr: { "aria-label": `Move step ${idx + 1} up` },
+          });
           upBtn.disabled = idx === 0;
           upBtn.onclick = () => {
             this.quizStore.moveOrder(sessionKey, idx, idx - 1);
             paint();
           };
-          const downBtn = row.createEl("button", { type: "button", text: "↓" });
+          const downBtn = moveWrap.createEl("button", {
+            type: "button",
+            cls: "ir-review-util-btn",
+            text: "↓",
+            attr: { "aria-label": `Move step ${idx + 1} down` },
+          });
           downBtn.disabled = idx === shownOrder.length - 1;
           downBtn.onclick = () => {
             this.quizStore.moveOrder(sessionKey, idx, idx + 1);
             paint();
           };
+        } else {
+          row.createSpan({
+            cls: "ir-quiz-option-mark",
+            text: matched ? "✓" : "✗",
+          });
         }
       });
       if (!reviewBody) {
-        const checkBtn = box.createEl("button", {
+        const actions = box.createDiv({ cls: "ir-priority-actions" });
+        const checkBtn = actions.createEl("button", {
           type: "button",
+          cls: revealed ? "ir-review-util-btn" : "ir-review-util-btn mod-cta",
           text: revealed ? "Scramble again" : "Check order",
         });
         checkBtn.onclick = () => {
@@ -9343,54 +9411,189 @@ export default class IncrementalReadingPlugin extends Plugin {
           revealed = !revealed;
           paint();
         };
-      } else if (revealed) {
+      } else if (!revealed) {
+        box.createDiv({
+          cls: "ir-quiz-hint",
+          text: "Reorder steps with ↑ / ↓ · Space to reveal",
+        });
+      } else {
         const res = gradeOrderedSequence(spec.items, currentOrder);
         box.createDiv({
-          cls: "setting-item-description",
-          text: `${Math.round(res.accuracy * 100)}% positions matched (suggested grade ${res.suggestedSmGrade})`,
+          cls: `ir-quiz-status ${res.exactMatch ? "is-pass" : "is-fail"}`,
+          text: `${Math.round(res.accuracy * 100)}% positions matched · Space confirms highlighted grade`,
         });
       }
     };
     paint();
   }
 
-  private async importSuperMemoQaOrXmlFromClipboard(): Promise<void> {
-    if (!this.ledger) return;
-    let raw = "";
+  private async openSuperMemoExchangeDrawer(): Promise<void> {
+    let initialClip = "";
     try {
-      raw = await navigator.clipboard.readText();
+      const clip = (await navigator.clipboard.readText()).trim();
+      if (isSuperMemoXmlText(clip) || /^Q:\s+/im.test(clip)) {
+        initialClip = clip;
+      }
     } catch {
-      new Notice("Incremental Reading: could not read clipboard.");
-      return;
+      // Clipboard permission unavailable — user can paste or pick a file in the drawer.
     }
+    await this.openTreeView();
+    const leaf = this.app.workspace.getLeavesOfType(IR_TREE_VIEW_TYPE)[0];
+    const treeView = leaf?.view;
+    if (treeView instanceof IrTreeView) {
+      treeView.openInlineTool("exchange", initialClip);
+    }
+  }
+
+  private async importSuperMemoQaOrXmlText(
+    raw: string,
+    options?: { conceptName?: string; targetFolder?: string },
+  ): Promise<number> {
+    if (!this.ledger) return 0;
     const trimmed = raw.trim();
     if (!trimmed) {
-      new Notice("Incremental Reading: clipboard is empty.");
-      return;
+      new Notice("Incremental Reading: enter or choose SuperMemo XML or Q&A text first.");
+      return 0;
     }
     const now = Date.now();
     const device = await this.ledger.getDeviceId();
-    const isXml = trimmed.startsWith("<?xml") || trimmed.includes("<SuperMemoCollection") || trimmed.includes("<SuperMemoElement>");
+    const isXml = isSuperMemoXmlText(trimmed);
     const parsed = isXml
       ? parseSuperMemoXmlCollection(trimmed, now, device)
       : { ...parseSuperMemoQaText(trimmed, now, device, this.settings.defaultPriority), concepts: [] };
 
     if (parsed.events.length === 0) {
-      new Notice("Incremental Reading: no SuperMemo Q&A or XML elements found in clipboard.");
-      return;
+      new Notice("Incremental Reading: no SuperMemo Q&A or XML elements found.");
+      return 0;
     }
-    let lamport = await this.ledger.nextLamport();
-    const stamped = parsed.events.map((ev) => ({ ...ev, lamport: lamport++ }));
-    await this.ledger.appendEvents(stamped);
-    if (parsed.concepts.length > 0) {
-      let reg = await this.ledger.readConcepts();
-      for (const c of parsed.concepts) reg = upsertConceptGroup(reg, c);
+
+    let overrideConceptId: string | undefined;
+    let reg = await this.ledger.readConcepts();
+    let conceptsChanged = false;
+    for (const c of parsed.concepts) {
+      reg = upsertConceptGroup(reg, c);
+      conceptsChanged = true;
+    }
+    const cleanFolder = options?.targetFolder?.trim().replace(/^\/+|\/+$/g, "");
+    const cleanConcept = options?.conceptName?.trim();
+    if (cleanConcept) {
+      const existing = findConceptByNameOrId(reg, cleanConcept);
+      const cid = existing ? existing.id : slugifyConceptId(cleanConcept);
+      overrideConceptId = cid;
+      reg = upsertConceptGroup(reg, {
+        ...(existing ?? { id: cid, name: cleanConcept, updatedAt: now }),
+        ...(cleanFolder && isSafeVaultRelativePath(cleanFolder) ? { targetFolder: cleanFolder } : {}),
+        updatedAt: now,
+      });
+      conceptsChanged = true;
+    } else if (cleanFolder && isSafeVaultRelativePath(cleanFolder)) {
+      const cid = slugifyConceptId(`Import ${cleanFolder}`);
+      overrideConceptId = cid;
+      reg = upsertConceptGroup(reg, {
+        id: cid,
+        name: `Import (${cleanFolder})`,
+        targetFolder: cleanFolder,
+        updatedAt: now,
+      });
+      conceptsChanged = true;
+    }
+    if (conceptsChanged) {
       await this.ledger.writeConcepts(reg);
     }
+
+    if (overrideConceptId) {
+      for (const el of parsed.elements) {
+        if (!el.conceptId) el.conceptId = overrideConceptId;
+      }
+    }
+    let lamport = await this.ledger.nextLamport();
+    const stamped = parsed.events.map((ev) => {
+      if (overrideConceptId && ev.kind === "element-created") {
+        const prevEl = ev.payload.element as IrElement;
+        if (!prevEl.conceptId) {
+          return {
+            ...ev,
+            lamport: lamport++,
+            payload: {
+              element: {
+                ...prevEl,
+                conceptId: overrideConceptId,
+              },
+            },
+          };
+        }
+      }
+      return { ...ev, lamport: lamport++ };
+    });
+    await this.ledger.appendEvents(stamped);
     await this.ledger.reconcileNew(new Set(parsed.elements.map((e) => e.id)));
     await this.refreshStatusBar();
     this.refreshAuxiliaryViews();
     new Notice(`Incremental Reading: imported ${parsed.elements.length} SuperMemo element(s).`);
+    return parsed.elements.length;
+  }
+
+  private async exportSuperMemoByFormat(
+    format: "sm-xml" | "qa-txt" | "sm20-binary",
+    options?: { subsetIds?: ReadonlySet<string>; outPath?: string },
+  ): Promise<string> {
+    if (!this.ledger) return "";
+    if (format === "sm20-binary" && !options?.subsetIds) {
+      await this.exportSm20BinaryToVault();
+      return `SM20 Export ${new Date().toISOString().slice(0, 10)}`;
+    }
+    const [state, concepts, matrix] = await Promise.all([
+      this.ledger.load(),
+      this.ledger.readConcepts(),
+      this.ensureSm20Matrix(),
+    ]);
+    const targetElements = options?.subsetIds
+      ? [...state.elements.values()].filter((e) => options.subsetIds!.has(e.id))
+      : [...state.elements.values()];
+    const dateStamp = new Date().toISOString().slice(0, 10);
+
+    if (format === "sm20-binary") {
+      const pkg = exportSm20BinaryPackage({
+        elements: targetElements,
+        concepts: concepts.concepts,
+        matrix,
+        nowMs: Date.now(),
+      });
+      const baseDir = `SM20 Subset Export ${dateStamp}`;
+      for (const [relPath, bytes] of pkg.entries()) {
+        const fullPath = assertVaultRelativePath(`${baseDir}/${relPath}`);
+        const slash = fullPath.lastIndexOf("/");
+        if (slash > 0) {
+          let acc = "";
+          for (const part of fullPath.slice(0, slash).split("/").filter(Boolean)) {
+            acc = acc ? `${acc}/${part}` : part;
+            if (!this.app.vault.getAbstractFileByPath(acc)) {
+              await this.app.vault.createFolder(acc).catch(() => undefined);
+            }
+          }
+        }
+        const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+        const existing = this.app.vault.getAbstractFileByPath(fullPath);
+        if (existing instanceof TFile) await this.app.vault.modifyBinary(existing, buf);
+        else await this.app.vault.createBinary(fullPath, buf);
+      }
+      new Notice(`Incremental Reading: exported ${targetElements.length} element(s) to ${baseDir}.`);
+      return baseDir;
+    }
+
+    const content =
+      format === "sm-xml"
+        ? exportSuperMemoXmlCollection(targetElements, concepts.concepts, Date.now())
+        : exportSuperMemoQaText(targetElements);
+    const defaultName =
+      format === "sm-xml" ? `IR Export ${dateStamp}.xml` : `IR QA Export ${dateStamp}.txt`;
+    const outPath =
+      options?.outPath && isSafeVaultRelativePath(options.outPath) ? options.outPath : defaultName;
+    const existing = this.app.vault.getAbstractFileByPath(outPath);
+    if (existing instanceof TFile) await this.app.vault.modify(existing, content);
+    else await this.app.vault.create(outPath, content);
+    new Notice(`Incremental Reading: exported ${targetElements.length} element(s) to ${outPath}.`);
+    return outPath;
   }
 
   private async exportSuperMemoXmlToVault(): Promise<void> {

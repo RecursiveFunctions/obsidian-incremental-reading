@@ -714,3 +714,83 @@ export function exportSm20BinaryPackage(input: {
 
   return files;
 }
+
+export interface SuperMemoExchangePreview {
+  format: "empty" | "sm-xml" | "qa-txt";
+  totalCount: number;
+  topicCount: number;
+  extractCount: number;
+  itemCount: number;
+  conceptNames: string[];
+  samples: string[];
+}
+
+export function isSuperMemoXmlText(rawText: string): boolean {
+  const trimmed = rawText.trim();
+  return (
+    trimmed.startsWith("<?xml") ||
+    trimmed.includes("<SuperMemoCollection") ||
+    trimmed.includes("<SuperMemoElement>")
+  );
+}
+
+/**
+ * Non-destructive preview of SuperMemo XML or Q&A text for the inline
+ * Import/Export drawer — reports format, per-type counts, detected concepts,
+ * and up to 5 clean preview labels before anything touches the vault/ledger.
+ */
+export function previewSuperMemoExchangeInput(
+  rawText: string,
+  defaultPriority = 33,
+): SuperMemoExchangePreview {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return {
+      format: "empty",
+      totalCount: 0,
+      topicCount: 0,
+      extractCount: 0,
+      itemCount: 0,
+      conceptNames: [],
+      samples: [],
+    };
+  }
+
+  const dummyDevice = "dev_preview0000" as DeviceId;
+  const isXml = isSuperMemoXmlText(trimmed);
+  const parsed = isXml
+    ? parseSuperMemoXmlCollection(trimmed, 0, dummyDevice)
+    : { ...parseSuperMemoQaText(trimmed, 0, dummyDevice, defaultPriority), concepts: [] };
+
+  let topicCount = 0;
+  let extractCount = 0;
+  let itemCount = 0;
+  const samples: string[] = [];
+
+  for (const el of parsed.elements) {
+    if (el.type === "topic") topicCount += 1;
+    else if (el.type === "extract") extractCount += 1;
+    else itemCount += 1;
+
+    if (samples.length < 5) {
+      const firstLine = (el.text ?? "")
+        .replace(/\{\{c\d+(?:::|:=)([\s\S]*?)\}\}/g, (_m, inner: string) => inner.split("::")[0] ?? "")
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .find(Boolean);
+      if (firstLine) {
+        samples.push(firstLine.length > 72 ? `${firstLine.slice(0, 69)}…` : firstLine);
+      }
+    }
+  }
+
+  return {
+    format: isXml ? "sm-xml" : "qa-txt",
+    totalCount: parsed.elements.length,
+    topicCount,
+    extractCount,
+    itemCount,
+    conceptNames: parsed.concepts.map((c) => c.name),
+    samples,
+  };
+}

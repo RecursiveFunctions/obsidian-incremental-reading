@@ -5,7 +5,11 @@
  */
 
 import type { Grade } from "../fsrs";
-import type { SmGrade } from "./sm20-scheduler";
+import {
+  gradeInputToSmGrade,
+  smGradeToFsrsGrade,
+  type SmGrade,
+} from "./sm20-scheduler";
 
 export type SpaceAfterReveal = Grade | "off";
 export type GradingScale = "4-point" | "sm20-6-point";
@@ -15,14 +19,33 @@ export const SM20_SIX_POINT_GRADES: ReadonlyArray<{
   label: string;
   compactLabel: string;
   key: string;
+  description: string;
+  group: "fail" | "pass";
 }> = [
-  { smGrade: 0, label: "Null", compactLabel: "0", key: "0" },
-  { smGrade: 1, label: "Bad", compactLabel: "1", key: "1" },
-  { smGrade: 2, label: "Fail", compactLabel: "2", key: "2" },
-  { smGrade: 3, label: "Pass", compactLabel: "3", key: "3" },
-  { smGrade: 4, label: "Good", compactLabel: "4", key: "4" },
-  { smGrade: 5, label: "Bright", compactLabel: "5", key: "5" },
+  { smGrade: 0, label: "Null", compactLabel: "0 · Null", key: "0", description: "Complete blackout — no recall", group: "fail" },
+  { smGrade: 1, label: "Bad", compactLabel: "1 · Bad", key: "1", description: "Wrong answer; answer looked familiar on reveal", group: "fail" },
+  { smGrade: 2, label: "Fail", compactLabel: "2 · Fail", key: "2", description: "Near miss — almost recalled before failing", group: "fail" },
+  { smGrade: 3, label: "Pass", compactLabel: "3 · Pass", key: "3", description: "Hard pass — recalled with significant effort", group: "pass" },
+  { smGrade: 4, label: "Good", compactLabel: "4 · Good", key: "4", description: "Solid recall at target retention", group: "pass" },
+  { smGrade: 5, label: "Bright", compactLabel: "5 · Bright", key: "5", description: "Instant, effortless recall", group: "pass" },
 ];
+
+export function resolveSpaceConfirmGrade(opts: {
+  gradingScale: GradingScale;
+  spaceAfterReveal: SpaceAfterReveal;
+  suggestedSmGrade: SmGrade | null;
+}): Grade | SmGrade | null {
+  if (opts.suggestedSmGrade !== null) {
+    return opts.gradingScale === "sm20-6-point"
+      ? opts.suggestedSmGrade
+      : smGradeToFsrsGrade(opts.suggestedSmGrade);
+  }
+  if (opts.spaceAfterReveal === "off") return null;
+  if (opts.gradingScale === "sm20-6-point") {
+    return gradeInputToSmGrade(opts.spaceAfterReveal);
+  }
+  return opts.spaceAfterReveal;
+}
 
 export function resolveSm20SixPointDigit(key: string): SmGrade | null {
   if (key.length !== 1) return null;

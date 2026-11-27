@@ -263,7 +263,43 @@ async function main() {
     assert.ok(narrowStats.viewOverflow <= 1, `narrow stats view overflow ${narrowStats.viewOverflow}px`);
     assert.ok(narrowStats.innerScrollable, "26w heatmap must scroll inside .ir-stats-heatmap-scroll");
 
-    console.log("OK: phone, tablet, narrow desktop split, and Collection layouts verified in browser");
+    // Narrow 360px phone/compact leaf: SM-20 6-point dock renders as 2x3 Fail/Pass grid with >=44px tap targets & intact suggested cell
+    await page.setViewportSize({ width: 360, height: 800 });
+    await page.setContent(`<!doctype html><style>body{margin:0}</style>
+      <div class="ir-review-modal ir-review--mobile" data-ir-tier="compact" style="width:360px;overflow-x:hidden">
+        <div class="ir-quiz-block ir-quiz-mcq">
+          <div class="ir-quiz-prompt">Which neurotransmitter is excitatory?</div>
+          <div class="ir-quiz-options">
+            <button class="ir-quiz-option is-correct"><span class="ir-quiz-option-num">1</span><span class="ir-quiz-option-text">Glutamate</span></button>
+          </div>
+        </div>
+        <div class="ir-review-buttons ir-review-buttons--grade ir-review-buttons--six-point">
+          <button class="ir-review-grade-btn ir-review-grade-btn--again" data-sm-group="fail"><span class="ir-review-grade-interval">+1d</span><span>0 · Null</span></button>
+          <button class="ir-review-grade-btn ir-review-grade-btn--again" data-sm-group="fail"><span class="ir-review-grade-interval">+1d</span><span>1 · Bad</span></button>
+          <button class="ir-review-grade-btn ir-review-grade-btn--again" data-sm-group="fail"><span class="ir-review-grade-interval">+1d</span><span>2 · Fail</span></button>
+          <button class="ir-review-grade-btn ir-review-grade-btn--hard" data-sm-group="pass"><span class="ir-review-grade-interval">+3d</span><span>3 · Pass</span></button>
+          <button class="ir-review-grade-btn ir-review-grade-btn--good ir-review-grade-btn--suggested" data-sm-group="pass"><span class="ir-review-grade-interval">+7d</span><span>4 · Good</span></button>
+          <button class="ir-review-grade-btn ir-review-grade-btn--easy" data-sm-group="pass"><span class="ir-review-grade-interval">+14d</span><span>5 · Bright</span></button>
+          <button class="ir-review-overflow-btn">⋯</button>
+        </div>
+      </div>`);
+    await page.addStyleTag({ path: stylesPath });
+    const sixPointLayout = await page.evaluate(() => {
+      const root = document.querySelector(".ir-review-modal");
+      const btns = Array.from(document.querySelectorAll(".ir-review-grade-btn")).map((b) => b.getBoundingClientRect());
+      return {
+        overflow: root.scrollWidth - root.clientWidth,
+        row1SameTop: Math.abs(btns[0].top - btns[1].top) < 2 && Math.abs(btns[1].top - btns[2].top) < 2,
+        row2SameTop: Math.abs(btns[3].top - btns[4].top) < 2 && Math.abs(btns[4].top - btns[5].top) < 2,
+        twoRows: btns[3].top >= btns[0].bottom - 1,
+        minHeight: Math.min(...btns.map((b) => b.height)),
+      };
+    });
+    assert.ok(sixPointLayout.overflow <= 1, `6-point compact dock overflow ${sixPointLayout.overflow}px`);
+    assert.ok(sixPointLayout.row1SameTop && sixPointLayout.row2SameTop && sixPointLayout.twoRows, "6-point compact dock must form a 2x3 Fail/Pass grid");
+    assert.ok(sixPointLayout.minHeight >= 44, `6-point tap target height ${sixPointLayout.minHeight}px < 44px`);
+
+    console.log("OK: phone, tablet, narrow desktop split, SM-20 2x3 6-point dock, and Collection layouts verified in browser");
   } finally {
     await browser.close();
   }

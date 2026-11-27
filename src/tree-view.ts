@@ -171,6 +171,14 @@ export interface IrTreeViewHost {
     replaceText: string,
     options: { caseSensitive: boolean; wholeWord: boolean; subsetIds?: ReadonlySet<string> },
   ) => Promise<number>;
+  commitExchangeImport?: (
+    rawText: string,
+    options: { conceptName?: string; targetFolder?: string },
+  ) => Promise<number>;
+  commitExchangeExport?: (
+    format: "sm-xml" | "qa-txt" | "sm20-binary",
+    options: { subsetIds?: ReadonlySet<string>; outPath?: string },
+  ) => Promise<string>;
   initialCurrentElementId?: ElementId | null;
 }
 
@@ -188,6 +196,7 @@ import {
   type Sm20ElementFilter,
 } from "./ir/sm20-collection-ops";
 import { slugifyConceptId, upsertConceptGroup } from "./ir/concepts-references";
+import { previewSuperMemoExchangeInput } from "./ir/sm20-exchange";
 import { isSafeVaultRelativePath } from "./ir/source-paths";
 import { formatDueLabel } from "./ir/due-label";
 export { formatDueLabel };
@@ -210,8 +219,19 @@ export class IrTreeView extends ItemView {
   /** Current search/filter text (case-insensitive substring match). */
   private filterText = "";
   private advancedFilter: Sm20ElementFilter = {};
-  private activeInlineTool: "none" | "range-filter" | "spread" | "replace" | "concepts" = "none";
+  private activeInlineTool:
+    | "none"
+    | "range-filter"
+    | "spread"
+    | "replace"
+    | "concepts"
+    | "exchange" = "none";
+  private exchangeDraftText = "";
+  private pendingRangeFocusSelector: string | null = null;
+  private rangeAdvancedOpen = false;
   private readonly commitSubsetReplace?: IrTreeViewHost["commitSubsetReplace"];
+  private readonly commitExchangeImport?: IrTreeViewHost["commitExchangeImport"];
+  private readonly commitExchangeExport?: IrTreeViewHost["commitExchangeExport"];
 
   /**
    * Element types currently visible. All three on means "no type filter".
@@ -349,8 +369,21 @@ export class IrTreeView extends ItemView {
     this.saveDisplayMode = host.saveDisplayMode;
     this.commitPriorityPlan = host.commitPriorityPlan;
     this.commitSubsetReplace = host.commitSubsetReplace;
+    this.commitExchangeImport = host.commitExchangeImport;
+    this.commitExchangeExport = host.commitExchangeExport;
     this.commitPriorityPreview = host.commitPriorityPreview;
     this.currentElementId = host.initialCurrentElementId ?? null;
+  }
+
+  openInlineTool(
+    tool: "range-filter" | "spread" | "replace" | "concepts" | "exchange",
+    initialExchangeText?: string,
+  ): void {
+    this.activeInlineTool = tool;
+    if (initialExchangeText !== undefined) {
+      this.exchangeDraftText = initialExchangeText;
+    }
+    void this.render();
   }
 
   getViewType(): string {
@@ -744,6 +777,30 @@ export class IrTreeView extends ItemView {
     const hasRangeFilter = activeRangeRules > 0;
     if (this.activeInlineTool !== "none") {
       this.renderInlineCollectionToolDrawer(body, elements);
+    } else if (hasRangeFilter) {
+      const strip = body.createDiv({ cls: "ir-active-filter-strip" });
+      strip.createSpan({
+        cls: "ir-active-filter-text",
+        text: `${activeRangeRules} metric range${activeRangeRules === 1 ? "" : "s"} active`,
+      });
+      const editBtn = strip.createEl("button", {
+        cls: "ir-review-util-btn",
+        type: "button",
+        text: "Edit",
+      });
+      editBtn.onclick = () => {
+        this.activeInlineTool = "range-filter";
+        void this.render();
+      };
+      const clearBtn = strip.createEl("button", {
+        cls: "ir-review-util-btn",
+        type: "button",
+        text: "Clear",
+      });
+      clearBtn.onclick = () => {
+        this.advancedFilter = {};
+        void this.render();
+      };
     }
     if (hasTextFilter || hasTypeFilter || hasStateFilter || this.leechesOnly || hasRangeFilter) {
       this.lastMatchedIds = new Set<string>();
@@ -1044,13 +1101,6 @@ export class IrTreeView extends ItemView {
         }));
     }
     menu.addSeparator();
-    menu.addItem((item) => item
-      .setTitle("Numeric & metric range filter…")
-      .setIcon("sliders-horizontal")
-      .onClick(() => {
-        this.activeInlineTool = this.activeInlineTool === "range-filter" ? "none" : "range-filter";
-        void this.render();
-      }));
     if (this.commitPriority) {
       menu.addItem((item) => item
         .setTitle("Spread priorities…")
@@ -1076,6 +1126,15 @@ export class IrTreeView extends ItemView {
         this.activeInlineTool = this.activeInlineTool === "concepts" ? "none" : "concepts";
         void this.render();
       }));
+    if (this.commitExchangeImport || this.commitExchangeExport) {
+      menu.addItem((item) => item
+        .setTitle("Import / export SuperMemo (.xml, .txt)…")
+        .setIcon("arrow-left-right")
+        .onClick(() => {
+          this.activeInlineTool = this.activeInlineTool === "exchange" ? "none" : "exchange";
+          void this.render();
+        }));
+    }
     menu.showAtMouseEvent(event);
   }
 
@@ -1247,6 +1306,30 @@ export class IrTreeView extends ItemView {
     }
     addToggle("Dismissed", this.showDismissed, () => { this.showDismissed = !this.showDismissed; });
     addToggle("Leeches only", this.leechesOnly, () => { this.leechesOnly = !this.leechesOnly; });
+    const rangeBtn = sheet.createEl("button", {
+      cls: `ir-sheet-option${countActiveElementFilterRules(this.advancedFilter) > 0 ? " is-active" : ""}`,
+      type: "button",
+      text: "Numeric & metric ranges…",
+    });
+    rangeBtn.onclick = () => {
+      this.contentEl.querySelector(".ir-adaptive-sheet-backdrop")?.remove();
+      this.activeInlineTool = "range-filter";
+      void this.render();
+    };
+    const resetBtn = sheet.createEl("button", {
+      cls: "ir-sheet-option",
+      type: "button",
+      text: "Reset all filters",
+    });
+    resetBtn.onclick = () => {
+      this.visibleTypes = new Set(["topic", "extract", "item"]);
+      this.visibleStates = new Set(["due", "future", "unscheduled"]);
+      this.showDismissed = false;
+      this.leechesOnly = false;
+      this.advancedFilter = {};
+      this.contentEl.querySelector(".ir-adaptive-sheet-backdrop")?.remove();
+      void this.render();
+    };
   }
 
   private async showBookmarksSheet(trigger: HTMLElement | null): Promise<void> {
@@ -1288,7 +1371,8 @@ export class IrTreeView extends ItemView {
       this.filterText.trim().length > 0 ||
       this.visibleTypes.size < 3 ||
       this.visibleStates.size < 3 ||
-      this.leechesOnly
+      this.leechesOnly ||
+      countActiveElementFilterRules(this.advancedFilter) > 0
     );
   }
 
@@ -3121,12 +3205,21 @@ export class IrTreeView extends ItemView {
     elements: readonly IrElement[],
   ): void {
     const drawer = body.createDiv({ cls: "ir-telemetry-drawer ir-telemetry-drawer--inline" });
+    drawer.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.activeInlineTool = "none";
+        void this.render();
+      }
+    });
     const header = drawer.createDiv({ cls: "ir-telemetry-header" });
     const titles: Record<Exclude<typeof this.activeInlineTool, "none">, string> = {
       "range-filter": "Numeric & metric range filter",
       spread: "Spread priorities",
       replace: "Search & replace in subset",
       concepts: "Concept groups (folders, priorities & templates)",
+      exchange: "Import & export SuperMemo (.xml / Q&A .txt)",
     };
     header.createSpan({
       cls: "ir-telemetry-title",
@@ -3135,7 +3228,7 @@ export class IrTreeView extends ItemView {
     const closeBtn = header.createEl("button", {
       cls: "ir-telemetry-close",
       type: "button",
-      text: "Close",
+      text: "Close (Esc)",
     });
     closeBtn.onclick = () => {
       this.activeInlineTool = "none";
@@ -3150,28 +3243,38 @@ export class IrTreeView extends ItemView {
           : undefined;
 
     if (this.activeInlineTool === "range-filter") {
-      const grid = drawer.createDiv({ cls: "ir-telemetry-grid" });
       const addRangePair = (
+        gridHost: HTMLElement,
         label: string,
-        key: "priority" | "intervalDays" | "aFactor" | "stabilityDays" | "difficulty10" | "retrievabilityPct" | "reps" | "lapses",
+        key:
+          | "priority"
+          | "intervalDays"
+          | "aFactor"
+          | "stabilityDays"
+          | "difficulty10"
+          | "retrievabilityPct"
+          | "reps"
+          | "lapses",
       ) => {
-        const cell = grid.createDiv({ cls: "ir-telemetry-cell" });
+        const cell = gridHost.createDiv({ cls: "ir-telemetry-cell" });
         cell.createDiv({ cls: "ir-telemetry-cell-label", text: label });
         const row = cell.createDiv({ cls: "ir-bulk-range" });
         const cur = this.advancedFilter[key] ?? {};
+        const minSel = `[data-range-field="${key}-min"]`;
+        const maxSel = `[data-range-field="${key}-max"]`;
         const minIn = row.createEl("input", {
           type: "number",
           placeholder: "min",
-          attr: { "aria-label": `${label} min` },
+          attr: { "aria-label": `${label} min`, "data-range-field": `${key}-min` },
         });
         const maxIn = row.createEl("input", {
           type: "number",
           placeholder: "max",
-          attr: { "aria-label": `${label} max` },
+          attr: { "aria-label": `${label} max`, "data-range-field": `${key}-max` },
         });
         if (cur.min !== undefined) minIn.value = String(cur.min);
         if (cur.max !== undefined) maxIn.value = String(cur.max);
-        const applyChange = () => {
+        const applyChange = (focusSelector: string) => {
           const minVal = minIn.value.trim() === "" ? undefined : Number(minIn.value);
           const maxVal = maxIn.value.trim() === "" ? undefined : Number(maxIn.value);
           if (minVal === undefined && maxVal === undefined) {
@@ -3182,26 +3285,49 @@ export class IrTreeView extends ItemView {
               ...(maxVal !== undefined && Number.isFinite(maxVal) ? { max: maxVal } : {}),
             };
           }
+          this.pendingRangeFocusSelector = focusSelector;
           void this.render();
         };
-        minIn.addEventListener("change", applyChange);
-        maxIn.addEventListener("change", applyChange);
+        minIn.addEventListener("change", () => applyChange(minSel));
+        maxIn.addEventListener("change", () => applyChange(maxSel));
       };
 
-      addRangePair("Priority %", "priority");
-      addRangePair("Interval (d)", "intervalDays");
-      addRangePair("A-Factor", "aFactor");
-      addRangePair("Stability (d)", "stabilityDays");
-      addRangePair("Difficulty (1-10)", "difficulty10");
-      addRangePair("Retrievability %", "retrievabilityPct");
-      addRangePair("Repetitions", "reps");
-      addRangePair("Lapses", "lapses");
+      const coreGrid = drawer.createDiv({ cls: "ir-telemetry-grid" });
+      addRangePair(coreGrid, "Priority %", "priority");
+      addRangePair(coreGrid, "Interval (d)", "intervalDays");
+      addRangePair(coreGrid, "Retrievability %", "retrievabilityPct");
+
+      const advKeys = ["aFactor", "stabilityDays", "difficulty10", "reps", "lapses"] as const;
+      const hasAdvActive = advKeys.some((k) => this.advancedFilter[k] !== undefined);
+      const advDetails = drawer.createEl("details", { cls: "ir-drawer-details" });
+      if (this.rangeAdvancedOpen || hasAdvActive) advDetails.open = true;
+      advDetails.addEventListener("toggle", () => {
+        this.rangeAdvancedOpen = advDetails.open;
+      });
+      advDetails.createEl("summary", {
+        cls: "ir-drawer-summary",
+        text: "More scheduler metrics (S, D, A-Factor, Reps, Lapses)",
+      });
+      const advGrid = advDetails.createDiv({ cls: "ir-drawer-details-body ir-telemetry-grid" });
+      addRangePair(advGrid, "Stability (d)", "stabilityDays");
+      addRangePair(advGrid, "Difficulty (1-10)", "difficulty10");
+      addRangePair(advGrid, "A-Factor", "aFactor");
+      addRangePair(advGrid, "Repetitions", "reps");
+      addRangePair(advGrid, "Lapses", "lapses");
 
       const actions = drawer.createDiv({ cls: "ir-priority-actions" });
       actions.createEl("button", { text: "Clear ranges", type: "button" }).onclick = () => {
         this.advancedFilter = {};
+        this.pendingRangeFocusSelector = null;
         void this.render();
       };
+      if (this.pendingRangeFocusSelector) {
+        const sel = this.pendingRangeFocusSelector;
+        this.pendingRangeFocusSelector = null;
+        requestAnimationFrame(() => {
+          drawer.querySelector<HTMLInputElement>(sel)?.focus();
+        });
+      }
       return;
     }
 
@@ -3267,15 +3393,22 @@ export class IrTreeView extends ItemView {
         placeholder: "Replace with…",
         attr: { "aria-label": "Replace text" },
       });
-      const caseChk = row.createEl("input", {
-        type: "checkbox",
-        attr: { "aria-label": "Case sensitive", title: "Case sensitive" },
-      });
-      const wordChk = row.createEl("input", {
-        type: "checkbox",
-        attr: { "aria-label": "Whole word", title: "Whole word" },
-      });
+      const flagRow = drawer.createDiv({ cls: "ir-telemetry-controls" });
+      const caseLbl = flagRow.createEl("label", { cls: "ir-inline-check" });
+      const caseChk = caseLbl.createEl("input", { type: "checkbox" });
+      caseLbl.createSpan({ text: "Match case" });
+      const wordLbl = flagRow.createEl("label", { cls: "ir-inline-check" });
+      const wordChk = wordLbl.createEl("input", { type: "checkbox" });
+      wordLbl.createSpan({ text: "Whole word" });
+
       const summary = drawer.createDiv({ cls: "ir-bulk-preview-summary" });
+      const previewDetails = drawer.createEl("details", { cls: "ir-drawer-details" });
+      const previewSummary = previewDetails.createEl("summary", {
+        cls: "ir-drawer-summary",
+        text: "Preview matched elements (0)",
+      });
+      const previewList = previewDetails.createDiv({ cls: "ir-drawer-details-body" });
+
       const updatePreview = () => {
         const plan = planSubsetSearchAndReplace(elements, findIn.value, repIn.value, {
           caseSensitive: caseChk.checked,
@@ -3285,6 +3418,15 @@ export class IrTreeView extends ItemView {
         summary.setText(
           `${plan.totalReplacements} replacement(s) across ${plan.matches.length} element(s)`,
         );
+        previewSummary.setText(`Preview matched elements (${plan.matches.length})`);
+        previewList.empty();
+        for (const m of plan.matches.slice(0, 6)) {
+          const snippet = m.afterText.replace(/\s+/g, " ").trim().slice(0, 80);
+          previewList.createDiv({
+            cls: "ir-telemetry-cell-sub",
+            text: `• (${m.replacements}×) ${snippet}`,
+          });
+        }
         return plan;
       };
       findIn.oninput = repIn.oninput = caseChk.onchange = wordChk.onchange = () => {
@@ -3307,15 +3449,7 @@ export class IrTreeView extends ItemView {
     }
 
     if (this.activeInlineTool === "concepts") {
-      const listWrap = drawer.createDiv({ cls: "ir-bulk-preview-summary" });
-      void this.ledger.readConcepts().then((reg) => {
-        if (!listWrap.isConnected) return;
-        listWrap.setText(
-          reg.concepts.length > 0
-            ? `Saved concepts: ${reg.concepts.map((c) => `${c.name}${c.targetFolder ? ` → ${c.targetFolder}` : ""}`).join(" · ")}`
-            : "No concept groups yet. Add one below (or set ir_concept in note frontmatter).",
-        );
-      });
+      const chipWrap = drawer.createDiv({ cls: "ir-concept-chips" });
       const row = drawer.createDiv({ cls: "ir-bulk-range" });
       const nameIn = row.createEl("input", {
         type: "text",
@@ -3332,11 +3466,46 @@ export class IrTreeView extends ItemView {
         value: "25",
         attr: { min: "0", max: "100", step: "1", "aria-label": "Concept default priority" },
       });
-      const tplIn = row.createEl("input", {
+      const tplDetails = drawer.createEl("details", { cls: "ir-drawer-details" });
+      tplDetails.createEl("summary", {
+        cls: "ir-drawer-summary",
+        text: "Optional item template",
+      });
+      const tplBody = tplDetails.createDiv({ cls: "ir-drawer-details-body" });
+      const tplIn = tplBody.createEl("input", {
         type: "text",
-        placeholder: "Item template (optional, uses {{content}})",
+        cls: "ir-priority-input",
+        placeholder: "Template (uses {{content}})",
         attr: { "aria-label": "Concept item template" },
       });
+
+      void this.ledger.readConcepts().then((reg) => {
+        if (!chipWrap.isConnected) return;
+        chipWrap.empty();
+        if (reg.concepts.length === 0) {
+          chipWrap.createDiv({
+            cls: "ir-bulk-preview-summary",
+            text: "No concept groups yet — add one below (click a saved chip anytime to edit).",
+          });
+          return;
+        }
+        for (const c of reg.concepts) {
+          const chip = chipWrap.createEl("button", {
+            cls: "ir-concept-chip",
+            type: "button",
+            text: `${c.name}${c.targetFolder ? ` → ${c.targetFolder}` : ""}`,
+            attr: { title: "Click to load into form" },
+          });
+          chip.onclick = () => {
+            nameIn.value = c.name;
+            folderIn.value = c.targetFolder ?? "";
+            prioIn.value = String(c.defaultPriority ?? 25);
+            tplIn.value = c.itemTemplate ?? "";
+            if (c.itemTemplate) tplDetails.open = true;
+          };
+        }
+      });
+
       const actions = drawer.createDiv({ cls: "ir-priority-actions" });
       actions.createEl("button", { text: "Save concept", cls: "mod-cta", type: "button" }).onclick = async () => {
         const name = nameIn.value.trim();
@@ -3363,6 +3532,174 @@ export class IrTreeView extends ItemView {
         new Notice(`Incremental Reading: saved concept "${name}".`);
         void this.render();
       };
+      return;
+    }
+
+    if (this.activeInlineTool === "exchange") {
+      const sourceActions = drawer.createDiv({ cls: "ir-priority-actions" });
+      const fileIn = sourceActions.createEl("input", {
+        type: "file",
+        attr: { accept: ".xml,.txt,text/xml,text/plain" },
+      });
+      fileIn.style.display = "none";
+      const chooseBtn = sourceActions.createEl("button", {
+        type: "button",
+        cls: "ir-review-util-btn",
+        text: "Choose .xml / .txt file…",
+      });
+      chooseBtn.onclick = () => fileIn.click();
+
+      const pasteBtn = sourceActions.createEl("button", {
+        type: "button",
+        cls: "ir-review-util-btn",
+        text: "Read clipboard",
+      });
+
+      const rawBox = drawer.createEl("textarea", {
+        cls: "ir-exchange-textarea",
+        attr: {
+          rows: "4",
+          placeholder: "Paste SuperMemo Q:/A: pairs or <SuperMemoCollection> XML, or choose a file above…",
+          "aria-label": "SuperMemo XML or Q&A text preview",
+        },
+      });
+      rawBox.value = this.exchangeDraftText;
+
+      const summary = drawer.createDiv({ cls: "ir-bulk-preview-summary" });
+      const sampleDetails = drawer.createEl("details", { cls: "ir-drawer-details" });
+      const sampleSummary = sampleDetails.createEl("summary", {
+        cls: "ir-drawer-summary",
+        text: "Sample parsed elements (0)",
+      });
+      const sampleBody = sampleDetails.createDiv({ cls: "ir-drawer-details-body" });
+
+      const destRow = drawer.createDiv({ cls: "ir-bulk-range" });
+      const datalistId = "ir-exchange-concept-dl";
+      const conceptIn = destRow.createEl("input", {
+        type: "text",
+        placeholder: "Assign concept (optional)",
+        attr: { "aria-label": "Assign concept group", list: datalistId },
+      });
+      const folderIn = destRow.createEl("input", {
+        type: "text",
+        placeholder: "Target folder (optional)",
+        attr: { "aria-label": "Target vault folder" },
+      });
+      void this.ledger.readConcepts().then((reg) => {
+        if (!destRow.isConnected || reg.concepts.length === 0) return;
+        const dl = destRow.createEl("datalist", { attr: { id: datalistId } });
+        for (const c of reg.concepts) dl.createEl("option", { attr: { value: c.name } });
+      });
+
+      const importActions = drawer.createDiv({ cls: "ir-priority-actions" });
+      const importBtn = importActions.createEl("button", {
+        text: "Import elements",
+        cls: "mod-cta",
+        type: "button",
+      });
+
+      const refreshExchangePreview = () => {
+        this.exchangeDraftText = rawBox.value;
+        const prev = previewSuperMemoExchangeInput(rawBox.value);
+        if (prev.format === "empty") {
+          summary.setText("Waiting for Q&A (.txt) or SuperMemo XML (.xml) input.");
+          sampleSummary.setText("Sample parsed elements (0)");
+          sampleBody.empty();
+          importBtn.disabled = true;
+          importBtn.setText("Import elements");
+          return prev;
+        }
+        const fmtLabel = prev.format === "sm-xml" ? "SuperMemo XML" : "Q&A text";
+        const parts: string[] = [];
+        if (prev.topicCount > 0) parts.push(`${prev.topicCount} topic(s)`);
+        if (prev.extractCount > 0) parts.push(`${prev.extractCount} extract(s)`);
+        if (prev.itemCount > 0) parts.push(`${prev.itemCount} item(s)`);
+        if (prev.conceptNames.length > 0) parts.push(`${prev.conceptNames.length} concept(s)`);
+        summary.setText(
+          prev.totalCount > 0
+            ? `${fmtLabel} · ${parts.join(", ")}`
+            : `${fmtLabel} · 0 valid elements found`,
+        );
+        sampleSummary.setText(`Sample parsed elements (${prev.samples.length})`);
+        sampleBody.empty();
+        for (const s of prev.samples) {
+          sampleBody.createDiv({ cls: "ir-telemetry-cell-sub", text: `• ${s}` });
+        }
+        importBtn.disabled = prev.totalCount === 0 || !this.commitExchangeImport;
+        importBtn.setText(
+          prev.totalCount > 0 ? `Import ${prev.totalCount} element(s)` : "Import elements",
+        );
+        return prev;
+      };
+
+      fileIn.onchange = async () => {
+        const f = fileIn.files?.[0];
+        if (!f) return;
+        rawBox.value = await f.text();
+        refreshExchangePreview();
+      };
+      pasteBtn.onclick = async () => {
+        try {
+          rawBox.value = await navigator.clipboard.readText();
+          refreshExchangePreview();
+        } catch {
+          new Notice("Incremental Reading: could not read clipboard — paste directly into the box.");
+        }
+      };
+      rawBox.oninput = () => {
+        refreshExchangePreview();
+      };
+      refreshExchangePreview();
+
+      importBtn.onclick = async () => {
+        if (!this.commitExchangeImport) return;
+        const cleanFolder = folderIn.value.trim().replace(/^\/+|\/+$/g, "");
+        if (cleanFolder && !isSafeVaultRelativePath(cleanFolder)) {
+          new Notice("Incremental Reading: target folder must be a safe vault-relative path.");
+          return;
+        }
+        const count = await this.commitExchangeImport(rawBox.value, {
+          conceptName: conceptIn.value.trim() || undefined,
+          targetFolder: cleanFolder || undefined,
+        });
+        if (count > 0) {
+          this.exchangeDraftText = "";
+          this.activeInlineTool = "none";
+          void this.render();
+        }
+      };
+
+      if (this.commitExchangeExport) {
+        const expDetails = drawer.createEl("details", { cls: "ir-drawer-details" });
+        expDetails.createEl("summary", {
+          cls: "ir-drawer-summary",
+          text: subsetIds
+            ? `Export subset (${subsetIds.size} elements) or full collection`
+            : `Export collection (${elements.length} elements)`,
+        });
+        const expBody = expDetails.createDiv({ cls: "ir-drawer-details-body" });
+        const scopeLbl = expBody.createEl("label", { cls: "ir-inline-check" });
+        const scopeChk = scopeLbl.createEl("input", { type: "checkbox" });
+        scopeChk.checked = Boolean(subsetIds && subsetIds.size > 0);
+        scopeChk.disabled = !subsetIds || subsetIds.size === 0;
+        scopeLbl.createSpan({
+          text: subsetIds && subsetIds.size > 0
+            ? `Export active selection/filter only (${subsetIds.size})`
+            : "Export entire collection",
+        });
+
+        const expBtns = expBody.createDiv({ cls: "ir-priority-actions" });
+        const runExport = async (fmt: "sm-xml" | "qa-txt" | "sm20-binary") => {
+          const targetSubset = scopeChk.checked && subsetIds ? subsetIds : undefined;
+          await this.commitExchangeExport!(fmt, { subsetIds: targetSubset });
+        };
+        expBtns.createEl("button", { type: "button", text: "Export XML (.xml)" }).onclick = () =>
+          void runExport("sm-xml");
+        expBtns.createEl("button", { type: "button", text: "Export Q&A (.txt)" }).onclick = () =>
+          void runExport("qa-txt");
+        expBtns.createEl("button", { type: "button", text: "Export SM-20 binary" }).onclick = () =>
+          void runExport("sm20-binary");
+      }
     }
   }
 }

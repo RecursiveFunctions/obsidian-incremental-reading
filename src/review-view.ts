@@ -32,6 +32,8 @@ import {
 } from "./ir/grade-preview";
 import { hasOcclusion } from "./ir/occlusion";
 import {
+  QuizSessionStore,
+  computeCardQuizSuggestedSmGrade,
   diffTypedAnswer,
   extractTypedClozes,
   formatTypedClozeHtml,
@@ -159,6 +161,7 @@ import {
   digitGradeAllowed,
   isSpaceAfterReveal,
   resolveSm20SixPointDigit,
+  resolveSpaceConfirmGrade,
   restoreDismissedSlot,
   SM20_SIX_POINT_GRADES,
   spacebarReviewAction,
@@ -252,6 +255,7 @@ import {
   upsertConceptGroup,
   writeConceptToFrontmatter,
   writeReferenceToFrontmatter,
+  type ConceptRegistryState,
 } from "./ir/concepts-references";
 import { renderElementTelemetryDrawer } from "./ui/telemetry-drawer";
 
@@ -360,6 +364,7 @@ export interface IrReviewViewHost {
   ) => Promise<ReviewSlot[]>;
   saveSettings?: () => Promise<void>;
   getSm20Matrix?: () => Sm20Matrix | undefined;
+  quizStore?: QuizSessionStore;
   onSm20Grade?: (
     eventId: string,
     prevCard: import("./ir/model").StoredCard | undefined,
@@ -651,6 +656,9 @@ export class IrReviewView extends ItemView {
   ) => Promise<ReviewSlot[]>;
   private readonly saveSettings?: () => Promise<void>;
   private readonly getSm20Matrix?: () => Sm20Matrix | undefined;
+  private readonly quizStore: QuizSessionStore;
+  private cachedConcepts: ConceptRegistryState | null = null;
+  private cachedEvents: import("./ir/model").IrEvent[] | null = null;
   private readonly onSm20Grade?: IrReviewViewHost["onSm20Grade"];
 
   constructor(leaf: WorkspaceLeaf, host: IrReviewViewHost) {
@@ -690,7 +698,19 @@ export class IrReviewView extends ItemView {
     this.onNeuralRefreshSlots = host.onNeuralRefreshSlots;
     this.saveSettings = host.saveSettings;
     this.getSm20Matrix = host.getSm20Matrix;
+    this.quizStore = host.quizStore ?? new QuizSessionStore();
     this.onSm20Grade = host.onSm20Grade;
+  }
+
+  private currentSuggestedSmGrade(slot: ReviewSlot | undefined): SmGrade | null {
+    if (!slot || this.isReading(slot) || !this.revealed) return null;
+    return computeCardQuizSuggestedSmGrade(this.currentRaw, {
+      slotId: slot.id,
+      sourcePath: slot.file?.path ?? "",
+      daySeed: Math.floor(Date.now() / 86_400_000),
+      typedAnswers: this.lastTypedAnswerBySlot,
+      quizStore: this.quizStore,
+    });
   }
 
   /** Whether the review dock is on screen (FAB sits above it). */
@@ -744,7 +764,13 @@ export class IrReviewView extends ItemView {
       }
     }
 
-    const bookmarkLoad = await this.ledger.loadBookmarksResult();
+    const [bookmarkLoad, conceptsLoad, eventsLoad] = await Promise.all([
+      this.ledger.loadBookmarksResult(),
+      this.ledger.readConcepts().catch(() => null),
+      this.ledger.loadEvents().catch(() => null),
+    ]);
+    this.cachedConcepts = conceptsLoad;
+    this.cachedEvents = eventsLoad;
     this.bookmarks = bookmarkLoad.bookmarks;
     this.bookmarksLoaded = bookmarkLoad.ok;
     this.sessionOpened = true;
@@ -886,16 +912,17 @@ export class IrReviewView extends ItemView {
         return;
       }
 
-      // Space: reading = Next; cloze = reveal, then configured grade.
+      // Space: reading = Next; cloze = reveal, then confirm highlighted/suggested grade.
       if (evt.key === " ") {
         if (!slot) return;
+        const spacePolicy = isSpaceAfterReveal(this.settings.spaceAfterReveal)
+          ? this.settings.spaceAfterReveal
+          : "good";
         const action = spacebarReviewAction({
           isReading: this.isReading(slot),
           revealed: this.revealed,
           typing,
-          spaceAfterReveal: isSpaceAfterReveal(this.settings.spaceAfterReveal)
-            ? this.settings.spaceAfterReveal
-            : "good",
+          spaceAfterReveal: spacePolicy,
         });
         if (action.kind === "none") return;
         evt.preventDefault();
@@ -904,7 +931,14 @@ export class IrReviewView extends ItemView {
           this.revealed = true;
           void this.renderCard();
         } else if (action.kind === "grade") {
-          void this.grade(action.grade);
+          const confirmGrade = resolveSpaceConfirmGrade({
+            gradingScale: this.settings.gradingScale === "sm20-6-point" ? "sm20-6-point" : "4-point",
+            spaceAfterReveal: spacePolicy,
+            suggestedSmGrade: this.currentSuggestedSmGrade(slot),
+          });
+          if (confirmGrade !== null) {
+            void this.grade(confirmGrade);
+          }
         }
         return;
       }
@@ -923,9 +957,24 @@ export class IrReviewView extends ItemView {
         return;
       }
       if (evt.key === "Enter") {
-        if (slot && this.isReading(slot) && !typing) {
-          evt.preventDefault();
-          void this.next();
+        if (slot && !typing) {
+          if (this.isReading(slot)) {
+            evt.preventDefault();
+            void this.next();
+          } else if (this.revealed && this.currentSuggestedSmGrade(slot) !== null) {
+            const spacePolicy = isSpaceAfterReveal(this.settings.spaceAfterReveal)
+              ? this.settings.spaceAfterReveal
+              : "good";
+            const confirmGrade = resolveSpaceConfirmGrade({
+              gradingScale: this.settings.gradingScale === "sm20-6-point" ? "sm20-6-point" : "4-point",
+              spaceAfterReveal: spacePolicy,
+              suggestedSmGrade: this.currentSuggestedSmGrade(slot),
+            });
+            if (confirmGrade !== null) {
+              evt.preventDefault();
+              void this.grade(confirmGrade);
+            }
+          }
         }
         return;
       }
@@ -3447,17 +3496,31 @@ export class IrReviewView extends ItemView {
     const sixPoint = this.settings.gradingScale === "sm20-6-point";
     const gradePreview = sixPoint ? null : this.itemGradePreview(slot);
     const smGradePreview = sixPoint ? this.itemSmGradePreview(slot) : null;
-    const bar = controls.createEl("div", {
-      cls: compactDock
-        ? "ir-review-buttons ir-review-buttons--grade"
-        : "ir-review-buttons",
+    const quizSuggested = this.currentSuggestedSmGrade(slot);
+    const spacePolicy = isSpaceAfterReveal(this.settings.spaceAfterReveal)
+      ? this.settings.spaceAfterReveal
+      : "good";
+    const confirmTarget = resolveSpaceConfirmGrade({
+      gradingScale: sixPoint ? "sm20-6-point" : "4-point",
+      spaceAfterReveal: spacePolicy,
+      suggestedSmGrade: quizSuggested,
     });
+    const barCls = [
+      "ir-review-buttons",
+      compactDock ? "ir-review-buttons--grade" : "",
+      sixPoint ? "ir-review-buttons--six-point" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const bar = controls.createEl("div", { cls: barCls });
     if (compactDock) {
       if (sixPoint) {
-        for (const { smGrade, compactLabel } of SM20_SIX_POINT_GRADES) {
+        for (const { smGrade, compactLabel, description, group } of SM20_SIX_POINT_GRADES) {
           const fsrsCls = smGradeToFsrsGrade(smGrade);
+          const isSuggested = quizSuggested !== null && confirmTarget === smGrade;
           const btn = bar.createEl("button", {
-            cls: `ir-review-grade-btn ir-review-grade-btn--${fsrsCls}`,
+            cls: `ir-review-grade-btn ir-review-grade-btn--${fsrsCls}${isSuggested ? " ir-review-grade-btn--suggested" : ""}`,
+            attr: { "data-sm-group": group, title: description },
           });
           if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
             btn.disabled = true;
@@ -3469,8 +3532,9 @@ export class IrReviewView extends ItemView {
         }
       } else {
         for (const { grade, label: gLabel } of GRADES) {
+          const isSuggested = quizSuggested !== null && confirmTarget === grade;
           const btn = bar.createEl("button", {
-            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
+            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}${isSuggested ? " ir-review-grade-btn--suggested" : ""}`,
           });
           if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
             btn.disabled = true;
@@ -3491,11 +3555,18 @@ export class IrReviewView extends ItemView {
       prevGrade.addEventListener("click", () => void this.previous());
       this.renderEditToggle(bar);
       if (sixPoint) {
-        for (const { smGrade, label: smLabel, key } of SM20_SIX_POINT_GRADES) {
+        for (const { smGrade, label: smLabel, key, description, group } of SM20_SIX_POINT_GRADES) {
           const fsrsCls = smGradeToFsrsGrade(smGrade);
-          const text = cap.showHotkeys ? `${smLabel} (${key})` : smLabel;
+          const isConfirm = confirmTarget === smGrade;
+          const isSuggested = quizSuggested !== null && isConfirm;
+          const spaceHint = cap.showHotkeys && isConfirm ? ", Space" : "";
+          const text = cap.showHotkeys ? `${smLabel} (${key}${spaceHint})` : smLabel;
           const btn = bar.createEl("button", {
-            cls: `ir-review-grade-btn ir-review-grade-btn--${fsrsCls}`,
+            cls: `ir-review-grade-btn ir-review-grade-btn--${fsrsCls}${isSuggested ? " ir-review-grade-btn--suggested" : ""}`,
+            attr: {
+              "data-sm-group": group,
+              title: isSuggested ? `Suggested from quiz — ${description}` : description,
+            },
           });
           if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
             btn.disabled = true;
@@ -3507,16 +3578,15 @@ export class IrReviewView extends ItemView {
         }
       } else {
         for (const { grade, label: gLabel, key } of GRADES) {
-          const spaceGrade = isSpaceAfterReveal(this.settings.spaceAfterReveal)
-            ? this.settings.spaceAfterReveal
-            : "good";
-          const spaceHint =
-            cap.showHotkeys && spaceGrade === grade ? ", Space" : "";
+          const isConfirm = confirmTarget === grade;
+          const isSuggested = quizSuggested !== null && isConfirm;
+          const spaceHint = cap.showHotkeys && isConfirm ? ", Space" : "";
           const text = cap.showHotkeys
             ? `${gLabel} (${key}${spaceHint})`
             : gLabel;
           const btn = bar.createEl("button", {
-            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
+            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}${isSuggested ? " ir-review-grade-btn--suggested" : ""}`,
+            attr: isSuggested ? { title: "Suggested from quiz — press Space or Enter to confirm" } : {},
           });
           if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
             btn.disabled = true;
@@ -4943,19 +5013,20 @@ export class IrReviewView extends ItemView {
       if (typedGroups.length > 0) {
         const spellBar = body.createDiv({ cls: "ir-spell-bar ir-telemetry-controls" });
         if (!this.revealed) {
+          const spellInputs: HTMLInputElement[] = [];
           typedGroups.forEach((grp, gIdx) => {
             const stateKey = `${slot.id}:${gIdx}`;
             const spellIn = spellBar.createEl("input", {
-              cls: "ir-priority-input",
+              cls: "ir-priority-input ir-spell-input",
               attr: {
                 type: "text",
                 placeholder: grp.hint
                   ? `Type answer ${typedGroups.length > 1 ? `#${gIdx + 1} ` : ""}(${grp.hint})…`
-                  : `Type answer${typedGroups.length > 1 ? ` #${gIdx + 1}` : ""} (Enter to check)…`,
+                  : `Type answer${typedGroups.length > 1 ? ` #${gIdx + 1}` : ""}…`,
                 "aria-label": `Typed cloze answer ${gIdx + 1}`,
               },
             });
-            spellIn.style.minWidth = "14em";
+            spellInputs.push(spellIn);
             spellIn.value = this.lastTypedAnswerBySlot.get(stateKey) ?? "";
             spellIn.addEventListener("input", () => {
               this.lastTypedAnswerBySlot.set(stateKey, spellIn.value);
@@ -4970,6 +5041,21 @@ export class IrReviewView extends ItemView {
               }
             });
           });
+          const checkBtn = spellBar.createEl("button", {
+            cls: "ir-review-util-btn mod-cta",
+            type: "button",
+            text: "Check (Enter)",
+          });
+          checkBtn.addEventListener("click", () => {
+            this.revealed = true;
+            void this.renderCard();
+          });
+          if (!Platform.isMobile && spellInputs.length > 0 && !this.editing) {
+            const targetIn = spellInputs[0]!;
+            requestAnimationFrame(() => {
+              if (targetIn.isConnected) targetIn.focus();
+            });
+          }
         } else {
           typedGroups.forEach((grp, gIdx) => {
             const stateKey = `${slot.id}:${gIdx}`;
@@ -4977,23 +5063,24 @@ export class IrReviewView extends ItemView {
             const evalRes = diffTypedAnswer(grp.answer, typedVal);
             const diffRow = spellBar.createDiv({ cls: "ir-spell-diff" });
             const prefix = typedGroups.length > 1 ? `#${gIdx + 1} ` : "";
+            const badgeText = !typedVal
+              ? "No answer typed"
+              : evalRes.exactMatch
+                ? "✓ Exact match"
+                : evalRes.normalizedMatch
+                  ? "✓ Matched (case/punctuation)"
+                  : `${Math.round(evalRes.accuracy * 100)}% match`;
             diffRow.createSpan({
-              text: typedVal
-                ? `${prefix}Typed "${typedVal}" (${Math.round(evalRes.accuracy * 100)}% match, suggested G${evalRes.suggestedSmGrade}): `
-                : `${prefix}Expected: ${grp.answer}`,
+              cls: `ir-spell-status ${evalRes.suggestedSmGrade >= 4 ? "is-pass" : evalRes.suggestedSmGrade === 3 ? "is-warn" : "is-fail"}`,
+              text: `${prefix}${badgeText} · Space confirms highlighted grade`,
             });
-            if (typedVal) {
+            if (typedVal && !evalRes.exactMatch) {
+              const segWrap = diffRow.createSpan({ cls: "ir-spell-segments" });
               for (const seg of evalRes.segments) {
-                const span = diffRow.createSpan({ text: seg.text });
-                if (seg.kind === "missing") {
-                  span.style.textDecoration = "underline";
-                  span.style.color = "var(--text-error)";
-                } else if (seg.kind === "extra") {
-                  span.style.textDecoration = "line-through";
-                  span.style.color = "var(--text-faint)";
-                } else {
-                  span.style.color = "var(--text-success)";
-                }
+                segWrap.createSpan({
+                  cls: `ir-spell-seg ir-spell-seg--${seg.kind}`,
+                  text: seg.text,
+                });
               }
             }
           });
@@ -5360,6 +5447,11 @@ export class IrReviewView extends ItemView {
     const topicAdvance = this.isReading(slot)
       ? this.resolveActiveTopicAdvance(slot, now)
       : undefined;
+    const resolvedConcept =
+      slot.element.conceptId && this.cachedConcepts
+        ? findConceptByNameOrId(this.cachedConcepts, slot.element.conceptId)?.name ??
+          slot.element.conceptId
+        : null;
     const telemetry = computeElementTelemetry({
       element: slot.element,
       allElements: this.elementsById.values(),
@@ -5371,8 +5463,11 @@ export class IrReviewView extends ItemView {
       nextReadingIntervalDays: topicAdvance?.interval,
       effectiveAFactor: topicAdvance?.effectiveAFactor,
       defaultAFactor: this.settings.topicAFactor,
+      recentEvents: this.cachedEvents ?? undefined,
+      conceptName: resolvedConcept,
     });
     renderElementTelemetryDrawer(parent, telemetry, tier, {
+      existingConcepts: this.cachedConcepts?.concepts.map((c) => c.name),
       onClose: () => {
         this.telemetryOpen = false;
         void this.renderCard();
@@ -5431,13 +5526,15 @@ export class IrReviewView extends ItemView {
             const existing = findConceptByNameOrId(curReg, conceptName);
             conceptId = existing ? existing.id : slugifyConceptId(conceptName);
             if (!existing) {
-              await this.ledger.writeConcepts(
-                upsertConceptGroup(curReg, {
-                  id: conceptId,
-                  name: conceptName,
-                  updatedAt: Date.now(),
-                }),
-              );
+              const nextReg = upsertConceptGroup(curReg, {
+                id: conceptId,
+                name: conceptName,
+                updatedAt: Date.now(),
+              });
+              await this.ledger.writeConcepts(nextReg);
+              this.cachedConcepts = nextReg;
+            } else {
+              this.cachedConcepts = curReg;
             }
           }
           await this.emit("metadata-set", slot.id, { conceptId, reference });

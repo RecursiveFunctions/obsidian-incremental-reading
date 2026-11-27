@@ -166,7 +166,8 @@ export function diffTypedAnswer(
   }
 
   let suggestedSmGrade: SmGrade;
-  if (exactMatch) suggestedSmGrade = 5;
+  if (b.length === 0) suggestedSmGrade = 0;
+  else if (exactMatch) suggestedSmGrade = 5;
   else if (normalizedMatch) suggestedSmGrade = 4;
   else if (accuracy >= 0.8) suggestedSmGrade = 3;
   else if (accuracy >= 0.5) suggestedSmGrade = 2;
@@ -471,4 +472,121 @@ export class QuizSessionStore {
     this.mcqSelections.delete(key);
     this.orderSequences.delete(key);
   }
+}
+
+export function extractMcqBlocks(body: string): string[] {
+  const out: string[] = [];
+  const re = /```ir-mcq[ \t]*\r?\n([\s\S]*?)\r?\n```/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    out.push(m[1] ?? "");
+  }
+  return out;
+}
+
+export function extractOrderBlocks(body: string): string[] {
+  const out: string[] = [];
+  const re = /```ir-order[ \t]*\r?\n([\s\S]*?)\r?\n```/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    out.push(m[1] ?? "");
+  }
+  return out;
+}
+
+/**
+ * Evaluates all interactive quizzes (`{{cN:=...}}` Spell-Pad, `ir-mcq`, `ir-order`)
+ * on a revealed card and returns the conservative minimum `SmGrade` (`0..5`),
+ * or `null` when the card contains no interactive quiz blocks.
+ */
+export function computeCardQuizSuggestedSmGrade(
+  rawBody: string,
+  opts: {
+    slotId: string;
+    sourcePath: string;
+    daySeed: number;
+    typedAnswers: ReadonlyMap<string, string>;
+    quizStore: QuizSessionStore;
+  },
+): SmGrade | null {
+  const grades: SmGrade[] = [];
+
+  const typedGroups = extractTypedClozes(rawBody);
+  typedGroups.forEach((grp, gIdx) => {
+    const typedVal = opts.typedAnswers.get(`${opts.slotId}:${gIdx}`) ?? "";
+    grades.push(diffTypedAnswer(grp.answer, typedVal).suggestedSmGrade);
+  });
+
+  const keyPrefix = opts.slotId || opts.sourcePath;
+  for (const mcqSrc of extractMcqBlocks(rawBody)) {
+    const spec = parseMcqPayload(mcqSrc);
+    if (!spec) continue;
+    const shuffled = shuffleMcqOptions(spec.options, opts.daySeed);
+    const selected = opts.quizStore.getMcqSelection(`${keyPrefix}::mcq::${mcqSrc}`);
+    grades.push(gradeMcqSelection(shuffled, [...selected]).suggestedSmGrade);
+  }
+
+  for (const orderSrc of extractOrderBlocks(rawBody)) {
+    const spec = parseOrderPayload(orderSrc);
+    if (!spec) continue;
+    const seq = opts.quizStore.getOrInitOrder(`${keyPrefix}::order::${orderSrc}`, spec.items, opts.daySeed);
+    grades.push(gradeOrderedSequence(spec.items, seq).suggestedSmGrade);
+  }
+
+  if (grades.length === 0) return null;
+  return Math.min(...grades) as SmGrade;
+}
+
+export function buildMcqAuthoringBlock(selectionText: string): string {
+  const lines = selectionText
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^(?:[-*]|\d+[.)])\s*(?:\[[xX ]\])?\s*/, "").trim())
+    .filter(Boolean);
+
+  if (lines.length >= 3) {
+    const [prompt, right, ...distractors] = lines;
+    return [
+      "```ir-mcq",
+      prompt!,
+      `- [x] ${right!}`,
+      ...distractors.map((d) => `- [ ] ${d}`),
+      "```",
+    ].join("\n");
+  }
+
+  const prompt = lines[0] || "Question prompt?";
+  const right = lines[1] || "Correct answer";
+  return [
+    "```ir-mcq",
+    prompt,
+    `- [x] ${right}`,
+    "- [ ] Distractor 1",
+    "- [ ] Distractor 2",
+    "```",
+  ].join("\n");
+}
+
+export function buildOrderAuthoringBlock(selectionText: string): string {
+  const lines = selectionText
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^(?:\d+[.)]|[-*])\s*/, "").trim())
+    .filter(Boolean);
+
+  if (lines.length >= 2) {
+    return [
+      "```ir-order",
+      ...lines.map((item, idx) => `${idx + 1}. ${item}`),
+      "```",
+    ].join("\n");
+  }
+
+  const prompt = lines[0] || "Arrange in sequence:";
+  return [
+    "```ir-order",
+    prompt,
+    "1. First step",
+    "2. Second step",
+    "3. Third step",
+    "```",
+  ].join("\n");
 }

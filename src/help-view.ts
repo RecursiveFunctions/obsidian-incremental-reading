@@ -46,16 +46,19 @@ function hotkeyLookup(app: App): HotkeyLookup | undefined {
 
 /** Mirrors the review pane's keydown handler in `src/review-view.ts`. */
 const REVIEW_KEYS: Array<[string, string]> = [
-  ["Space", "Reading: next card. Cloze: reveal, then grade."],
-  ["1 / 2 / 3 / 4", "Again / Hard / Good / Easy, once the answer is shown."],
-  ["Enter", "Reading: next card."],
+  ["Space", "Reading: next card. Items: reveal, then confirm highlighted grade."],
+  ["1 / 2 / 3 / 4", "Again / Hard / Good / Easy (4-point scale) once revealed."],
+  ["0 / 1 / 2 / 3 / 4 / 5", "Null / Bad / Fail / Pass / Good / Bright (SM-20 6-point scale)."],
+  ["Enter", "Reading: next card. Typed cloze: check answer, then confirm grade."],
+  ["1 – 9 (pre-reveal)", "Toggle option 1–9 on multiple-choice (ir-mcq) items."],
   ["Ctrl+Enter", "Reading: next card, even while editing the body."],
+  ["I", "Toggle Element Info drawer (telemetry, curve, concept & reference)."],
   ["[", "Back to the previous card in this pass."],
   ["L", "Reading: later today. Reschedules without counting a review."],
   ["D", "Dismiss the current element."],
   ["Alt+X", "Extract the selection as a child element."],
   ["Alt+Z", "Cloze the selection into a separate item."],
-  ["Esc", "Leave the review tab."],
+  ["Esc", "Close open drawer/editor, or leave the review tab."],
 ];
 
 /** Mirrors `treeKeyCommand` in `src/ir/tree-nav.ts`. */
@@ -84,7 +87,11 @@ const CONCEPTS: Array<[string, string]> = [
   ],
   [
     "Item",
-    "A card you grade: a cloze, or an image occlusion. Scheduled by FSRS.",
+    "A card you grade: a cloze, typed Spell-Pad ({{c1:=answer}}), multiple-choice (ir-mcq), sequence order (ir-order), or image occlusion. Scheduled by FSRS-6 or SM-20.",
+  ],
+  [
+    "Concept groups & references",
+    "Assign a concept group or source citation in Element Info (I) or YAML frontmatter (ir_concept, ir_ref). Child extracts and items inherit them automatically.",
   ],
   [
     "Priority",

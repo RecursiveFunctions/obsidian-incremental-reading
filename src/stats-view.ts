@@ -1306,14 +1306,17 @@ export class IrStatsView extends ItemView {
       seed: FIT_SEED,
     });
 
-    this.table(section, [
-      ["Average daily reviews", `${sim.summary.avgDailyReviews} / day`],
-      ["Peak daily reviews", String(sim.summary.peakDailyReviews)],
-      ["Peak overdue backlog", String(sim.summary.peakBacklog)],
-      ["Final overdue backlog", String(sim.summary.finalBacklog)],
-      ["Projected memorized items", String(sim.summary.finalMemorizedCount)],
-      ["Projected mean retention", `${(sim.summary.meanRetention * 100).toFixed(1)}%`],
-    ]);
+    const simKpis = section.createDiv({ cls: "ir-stats-kpi-grid" });
+    const addSimKpi = (label: string, value: string, sub?: string) => {
+      const card = simKpis.createDiv({ cls: "ir-stats-kpi-card" });
+      card.createDiv({ cls: "ir-stats-kpi-value", text: value });
+      card.createDiv({ cls: "ir-stats-kpi-label", text: label });
+      if (sub) card.createDiv({ cls: "ir-stats-kpi-sub", text: sub });
+    };
+    addSimKpi("Avg daily load", `${sim.summary.avgDailyReviews}/d`, `Peak ${sim.summary.peakDailyReviews}/d`);
+    addSimKpi("End backlog", String(sim.summary.finalBacklog), `Peak ${sim.summary.peakBacklog}`);
+    addSimKpi("Memorized", String(sim.summary.finalMemorizedCount));
+    addSimKpi("Mean retention", `${(sim.summary.meanRetention * 100).toFixed(1)}%`);
 
     const bucketCount = Math.min(20, sim.days.length);
     const step = Math.max(1, Math.floor(sim.days.length / bucketCount));
@@ -1348,6 +1351,17 @@ export class IrStatsView extends ItemView {
       fill.style.height = `${total > 0 ? Math.max(8, pct) : 0}%`;
       col.createDiv({ cls: "ir-stats-bar-label", text: b.label });
     }
+
+    const simDetails = section.createEl("details", { cls: "ir-drawer-details" });
+    simDetails.createEl("summary", { cls: "ir-drawer-summary", text: "Detailed simulation metrics" });
+    this.table(simDetails.createDiv({ cls: "ir-drawer-details-body" }), [
+      ["Average daily reviews", `${sim.summary.avgDailyReviews} / day`],
+      ["Peak daily reviews", String(sim.summary.peakDailyReviews)],
+      ["Peak overdue backlog", String(sim.summary.peakBacklog)],
+      ["Final overdue backlog", String(sim.summary.finalBacklog)],
+      ["Projected memorized items", String(sim.summary.finalMemorizedCount)],
+      ["Projected mean retention", `${(sim.summary.meanRetention * 100).toFixed(1)}%`],
+    ]);
   }
 
   private renderCalibrationBenchmark(
@@ -1373,8 +1387,13 @@ export class IrStatsView extends ItemView {
 
     const activeBins = bench.calibrationBins.filter((b) => b.count > 0);
     if (activeBins.length > 0) {
+      const binDetails = section.createEl("details", { cls: "ir-drawer-details" });
+      binDetails.createEl("summary", {
+        cls: "ir-drawer-summary",
+        text: `Retrievability calibration bins (${activeBins.length} active bins)`,
+      });
       this.table(
-        section,
+        binDetails.createDiv({ cls: "ir-drawer-details-body" }),
         activeBins.map((b) => [
           `Predicted ${b.rangeLabel} (n=${b.count})`,
           `Pred ${(b.predictedMean * 100).toFixed(1)}% vs Actual ${(b.actualRecallRate * 100).toFixed(1)}%`,
@@ -1389,10 +1408,16 @@ export class IrStatsView extends ItemView {
     const section = body.createDiv({ cls: "ir-stats-section" });
     section.createDiv({
       cls: "ir-stats-section-title",
-      text: `SM-20 SInc surface (20×20 D×S · range ×${hm.minSinc.toFixed(2)}–×${hm.maxSinc.toFixed(2)})`,
+      text: `SM-20 SInc surface (×${hm.minSinc.toFixed(2)}–×${hm.maxSinc.toFixed(2)})`,
     });
-
-    const wrap = section.createDiv({ cls: "ir-sinc-heatmap" });
+    const hmDetails = section.createEl("details", { cls: "ir-drawer-details" });
+    hmDetails.open = true;
+    hmDetails.createEl("summary", {
+      cls: "ir-drawer-summary",
+      text: "20×20 Difficulty × Stability grid (hover cell for exact SInc)",
+    });
+    const hmBody = hmDetails.createDiv({ cls: "ir-drawer-details-body" });
+    const wrap = hmBody.createDiv({ cls: "ir-sinc-heatmap" });
     const span = Math.max(0.01, hm.maxSinc - hm.minSinc);
     for (let d = 0; d < 20; d += 2) {
       const rowEl = wrap.createDiv({ cls: "ir-sinc-heatmap-row" });
