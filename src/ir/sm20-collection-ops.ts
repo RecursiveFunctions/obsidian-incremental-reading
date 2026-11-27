@@ -477,7 +477,15 @@ export function auditAndRepairCollectionIntegrity(
   );
   const perItemStats = new Map<
     string,
-    { reps: number; lapses: number; lastTs: number | null; backwardReported: boolean }
+    {
+      reps: number;
+      lapses: number;
+      /** Timestamp of the previous graded event, for period ordering only. */
+      lastTs: number | null;
+      /** Authoritative lastReview from the latest card snapshot or reset. */
+      lastReview: number | null;
+      backwardReported: boolean;
+    }
   >();
 
   for (const ev of sortedEvents) {
@@ -487,7 +495,8 @@ export function auditAndRepairCollectionIntegrity(
       perItemStats.set(ev.target, {
         reps: resetCard?.reps ?? 0,
         lapses: resetCard?.lapses ?? 0,
-        lastTs: resetCard?.lastReview ?? null,
+        lastTs: null,
+        lastReview: resetCard?.lastReview ?? null,
         backwardReported: false,
       });
       continue;
@@ -498,7 +507,8 @@ export function auditAndRepairCollectionIntegrity(
         perItemStats.set(ev.target, {
           reps: created.card.reps,
           lapses: created.card.lapses,
-          lastTs: created.card.lastReview ?? null,
+          lastTs: null,
+          lastReview: created.card.lastReview ?? null,
           backwardReported: false,
         });
       }
@@ -509,6 +519,7 @@ export function auditAndRepairCollectionIntegrity(
         reps: 0,
         lapses: 0,
         lastTs: null,
+        lastReview: null,
         backwardReported: false,
       };
       if (cur.lastTs !== null && ev.ts < cur.lastTs && !cur.backwardReported) {
@@ -520,12 +531,24 @@ export function auditAndRepairCollectionIntegrity(
           detail: `Backwardly timestamped repetition (${ev.ts} < ${cur.lastTs}) in lamport order.`,
         });
       }
-      cur.reps += 1;
-      const smG = typeof ev.payload.smGrade === "number" ? ev.payload.smGrade : undefined;
-      const gNum = typeof ev.payload.grade === "number" ? ev.payload.grade : 3;
-      const failed = smG !== undefined ? smG < 3 : gNum <= 1;
-      if (failed) cur.lapses += 1;
-      cur.lastTs = Math.max(cur.lastTs ?? ev.ts, ev.ts);
+      const gradedCard = ev.payload.card as StoredCard | undefined;
+      if (gradedCard) {
+        // Graded events carry cumulative card snapshots; the fold adopts them
+        // verbatim. Counting +1 on top of a snapshot double-counts history.
+        cur.reps = gradedCard.reps;
+        cur.lapses = gradedCard.lapses;
+        if (typeof gradedCard.lastReview === "number" && Number.isFinite(gradedCard.lastReview)) {
+          cur.lastReview = gradedCard.lastReview;
+        }
+      } else {
+        // Legacy snapshot-less events still carry only an increment.
+        cur.reps += 1;
+        const smG = typeof ev.payload.smGrade === "number" ? ev.payload.smGrade : undefined;
+        const gNum = typeof ev.payload.grade === "number" ? ev.payload.grade : 3;
+        const failed = smG !== undefined ? smG < 3 : gNum <= 1;
+        if (failed) cur.lapses += 1;
+      }
+      cur.lastTs = ev.ts;
       perItemStats.set(ev.target, cur);
     }
   }
@@ -544,7 +567,7 @@ export function auditAndRepairCollectionIntegrity(
         ...el.card,
         reps: Math.max(0, stats.reps),
         lapses: Math.max(0, stats.lapses),
-        ...(stats.lastTs !== null ? { lastReview: stats.lastTs } : {}),
+        ...(stats.lastReview !== null ? { lastReview: stats.lastReview } : {}),
       };
       emitRepair("card-reset", el.id, { card: fixedCard });
     }

@@ -196,7 +196,12 @@ test("auditAndRepairCollectionIntegrity (0x00d32f50, 0x00d0cdc0) detects and rep
     kind: "graded",
     target: driftedItemId,
     payload: {
-      card: driftedItem.card!,
+      card: {
+        ...driftedItem.card!,
+        reps: 1,
+        lapses: 0,
+        lastReview: NOW - 10 * DAY_MS,
+      },
       grade: 3,
       smGrade: 4,
     },
