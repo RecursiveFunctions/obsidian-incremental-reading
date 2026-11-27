@@ -299,7 +299,112 @@ async function main() {
     assert.ok(sixPointLayout.row1SameTop && sixPointLayout.row2SameTop && sixPointLayout.twoRows, "6-point compact dock must form a 2x3 Fail/Pass grid");
     assert.ok(sixPointLayout.minHeight >= 44, `6-point tap target height ${sixPointLayout.minHeight}px < 44px`);
 
-    console.log("OK: phone, tablet, narrow desktop split, SM-20 2x3 6-point dock, and Collection layouts verified in browser");
+    // Android 8" Tablet Landscape (960x600 — TCL TAB 8 Plus) + Phone Collection Drawer (360x800) + Touch Occlusion verified across Chromium & WebKit (when installed)
+    const { webkit } = await import("playwright");
+    const extraEngines = [["chromium", page]];
+    let wkBrowser = null;
+    try {
+      wkBrowser = await webkit.launch();
+      const wkPage = await wkBrowser.newPage({ viewport: { width: 960, height: 600 }, isMobile: true, hasTouch: true });
+      extraEngines.push(["webkit", wkPage]);
+    } catch {
+      // Optional WebKit fallback if CI runner only installed Chromium
+    }
+
+    try {
+      for (const [engName, p] of extraEngines) {
+        await p.setViewportSize({ width: 960, height: 600 });
+        await p.setContent(`<!doctype html><style>body{margin:0;font-family:sans-serif}*{box-sizing:border-box}button,input{padding:6px 10px}</style>
+          <div class="ir-review-modal ir-review-layout ir-review--mobile ir-review--tablet ir-review--landscape" data-ir-tier="medium" data-ir-pointer="coarse" style="height:600px;display:flex;flex-direction:column;">
+            <div class="ir-review-session-bar" style="height:40px">Session</div>
+            <div class="ir-review-card-host" style="flex:1;min-height:0;display:flex;flex-direction:column;">
+              <div class="ir-review-columns ir-review-columns--medium" style="flex:1;min-height:0;display:flex;">
+                <div class="ir-review-context-col ir-review-context-col--collapsible-rail">Source</div>
+                <div class="ir-review-main-col" style="flex:1;min-height:0;"><div class="ir-review-scroll">Card</div></div>
+              </div>
+              <div class="ir-review-dock">
+                <div class="ir-review-controls">
+                  <div class="ir-priority-row"><span>Priority</span><input class="ir-priority-input" type="number" value="18" /></div>
+                  <div class="ir-review-buttons ir-review-buttons--grade ir-review-buttons--six-point">
+                    <button class="ir-review-grade-btn">0 · Null</button>
+                    <button class="ir-review-grade-btn">1 · Bad</button>
+                    <button class="ir-review-grade-btn">2 · Fail</button>
+                    <button class="ir-review-grade-btn">3 · Pass</button>
+                    <button class="ir-review-grade-btn ir-review-grade-btn--suggested">4 · Good</button>
+                    <button class="ir-review-grade-btn">5 · Bright</button>
+                    <button class="ir-review-overflow-btn">⋯</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>`);
+        await p.addStyleTag({ path: stylesPath });
+        const tabLandscape = await p.evaluate(() => {
+          const root = document.querySelector(".ir-review-modal");
+          const dock = document.querySelector(".ir-review-dock").getBoundingClientRect();
+          const main = document.querySelector(".ir-review-main-col").getBoundingClientRect();
+          const btns = Array.from(document.querySelectorAll(".ir-review-buttons button")).map((b) => b.getBoundingClientRect());
+          const rowTops = btns.map((r) => r.top);
+          return {
+            overflow: root.scrollWidth - root.clientWidth,
+            dockHeight: dock.height,
+            mainHeight: main.height,
+            singleRow: Math.max(...rowTops) - Math.min(...rowTops) <= 3,
+            minBtnHeight: Math.min(...btns.map((r) => r.height)),
+          };
+        });
+        assert.ok(tabLandscape.overflow <= 1, `[${engName}] tablet landscape overflow ${tabLandscape.overflow}px`);
+        assert.ok(tabLandscape.singleRow, `[${engName}] tablet landscape 6-point dock must sit on 1 horizontal row`);
+        assert.ok(tabLandscape.dockHeight <= 155, `[${engName}] tablet landscape dock height ${tabLandscape.dockHeight}px > 155px`);
+        assert.ok(tabLandscape.mainHeight >= 400, `[${engName}] tablet landscape card height ${tabLandscape.mainHeight}px < 400px`);
+        assert.ok(tabLandscape.minBtnHeight >= 44, `[${engName}] tablet tap target ${tabLandscape.minBtnHeight}px < 44px`);
+
+        await p.setViewportSize({ width: 360, height: 800 });
+        await p.setContent(`<!doctype html><style>body{margin:0;font-family:sans-serif}*{box-sizing:border-box}button,input,select{padding:6px 10px}</style>
+          <div class="ir-tree-view ir-tree--mobile" data-ir-tier="compact" data-ir-pointer="coarse" style="width:360px;">
+            <div class="ir-telemetry-drawer ir-telemetry-drawer--inline">
+              <div class="ir-telemetry-header"><span class="ir-telemetry-title">Concept groups</span><button class="ir-telemetry-close">Close</button></div>
+              <div class="ir-bulk-range"><input placeholder="Name"/><input placeholder="Folder"/><input type="number" value="25"/></div>
+            </div>
+            <div class="ir-tree-row" style="display:flex;align-items:center;">
+              <input type="checkbox" class="ir-tree-select-checkbox"/><span style="flex:1">Topic</span><button class="ir-tree-row-menu-btn">⋯</button>
+            </div>
+          </div>
+          <div class="ir-occlusion-editor ir-occlusion--mobile" data-ir-pointer="coarse" style="width:360px;">
+            <div class="ir-occlusion-toolbar">
+              <div class="ir-occlusion-toolbar-group"><button>Undo point</button><button>Close polygon</button><button>Delete mask</button><button class="mod-cta">Create 1 item</button></div>
+            </div>
+            <div class="ir-occlusion-stage" style="width:200px;height:120px;"></div>
+          </div>`);
+        await p.addStyleTag({ path: stylesPath });
+        const phoneTouch = await p.evaluate(() => {
+          const tree = document.querySelector(".ir-tree-view");
+          const occ = document.querySelector(".ir-occlusion-editor");
+          const stageStyle = getComputedStyle(document.querySelector(".ir-occlusion-stage"));
+          const inputs = Array.from(document.querySelectorAll(".ir-bulk-range input")).map((el) => el.getBoundingClientRect());
+          const close = document.querySelector(".ir-telemetry-close").getBoundingClientRect();
+          const chk = document.querySelector(".ir-tree-select-checkbox").getBoundingClientRect();
+          return {
+            treeOverflow: tree.scrollWidth - tree.clientWidth,
+            occOverflow: occ.scrollWidth - occ.clientWidth,
+            minInputHeight: Math.min(...inputs.map((r) => r.height)),
+            closeHeight: close.height,
+            chkWidth: chk.width,
+            touchAction: stageStyle.touchAction,
+          };
+        });
+        assert.ok(phoneTouch.treeOverflow <= 1, `[${engName}] 360px phone collection drawer overflow ${phoneTouch.treeOverflow}px`);
+        assert.ok(phoneTouch.occOverflow <= 1, `[${engName}] 360px phone occlusion toolbar overflow ${phoneTouch.occOverflow}px`);
+        assert.ok(Math.round(phoneTouch.minInputHeight) >= 44, `[${engName}] 360px drawer input height ${phoneTouch.minInputHeight}px < 44px`);
+        assert.ok(Math.round(phoneTouch.closeHeight) >= 44, `[${engName}] 360px drawer close button height ${phoneTouch.closeHeight}px < 44px`);
+        assert.ok(Math.round(phoneTouch.chkWidth) >= 22, `[${engName}] checkbox size ${phoneTouch.chkWidth}px < 22px`);
+        assert.equal(phoneTouch.touchAction, "none", `[${engName}] occlusion stage must set touch-action: none`);
+      }
+    } finally {
+      if (wkBrowser) await wkBrowser.close();
+    }
+
+    console.log("OK: phone, 8-inch Android tablet (portrait & landscape), narrow desktop split, and Chromium + WebKit touch layouts verified");
   } finally {
     await browser.close();
   }

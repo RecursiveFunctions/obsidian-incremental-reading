@@ -147,3 +147,11 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
   result.neuralDueOnly = saved.neuralDueOnly === true;
   return result;
 }
+
+export function shouldShowSm20SchedulerOffer(
+  primaryScheduler: "sm20" | "fsrs",
+  offerAlreadyShown: boolean,
+): boolean {
+  if (offerAlreadyShown) return false;
+  return primaryScheduler !== "sm20";
+}

@@ -16,7 +16,11 @@ import {
 } from "obsidian";
 import { DEFAULT_SETTINGS, IrSettingTab, IrSettings } from "./src/settings";
 import { Sm20SchedulerOfferModal } from "./src/sm20-offer-modal";
-import { resolveSettings, resolveShowDivergencePicker } from "./src/ir/settings-resolve";
+import {
+  resolveSettings,
+  resolveShowDivergencePicker,
+  shouldShowSm20SchedulerOffer,
+} from "./src/ir/settings-resolve";
 import { isSpaceAfterReveal } from "./src/ir/review-keys";
 import { buildTextQuoteAnchor } from "./src/ir/cloze-marks";
 import { IR_TREE_VIEW_TYPE, IrTreeView } from "./src/tree-view";
@@ -716,13 +720,21 @@ export default class IncrementalReadingPlugin extends Plugin {
       // Wait for the vault index: before layout-ready, present files can
       // still read as missing and prompt for notes that exist.
       this.app.workspace.onLayoutReady(() => {
-        if (!this.settings.notices.sm20SchedulerOffer) {
+        if (
+          shouldShowSm20SchedulerOffer(
+            this.settings.primaryScheduler,
+            this.settings.notices.sm20SchedulerOffer,
+          )
+        ) {
           new Sm20SchedulerOfferModal(this.app, async (choice) => {
             this.settings.primaryScheduler = choice;
             this.settings.notices.sm20SchedulerOffer = true;
             await this.saveSettings();
             this.refreshSchedulerViews();
           }).open();
+        } else if (!this.settings.notices.sm20SchedulerOffer && this.settings.primaryScheduler === "sm20") {
+          this.settings.notices.sm20SchedulerOffer = true;
+          void this.saveSettings();
         }
         void this.reconcileMissingSources().then(() => this.offerPendingRelinks());
       });
@@ -1397,9 +1409,9 @@ export default class IncrementalReadingPlugin extends Plugin {
       icon: "scan",
       hotkeys: [{ modifiers: ["Alt"], key: "o" }],
       checkCallback: (checking) => {
-        const file = this.app.workspace.getActiveFile();
-        if (!file || !isImageFile(file)) return false;
-        if (!checking) void this.occlusionFromImageFile(file);
+        const target = this.resolveActiveOcclusionTarget();
+        if (!target) return false;
+        if (!checking) void this.occlusionFromImageFile(target.image, target.parent);
         return true;
       },
     });
@@ -8261,11 +8273,48 @@ export default class IncrementalReadingPlugin extends Plugin {
     await this.openOcclusionEditor(image, parent);
   }
 
-  /** Command / file-menu entry: occlusion items from a standalone image file. */
-  private async occlusionFromImageFile(image: TFile): Promise<void> {
-    // Prefer an IR note that embeds this image (the user's own context);
+  /**
+   * Resolve a standalone image file or an image embedded inside the active
+   * Markdown note / Review slot so mobile & tablet users can launch occlusion
+   * straight from a reading topic.
+   */
+  private resolveActiveOcclusionTarget(): { image: TFile; parent?: TFile } | null {
+    const rv = this.app.workspace.getActiveViewOfType(IrReviewView);
+    const candidateFile = rv?.getCurrentSlotFile() ?? this.app.workspace.getActiveFile();
+    if (!candidateFile) return null;
+    if (isImageFile(candidateFile)) {
+      return { image: candidateFile };
+    }
+    if (candidateFile.extension !== "md") return null;
+    const embeds = this.app.metadataCache.getFileCache(candidateFile)?.embeds ?? [];
+    if (embeds.length === 0) return null;
+    const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const cursorLine = mv?.file?.path === candidateFile.path ? mv.editor?.getCursor()?.line : undefined;
+    const ordered =
+      cursorLine !== undefined
+        ? [
+            ...embeds.filter(
+              (e) => e.position.start.line <= cursorLine && cursorLine <= e.position.end.line,
+            ),
+            ...embeds,
+          ]
+        : embeds;
+    for (const emb of ordered) {
+      const dest = this.app.metadataCache.getFirstLinkpathDest(emb.link, candidateFile.path);
+      if (dest && isImageFile(dest)) {
+        const t = getIrType(this.app, candidateFile);
+        const parent = t === "topic" || t === "extract" ? candidateFile : undefined;
+        return { image: dest, parent };
+      }
+    }
+    return null;
+  }
+
+  /** Command / file-menu entry: occlusion items from a standalone or embedded image file. */
+  private async occlusionFromImageFile(image: TFile, explicitParent?: TFile): Promise<void> {
+    // Prefer an explicit IR note or one that embeds this image (the user's own context);
     // otherwise make a topic note that embeds it and file the cards there.
-    let parent = this.findIrNoteEmbedding(image);
+    let parent = explicitParent ?? this.findIrNoteEmbedding(image);
     if (!parent) {
       const folder = this.settings.extractFolder.trim()
         ? normalizePathForFolder(this.settings.extractFolder)

@@ -18,6 +18,8 @@ import {
   finalizeDraftPolygon,
   nextRectNumber,
   normalizeDragRect,
+  resolvePolygonVertexTap,
+  undoDraftPolygonVertex,
   type OcclusionMode,
   type OcclusionPolygon,
   type OcclusionRect,
@@ -59,7 +61,17 @@ export class IrOcclusionEditorView extends ItemView {
   private stage: HTMLElement | null = null;
   private labelInput: HTMLInputElement | null = null;
   private createBtn: HTMLButtonElement | null = null;
+  private undoPtBtn: HTMLButtonElement | null = null;
+  private closePolyBtn: HTMLButtonElement | null = null;
+  private clearBtn: HTMLButtonElement | null = null;
   private busy = false;
+
+  private syncDraftPolyButtons(): void {
+    const total = this.totalMaskCount();
+    if (this.undoPtBtn) this.undoPtBtn.disabled = this.draftPoly.length === 0;
+    if (this.closePolyBtn) this.closePolyBtn.disabled = this.draftPoly.length < 3;
+    if (this.clearBtn) this.clearBtn.disabled = total === 0 && this.draftPoly.length === 0;
+  }
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -325,15 +337,31 @@ export class IrOcclusionEditorView extends ItemView {
 
     const total = this.totalMaskCount();
     const btns = toolbar.createDiv({ cls: "ir-occlusion-toolbar-group" });
-    if (this.drawTool === "poly" && this.draftPoly.length >= 3) {
-      const closePolyBtn = btns.createEl("button", { text: "Close polygon (C)" });
+    this.undoPtBtn = null;
+    this.closePolyBtn = null;
+    if (this.drawTool === "poly") {
+      const undoPtBtn = btns.createEl("button", { text: "Undo point" });
+      undoPtBtn.disabled = this.draftPoly.length === 0;
+      undoPtBtn.addEventListener("click", () => {
+        this.draftPoly = undoDraftPolygonVertex(this.draftPoly);
+        this.syncDraftPolyButtons();
+        this.paintMasks();
+      });
+      this.undoPtBtn = undoPtBtn;
+
+      const closePolyBtn = btns.createEl("button", {
+        text: Platform.isMobile ? "Close polygon" : "Close polygon (C)",
+      });
+      closePolyBtn.disabled = this.draftPoly.length < 3;
       closePolyBtn.addEventListener("click", () => this.commitDraftPolygon());
+      this.closePolyBtn = closePolyBtn;
     }
     const delBtn = btns.createEl("button", { text: "Delete mask" });
     delBtn.disabled = this.selected === null;
     delBtn.addEventListener("click", () => this.deleteSelected());
     const clearBtn = btns.createEl("button", { text: "Clear" });
     clearBtn.disabled = total === 0 && this.draftPoly.length === 0;
+    this.clearBtn = clearBtn;
     clearBtn.addEventListener("click", () => {
       this.rects = [];
       this.polygons = [];
@@ -355,7 +383,9 @@ export class IrOcclusionEditorView extends ItemView {
       cls: "ir-occlusion-help",
       text:
         this.drawTool === "poly"
-          ? "Click vertices to outline polygon · click near first vertex or press C / Enter to close · P switches to Rectangle · Esc cancels draft"
+          ? Platform.isMobile
+            ? "Tap points on the image to outline a polygon · tap the first point or 'Close polygon' when done."
+            : "Click vertices to outline polygon · click near first vertex or press C / Enter to close · P switches to Rectangle · Esc cancels draft"
           : Platform.isMobile
             ? "Drag on the image to draw a mask. Tap a mask to select it."
             : "Drag to draw a rectangle · P switches to Polygon · click mask to select · Del removes · M toggles mode · Enter creates items",
@@ -363,6 +393,7 @@ export class IrOcclusionEditorView extends ItemView {
 
     const stageWrap = root.createDiv({ cls: "ir-occlusion-stage-wrap" });
     const stage = stageWrap.createDiv({ cls: "ir-occlusion-stage" });
+    if (Platform.isMobile) root.addClass("ir-occlusion--mobile");
     const img = stage.createEl("img", { cls: "ir-occlusion-img" });
     img.setAttr("src", s.imageUrl);
     img.setAttr("alt", "");
@@ -370,7 +401,7 @@ export class IrOcclusionEditorView extends ItemView {
     this.stage = stage;
     this.wireDrawing(stage);
     this.paintMasks();
-    if (this.selected !== null) labelInput.focus();
+    if (this.selected !== null && !Platform.isMobile) labelInput.focus();
     else root.focus();
   }
 
@@ -391,12 +422,14 @@ export class IrOcclusionEditorView extends ItemView {
       }
       const tag = mask.createSpan({ cls: "ir-occlusion-mask-tag", text: String(r.n) });
       if (r.label) tag.setText(`${r.n} · ${r.label}`);
-      mask.addEventListener("mousedown", (evt) => {
+      const selectRect = (evt: Event) => {
         evt.stopPropagation();
         evt.preventDefault();
         this.selected = { kind: "rect", index: i };
         this.render();
-      });
+      };
+      mask.addEventListener("mousedown", selectRect);
+      mask.addEventListener("touchstart", selectRect, { passive: false });
     });
 
     if (this.polygons.length > 0 || this.draftPoly.length > 0) {
@@ -424,12 +457,14 @@ export class IrOcclusionEditorView extends ItemView {
         });
         polyEl.style.pointerEvents = "auto";
         polyEl.style.cursor = "pointer";
-        polyEl.addEventListener("mousedown", (evt) => {
+        const selectPoly = (evt: Event) => {
           evt.stopPropagation();
           evt.preventDefault();
           this.selected = { kind: "poly", index: idx };
           this.render();
-        });
+        };
+        polyEl.addEventListener("mousedown", selectPoly);
+        polyEl.addEventListener("touchstart", selectPoly, { passive: false });
       });
 
       if (this.draftPoly.length > 0) {
@@ -470,24 +505,28 @@ export class IrOcclusionEditorView extends ItemView {
     };
 
     if (this.drawTool === "poly") {
+      const handlePolyPoint = (clientX: number, clientY: number, coarse: boolean) => {
+        const pt = norm(clientX, clientY);
+        const res = resolvePolygonVertexTap(this.draftPoly, [pt.x, pt.y], coarse);
+        if (res.action === "close") {
+          this.commitDraftPolygon();
+          return;
+        }
+        this.draftPoly = res.nextDraft;
+        this.syncDraftPolyButtons();
+        this.paintMasks();
+      };
       stage.addEventListener("mousedown", (evt) => {
         if (evt.button !== 0) return;
         evt.preventDefault();
-        const pt = norm(evt.clientX, evt.clientY);
-        if (this.draftPoly.length >= 3) {
-          const [fx, fy] = this.draftPoly[0]!;
-          if (Math.hypot(pt.x - fx, pt.y - fy) < 0.035) {
-            this.commitDraftPolygon();
-            return;
-          }
-        }
-        this.draftPoly.push([pt.x, pt.y]);
-        if (this.draftPoly.length === 3) {
-          this.render();
-        } else {
-          this.paintMasks();
-        }
+        handlePolyPoint(evt.clientX, evt.clientY, Platform.isMobile);
       });
+      stage.addEventListener("touchstart", (evt) => {
+        const t = evt.touches[0];
+        if (!t) return;
+        evt.preventDefault();
+        handlePolyPoint(t.clientX, t.clientY, true);
+      }, { passive: false });
       stage.addEventListener("dblclick", (evt) => {
         evt.preventDefault();
         if (this.draftPoly.length >= 3) {

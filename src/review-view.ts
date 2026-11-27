@@ -236,7 +236,9 @@ import {
 import { DropWhileBusyGate } from "./ir/action-gate";
 import { getPdfPageForPath, openPdfAt } from "./ir/pdf-view";
 import {
+  isTabletViewport,
   resolveViewportCapability,
+  shouldUseCompactReviewDock,
   type ViewportCapability,
 } from "./ir/viewport-tiers";
 import {
@@ -808,7 +810,7 @@ export class IrReviewView extends ItemView {
     this.attachSelectionAffordances();
     if (Platform.isMobile) {
       this.contentEl.addClass("ir-review--mobile");
-      if (Platform.isTablet) {
+      if (isTabletViewport(Platform.isMobile, Platform.isTablet, window.innerWidth, window.innerHeight)) {
         this.contentEl.addClass("ir-review--tablet");
       }
       this.mobileLayoutCleanup?.();
@@ -1081,7 +1083,19 @@ export class IrReviewView extends ItemView {
     });
   }
 
+  public getCurrentSlotFile(): TFile | null {
+    return this.current?.file ?? null;
+  }
+
+  private activePriorityBackdrop: HTMLElement | null = null;
+
+  private closePrioritySheet(): void {
+    this.activePriorityBackdrop?.remove();
+    this.activePriorityBackdrop = null;
+  }
+
   async onClose(): Promise<void> {
+    this.closePrioritySheet();
     this.reportSessionState();
     if (this.flashClearTimer != null) {
       window.clearTimeout(this.flashClearTimer);
@@ -1192,6 +1206,13 @@ export class IrReviewView extends ItemView {
     const update = () => {
       const landscape = window.innerWidth > window.innerHeight;
       this.contentEl.toggleClass("ir-review--landscape", landscape);
+      const tablet = isTabletViewport(
+        Platform.isMobile,
+        Platform.isTablet,
+        window.innerWidth,
+        window.innerHeight,
+      );
+      this.contentEl.toggleClass("ir-review--tablet", tablet);
     };
     update();
     window.addEventListener("resize", update);
@@ -1200,6 +1221,7 @@ export class IrReviewView extends ItemView {
       window.removeEventListener("resize", update);
       window.removeEventListener("orientationchange", update);
       this.contentEl.removeClass("ir-review--landscape");
+      this.contentEl.removeClass("ir-review--tablet");
     };
   }
 
@@ -2435,19 +2457,33 @@ export class IrReviewView extends ItemView {
   }
 
   private openPriorityEditor(trigger: HTMLElement, parent: HTMLElement, slot: ReviewSlot): void {
-    const surface = parent.createDiv({
+    this.closePrioritySheet();
+    let hostParent = parent;
+    if (Platform.isMobile) {
+      const backdrop = parent.ownerDocument.body.createDiv({ cls: "ir-adaptive-sheet-backdrop" });
+      backdrop.addEventListener("click", (evt) => {
+        if (evt.target === backdrop) this.closePrioritySheet();
+      });
+      this.activePriorityBackdrop = backdrop;
+      hostParent = backdrop;
+    }
+    const surface = hostParent.createDiv({
       cls: Platform.isMobile
         ? "ir-priority-surface ir-adaptive-sheet is-mobile"
         : "ir-priority-surface ir-adaptive-popover",
     });
+    const closeSurface = () => {
+      surface.remove();
+      this.closePrioritySheet();
+    };
     mountPriorityEditor(surface, {
       targetId: slot.id,
       elements: [...this.elementsById.values()],
       labelFor: (element) => treeRowLabel(element, true),
       restoreFocus: trigger,
-      onCancel: () => surface.remove(),
+      onCancel: closeSurface,
       onCommit: (preview) => {
-        surface.remove();
+        closeSurface();
         void (async () => {
           if (this.commitPriorityPreview) {
             await this.commitPriorityPreview(preview, slot.file);
@@ -3145,7 +3181,7 @@ export class IrReviewView extends ItemView {
     else this.contentEl.removeClass("ir-review-has-context");
 
     const cap = this.capability;
-    const compactDock = cap.tier === "compact";
+    const compactDock = shouldUseCompactReviewDock(cap.tier, Platform.isMobile);
     const columns = host.createDiv({
       cls: `ir-review-columns ir-review-columns--${cap.tier}`,
     });
