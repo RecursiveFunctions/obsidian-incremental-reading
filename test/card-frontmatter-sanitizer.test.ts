@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { S_MIN } from "ts-fsrs";
 import { readCardFromFrontmatter, schedule } from "../src/fsrs";
 import { IR_KEYS } from "../src/types";
 
@@ -28,9 +29,14 @@ test("fractional card state falls back to New", () => {
 
 test("negative review stability is clamped and cannot crash grading", () => {
   const card = readCardFromFrontmatter(fm({ [IR_KEYS.state]: 2, [IR_KEYS.stability]: -5, [IR_KEYS.difficulty]: 5 }));
-  assert.equal(card.stability >= 0.7, true);
+  assert.equal(card.stability, S_MIN);
   const result = schedule(card, "good", NOW);
   assert.equal(result.state >= 0, true);
+});
+
+test("legitimate small review stability is preserved", () => {
+  const card = readCardFromFrontmatter(fm({ [IR_KEYS.state]: 2, [IR_KEYS.stability]: 0.1, [IR_KEYS.difficulty]: 5 }));
+  assert.equal(card.stability, 0.1);
 });
 
 test("negative difficulty is clamped to the valid range", () => {

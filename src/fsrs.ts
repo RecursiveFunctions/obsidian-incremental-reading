@@ -11,6 +11,7 @@ import {
   Grade as FsrsGrade,
   Rating,
   S_MAX,
+  S_MIN,
   State,
   createEmptyCard,
   fsrs,
@@ -180,7 +181,7 @@ export function readCardFromFrontmatter(
     card.stability = 0;
     card.difficulty = 0;
   } else {
-    card.stability = Math.min(S_MAX, Math.max(0.7, card.stability));
+    card.stability = Math.min(S_MAX, Math.max(S_MIN, card.stability));
     card.difficulty = Math.min(10, Math.max(1, card.difficulty));
   }
 
