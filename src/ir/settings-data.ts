@@ -13,6 +13,8 @@ export type { LeechHandlingPolicy } from "./leech";
 export interface IrSettings {
   schemaVersion: 2;
   primaryScheduler: "sm20" | "fsrs";
+  /** Item grading buttons: "4-point" (Again/Hard/Good/Easy) or "sm20-6-point" (0..5). */
+  gradingScale: "4-point" | "sm20-6-point";
   finalDrillMode: FinalDrillMode;
   leechPolicy: LeechHandlingPolicy;
   randomizeDrill: boolean;
@@ -259,6 +261,7 @@ export const DEFAULT_SETTINGS: IrSettings = {
   mobileReviewButtons: "comfortable",
   neuralUseLexicalLinks: true,
   neuralDueOnly: false,
+  gradingScale: "4-point",
 };
 
 /** Fresh copy so restoring defaults cannot mutate the constant. */

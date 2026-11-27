@@ -4,8 +4,25 @@ import type { StoredCard } from "./model";
 import { formatDueLabel } from "./due-label";
 import { scheduleItem, type PrimaryItemScheduler } from "./item-scheduler";
 import type { Sm20Matrix } from "./sm20-matrix";
+import type { SmGrade } from "./sm20-scheduler";
 
 export const PREVIEW_GRADES: readonly Grade[] = ["again", "hard", "good", "easy"];
+export const PREVIEW_SM_GRADES: readonly SmGrade[] = [0, 1, 2, 3, 4, 5];
+
+export function previewSmGradeDelays(
+  card: Card | StoredCard | null | undefined,
+  now: number,
+  requestRetention?: number,
+  primaryScheduler: PrimaryItemScheduler = "sm20",
+  sm20Matrix?: Sm20Matrix,
+): Record<SmGrade, number> {
+  const out = {} as Record<SmGrade, number>;
+  for (const smGrade of PREVIEW_SM_GRADES) {
+    out[smGrade] =
+      scheduleItem(card, smGrade, now, { primaryScheduler, requestRetention, sm20Matrix }).stored.due - now;
+  }
+  return out;
+}
 
 export function previewGradeDelays(
   card: Card | StoredCard | null | undefined,

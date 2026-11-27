@@ -22,7 +22,13 @@ import {
   trackSegments,
   type DivergenceScale,
 } from "./ir/divergence-track";
-import { formatIntervalShort, previewGradeDelays, PREVIEW_GRADES } from "./ir/grade-preview";
+import {
+  formatIntervalShort,
+  previewGradeDelays,
+  previewSmGradeDelays,
+  PREVIEW_GRADES,
+  PREVIEW_SM_GRADES,
+} from "./ir/grade-preview";
 import { hasOcclusion } from "./ir/occlusion";
 import { fuzzyLocateInBody } from "./ir/fuzzy-text";
 import type { MultiSelectController } from "./ir/multi-select-dom";
@@ -143,10 +149,17 @@ import {
   canGradeInSession,
   digitGradeAllowed,
   isSpaceAfterReveal,
+  resolveSm20SixPointDigit,
   restoreDismissedSlot,
+  SM20_SIX_POINT_GRADES,
   spacebarReviewAction,
   spliceDismissedSlot,
 } from "./ir/review-keys";
+import {
+  gradeInputToSmGrade,
+  smGradeToFsrsGrade,
+  type SmGrade,
+} from "./ir/sm20-scheduler";
 import { applyMobileReviewLayout } from "./ir/mobile-review";
 import {
   buildExtractChildClozeAnchor,
@@ -337,6 +350,7 @@ export interface IrReviewViewHost {
     nextCard: import("./ir/model").StoredCard,
     grade: Grade,
     overridden?: boolean,
+    smGrade?: SmGrade,
   ) => Promise<void>;
 }
 
@@ -932,11 +946,10 @@ export class IrReviewView extends ItemView {
         return;
       }
 
-      // 1-4 grade keys: work on revealed cloze items even when editing, since
-      // grading is the primary action and typing digits in the source during
-      // review is not the expected flow.
-      for (const { grade, key } of GRADES) {
-        if (evt.key === key) {
+      // Grade keys: 0-5 in SuperMemo 6-point mode, 1-4 in standard 4-point mode.
+      if (this.settings.gradingScale === "sm20-6-point") {
+        const smDigit = resolveSm20SixPointDigit(evt.key);
+        if (smDigit !== null) {
           const activeTag =
             this.contentEl.ownerDocument.activeElement?.tagName ?? null;
           if (
@@ -946,9 +959,26 @@ export class IrReviewView extends ItemView {
             this.revealed
           ) {
             evt.preventDefault();
-            void this.grade(grade);
+            void this.grade(smDigit);
           }
           return;
+        }
+      } else {
+        for (const { grade, key } of GRADES) {
+          if (evt.key === key) {
+            const activeTag =
+              this.contentEl.ownerDocument.activeElement?.tagName ?? null;
+            if (
+              digitGradeAllowed(typing, activeTag) &&
+              slot &&
+              !this.isReading(slot) &&
+              this.revealed
+            ) {
+              evt.preventDefault();
+              void this.grade(grade);
+            }
+            return;
+          }
         }
       }
     });
@@ -3380,24 +3410,42 @@ export class IrReviewView extends ItemView {
     this.renderPriorityRow(controls, slot);
     // What each grade would do, shown before the grade is given (see
     // grade-preview.ts). Empty when the element has no card yet.
-    const gradePreview = this.itemGradePreview(slot);
+    const sixPoint = this.settings.gradingScale === "sm20-6-point";
+    const gradePreview = sixPoint ? null : this.itemGradePreview(slot);
+    const smGradePreview = sixPoint ? this.itemSmGradePreview(slot) : null;
     const bar = controls.createEl("div", {
       cls: compactDock
         ? "ir-review-buttons ir-review-buttons--grade"
         : "ir-review-buttons",
     });
     if (compactDock) {
-      for (const { grade, label: gLabel } of GRADES) {
-        const btn = bar.createEl("button", {
-          cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
-        });
-        if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
-          btn.disabled = true;
-          btn.title = "Already graded in this session — use Undo to re-grade";
+      if (sixPoint) {
+        for (const { smGrade, compactLabel } of SM20_SIX_POINT_GRADES) {
+          const fsrsCls = smGradeToFsrsGrade(smGrade);
+          const btn = bar.createEl("button", {
+            cls: `ir-review-grade-btn ir-review-grade-btn--${fsrsCls}`,
+          });
+          if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
+            btn.disabled = true;
+            btn.title = "Already graded in this session — use Undo to re-grade";
+          }
+          this.renderGradePreviewLabel(btn, smGradePreview?.[smGrade]);
+          btn.createSpan({ cls: "ir-review-grade-label", text: compactLabel });
+          btn.addEventListener("click", () => void this.grade(smGrade));
         }
-        this.renderGradePreviewLabel(btn, gradePreview?.[grade]);
-        btn.createSpan({ cls: "ir-review-grade-label", text: gLabel });
-        btn.addEventListener("click", () => void this.grade(grade));
+      } else {
+        for (const { grade, label: gLabel } of GRADES) {
+          const btn = bar.createEl("button", {
+            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
+          });
+          if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
+            btn.disabled = true;
+            btn.title = "Already graded in this session — use Undo to re-grade";
+          }
+          this.renderGradePreviewLabel(btn, gradePreview?.[grade]);
+          btn.createSpan({ cls: "ir-review-grade-label", text: gLabel });
+          btn.addEventListener("click", () => void this.grade(grade));
+        }
       }
       this.renderOverflowButton(bar, this.gradeOverflowItems());
     } else {
@@ -3408,25 +3456,42 @@ export class IrReviewView extends ItemView {
       if (this.index === 0) prevGrade.disabled = true;
       prevGrade.addEventListener("click", () => void this.previous());
       this.renderEditToggle(bar);
-      for (const { grade, label: gLabel, key } of GRADES) {
-        const spaceGrade = isSpaceAfterReveal(this.settings.spaceAfterReveal)
-          ? this.settings.spaceAfterReveal
-          : "good";
-        const spaceHint =
-          cap.showHotkeys && spaceGrade === grade ? ", Space" : "";
-        const text = cap.showHotkeys
-          ? `${gLabel} (${key}${spaceHint})`
-          : gLabel;
-        const btn = bar.createEl("button", {
-          cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
-        });
-        if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
-          btn.disabled = true;
-          btn.title = "Already graded in this session — use Undo to re-grade";
+      if (sixPoint) {
+        for (const { smGrade, label: smLabel, key } of SM20_SIX_POINT_GRADES) {
+          const fsrsCls = smGradeToFsrsGrade(smGrade);
+          const text = cap.showHotkeys ? `${smLabel} (${key})` : smLabel;
+          const btn = bar.createEl("button", {
+            cls: `ir-review-grade-btn ir-review-grade-btn--${fsrsCls}`,
+          });
+          if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
+            btn.disabled = true;
+            btn.title = "Already graded in this session — use Undo to re-grade";
+          }
+          this.renderGradePreviewLabel(btn, smGradePreview?.[smGrade]);
+          btn.createSpan({ cls: "ir-review-grade-label", text });
+          btn.addEventListener("click", () => void this.grade(smGrade));
         }
-        this.renderGradePreviewLabel(btn, gradePreview?.[grade]);
-        btn.createSpan({ cls: "ir-review-grade-label", text });
-        btn.addEventListener("click", () => void this.grade(grade));
+      } else {
+        for (const { grade, label: gLabel, key } of GRADES) {
+          const spaceGrade = isSpaceAfterReveal(this.settings.spaceAfterReveal)
+            ? this.settings.spaceAfterReveal
+            : "good";
+          const spaceHint =
+            cap.showHotkeys && spaceGrade === grade ? ", Space" : "";
+          const text = cap.showHotkeys
+            ? `${gLabel} (${key}${spaceHint})`
+            : gLabel;
+          const btn = bar.createEl("button", {
+            cls: `ir-review-grade-btn ir-review-grade-btn--${grade}`,
+          });
+          if (this.sessionPhase !== "drill" && !canGradeInSession(slot.id, this.gradedSlotIds)) {
+            btn.disabled = true;
+            btn.title = "Already graded in this session — use Undo to re-grade";
+          }
+          this.renderGradePreviewLabel(btn, gradePreview?.[grade]);
+          btn.createSpan({ cls: "ir-review-grade-label", text });
+          btn.addEventListener("click", () => void this.grade(grade));
+        }
       }
       bar
         .createEl("button", {
@@ -6338,6 +6403,36 @@ export class IrReviewView extends ItemView {
     return out;
   }
 
+  private itemSmGradePreview(slot: ReviewSlot): Record<SmGrade, string> | null {
+    if (!canGradeInSession(slot.id, this.gradedSlotIds) && this.sessionPhase !== "drill") {
+      return null;
+    }
+    if (this.sessionPhase === "drill") {
+      return { 0: "stay", 1: "stay", 2: "stay", 3: "pass", 4: "pass", 5: "pass" };
+    }
+    const now = Date.now();
+    const policy = this.settings.prioritySchedulingPolicy;
+    const retention = effectiveItemRetention(
+      slot.element.priority,
+      policy.enabled,
+      this.settings.desiredRetention,
+      policy.itemHighRetention,
+      policy.itemLowRetention,
+    );
+    const delays = previewSmGradeDelays(
+      slot.element.card,
+      now,
+      retention,
+      this.activePrimaryScheduler(),
+      this.getSm20Matrix?.(),
+    );
+    const out = {} as Record<SmGrade, string>;
+    for (const smGrade of PREVIEW_SM_GRADES) {
+      out[smGrade] = formatIntervalShort(delays[smGrade], now);
+    }
+    return out;
+  }
+
   /**
    * The interval label the reading Next button shows.
    *
@@ -6421,11 +6516,13 @@ export class IrReviewView extends ItemView {
     btn.createSpan({ cls: "ir-review-grade-interval", text: label });
   }
 
-  private async grade(g: Grade) {
+  private async grade(g: Grade | SmGrade) {
     await this.runAction(() => this.gradeNow(g));
   }
 
-  private async gradeNow(g: Grade) {
+  private async gradeNow(gradeInput: Grade | SmGrade) {
+    const smGrade = gradeInputToSmGrade(gradeInput);
+    const g: Grade = typeof gradeInput === "number" ? smGradeToFsrsGrade(smGrade) : gradeInput;
     const slot = this.current;
     if (!slot) return;
     if (this.sessionPhase === "drill") {
@@ -6453,7 +6550,7 @@ export class IrReviewView extends ItemView {
       policy.itemLowRetention,
     );
     const sm20Matrix = this.getSm20Matrix?.();
-    const scheduled = scheduleItem(slot.element.card, g, nowMs, {
+    const scheduled = scheduleItem(slot.element.card, gradeInput, nowMs, {
       primaryScheduler,
       requestRetention: effectiveRetention,
       sm20Matrix,
@@ -6480,7 +6577,7 @@ export class IrReviewView extends ItemView {
       return;
     }
 
-    await this.applyGrade(slot, next, stored, g, false, effectiveRetention, primaryScheduler);
+    await this.applyGrade(slot, next, stored, g, false, effectiveRetention, primaryScheduler, smGrade);
   }
 
   private async applyGrade(
@@ -6491,7 +6588,9 @@ export class IrReviewView extends ItemView {
     intervalOverridden = false,
     effectiveRetention = this.settings.desiredRetention,
     scheduler: PrimaryItemScheduler = this.activePrimaryScheduler(),
+    explicitSmGrade?: SmGrade,
   ) {
+    const smGrade = explicitSmGrade ?? gradeInputToSmGrade(g);
     const priorityDelta = getPriorityDeltaForItemGrade(g, "fsrs");
     const nextPriority =
       priorityDelta > 0
@@ -6504,6 +6603,7 @@ export class IrReviewView extends ItemView {
     const payload: Record<string, unknown> = {
       card: stored,
       grade: gradeNumber(g),
+      smGrade,
       scheduler,
       prioritySnapshot: slot.element.priority,
       effectiveRetention,
@@ -6519,7 +6619,7 @@ export class IrReviewView extends ItemView {
     const prevCard = slot.element.card;
     const eventId = await this.emit("graded", slot.id, payload);
     if (this.onSm20Grade) {
-      await this.onSm20Grade(eventId, prevCard, stored, g, intervalOverridden).catch((e) => {
+      await this.onSm20Grade(eventId, prevCard, stored, g, intervalOverridden, smGrade).catch((e) => {
         console.warn("Incremental Reading: could not update SM-20 matrix", e);
       });
     }

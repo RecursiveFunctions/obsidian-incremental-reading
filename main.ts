@@ -82,6 +82,7 @@ import {
   gradeToSmGrade,
   recordSm20Outcome,
   restoreSm20Matrix,
+  SM20_MATRIX_SCHEMA_VERSION,
   snapshotSm20Matrix,
   type Sm20Matrix,
   type Sm20MatrixStats,
@@ -91,6 +92,7 @@ import {
   SM20_RETRIEVABILITY_MAX,
   SM20_STABILITY_MIN,
   storedDifficultyTo01,
+  type SmGrade,
 } from "./src/ir/sm20-scheduler";
 import type { Grade } from "./src/fsrs";
 import type { StoredCard } from "./src/ir/model";
@@ -2051,7 +2053,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     const eventCount = sorted.length;
 
     const cached = await this.ledger.readSm20Matrix();
-    if (cached && cached.headEventId === headEventId && cached.eventCount === eventCount) {
+    if (
+      cached &&
+      cached.schemaVersion === SM20_MATRIX_SCHEMA_VERSION &&
+      cached.headEventId === headEventId &&
+      cached.eventCount === eventCount
+    ) {
       try {
         this.sm20Matrix = restoreSm20Matrix(cached.matrix);
         this.sm20MatrixMeta = {
@@ -2075,7 +2082,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     this.sm20Matrix = matrix;
     this.sm20MatrixMeta = { baseline, baselineCursorEventId, headEventId, eventCount };
     await this.ledger.writeSm20Matrix({
-      schemaVersion: 2,
+      schemaVersion: SM20_MATRIX_SCHEMA_VERSION,
       matrix: snapshotSm20Matrix(matrix),
       ...(baseline ? { baseline } : {}),
       ...(baselineCursorEventId !== null ? { baselineCursorEventId } : {}),
@@ -2093,6 +2100,7 @@ export default class IncrementalReadingPlugin extends Plugin {
     nextCard: StoredCard,
     grade: Grade,
     overridden = false,
+    explicitSmGrade?: SmGrade,
   ): Promise<void> {
     const matrix = this.sm20Matrix ?? (await this.ensureSm20Matrix());
     if (!overridden && prevCard && prevCard.reps > 0 && prevCard.stability > 0) {
@@ -2108,13 +2116,16 @@ export default class IncrementalReadingPlugin extends Plugin {
         prevStability: prevS,
         retrievability: r,
         nextStability: nextCard.stability,
-        smGrade: gradeToSmGrade(grade),
+        smGrade: explicitSmGrade ?? gradeToSmGrade(grade),
+        prevReps: prevCard.reps,
+        prevLapses: prevCard.lapses,
+        elapsedDays,
       });
     }
     if (!this.ledger) return;
     const prevCount = this.sm20MatrixMeta?.eventCount ?? 0;
     const meta: Sm20MatrixFileV1 = {
-      schemaVersion: 2,
+      schemaVersion: SM20_MATRIX_SCHEMA_VERSION,
       matrix: snapshotSm20Matrix(matrix),
       ...(this.sm20MatrixMeta?.baseline ? { baseline: this.sm20MatrixMeta.baseline } : {}),
       ...(this.sm20MatrixMeta?.baselineCursorEventId !== undefined
@@ -2147,7 +2158,7 @@ export default class IncrementalReadingPlugin extends Plugin {
       eventCount,
     };
     await this.ledger.writeSm20Matrix({
-      schemaVersion: 2,
+      schemaVersion: SM20_MATRIX_SCHEMA_VERSION,
       matrix: snapshotSm20Matrix(matrix),
       headEventId,
       eventCount,
@@ -5661,7 +5672,7 @@ export default class IncrementalReadingPlugin extends Plugin {
         eventCount: sorted.length,
       };
       await this.ledger.writeSm20Matrix({
-        schemaVersion: 2,
+        schemaVersion: SM20_MATRIX_SCHEMA_VERSION,
         matrix: snapshotSm20Matrix(matrix),
         baseline: plan.sm20Baseline,
         baselineCursorEventId,

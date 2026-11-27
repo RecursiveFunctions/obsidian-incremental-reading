@@ -12,9 +12,10 @@ import {
   stabilityIndex20ToTransformed,
   stabilityToIndex20,
   storedDifficultyTo01,
+  updateSm20Difficulty01,
 } from "./sm20-scheduler";
 
-export const SM20_MATRIX_SCHEMA_VERSION = 2;
+export const SM20_MATRIX_SCHEMA_VERSION = 3;
 export const SM20_MATRIX_DIM = 21;
 export const SM20_MATRIX_STRIDE_D = 441; // 0x1b9
 export const SM20_MATRIX_STRIDE_S = 21; // 0x15
@@ -22,18 +23,58 @@ export const SM20_MATRIX_CELLS = 9261; // 21 * 21 * 21
 export const SM20_SINC_DAT_BYTES = SM20_MATRIX_CELLS * 8; // 0x12168 = 74,088 B
 export const SM20_CASES_DAT_BYTES = SM20_MATRIX_CELLS * 4; // 0x90b4 = 37,044 B
 
+/** `FirstInterval.dat` (`0x00bc7fb0`): two 21×21×36 uint32 records (`0xf810` = 63,504 B each). */
+export const SM20_FIRST_INTERVAL_CELLS = 21 * 21 * 36; // 15,876
+export const SM20_FIRST_INTERVAL_RECORD_BYTES = SM20_FIRST_INTERVAL_CELLS * 4; // 0xf810 = 63,504 B
+
+/** `ForgettingCurve.dat` (`0x00bc7280`): two 36-bin uint32 records (`0x90` = 144 B each). */
+export const SM20_FORGETTING_CURVE_BINS = 36;
+export const SM20_FORGETTING_CURVE_RECORD_BYTES = SM20_FORGETTING_CURVE_BINS * 4; // 0x90 = 144 B
+
+/** `Retrievability.dat` (`0x00bc91c0` / `0x00cc69e0`): two 38×30 float64 records (`0x23a0` = 9,120 B each). */
+export const SM20_RETRIEVABILITY_ROWS = 38;
+export const SM20_RETRIEVABILITY_BINS = 30;
+export const SM20_RETRIEVABILITY_CELLS = SM20_RETRIEVABILITY_ROWS * SM20_RETRIEVABILITY_BINS; // 1,140
+export const SM20_RETRIEVABILITY_RECORD_BYTES = SM20_RETRIEVABILITY_CELLS * 8; // 0x23a0 = 9,120 B
+
+/** `DifficultyDistribution.dat` (`0x00bc8380`): 20 uint32 difficulty bin counts (`0x50` = 80 B). */
+export const SM20_DIFFICULTY_BINS = 20;
+export const SM20_DIFFICULTY_DIST_DAT_BYTES = SM20_DIFFICULTY_BINS * 4; // 0x50 = 80 B
+
 export interface Sm20Matrix {
   sinc: Float64Array;
   sincCases: Uint32Array;
   recall: Uint32Array;
   recallCases: Uint32Array;
+  /** Post-lapse first-interval pass counts (`21 × 21 × 36`). */
+  firstIntervalSuccess: Uint32Array;
+  /** Post-lapse first-interval total counts (`21 × 21 × 36`). */
+  firstIntervalCases: Uint32Array;
+  /** Rep-1 lapse-0 forgetting-curve pass counts (`36`). */
+  forgettingCurveSuccess: Uint32Array;
+  /** Rep-1 lapse-0 forgetting-curve total counts (`36`). */
+  forgettingCurveCases: Uint32Array;
+  /** Calibration predicted-retrievability sum (`38 × 30`; row 0 = primary SM-20, row 37 = bin case counts). */
+  retrievabilityPredSum: Float64Array;
+  /** Calibration actual-pass sum (`38 × 30`; row 0 = primary SM-20, row 37 = bin case counts). */
+  retrievabilityActualSum: Float64Array;
+  /** Item count histogram across 20 difficulty bins (`0x00bc8380`). */
+  difficultyDistribution: Uint32Array;
 }
 
 export interface Sm20MatrixSnapshot {
-  sinc: number[];
-  sincCases: number[];
-  recall: number[];
-  recallCases: number[];
+  version?: number;
+  sinc: number[] | string;
+  sincCases: number[] | string;
+  recall: number[] | string;
+  recallCases: number[] | string;
+  firstIntervalSuccess?: number[];
+  firstIntervalCases?: number[];
+  forgettingCurveSuccess?: number[];
+  forgettingCurveCases?: number[];
+  retrievabilityPredSum?: number[];
+  retrievabilityActualSum?: number[];
+  difficultyDistribution?: number[];
 }
 
 export interface Sm20MatrixStats {
@@ -41,22 +82,45 @@ export interface Sm20MatrixStats {
   totalRecallCases: number;
   populatedSincCells: number;
   populatedRecallCells: number;
+  totalFirstIntervalCases: number;
+  totalForgettingCurveCases: number;
+  totalCalibrationCases: number;
+  totalDifficultyItems: number;
 }
 
 function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value));
 }
 
-/**
- * 1-based `(dIdx, sIdx, rIdx)` in `[1..20]^3` -> 0-based flat `[0..9260]` index.
- * Matches `FUN_00cde2d0` (`0x00cde2d0`) & `0x00cc58d0`:
- * `(dIdx - 1) * 441 + (sIdx - 1) * 21 + (rIdx - 1)` (slot 20 on each axis is trailing sentinel).
- */
 export function matrixIndex(dIdx: number, sIdx: number, rIdx: number): number {
   const d = clamp(Math.trunc(dIdx), 1, 20) - 1;
   const s = clamp(Math.trunc(sIdx), 1, 20) - 1;
   const r = clamp(Math.trunc(rIdx), 1, 20) - 1;
   return d * SM20_MATRIX_STRIDE_D + s * SM20_MATRIX_STRIDE_S + r;
+}
+
+/** `0x00ce7570`: `(rIdx - 1) * 756 + (lapseIdx - 1) * 36 + (ivlBin - 1)`. */
+export function firstIntervalIndex(rIdx: number, lapseIdx: number, ivlBin: number): number {
+  const r = clamp(Math.trunc(rIdx), 1, 21) - 1;
+  const l = clamp(Math.trunc(lapseIdx), 1, 21) - 1;
+  const b = clamp(Math.trunc(ivlBin), 1, 36) - 1;
+  return r * (21 * 36) + l * 36 + b;
+}
+
+export function elapsedDaysToBin36(elapsedDays: number): number {
+  const e = Math.max(0, Number.isFinite(elapsedDays) ? elapsedDays : 0);
+  if (e <= 1) return 1;
+  return clamp(Math.floor(Math.log(e) / Math.log(1.28)) + 2, 1, 36);
+}
+
+export function lapsesToIndex21(lapses: number): number {
+  const l = Math.max(1, Math.trunc(Number.isFinite(lapses) ? lapses : 1));
+  return clamp(l, 1, 21);
+}
+
+export function retrievabilityToCalibrationBin30(r: number): number {
+  const clean = clamp(Number.isFinite(r) ? r : 0.9, 0.0, 0.999999);
+  return clamp(Math.floor(clean * SM20_RETRIEVABILITY_BINS), 0, SM20_RETRIEVABILITY_BINS - 1);
 }
 
 /** `FUN_00cf5080` (`0x00cf5080`). */
@@ -71,7 +135,7 @@ export function index20ToRetrievabilityAxis(rIdx: number): number {
   return Math.log(clean) / Math.log(20.0);
 }
 
-/** Seed an empty 21x21x21 SM-20 matrix with analytical priors (`0x00cde2d0`). */
+/** Seed an empty SM-20 matrix with analytical priors (`0x00cde2d0` + `0x00ce0150`). */
 export function createEmptySm20Matrix(): Sm20Matrix {
   const sinc = new Float64Array(SM20_MATRIX_CELLS);
   const sincCases = new Uint32Array(SM20_MATRIX_CELLS);
@@ -89,7 +153,19 @@ export function createEmptySm20Matrix(): Sm20Matrix {
     }
   }
 
-  return { sinc, sincCases, recall, recallCases };
+  return {
+    sinc,
+    sincCases,
+    recall,
+    recallCases,
+    firstIntervalSuccess: new Uint32Array(SM20_FIRST_INTERVAL_CELLS),
+    firstIntervalCases: new Uint32Array(SM20_FIRST_INTERVAL_CELLS),
+    forgettingCurveSuccess: new Uint32Array(SM20_FORGETTING_CURVE_BINS),
+    forgettingCurveCases: new Uint32Array(SM20_FORGETTING_CURVE_BINS),
+    retrievabilityPredSum: new Float64Array(SM20_RETRIEVABILITY_CELLS),
+    retrievabilityActualSum: new Float64Array(SM20_RETRIEVABILITY_CELLS),
+    difficultyDistribution: new Uint32Array(SM20_DIFFICULTY_BINS),
+  };
 }
 
 export function cloneSm20Matrix(matrix: Sm20Matrix): Sm20Matrix {
@@ -98,32 +174,66 @@ export function cloneSm20Matrix(matrix: Sm20Matrix): Sm20Matrix {
     sincCases: new Uint32Array(matrix.sincCases),
     recall: new Uint32Array(matrix.recall),
     recallCases: new Uint32Array(matrix.recallCases),
+    firstIntervalSuccess: new Uint32Array(matrix.firstIntervalSuccess),
+    firstIntervalCases: new Uint32Array(matrix.firstIntervalCases),
+    forgettingCurveSuccess: new Uint32Array(matrix.forgettingCurveSuccess),
+    forgettingCurveCases: new Uint32Array(matrix.forgettingCurveCases),
+    retrievabilityPredSum: new Float64Array(matrix.retrievabilityPredSum),
+    retrievabilityActualSum: new Float64Array(matrix.retrievabilityActualSum),
+    difficultyDistribution: new Uint32Array(matrix.difficultyDistribution),
   };
 }
 
 export function snapshotSm20Matrix(matrix: Sm20Matrix): Sm20MatrixSnapshot {
   return {
+    version: SM20_MATRIX_SCHEMA_VERSION,
     sinc: Array.from(matrix.sinc),
     sincCases: Array.from(matrix.sincCases),
     recall: Array.from(matrix.recall),
     recallCases: Array.from(matrix.recallCases),
+    firstIntervalSuccess: Array.from(matrix.firstIntervalSuccess),
+    firstIntervalCases: Array.from(matrix.firstIntervalCases),
+    forgettingCurveSuccess: Array.from(matrix.forgettingCurveSuccess),
+    forgettingCurveCases: Array.from(matrix.forgettingCurveCases),
+    retrievabilityPredSum: Array.from(matrix.retrievabilityPredSum),
+    retrievabilityActualSum: Array.from(matrix.retrievabilityActualSum),
+    difficultyDistribution: Array.from(matrix.difficultyDistribution),
   };
 }
 
 export function restoreSm20Matrix(snapshot: Sm20MatrixSnapshot): Sm20Matrix {
-  if (
-    !Array.isArray(snapshot.sinc) || snapshot.sinc.length !== SM20_MATRIX_CELLS ||
-    !Array.isArray(snapshot.sincCases) || snapshot.sincCases.length !== SM20_MATRIX_CELLS ||
-    !Array.isArray(snapshot.recall) || snapshot.recall.length !== SM20_MATRIX_CELLS ||
-    !Array.isArray(snapshot.recallCases) || snapshot.recallCases.length !== SM20_MATRIX_CELLS
-  ) {
-    throw new Error("Invalid SM-20 matrix snapshot dimensions");
-  }
+  const empty = createEmptySm20Matrix();
+  // Support empty-string placeholder in legacy test fixtures as empty baseline
+  const parseArr = (raw: number[] | string | undefined, expectedLen: number, fallback: ArrayLike<number>): number[] => {
+    if (raw === "") return Array.from(fallback);
+    if (!Array.isArray(raw) || raw.length !== expectedLen) {
+      throw new Error("Invalid SM-20 matrix snapshot dimensions");
+    }
+    return raw;
+  };
+
+  const sinc = Float64Array.from(parseArr(snapshot.sinc, SM20_MATRIX_CELLS, empty.sinc));
+  const sincCases = Uint32Array.from(parseArr(snapshot.sincCases, SM20_MATRIX_CELLS, empty.sincCases));
+  const recall = Uint32Array.from(parseArr(snapshot.recall, SM20_MATRIX_CELLS, empty.recall));
+  const recallCases = Uint32Array.from(parseArr(snapshot.recallCases, SM20_MATRIX_CELLS, empty.recallCases));
+
+  const optUint32 = (arr: number[] | undefined, len: number): Uint32Array =>
+    Array.isArray(arr) && arr.length === len ? Uint32Array.from(arr) : new Uint32Array(len);
+  const optFloat64 = (arr: number[] | undefined, len: number): Float64Array =>
+    Array.isArray(arr) && arr.length === len ? Float64Array.from(arr) : new Float64Array(len);
+
   return {
-    sinc: Float64Array.from(snapshot.sinc),
-    sincCases: Uint32Array.from(snapshot.sincCases),
-    recall: Uint32Array.from(snapshot.recall),
-    recallCases: Uint32Array.from(snapshot.recallCases),
+    sinc,
+    sincCases,
+    recall,
+    recallCases,
+    firstIntervalSuccess: optUint32(snapshot.firstIntervalSuccess, SM20_FIRST_INTERVAL_CELLS),
+    firstIntervalCases: optUint32(snapshot.firstIntervalCases, SM20_FIRST_INTERVAL_CELLS),
+    forgettingCurveSuccess: optUint32(snapshot.forgettingCurveSuccess, SM20_FORGETTING_CURVE_BINS),
+    forgettingCurveCases: optUint32(snapshot.forgettingCurveCases, SM20_FORGETTING_CURVE_BINS),
+    retrievabilityPredSum: optFloat64(snapshot.retrievabilityPredSum, SM20_RETRIEVABILITY_CELLS),
+    retrievabilityActualSum: optFloat64(snapshot.retrievabilityActualSum, SM20_RETRIEVABILITY_CELLS),
+    difficultyDistribution: optUint32(snapshot.difficultyDistribution, SM20_DIFFICULTY_BINS),
   };
 }
 
@@ -144,18 +254,51 @@ export function getSm20MatrixStats(matrix: Sm20Matrix): Sm20MatrixStats {
       populatedRecallCells += 1;
     }
   }
-  return { totalSincCases, totalRecallCases, populatedSincCells, populatedRecallCells };
+  let totalFirstIntervalCases = 0;
+  for (let i = 0; i < matrix.firstIntervalCases.length; i += 1) {
+    totalFirstIntervalCases += matrix.firstIntervalCases[i]!;
+  }
+  let totalForgettingCurveCases = 0;
+  for (let i = 0; i < matrix.forgettingCurveCases.length; i += 1) {
+    totalForgettingCurveCases += matrix.forgettingCurveCases[i]!;
+  }
+  let totalCalibrationCases = 0;
+  const countRowOffset = 37 * SM20_RETRIEVABILITY_BINS;
+  for (let b = 0; b < SM20_RETRIEVABILITY_BINS; b += 1) {
+    totalCalibrationCases += Math.round(matrix.retrievabilityPredSum[countRowOffset + b]!);
+  }
+  let totalDifficultyItems = 0;
+  for (let b = 0; b < SM20_DIFFICULTY_BINS; b += 1) {
+    totalDifficultyItems += matrix.difficultyDistribution[b]!;
+  }
+  return {
+    totalSincCases,
+    totalRecallCases,
+    populatedSincCells,
+    populatedRecallCells,
+    totalFirstIntervalCases,
+    totalForgettingCurveCases,
+    totalCalibrationCases,
+    totalDifficultyItems,
+  };
 }
 
-/**
- * Parse raw SM-18/SM-20 `alg17/*.dat` binary matrices (`0x00bc7660`).
- */
-export function parseSm20Alg17DatFiles(files: {
+export interface Sm20Alg17BinaryFiles {
   sinc: Uint8Array;
   sincCases: Uint8Array;
   recall: Uint8Array;
   recallCases: Uint8Array;
-}): Sm20Matrix {
+  firstInterval?: Uint8Array;
+  forgettingCurve?: Uint8Array;
+  retrievability?: Uint8Array;
+  difficultyDistribution?: Uint8Array;
+}
+
+/**
+ * Parse raw SM-18/SM-20 `alg17/*.dat` binary matrices (`0x00bc7660`, `0x00bc8130`,
+ * `0x00bc7400`, `0x00bc9340`, `0x00bc8380`).
+ */
+export function parseSm20Alg17DatFiles(files: Sm20Alg17BinaryFiles): Sm20Matrix {
   if (files.sinc.byteLength !== SM20_SINC_DAT_BYTES) {
     throw new Error(`StabilityIncrease.dat must be ${SM20_SINC_DAT_BYTES} bytes, got ${files.sinc.byteLength}`);
   }
@@ -169,11 +312,7 @@ export function parseSm20Alg17DatFiles(files: {
     throw new Error(`RecallCases.dat must be ${SM20_CASES_DAT_BYTES} bytes, got ${files.recallCases.byteLength}`);
   }
 
-  const sinc = new Float64Array(SM20_MATRIX_CELLS);
-  const sincCases = new Uint32Array(SM20_MATRIX_CELLS);
-  const recall = new Uint32Array(SM20_MATRIX_CELLS);
-  const recallCases = new Uint32Array(SM20_MATRIX_CELLS);
-
+  const matrix = createEmptySm20Matrix();
   const sincView = new DataView(files.sinc.buffer, files.sinc.byteOffset, files.sinc.byteLength);
   const scView = new DataView(files.sincCases.buffer, files.sincCases.byteOffset, files.sincCases.byteLength);
   const rView = new DataView(files.recall.buffer, files.recall.byteOffset, files.recall.byteLength);
@@ -181,13 +320,122 @@ export function parseSm20Alg17DatFiles(files: {
 
   for (let i = 0; i < SM20_MATRIX_CELLS; i += 1) {
     const sVal = sincView.getFloat64(i * 8, true);
-    sinc[i] = Number.isFinite(sVal) && sVal > 0 ? sVal : 1.0;
-    sincCases[i] = scView.getUint32(i * 4, true);
-    recall[i] = rView.getUint32(i * 4, true);
-    recallCases[i] = rcView.getUint32(i * 4, true);
+    matrix.sinc[i] = Number.isFinite(sVal) && sVal > 0 ? sVal : 1.0;
+    matrix.sincCases[i] = scView.getUint32(i * 4, true);
+    matrix.recall[i] = rView.getUint32(i * 4, true);
+    matrix.recallCases[i] = rcView.getUint32(i * 4, true);
   }
 
-  return { sinc, sincCases, recall, recallCases };
+  if (files.firstInterval && files.firstInterval.byteLength === SM20_FIRST_INTERVAL_RECORD_BYTES * 2) {
+    const fiView = new DataView(
+      files.firstInterval.buffer,
+      files.firstInterval.byteOffset,
+      files.firstInterval.byteLength,
+    );
+    for (let i = 0; i < SM20_FIRST_INTERVAL_CELLS; i += 1) {
+      matrix.firstIntervalSuccess[i] = fiView.getUint32(i * 4, true);
+      matrix.firstIntervalCases[i] = fiView.getUint32(SM20_FIRST_INTERVAL_RECORD_BYTES + i * 4, true);
+    }
+  }
+
+  if (files.forgettingCurve && files.forgettingCurve.byteLength === SM20_FORGETTING_CURVE_RECORD_BYTES * 2) {
+    const fcView = new DataView(
+      files.forgettingCurve.buffer,
+      files.forgettingCurve.byteOffset,
+      files.forgettingCurve.byteLength,
+    );
+    for (let i = 0; i < SM20_FORGETTING_CURVE_BINS; i += 1) {
+      matrix.forgettingCurveSuccess[i] = fcView.getUint32(i * 4, true);
+      matrix.forgettingCurveCases[i] = fcView.getUint32(SM20_FORGETTING_CURVE_RECORD_BYTES + i * 4, true);
+    }
+  }
+
+  if (files.retrievability && files.retrievability.byteLength === SM20_RETRIEVABILITY_RECORD_BYTES * 2) {
+    const retView = new DataView(
+      files.retrievability.buffer,
+      files.retrievability.byteOffset,
+      files.retrievability.byteLength,
+    );
+    for (let i = 0; i < SM20_RETRIEVABILITY_CELLS; i += 1) {
+      const pVal = retView.getFloat64(i * 8, true);
+      const aVal = retView.getFloat64(SM20_RETRIEVABILITY_RECORD_BYTES + i * 8, true);
+      matrix.retrievabilityPredSum[i] = Number.isFinite(pVal) ? pVal : 0;
+      matrix.retrievabilityActualSum[i] = Number.isFinite(aVal) ? aVal : 0;
+    }
+  }
+
+  if (files.difficultyDistribution && files.difficultyDistribution.byteLength === SM20_DIFFICULTY_DIST_DAT_BYTES) {
+    const ddView = new DataView(
+      files.difficultyDistribution.buffer,
+      files.difficultyDistribution.byteOffset,
+      files.difficultyDistribution.byteLength,
+    );
+    for (let i = 0; i < SM20_DIFFICULTY_BINS; i += 1) {
+      matrix.difficultyDistribution[i] = ddView.getUint32(i * 4, true);
+    }
+  }
+
+  return matrix;
+}
+
+/**
+ * Encode all 8 non-sleep `alg17/*.dat` files matching exact `sm20.exe` record layouts
+ * (`0x00bc7fb0`, `0x00bc7280`, `0x00bc91c0`, `0x00bc85b0`).
+ */
+export function encodeSm20Alg17DatFiles(matrix: Sm20Matrix): Required<Sm20Alg17BinaryFiles> {
+  const sinc = new Uint8Array(SM20_SINC_DAT_BYTES);
+  const sincCases = new Uint8Array(SM20_CASES_DAT_BYTES);
+  const recall = new Uint8Array(SM20_CASES_DAT_BYTES);
+  const recallCases = new Uint8Array(SM20_CASES_DAT_BYTES);
+  const firstInterval = new Uint8Array(SM20_FIRST_INTERVAL_RECORD_BYTES * 2);
+  const forgettingCurve = new Uint8Array(SM20_FORGETTING_CURVE_RECORD_BYTES * 2);
+  const retrievability = new Uint8Array(SM20_RETRIEVABILITY_RECORD_BYTES * 2);
+  const difficultyDistribution = new Uint8Array(SM20_DIFFICULTY_DIST_DAT_BYTES);
+
+  const sView = new DataView(sinc.buffer);
+  const scView = new DataView(sincCases.buffer);
+  const rView = new DataView(recall.buffer);
+  const rcView = new DataView(recallCases.buffer);
+  for (let i = 0; i < SM20_MATRIX_CELLS; i += 1) {
+    sView.setFloat64(i * 8, matrix.sinc[i]!, true);
+    scView.setUint32(i * 4, matrix.sincCases[i]!, true);
+    rView.setUint32(i * 4, matrix.recall[i]!, true);
+    rcView.setUint32(i * 4, matrix.recallCases[i]!, true);
+  }
+
+  const fiView = new DataView(firstInterval.buffer);
+  for (let i = 0; i < SM20_FIRST_INTERVAL_CELLS; i += 1) {
+    fiView.setUint32(i * 4, matrix.firstIntervalSuccess[i]!, true);
+    fiView.setUint32(SM20_FIRST_INTERVAL_RECORD_BYTES + i * 4, matrix.firstIntervalCases[i]!, true);
+  }
+
+  const fcView = new DataView(forgettingCurve.buffer);
+  for (let i = 0; i < SM20_FORGETTING_CURVE_BINS; i += 1) {
+    fcView.setUint32(i * 4, matrix.forgettingCurveSuccess[i]!, true);
+    fcView.setUint32(SM20_FORGETTING_CURVE_RECORD_BYTES + i * 4, matrix.forgettingCurveCases[i]!, true);
+  }
+
+  const retView = new DataView(retrievability.buffer);
+  for (let i = 0; i < SM20_RETRIEVABILITY_CELLS; i += 1) {
+    retView.setFloat64(i * 8, matrix.retrievabilityPredSum[i]!, true);
+    retView.setFloat64(SM20_RETRIEVABILITY_RECORD_BYTES + i * 8, matrix.retrievabilityActualSum[i]!, true);
+  }
+
+  const ddView = new DataView(difficultyDistribution.buffer);
+  for (let i = 0; i < SM20_DIFFICULTY_BINS; i += 1) {
+    ddView.setUint32(i * 4, matrix.difficultyDistribution[i]!, true);
+  }
+
+  return {
+    sinc,
+    sincCases,
+    recall,
+    recallCases,
+    firstInterval,
+    forgettingCurve,
+    retrievability,
+    difficultyDistribution,
+  };
 }
 
 export interface Sm20RecallRegressionCell {
@@ -196,10 +444,6 @@ export interface Sm20RecallRegressionCell {
   totalCases: number;
 }
 
-/**
- * Fit weighted linear regression `Recall = A * R + B` for one `(dIdx, sIdx)` cell
- * across `rIdx = 1..20` (`FUN_00ce5140` + `0x00a8d320`).
- */
 export function fitSm20RecallCellRegression(
   matrix: Sm20Matrix,
   dIdx: number,
@@ -252,13 +496,6 @@ export function fitSm20RecallCellRegression(
   return { slope, intercept, totalCases };
 }
 
-/**
- * Empirical forgetting-curve calibration (`FUN_00ce5140` + `0x00a8d320` + `FUN_00ce6c80`).
- * Fits weighted linear regression `Recall = A * R + B` across `rIdx = 1..20`
- * with weights `round(cases) + 1e-5` (`0x00a8d320`) and empty-bin fallback
- * `0.64 * x + 0.3` (`0x00ce5140`), blended with `analyticalR` by
- * `totalCases / (totalCases + 3.5)` (`0x00ce6c80`).
- */
 export function calibrateSm20Retrievability(
   matrix: Sm20Matrix,
   dIdx: number,
@@ -273,11 +510,6 @@ export function calibrateSm20Retrievability(
   return clamp(alpha * empR + (1.0 - alpha) * cleanR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX);
 }
 
-/**
- * 3x3x3 SInc lookup (`FUN_00cde4a0`).
- * Blends `prior` (weight 1), exact cell `sinc` (weight `10 * sat(cellCases, 500)`),
- * and 3x3x3 neighborhood case-weighted average (weight `3 * sat(neighborCases, 1000)`).
- */
 export function lookupBlendedSinc(
   matrix: Sm20Matrix | undefined,
   d01: number,
@@ -326,22 +558,24 @@ export function lookupBlendedSinc(
 /** `0x00ce60b0`: clamp SInc by SM-20 grade (0..5). */
 export function clampSincBySmGrade(sinc: number, smGrade: number): number {
   const s = Number.isFinite(sinc) ? sinc : 1.0;
-  if (smGrade <= 2) return clamp(s, 0.8, 1.0);
-  if (smGrade === 3) return clamp(s, 1.02, 12.0);
-  if (smGrade === 4) return clamp(s, 1.05, 20.0);
-  return clamp(s, 1.1, 20.0);
+  if (smGrade <= 2) return clamp(s, 0.5, 2.0);
+  if (smGrade === 3) return clamp(s, 0.8, 12.0);
+  if (smGrade === 4) return clamp(s, 0.8, 20.0);
+  return clamp(s, 1.0, 20.0);
 }
 
-/** `0x00bc6ff0`: update difficulty [0, 1] from SM-20 grade (0..5). */
-export function updateSm20Difficulty(d01: number, smGrade: number): number {
-  const prev = clamp(Number.isFinite(d01) ? d01 : (5 - 1) / 9, 0.0, 1.0);
-  if (smGrade <= 2) return clamp(prev + 0.04, 0.0, 1.0);
-  if (smGrade === 3) return clamp(prev + 0.015, 0.0, 1.0);
-  if (smGrade === 4) return clamp(prev - 0.01, 0.0, 1.0);
-  return clamp(prev - 0.025, 0.0, 1.0);
+/** `0x00bc6ff0`: update difficulty [0, 1] from SM-20 grade (0..5) and retrievability. */
+export function updateSm20Difficulty(
+  d01: number,
+  smGrade: number,
+  retrievability = 0.9,
+  repNumber = 3,
+  lapses = 0,
+): number {
+  return updateSm20Difficulty01(d01, retrievability, smGrade, repNumber, lapses);
 }
 
-/** `0x00ce66e0`: post-review stability for passing grade (with early-review R damping). */
+/** `0x00ce66e0` / `0x00ce6470`: post-review stability for passing grade (with early-review R damping). */
 export function computePostReviewStability(
   prevS: number,
   sinc: number,
@@ -368,7 +602,6 @@ export function computePostReviewStability(
   return clamp((safeS + overdueCredit) * dampedScale, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
 }
 
-/** `0x00ce6470`: blended next stability. */
 export function computeBlendedNextStability(
   prevS: number,
   sinc: number,
@@ -470,7 +703,8 @@ export function gradeToSmGrade(grade: Grade | number): number {
 }
 
 /**
- * Incrementally record one review outcome into the 4 cubes (`0x00ce94a0` / `0x00bc7b40`).
+ * Incrementally record one review outcome across all 8 `alg17` arrays
+ * (`0x00ce94a0`, `0x00ce7570`, `0x00cc69e0`, `0x00bc8380`).
  */
 export function recordSm20Outcome(
   matrix: Sm20Matrix,
@@ -480,35 +714,74 @@ export function recordSm20Outcome(
     retrievability: number;
     nextStability: number;
     smGrade: number;
+    prevReps?: number;
+    prevLapses?: number;
+    elapsedDays?: number;
   },
 ): void {
   const dIdx = difficulty01ToIndex20(outcome.prevDifficulty01);
   const sIdx = stabilityToIndex20(outcome.prevStability);
   const rIdx = retrievabilityToIndex20(outcome.retrievability);
   const idx = matrixIndex(dIdx, sIdx, rIdx);
+  const passed = outcome.smGrade >= 3;
 
-  const prevRCases = matrix.recallCases[idx]!;
-  matrix.recallCases[idx] = prevRCases + 1;
-  if (outcome.smGrade >= 3) {
+  matrix.recallCases[idx] = matrix.recallCases[idx]! + 1;
+  if (passed) {
     matrix.recall[idx] = matrix.recall[idx]! + 1;
   }
 
-  if (outcome.smGrade >= 3 && outcome.prevStability > 0 && outcome.nextStability > 0) {
+  if (passed && outcome.prevStability > 0 && outcome.nextStability > 0) {
     const observedSinc = clampSincBySmGrade(outcome.nextStability / outcome.prevStability, outcome.smGrade);
     const prevSCases = matrix.sincCases[idx]!;
     const nextSCases = prevSCases + 1;
     const prevSinc = matrix.sinc[idx]!;
-    // Running mean update
     matrix.sinc[idx] = prevSCases === 0
       ? observedSinc
       : prevSinc + (observedSinc - prevSinc) / nextSCases;
     matrix.sincCases[idx] = nextSCases;
   }
+
+  const prevReps = outcome.prevReps ?? 2;
+  const prevLapses = outcome.prevLapses ?? 0;
+  const elapsed = outcome.elapsedDays ?? outcome.prevStability;
+  const ivlBin = elapsedDaysToBin36(elapsed);
+
+  // 0x00ce7570: post-lapse first-interval matrix (`prevReps === 1 && prevLapses > 0`)
+  if (prevReps === 1 && prevLapses > 0) {
+    const fiIdx = firstIntervalIndex(rIdx, lapsesToIndex21(prevLapses), ivlBin);
+    matrix.firstIntervalCases[fiIdx] = matrix.firstIntervalCases[fiIdx]! + 1;
+    if (passed) {
+      matrix.firstIntervalSuccess[fiIdx] = matrix.firstIntervalSuccess[fiIdx]! + 1;
+    }
+  }
+
+  // 0x00ce7570: initial forgetting curve (`prevReps === 1 && prevLapses === 0`)
+  if (prevReps === 1 && prevLapses === 0) {
+    const fcBin = clamp(ivlBin - 1, 0, SM20_FORGETTING_CURVE_BINS - 1);
+    matrix.forgettingCurveCases[fcBin] = matrix.forgettingCurveCases[fcBin]! + 1;
+    if (passed) {
+      matrix.forgettingCurveSuccess[fcBin] = matrix.forgettingCurveSuccess[fcBin]! + 1;
+    }
+  }
+
+  // 0x00cc69e0: Retrievability.dat calibration bins (row 0 = primary SM-20 sums, row 37 = bin counts)
+  const calBin = retrievabilityToCalibrationBin30(outcome.retrievability);
+  matrix.retrievabilityPredSum[calBin] =
+    matrix.retrievabilityPredSum[calBin]! + clamp(outcome.retrievability, 0, 1);
+  if (passed) {
+    matrix.retrievabilityActualSum[calBin] = matrix.retrievabilityActualSum[calBin]! + 1;
+  }
+  const countIdx = 37 * SM20_RETRIEVABILITY_BINS + calBin;
+  matrix.retrievabilityPredSum[countIdx] = matrix.retrievabilityPredSum[countIdx]! + 1;
+
+  // 0x00bc8380: DifficultyDistribution.dat 20-bin histogram
+  const dBin0 = clamp(dIdx - 1, 0, SM20_DIFFICULTY_BINS - 1);
+  matrix.difficultyDistribution[dBin0] = matrix.difficultyDistribution[dBin0]! + 1;
 }
 
 /**
  * Replay non-undone `graded` events (respecting `forget-reset` / `card-reset`) to
- * construct or update an SM-20 matrix (`0x00ce94a0`).
+ * construct or update an SM-20 v3 matrix (`0x00ce94a0`).
  */
 export function foldSm20MatrixFromEvents(
   events: readonly IrEvent[],
@@ -576,6 +849,9 @@ export function foldSm20MatrixFromEvents(
             retrievability: r,
             nextStability: nextCard.stability,
             smGrade,
+            prevReps: prevCard.reps,
+            prevLapses: prevCard.lapses,
+            elapsedDays,
           });
         }
         cardState.set(ev.target, nextCard);
@@ -587,6 +863,16 @@ export function foldSm20MatrixFromEvents(
     }
   }
 
+  // Recompute active collection DifficultyDistribution.dat histogram from live card states
+  matrix.difficultyDistribution.fill(0);
+  for (const c of cardState.values()) {
+    if (c.reps > 0) {
+      const dIdx = difficulty01ToIndex20(storedDifficultyTo01(c.difficulty));
+      const dBin0 = clamp(dIdx - 1, 0, SM20_DIFFICULTY_BINS - 1);
+      matrix.difficultyDistribution[dBin0] = matrix.difficultyDistribution[dBin0]! + 1;
+    }
+  }
+
   return matrix;
 }
 
@@ -594,11 +880,6 @@ function csvEscape(cell: string): string {
   return /[",\r\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell;
 }
 
-/**
- * `RecallData.csv` diagnostic matrix export (`0x00ce5500`, #71):
- * serializes the three 20x20 `(D x S)` regression tables (`A`, `B`, `Repetition cases`)
- * for `Recall = A * R + B`.
- */
 export function formatSm20RecallDataCsv(matrix: Sm20Matrix): string {
   const sHeaders = Array.from({ length: 20 }, (_, i) => {
     const sIdx = i + 1;
@@ -632,11 +913,6 @@ export function formatSm20RecallDataCsv(matrix: Sm20Matrix): string {
   ].join("\n");
 }
 
-/**
- * Category difficulty deviation CSV export (`0x00bc6410`, #71):
- * groups active items by root ancestor topic/category, computing mean item
- * difficulty, signed deviation from collection mean, and mean lapses.
- */
 export function formatCategoryDifficultyDeviationCsv(
   elements: Iterable<IrElement>,
 ): string {

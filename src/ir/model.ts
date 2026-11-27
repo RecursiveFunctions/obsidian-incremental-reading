@@ -429,6 +429,12 @@ export function validateIrEvent(value: unknown): string | null {
     case "dismiss-set": return typeof payload.dismissed === "boolean" ? null : "dismissed must be boolean";
     case "graded":
       if (!validCard(payload.card)) return "card is invalid";
+      if (
+        payload.smGrade !== undefined &&
+        (!Number.isInteger(payload.smGrade) || (payload.smGrade as number) < 0 || (payload.smGrade as number) > 5)
+      ) {
+        return "smGrade must be an integer in 0..5";
+      }
       return payload.placement === undefined || validPriorityPlacement(payload.placement)
         ? null : "placement is invalid";
     case "grade-undone": return typeof payload.eventId === "string" && payload.eventId ? null : "eventId is required";

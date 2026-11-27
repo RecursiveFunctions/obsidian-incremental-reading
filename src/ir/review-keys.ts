@@ -5,8 +5,31 @@
  */
 
 import type { Grade } from "../fsrs";
+import type { SmGrade } from "./sm20-scheduler";
 
 export type SpaceAfterReveal = Grade | "off";
+export type GradingScale = "4-point" | "sm20-6-point";
+
+export const SM20_SIX_POINT_GRADES: ReadonlyArray<{
+  smGrade: SmGrade;
+  label: string;
+  compactLabel: string;
+  key: string;
+}> = [
+  { smGrade: 0, label: "Null", compactLabel: "0", key: "0" },
+  { smGrade: 1, label: "Bad", compactLabel: "1", key: "1" },
+  { smGrade: 2, label: "Fail", compactLabel: "2", key: "2" },
+  { smGrade: 3, label: "Pass", compactLabel: "3", key: "3" },
+  { smGrade: 4, label: "Good", compactLabel: "4", key: "4" },
+  { smGrade: 5, label: "Bright", compactLabel: "5", key: "5" },
+];
+
+export function resolveSm20SixPointDigit(key: string): SmGrade | null {
+  if (key.length !== 1) return null;
+  const code = key.charCodeAt(0) - 48;
+  if (code >= 0 && code <= 5) return code as SmGrade;
+  return null;
+}
 
 export const SPACE_AFTER_REVEAL_OPTIONS: ReadonlyArray<{
   value: SpaceAfterReveal;

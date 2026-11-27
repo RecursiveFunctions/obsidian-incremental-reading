@@ -1,7 +1,12 @@
 import type { Card } from "ts-fsrs";
 import { cardToStored, schedule, storedToCard, type Grade } from "../fsrs";
 import type { StoredCard } from "./model";
-import { scheduleSm20Item } from "./sm20-scheduler";
+import {
+  gradeInputToSmGrade,
+  scheduleSm20Item,
+  smGradeToFsrsGrade,
+  type SmGrade,
+} from "./sm20-scheduler";
 import type { Sm20Matrix } from "./sm20-matrix";
 
 export type PrimaryItemScheduler = "sm20" | "fsrs";
@@ -24,7 +29,7 @@ function isFsrsCard(value: StoredCard | Card | null | undefined): value is Card 
 
 export function scheduleItem(
   card: StoredCard | Card | null | undefined,
-  grade: Grade,
+  grade: Grade | SmGrade,
   nowMs: number,
   options: ScheduleItemOptions = {},
 ): ScheduleItemResult {
@@ -44,8 +49,9 @@ export function scheduleItem(
       stored,
     };
   }
+  const fsrsGrade = typeof grade === "number" ? smGradeToFsrsGrade(gradeInputToSmGrade(grade)) : grade;
   const fsrsInput = isFsrsCard(card) ? card : storedToCard(card);
-  const nextCard = schedule(fsrsInput, grade, new Date(nowMs), options.requestRetention);
+  const nextCard = schedule(fsrsInput, fsrsGrade, new Date(nowMs), options.requestRetention);
   return {
     scheduler: "fsrs",
     card: nextCard,

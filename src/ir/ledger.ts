@@ -73,7 +73,7 @@ interface LedgerMetaV1 {
 }
 
 export interface Sm20MatrixFileV1 {
-  schemaVersion: 2;
+  schemaVersion: 2 | 3;
   matrix: Sm20MatrixSnapshot;
   baseline?: Sm20MatrixSnapshot;
   baselineCursorEventId?: string | null;
@@ -1336,7 +1336,7 @@ export class IrLedger {
     if (!(await this.fs.exists(sm20Matrix))) return null;
     try {
       const parsed = JSON.parse(await this.fs.read(sm20Matrix)) as Partial<Sm20MatrixFileV1>;
-      if (parsed.schemaVersion !== 2 || !parsed.matrix) return null;
+      if ((parsed.schemaVersion !== 2 && parsed.schemaVersion !== 3) || !parsed.matrix) return null;
       return parsed as Sm20MatrixFileV1;
     } catch {
       return null;

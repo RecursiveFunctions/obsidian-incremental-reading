@@ -76,6 +76,24 @@ export class IrSettingTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(containerEl)
+      .setName("Item grading scale")
+      .setDesc(
+        "4-point shows Again/Hard/Good/Easy (keys 1-4). SuperMemo 6-point shows grades 0-5 (Null/Bad/Fail/Pass/Good/Bright, keys 0-5) and maps seamlessly when switching to FSRS-6.",
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("4-point", "4-point (Again / Hard / Good / Easy)")
+          .addOption("sm20-6-point", "SuperMemo 6-point (0 - 5)")
+          .setValue(this.plugin.settings.gradingScale ?? "4-point")
+          .onChange(async (value) => {
+            this.plugin.settings.gradingScale =
+              value === "sm20-6-point" ? "sm20-6-point" : "4-point";
+            await this.plugin.saveSettings();
+            this.plugin.refreshSchedulerViews();
+          }),
+      );
+
     const mixSummary = formatReviewsPerReadingSummary(
       this.plugin.settings.reviewsPerReading,
       this.plugin.settings.sortingPolicy,
