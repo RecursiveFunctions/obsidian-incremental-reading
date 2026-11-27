@@ -9,6 +9,7 @@ import type { IrElement, IrEvent } from "./model";
 import type { PrimaryItemScheduler } from "./item-scheduler";
 import { previewGradeDelays } from "./grade-preview";
 import { lookupBlendedSinc, type Sm20Matrix } from "./sm20-matrix";
+import { computeItemMemoryCurve, type ItemMemoryCurve } from "./sm20-analytics";
 import {
   computeSm20Retrievability,
   storedDifficultyTo01,
@@ -34,6 +35,7 @@ export interface ItemElementTelemetry {
   priorityRank: number;
   totalActive: number;
   lastPriorityDelta: number | null;
+  memoryCurve: ItemMemoryCurve | null;
 }
 
 export type AnchorHealthStatus =
@@ -193,6 +195,7 @@ export function computeElementTelemetry(
       priorityRank: rank,
       totalActive,
       lastPriorityDelta,
+      memoryCurve: computeItemMemoryCurve(element, nowMs, input.recentEvents, requestRetention),
     };
   }
 

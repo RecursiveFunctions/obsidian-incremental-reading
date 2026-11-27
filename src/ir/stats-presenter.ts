@@ -7,7 +7,7 @@ import type { ElementId } from "./ids";
 import type { IrElement } from "./model";
 import { forgettingIndexByPriority, type PriorityGrade } from "./priority-analytics";
 
-export type StatsTabId = "overview" | "triage" | "models";
+export type StatsTabId = "overview" | "triage" | "simulator" | "models";
 
 export interface ActionablePriorityFiBucket {
   start: number;

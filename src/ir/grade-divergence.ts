@@ -3,6 +3,10 @@ import { cardToStored, schedule, storedToCard, type Grade } from "../fsrs";
 import { sm2, type Sm2State } from "../scheduler";
 import { predict as predictDsr, type SchedulerStatePrimitive } from "../sm18-scheduler";
 import { buildDivergenceModal, type DivergenceModalConfig } from "./divergence-modal";
+import {
+  computeIntervalChoiceEnsemble,
+  type IntervalChoiceEnsembleResult,
+} from "./sm20-analytics";
 import { scheduleSm20Item } from "./sm20-scheduler";
 import type { Sm20Matrix } from "./sm20-matrix";
 import type { PrimaryItemScheduler } from "./item-scheduler";
@@ -26,6 +30,9 @@ export interface DivergenceCheck {
   dsrDue: number;
   dsrStability: number;
   dsrDifficulty: number;
+  ensemble: IntervalChoiceEnsembleResult;
+  weightedAverageDue: number;
+  minIntervalDue: number;
 }
 
 export interface DivergenceOptions {
@@ -148,6 +155,14 @@ export function checkGradeDivergence(
   });
 
   if (!config) return null;
+  const sm15Pred = predictPowerLawDsr(card, grade, now, priority);
+  const ensemble = computeIntervalChoiceEnsemble({
+    sm2Days: sm2IntervalDays,
+    sm15Days: sm15Pred.intervalDays,
+    sm18Days: dsrIntervalDays,
+    sm20Days: sm20IntervalDays,
+    fsrsDays: fsrsIntervalDays,
+  });
   return {
     config,
     primaryScheduler,
@@ -163,5 +178,8 @@ export function checkGradeDivergence(
     dsrDue,
     dsrStability: dsrPrediction.stability,
     dsrDifficulty: dsrPrediction.difficulty,
+    ensemble,
+    weightedAverageDue: now + ensemble.weightedAverageDays * MS_PER_DAY,
+    minIntervalDue: now + ensemble.minIntervalDays * MS_PER_DAY,
   };
 }

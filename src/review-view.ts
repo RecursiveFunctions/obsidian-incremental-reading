@@ -6789,6 +6789,18 @@ export class IrReviewView extends ItemView {
         overridden = div.sm20Card;
       } else if (id === "FSRS") {
         overridden = div.fsrsCard;
+      } else if (id === "WEIGHTED") {
+        overridden = {
+          ...primaryStored,
+          due: div.weightedAverageDue,
+          scheduledDays: div.ensemble.weightedAverageDays,
+        };
+      } else if (id === "MIN") {
+        overridden = {
+          ...primaryStored,
+          due: div.minIntervalDue,
+          scheduledDays: div.ensemble.minIntervalDays,
+        };
       } else if (id === "DSR") {
         overridden = {
           ...primaryStored,
@@ -6819,7 +6831,7 @@ export class IrReviewView extends ItemView {
 
     bar.createSpan({
       cls: "ir-divergence-msg",
-      text: div.config.message,
+      text: `${div.config.message} · Weighted avg ${div.ensemble.weightedAverageDays}d (−${div.ensemble.leftSdDays}d / +${div.ensemble.rightSdDays}d)`,
     });
 
     // One segment per model, sized by its own proposal. Each is clickable, and
@@ -6850,6 +6862,14 @@ export class IrReviewView extends ItemView {
       });
       btn.addEventListener("click", () => choose(m.id));
     }
+    const wBtn = btnRow.createEl("button", {
+      text: `W. Avg: ${div.ensemble.weightedAverageDays}d`,
+    });
+    wBtn.addEventListener("click", () => choose("WEIGHTED"));
+    const mBtn = btnRow.createEl("button", {
+      text: `M. Min: ${div.ensemble.minIntervalDays}d`,
+    });
+    mBtn.addEventListener("click", () => choose("MIN"));
 
     const cleanupKeys = () => {
       document.removeEventListener("keydown", onKey, true);
@@ -6865,6 +6885,18 @@ export class IrReviewView extends ItemView {
         ev.stopPropagation();
         cleanupKeys();
         bar.remove();
+        return;
+      }
+      if (ev.key === "w" || ev.key === "W") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        choose("WEIGHTED");
+        return;
+      }
+      if (ev.key === "m" || ev.key === "M") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        choose("MIN");
         return;
       }
       const idx = Number(ev.key) - 1;

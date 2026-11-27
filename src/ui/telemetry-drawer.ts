@@ -106,6 +106,68 @@ export function renderElementTelemetryDrawer(
       `+${primaryDays}d`,
       `Shadow (${shadowName}): +${shadowDays}d`,
     );
+
+    if (telemetry.memoryCurve && telemetry.memoryCurve.points.length > 1) {
+      const curveBox = drawer.createDiv({ cls: "ir-telemetry-memory-curve" });
+      curveBox.createDiv({
+        cls: "ir-telemetry-cell-label",
+        text: `Forgetting curve (${telemetry.memoryCurve.horizonDays}d horizon · target ${telemetry.memoryCurve.targetRetentionPct}%)`,
+      });
+      const svg = curveBox.createSvg("svg", {
+        cls: "ir-telemetry-curve-svg",
+        attr: { viewBox: "0 0 240 64" },
+      });
+      svg.style.width = "100%";
+      svg.style.height = "64px";
+
+      const targetY = 60 - (telemetry.memoryCurve.targetRetentionPct / 100) * 54;
+      svg.createSvg("line", {
+        attr: {
+          x1: "0",
+          x2: "240",
+          y1: targetY.toFixed(1),
+          y2: targetY.toFixed(1),
+          stroke: "var(--text-faint)",
+          "stroke-dasharray": "3,3",
+          "stroke-width": "1",
+        },
+      });
+
+      const maxD = Math.max(1, telemetry.memoryCurve.horizonDays);
+      const pts = telemetry.memoryCurve.points
+        .map((p) => {
+          const x = (p.dayOffset / maxD) * 240;
+          const y = 60 - (p.retrievabilityPct / 100) * 54;
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        })
+        .join(" ");
+      svg.createSvg("polyline", {
+        attr: {
+          fill: "none",
+          stroke: "var(--interactive-accent)",
+          "stroke-width": "2",
+          points: pts,
+        },
+      });
+
+      const nowX = Math.min(240, Math.max(0, (telemetry.memoryCurve.elapsedDaysNow / maxD) * 240));
+      const nowY = 60 - (telemetry.memoryCurve.currentRetrievabilityPct / 100) * 54;
+      svg.createSvg("circle", {
+        attr: {
+          cx: nowX.toFixed(1),
+          cy: nowY.toFixed(1),
+          r: "3.5",
+          fill: "var(--interactive-accent)",
+        },
+      });
+      if (telemetry.memoryCurve.history.length > 0) {
+        const recent = telemetry.memoryCurve.history.slice(-5);
+        const histText = recent
+          .map((h) => `G${h.smGrade}→${h.scheduledDays}d (S=${h.stability}d)`)
+          .join(" · ");
+        curveBox.createDiv({ cls: "ir-telemetry-cell-sub", text: `History: ${histText}` });
+      }
+    }
   } else {
     addMetricCell(
       grid,

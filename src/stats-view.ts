@@ -44,6 +44,11 @@ import {
   type Sm20Matrix,
 } from "./ir/sm20-matrix";
 import {
+  computeCalibrationAndModelBenchmark,
+  formatSm20RepetitionLogCsv,
+  simulateLongHorizonWorkload,
+} from "./ir/sm20-analytics";
+import {
   buildActionablePriorityFiBuckets,
   type StatsTabId,
 } from "./ir/stats-presenter";
@@ -136,6 +141,9 @@ export class IrStatsView extends ItemView {
   private leechMaxInterval = DEFAULT_LEECH_CRITERIA.maxLapseIntervalDays;
   private leechMaxPostpones = DEFAULT_LEECH_CRITERIA.maxPostpones;
   private activeTab: StatsTabId = "overview";
+  private simHorizonDays = 365;
+  private simDailyCapacity = 60;
+  private simNewItemsPerDay = 5;
   private cachedSnapshot: { state: LogState; events: IrEvent[] } | null = null;
   private leafCapHandle?: LeafCapabilityHandle;
 
@@ -223,6 +231,7 @@ export class IrStatsView extends ItemView {
     const tabDefs: Array<{ id: StatsTabId; label: string; badge?: number }> = [
       { id: "overview", label: "Overview" },
       { id: "triage", label: "Triage", badge: leeches.length > 0 ? leeches.length : undefined },
+      { id: "simulator", label: "Simulator" },
       { id: "models", label: "Models & SM-20" },
     ];
     for (const def of tabDefs) {
@@ -259,8 +268,11 @@ export class IrStatsView extends ItemView {
     } else if (this.activeTab === "triage") {
       this.renderTrueRetentionTrend(body, events, now);
       this.renderLeechTriage(body, state, leeches, semiLeeches);
+    } else if (this.activeTab === "simulator") {
+      this.renderWorkloadSimulator(body, elements, now);
     } else {
       this.renderScheduler(body, events, state);
+      this.renderCalibrationBenchmark(body, events);
       this.renderPriorityForgettingIndex(body, priorityGrades, elements);
     }
   }
@@ -404,6 +416,14 @@ export class IrStatsView extends ItemView {
     exportDiffBtn.addEventListener("click", () => {
       const csv = formatCategoryDifficultyDeviationCsv(state.elements.values());
       this.downloadCsv("DifficultyDeviation.csv", csv);
+    });
+    const exportRepLogBtn = smActions.createEl("button", {
+      type: "button",
+      text: "Export RepetitionLog.csv",
+    });
+    exportRepLogBtn.addEventListener("click", () => {
+      const csv = formatSm20RepetitionLogCsv(events);
+      this.downloadCsv("RepetitionLog.csv", csv);
     });
     if (s.primaryScheduler !== "fsrs") {
       section.createEl("p", {
@@ -1189,6 +1209,175 @@ export class IrStatsView extends ItemView {
           }
         });
       }
+    }
+  }
+
+  private renderWorkloadSimulator(
+    body: HTMLElement,
+    elements: readonly IrElement[],
+    now: number,
+  ): void {
+    const s = this.host.settings;
+    const section = body.createDiv({ cls: "ir-stats-section" });
+    section.createDiv({
+      cls: "ir-stats-section-title",
+      text: "Long-horizon workload & retention simulator",
+    });
+
+    const controls = section.createDiv({ cls: "ir-opt-actions" });
+
+    const horizonSelect = controls.createEl("select", {
+      cls: "dropdown",
+      attr: { "aria-label": "Simulation horizon" },
+    });
+    for (const [days, label] of [
+      [30, "30 days"],
+      [90, "90 days"],
+      [365, "1 year"],
+      [1095, "3 years"],
+    ] as const) {
+      horizonSelect.createEl("option", { value: String(days), text: label });
+    }
+    horizonSelect.value = String(this.simHorizonDays);
+    horizonSelect.addEventListener("change", () => {
+      this.simHorizonDays = Number(horizonSelect.value) || 365;
+      if (this.cachedSnapshot) {
+        this.renderFromSnapshot(this.cachedSnapshot.state, this.cachedSnapshot.events);
+      }
+    });
+
+    const capLabel = controls.createSpan({ text: `Daily cap: ${this.simDailyCapacity}` });
+    const capInput = controls.createEl("input", {
+      attr: {
+        type: "number",
+        min: "5",
+        max: "1000",
+        step: "5",
+        value: String(this.simDailyCapacity),
+        "aria-label": "Daily review capacity",
+      },
+    });
+    capInput.style.width = "4.5em";
+    capInput.addEventListener("change", () => {
+      const n = Number(capInput.value);
+      if (Number.isFinite(n) && n >= 1) {
+        this.simDailyCapacity = Math.min(2000, Math.max(1, Math.round(n)));
+        capLabel.setText(`Daily cap: ${this.simDailyCapacity}`);
+        if (this.cachedSnapshot) {
+          this.renderFromSnapshot(this.cachedSnapshot.state, this.cachedSnapshot.events);
+        }
+      }
+    });
+
+    const inflowLabel = controls.createSpan({ text: `New/day: ${this.simNewItemsPerDay}` });
+    const inflowInput = controls.createEl("input", {
+      attr: {
+        type: "number",
+        min: "0",
+        max: "200",
+        step: "1",
+        value: String(this.simNewItemsPerDay),
+        "aria-label": "New items per day",
+      },
+    });
+    inflowInput.style.width = "4em";
+    inflowInput.addEventListener("change", () => {
+      const n = Number(inflowInput.value);
+      if (Number.isFinite(n) && n >= 0) {
+        this.simNewItemsPerDay = Math.min(500, Math.max(0, Math.round(n)));
+        inflowLabel.setText(`New/day: ${this.simNewItemsPerDay}`);
+        if (this.cachedSnapshot) {
+          this.renderFromSnapshot(this.cachedSnapshot.state, this.cachedSnapshot.events);
+        }
+      }
+    });
+
+    const sim = simulateLongHorizonWorkload({
+      elements,
+      nowMs: now,
+      horizonDays: this.simHorizonDays,
+      dailyCapacity: this.simDailyCapacity,
+      newItemsPerDay: this.simNewItemsPerDay,
+      desiredRetention: s.desiredRetention,
+      scheduler: s.primaryScheduler === "fsrs" ? "fsrs" : "sm20",
+      sm20Matrix: this.host.getSm20Matrix?.(),
+      seed: FIT_SEED,
+    });
+
+    this.table(section, [
+      ["Average daily reviews", `${sim.summary.avgDailyReviews} / day`],
+      ["Peak daily reviews", String(sim.summary.peakDailyReviews)],
+      ["Peak overdue backlog", String(sim.summary.peakBacklog)],
+      ["Final overdue backlog", String(sim.summary.finalBacklog)],
+      ["Projected memorized items", String(sim.summary.finalMemorizedCount)],
+      ["Projected mean retention", `${(sim.summary.meanRetention * 100).toFixed(1)}%`],
+    ]);
+
+    const bucketCount = Math.min(20, sim.days.length);
+    const step = Math.max(1, Math.floor(sim.days.length / bucketCount));
+    const sampled = [];
+    for (let i = 0; i < sim.days.length; i += step) {
+      const slice = sim.days.slice(i, i + step);
+      const meanRev = slice.reduce((acc, d) => acc + d.reviewsDone, 0) / slice.length;
+      const meanBacklog = slice.reduce((acc, d) => acc + d.backlogCount, 0) / slice.length;
+      sampled.push({
+        label: `D${slice[slice.length - 1]!.day}`,
+        reviews: Math.round(meanRev),
+        backlog: Math.round(meanBacklog),
+      });
+    }
+    const maxBar = Math.max(1, ...sampled.map((b) => b.reviews + b.backlog));
+    const bars = section.createDiv({ cls: "ir-stats-bars" });
+    for (const b of sampled) {
+      const total = b.reviews + b.backlog;
+      const col = bars.createDiv({
+        cls: "ir-stats-bar-col",
+        attr: {
+          title: `${b.label}: ${b.reviews} reviewed · ${b.backlog} backlog`,
+        },
+      });
+      col.createDiv({
+        cls: "ir-stats-bar-count",
+        text: total > 0 ? String(b.reviews) : "",
+      });
+      const track = col.createDiv({ cls: "ir-stats-bar-track" });
+      const fill = track.createDiv({ cls: "ir-stats-bar-fill" });
+      const pct = Math.round((total / maxBar) * 100);
+      fill.style.height = `${total > 0 ? Math.max(8, pct) : 0}%`;
+      col.createDiv({ cls: "ir-stats-bar-label", text: b.label });
+    }
+  }
+
+  private renderCalibrationBenchmark(
+    body: HTMLElement,
+    events: readonly IrEvent[],
+  ): void {
+    const bench = computeCalibrationAndModelBenchmark(events);
+    if (bench.sampleCount === 0) return;
+
+    const section = body.createDiv({ cls: "ir-stats-section" });
+    section.createDiv({
+      cls: "ir-stats-section-title",
+      text: `Algorithm benchmark & calibration (${bench.sampleCount} reviews)`,
+    });
+
+    this.table(
+      section,
+      bench.models.map((m) => [
+        m.modelId,
+        `RMSE ${m.rmse.toFixed(4)} · LogLoss ${m.logLoss.toFixed(4)} · ECE ${m.ece.toFixed(4)}`,
+      ]),
+    );
+
+    const activeBins = bench.calibrationBins.filter((b) => b.count > 0);
+    if (activeBins.length > 0) {
+      this.table(
+        section,
+        activeBins.map((b) => [
+          `Predicted ${b.rangeLabel} (n=${b.count})`,
+          `Pred ${(b.predictedMean * 100).toFixed(1)}% vs Actual ${(b.actualRecallRate * 100).toFixed(1)}%`,
+        ]),
+      );
     }
   }
 
