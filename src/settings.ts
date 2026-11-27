@@ -76,6 +76,49 @@ export class IrSettingTab extends PluginSettingTab {
           }),
       );
 
+    const arenaDetails = containerEl.createEl("details", { cls: "ir-drawer-details" });
+    arenaDetails.createEl("summary", {
+      cls: "ir-drawer-summary",
+      text: "SM-20 Algorithm Arena weights (SM-2 · SM-15 · SM-19 · SM-20 · FSRS)",
+    });
+    const arenaBody = arenaDetails.createDiv({ cls: "ir-drawer-details-body" });
+    new Setting(arenaBody)
+      .setName("Auto-adapt Arena weights from recall accuracy")
+      .setDesc(
+        "Nudges the 5 competing algorithms' weights over 100-200 reviews using live recall prediction error (LSRM), matching SuperMemo 20's Algorithm Arena.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.sm20AutoAdaptArena ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.sm20AutoAdaptArena = val;
+            await this.plugin.saveSettings();
+            this.plugin.refreshSchedulerViews();
+          }),
+      );
+    for (const [key, label] of [
+      ["sm2", "SM-2 baseline weight (default 6)"],
+      ["sm15", "SM-15 baseline weight (default 14)"],
+      ["sm19", "SM-19 matrix baseline weight (default 45)"],
+      ["sm20", "SM-20 ML baseline weight (default 25)"],
+      ["fsrs", "FSRS baseline weight (default 10)"],
+    ] as const) {
+      new Setting(arenaBody).setName(label).addSlider((s) =>
+        s
+          .setLimits(0, 100, 1)
+          .setValue(this.plugin.settings.sm20ArenaWeights?.[key] ?? 10)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            this.plugin.settings.sm20ArenaWeights = {
+              ...this.plugin.settings.sm20ArenaWeights,
+              [key]: v,
+            };
+            await this.plugin.saveSettings();
+            this.plugin.refreshSchedulerViews();
+          }),
+      );
+    }
+
     new Setting(containerEl)
       .setName("Item grading scale")
       .setDesc(

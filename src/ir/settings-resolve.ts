@@ -116,6 +116,16 @@ export function resolveSettings(saved: Partial<IrSettings> | null | undefined): 
     recency: Math.round(finite(mercy.recency, defaults.mercyWeights.recency, 0, 10)),
     mode: Math.round(finite(mercy.mode, defaults.mercyWeights.mode ?? 3, 0, 3)),
   };
+  const arena = record(saved.sm20ArenaWeights);
+  result.sm20ArenaWeights = {
+    sm2: finite(arena.sm2, defaults.sm20ArenaWeights.sm2, 0, 100),
+    sm15: finite(arena.sm15, defaults.sm20ArenaWeights.sm15, 0, 100),
+    sm19: finite(arena.sm19, defaults.sm20ArenaWeights.sm19, 0, 100),
+    sm20: finite(arena.sm20, defaults.sm20ArenaWeights.sm20, 0, 100),
+    fsrs: finite(arena.fsrs, defaults.sm20ArenaWeights.fsrs, 0, 100),
+  };
+  result.sm20AutoAdaptArena =
+    saved.sm20AutoAdaptArena === undefined ? true : saved.sm20AutoAdaptArena === true;
   const savedNotices = record(saved.notices);
   result.notices = {
     ...defaults.notices,

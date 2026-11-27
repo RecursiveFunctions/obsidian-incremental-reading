@@ -75,18 +75,21 @@ test("STRIDE Tampering/DoS: restoreSm20Matrix sanitizes NaN, Infinity, and negat
   sincArr[0] = Number.NaN;
   sincArr[1] = Number.POSITIVE_INFINITY;
   sincArr[2] = -999;
-  const predArr = new Array<number>(38 * 30).fill(Number.NaN);
+  const sumsArr = new Array<number>(38 * 30).fill(Number.NaN);
+  const casesArr = new Array<number>(76 * 30).fill(-99);
 
   const restored = restoreSm20Matrix({
     ...clean,
     sinc: sincArr,
-    retrievabilityPredSum: predArr,
+    retrievabilityCases: casesArr,
+    retrievabilitySums: sumsArr,
   });
 
   assert.ok(Number.isFinite(restored.sinc[0]!) && restored.sinc[0]! >= 0.5);
   assert.ok(Number.isFinite(restored.sinc[1]!) && restored.sinc[1]! <= 20);
   assert.ok(Number.isFinite(restored.sinc[2]!) && restored.sinc[2]! >= 0.5);
-  assert.ok(restored.retrievabilityPredSum.every((v) => Number.isFinite(v) && v >= 0));
+  assert.ok(restored.retrievabilityCases.every((v) => Number.isFinite(v) && v >= 0));
+  assert.ok(restored.retrievabilitySums.every((v) => Number.isFinite(v) && v >= 0));
   assert.ok(Number.isFinite(lookupBlendedSinc(restored, 0.2, 5, 0.9)));
 });
 

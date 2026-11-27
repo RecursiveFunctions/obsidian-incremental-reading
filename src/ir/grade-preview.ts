@@ -5,7 +5,14 @@ import { formatDueLabel } from "./due-label";
 import { gradePassesDrill, type FinalDrillMode } from "./drill";
 import { scheduleItem, type PrimaryItemScheduler } from "./item-scheduler";
 import type { Sm20Matrix } from "./sm20-matrix";
-import { smGradeToFsrsGrade, type SmGrade } from "./sm20-scheduler";
+import { smGradeToFsrsGrade, type Sm20ArenaWeights, type SmGrade } from "./sm20-scheduler";
+
+export interface GradePreviewContext {
+  elementId?: string;
+  undoRollCount?: number;
+  sm20ArenaWeights?: Sm20ArenaWeights;
+  sm20AutoAdaptArena?: boolean;
+}
 
 export const PREVIEW_GRADES: readonly Grade[] = ["again", "hard", "good", "easy"];
 export const PREVIEW_SM_GRADES: readonly SmGrade[] = [0, 1, 2, 3, 4, 5];
@@ -26,11 +33,17 @@ export function previewSmGradeDelays(
   requestRetention?: number,
   primaryScheduler: PrimaryItemScheduler = "sm20",
   sm20Matrix?: Sm20Matrix,
+  context?: GradePreviewContext,
 ): Record<SmGrade, number> {
   const out = {} as Record<SmGrade, number>;
   for (const smGrade of PREVIEW_SM_GRADES) {
     out[smGrade] =
-      scheduleItem(card, smGrade, now, { primaryScheduler, requestRetention, sm20Matrix }).stored.due - now;
+      scheduleItem(card, smGrade, now, {
+        primaryScheduler,
+        requestRetention,
+        sm20Matrix,
+        ...context,
+      }).stored.due - now;
   }
   return out;
 }
@@ -41,11 +54,17 @@ export function previewGradeDelays(
   requestRetention?: number,
   primaryScheduler: PrimaryItemScheduler = "fsrs",
   sm20Matrix?: Sm20Matrix,
+  context?: GradePreviewContext,
 ): Record<Grade, number> {
   const out = {} as Record<Grade, number>;
   for (const grade of PREVIEW_GRADES) {
     out[grade] =
-      scheduleItem(card, grade, now, { primaryScheduler, requestRetention, sm20Matrix }).stored.due - now;
+      scheduleItem(card, grade, now, {
+        primaryScheduler,
+        requestRetention,
+        sm20Matrix,
+        ...context,
+      }).stored.due - now;
   }
   return out;
 }

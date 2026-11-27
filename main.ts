@@ -81,6 +81,7 @@ import {
   getSm20MatrixStats,
   gradeToSmGrade,
   recordSm20Outcome,
+  replaySm20CardsFromEvents,
   restoreSm20Matrix,
   SM20_MATRIX_SCHEMA_VERSION,
   snapshotSm20Matrix,
@@ -2253,23 +2254,13 @@ export default class IncrementalReadingPlugin extends Plugin {
   ): Promise<void> {
     const matrix = this.sm20Matrix ?? (await this.ensureSm20Matrix());
     if (!overridden && prevCard && prevCard.reps > 0 && prevCard.stability > 0) {
-      const prevS = prevCard.stability;
-      const prevD01 = storedDifficultyTo01(prevCard.difficulty);
-      const elapsedDays =
-        prevCard.lastReview !== undefined && nextCard.lastReview !== undefined
-          ? Math.max(0, (nextCard.lastReview - prevCard.lastReview) / 86_400_000)
-          : Math.max(0, nextCard.elapsedDays ?? 0);
-      const r = computeSm20Retrievability(elapsedDays, prevS);
-      recordSm20Outcome(matrix, {
-        prevDifficulty01: prevD01,
-        prevStability: prevS,
-        retrievability: r,
-        nextStability: nextCard.stability,
-        smGrade: explicitSmGrade ?? gradeToSmGrade(grade),
-        prevReps: prevCard.reps,
-        prevLapses: prevCard.lapses,
-        elapsedDays,
-      });
+      recordSm20Outcome(
+        matrix,
+        prevCard,
+        nextCard,
+        grade,
+        explicitSmGrade ?? gradeToSmGrade(grade),
+      );
     }
     if (!this.ledger) return;
     const prevCount = this.sm20MatrixMeta?.eventCount ?? 0;
@@ -2294,29 +2285,70 @@ export default class IncrementalReadingPlugin extends Plugin {
 
   public async rebuildSm20MatrixFromHistory(notify = false): Promise<void> {
     if (!this.ledger) return;
-    const events = await this.ledger.loadEvents();
+    const [events, state] = await Promise.all([
+      this.ledger.loadEvents(),
+      this.ledger.load(),
+    ]);
     const sorted = [...events].sort((a, b) => a.lamport - b.lamport || a.id.localeCompare(b.id));
     const headEventId = sorted.length > 0 ? sorted[sorted.length - 1]!.id : null;
     const eventCount = sorted.length;
     const matrix = foldSm20MatrixFromEvents(sorted);
+
+    // Replay full item history to refresh (stability, difficulty) while preserving card due dates
+    if (this.settings.primaryScheduler === "sm20") {
+      const refreshed = replaySm20CardsFromEvents(state.elements.values(), sorted, matrix, {
+        requestRetention: this.settings.desiredRetention,
+        arenaWeights: this.settings.sm20ArenaWeights,
+        autoAdaptArena: this.settings.sm20AutoAdaptArena,
+      });
+      const device = await this.ledger.getDeviceId();
+      let lamport = await this.ledger.nextLamport();
+      const now = Date.now();
+      const refreshEvents: IrEvent[] = [];
+      for (const [elId, nextCard] of refreshed.entries()) {
+        const curCard = state.elements.get(elId)?.card;
+        if (
+          curCard &&
+          (Math.abs(curCard.stability - nextCard.stability) > 0.05 ||
+            Math.abs(curCard.difficulty - nextCard.difficulty) > 0.05)
+        ) {
+          refreshEvents.push({
+            id: newEventId(),
+            ts: now,
+            lamport: lamport++,
+            device,
+            kind: "mercy-postponed",
+            target: elId,
+            payload: {
+              operation: "manual-reschedule",
+              card: nextCard, // due date preserved identically from curCard!
+            },
+          });
+        }
+      }
+      if (refreshEvents.length > 0) {
+        await this.ledger.appendEvents(refreshEvents);
+      }
+    }
+
     this.sm20Matrix = matrix;
     this.sm20MatrixMeta = {
       baseline: undefined,
       baselineCursorEventId: null,
       headEventId,
-      eventCount,
+      eventCount: sorted.length,
     };
     await this.ledger.writeSm20Matrix({
       schemaVersion: SM20_MATRIX_SCHEMA_VERSION,
       matrix: snapshotSm20Matrix(matrix),
       headEventId,
-      eventCount,
+      eventCount: sorted.length,
     });
     this.refreshSchedulerViews();
     if (notify) {
       const stats = getSm20MatrixStats(matrix);
       new Notice(
-        `Incremental Reading: rebuilt SM-20 matrix (${stats.totalSincCases} SInc, ${stats.totalRecallCases} Recall observations).`,
+        `Incremental Reading: rebuilt SM-20 v4 matrix (${stats.totalSincCases} SInc, ${stats.totalRecallCases} Recall, ${matrix.arenaCases} Arena observations).`,
       );
     }
   }

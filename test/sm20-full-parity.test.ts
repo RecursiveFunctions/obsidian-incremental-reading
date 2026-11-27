@@ -185,8 +185,8 @@ test("6-point SuperMemo grades (0..5) schedule monotonically and interoperate wi
   );
 });
 
-test("Sm20Matrix schema v3 encodes/decodes all 8 alg17 .dat files and records rep-1, post-lapse, calibration & difficulty bins", () => {
-  assert.equal(SM20_MATRIX_SCHEMA_VERSION, 3);
+test("Sm20Matrix schema v4 encodes/decodes all 8 alg17 .dat files and records rep-1, post-lapse, calibration & difficulty bins", () => {
+  assert.equal(SM20_MATRIX_SCHEMA_VERSION, 4);
   assert.equal(SM20_FIRST_INTERVAL_RECORD_BYTES, 0xf810);
   assert.equal(SM20_FORGETTING_CURVE_RECORD_BYTES, 0x90);
   assert.equal(SM20_RETRIEVABILITY_RECORD_BYTES, 0x23a0);
@@ -232,7 +232,7 @@ test("Sm20Matrix schema v3 encodes/decodes all 8 alg17 .dat files and records re
   assert.deepEqual(getSm20MatrixStats(reparsed), stats);
 
   const snap = snapshotSm20Matrix(reparsed);
-  assert.equal(snap.version, 3);
+  assert.equal(snap.version, 4);
   const restored = restoreSm20Matrix(snap);
   assert.deepEqual(getSm20MatrixStats(restored), stats);
 });

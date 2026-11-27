@@ -1442,6 +1442,7 @@ export class IrReviewView extends ItemView {
     return hasCloze(raw) || hasOcclusion(raw) || hasInteractiveQuiz(raw);
   }
   private lastTypedAnswerBySlot = new Map<string, string>();
+  private undoRollCountBySlot = new Map<string, number>();
 
   /**
    * Ctrl-multi-select controller, injected by the host plugin. Held spans
@@ -4729,6 +4730,10 @@ export class IrReviewView extends ItemView {
     }
     this.gradedSlotIds.delete(result.targetId);
     this.processedSlotIds.delete(result.targetId);
+    this.undoRollCountBySlot.set(
+      result.targetId,
+      (this.undoRollCountBySlot.get(result.targetId) ?? 0) + 1,
+    );
     if (this.drillEnqueuedByGrade.delete(result.targetId)) {
       try {
         const dayKey = repetitionDayKey();
@@ -6630,6 +6635,12 @@ export class IrReviewView extends ItemView {
       retention,
       this.activePrimaryScheduler(),
       this.getSm20Matrix?.(),
+      {
+        elementId: slot.id,
+        undoRollCount: this.undoRollCountBySlot.get(slot.id) ?? 0,
+        sm20ArenaWeights: this.settings.sm20ArenaWeights,
+        sm20AutoAdaptArena: this.settings.sm20AutoAdaptArena,
+      },
     );
     const out = {} as Record<Grade, string>;
     for (const grade of PREVIEW_GRADES) {
@@ -6660,6 +6671,12 @@ export class IrReviewView extends ItemView {
       retention,
       this.activePrimaryScheduler(),
       this.getSm20Matrix?.(),
+      {
+        elementId: slot.id,
+        undoRollCount: this.undoRollCountBySlot.get(slot.id) ?? 0,
+        sm20ArenaWeights: this.settings.sm20ArenaWeights,
+        sm20AutoAdaptArena: this.settings.sm20AutoAdaptArena,
+      },
     );
     const out = {} as Record<SmGrade, string>;
     for (const smGrade of PREVIEW_SM_GRADES) {
@@ -6789,6 +6806,10 @@ export class IrReviewView extends ItemView {
       primaryScheduler,
       requestRetention: effectiveRetention,
       sm20Matrix,
+      elementId: slot.id,
+      undoRollCount: this.undoRollCountBySlot.get(slot.id) ?? 0,
+      sm20ArenaWeights: this.settings.sm20ArenaWeights,
+      sm20AutoAdaptArena: this.settings.sm20AutoAdaptArena,
     });
     const next = scheduled.card;
     const stored = scheduled.stored;

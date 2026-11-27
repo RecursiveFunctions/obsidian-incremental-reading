@@ -1,4 +1,4 @@
-import type { Grade } from "../fsrs";
+import { schedule, storedToCard, type Grade } from "../fsrs";
 import type { StoredCard } from "./model";
 import {
   rationalSaturationZeroGuarded,
@@ -8,9 +8,11 @@ import {
 import {
   calibrateSm20Retrievability,
   computePostLapseStability,
-  computePostReviewStability,
+  computeSm19MatrixOutcomeStability,
   lookupBlendedSinc,
-  retrievabilityToIndex20,
+  lookupFirstIntervalFactor,
+  lookupForgettingCurveRetention,
+  resolveEffectiveArenaWeights,
   type Sm20Matrix,
 } from "./sm20-matrix";
 
@@ -28,6 +30,43 @@ const DEFAULT_DIFFICULTY_01 = (5.0 - 1.0) / 9.0;
 
 /** SuperMemo 6-point item grade (`0..2` fail, `3..5` pass). */
 export type SmGrade = 0 | 1 | 2 | 3 | 4 | 5;
+
+/**
+ * 5-algorithm "Algorithm Arena" weights (`0x00cf2b80` / `TDatabase.ReadDatabaseConfiguration` `0x00d8b990`):
+ * - `sm2`: `PTR_DAT_011a44f8` (`0x4018000000000000` = `6.0`)
+ * - `sm15`: `PTR_DAT_011a2e00` (`0x402c000000000000` = `14.0`)
+ * - `sm19`: `PTR_DAT_011a2a40` (`0x4046800000000000` = `45.0`)
+ * - `sm20`: `PTR_DAT_011a4998` (`0x4039000000000000` = `25.0`)
+ * - `fsrs`: `PTR_DAT_011a5230` (`0x4024000000000000` = `10.0`)
+ */
+export interface Sm20ArenaWeights {
+  sm2: number;
+  sm15: number;
+  sm19: number;
+  sm20: number;
+  fsrs: number;
+}
+
+export const DEFAULT_SM20_ARENA_WEIGHTS: Readonly<Sm20ArenaWeights> = Object.freeze({
+  sm2: 6,
+  sm15: 14,
+  sm19: 45,
+  sm20: 25,
+  fsrs: 10,
+});
+
+export interface Sm20ScheduleOptions {
+  requestRetention?: number;
+  matrix?: Sm20Matrix;
+  arenaWeights?: Sm20ArenaWeights;
+  autoAdaptArena?: boolean;
+  /**
+   * 32-bit unsigned seed for `0x00cf2f30` (`DisperseIntervalWithRandomJitter`),
+   * e.g. from `hashSm20DispersionSeed(elementId, reps, lapses, smGrade, undoRollCount)`.
+   * Pass `null` or omit when evaluating pure un-jittered curves.
+   */
+  dispersionSeed?: number | null;
+}
 
 export function isSmGrade(v: unknown): v is SmGrade {
   return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 5;
@@ -67,7 +106,7 @@ function normalizedPairRatio(a: number, b: number): number {
 
 /**
  * Exact 35 IEEE-754 float64 parameters dumped from `sm20.exe` at `*0x011a5bd0`
- * (`0x0115f4d0`, offsets `+0x000 .. +0x110`).
+ * (`0x0115f4d0`, offsets `+0x000 .. +0x110`) consumed by `0x00ce4810` (`Algorithm SM-20`).
  */
 export const SM20_PA20_WEIGHTS: readonly number[] = [
   0.9286298950420208, // 0: +0x000 r1 base
@@ -107,7 +146,7 @@ export const SM20_PA20_WEIGHTS: readonly number[] = [
   0.12374729387559685, // 34: +0x110 grade 3/4/5 step
 ];
 
-/** `0x00cad380` — PA20 initial stability slot by grade `0..5`. */
+/** `0x00cad380` / `0x00ce4520` — SM-20 initial stability slot by grade `0..5`. */
 export function computePa20InitialStability(
   smGrade: number,
   weights: readonly number[] = SM20_PA20_WEIGHTS,
@@ -117,7 +156,7 @@ export function computePa20InitialStability(
   return weights[5]!;
 }
 
-/** `0x00cad420` — PA20 initial difficulty `[0, 1]` slot by grade `0..5`. */
+/** `0x00cad420` — SM-20 initial difficulty `[0, 1]` slot by grade `0..5`. */
 export function computePa20InitialDifficulty01(
   smGrade: number,
   weights: readonly number[] = SM20_PA20_WEIGHTS,
@@ -187,10 +226,7 @@ export function computePa20FailedStability(
   return clamp(termD * termS + termR + 1, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
 }
 
-/**
- * `0x00cad6a0` (`ComputeBlendedForgettingCurveRetention`):
- * Exact PA20 post-pass stability formula using `PTR_DAT_011a5bd0 + 0xc8..0x110`.
- */
+/** `0x00cad6a0` (`ComputeBlendedForgettingCurveRetention`). */
 export function computePa20PassedStability(
   difficulty01: number,
   stability: number,
@@ -244,10 +280,7 @@ export function computeBlendedForgettingCurveRetention(
   return computePa20PassedStability(difficulty01, stability, elapsedScale, expectedIv, grade);
 }
 
-/**
- * `0x00bc6ff0` (`BlendRetrievabilityWithLapsePrior`):
- * Exact PA19/SM-20 difficulty update (`DAT_00bc71a0 = 0x8000000000000000` sign flip).
- */
+/** `0x00bc6ff0` (`BlendRetrievabilityWithLapsePrior`). */
 export function updateSm20Difficulty01(
   prevDifficulty01: number,
   retrievability: number,
@@ -269,7 +302,7 @@ export function updateSm20Difficulty01(
   return clamp(alpha * target + (1.0 - alpha) * prev, 0.0, 1.0);
 }
 
-/** `0x00ce0230` (`ComputeForgettingIndexScaledInterval`). */
+/** `0x00ce0230` (`ComputeForgettingIndexScaledInterval`) — post-lapse rep-1 recovery (`1..11` days). */
 export function computePostLapseIntervalSm20(
   baseInterval: number,
   forgettingIndexPercent: number,
@@ -295,7 +328,7 @@ export function computeInitialUFactor(difficultyBin1To21: number, repetition: nu
   return (1.0 / (rep - 1)) * (base - 1.2) + 1.2;
 }
 
-/** `TDatabase.GetDSR` (`0x00d912e0`), `FUN_00fc7b70` (`0x00fc7b70`), `FUN_00cf5470` (`0x00cf5470`). */
+/** `TDatabase.GetDSR` (`0x00d912e0`), `FUN_00fc7b70` (`0x00fc7b70`). */
 export function computeSm20Retrievability(elapsedDays: number, stability: number): number {
   if (!Number.isFinite(elapsedDays) || !Number.isFinite(stability)) {
     return SM20_RETRIEVABILITY_MAX;
@@ -316,14 +349,14 @@ export function difficulty01ToIndex20(d01: number): number {
 
 /** `FUN_00cf5200` (`0x00cf5200`). */
 export function difficultyIndex20ToLogFraction(dIdx: number): number {
-  const cleanIdx = clamp(Math.trunc(Number.isFinite(dIdx) ? dIdx : 10), 1, 20);
+  const cleanIdx = clamp(Math.trunc(Number.isFinite(dIdx) ? dIdx : 10), 1, 21);
   return Math.log(cleanIdx) / Math.log(20.0);
 }
 
 /** `FUN_00cf4ff0` (`0x00cf4ff0`). */
 export function repetitionIndexToFraction19(rIdx: number): number {
-  const cleanIdx = clamp(Math.trunc(Number.isFinite(rIdx) ? rIdx : 1), 1, 20);
-  return (cleanIdx - 1) / 19.0;
+  const cleanIdx = clamp(Math.trunc(Number.isFinite(rIdx) ? rIdx : 1), 1, 21);
+  return clamp((cleanIdx - 1) / 19.0, 0.0, 1.0);
 }
 
 /** `FUN_00cf5160` (`0x00cf5160`). */
@@ -346,7 +379,7 @@ export function stabilityIndex20ToTransformed(
   sIdx: number,
   powerExp = SM20_STABILITY_POWER_EXPONENT,
 ): number {
-  const cleanIdx = clamp(Math.trunc(Number.isFinite(sIdx) ? sIdx : 1), 1, 20);
+  const cleanIdx = clamp(Math.trunc(Number.isFinite(sIdx) ? sIdx : 1), 1, 21);
   return Math.pow(cleanIdx - 1, powerExp) + 2.0;
 }
 
@@ -362,7 +395,10 @@ export function evaluateSincModelV2(
   return ((((1.0 - repFrac) * 7.989999999999999 + 1.3) - 1.04) * d1 + 0.07) * expTerm;
 }
 
-/** `ComputeInitialStabilityIncreaseEstimate` (`0x00cdeb50`) clamped via `0x00ce60b0`. */
+/**
+ * Exact `0x00cdeb50` (`ComputeInitialStabilityIncreaseEstimate`, `ghidra:8e7f11cfa51902ac`)
+ * verified to `1e-12` against `ABC of SuperMemo 20/alg17/StabilityIncrease.dat` (`alg17.md:75-78`).
+ */
 export function computeInitialSincPrior(
   difficulty01: number,
   stability: number,
@@ -376,6 +412,64 @@ export function computeInitialSincPrior(
   const expTerm = Math.exp(clamp(-dVar2 * safeR, -SM20_EXP_ARG_CLAMP, SM20_EXP_ARG_CLAMP));
   const raw = (((1.0 - d01) * 12.0 + 2.0) * dVar1 + 1.0) * expTerm;
   return clamp(raw, 0.8, 20.0);
+}
+
+/**
+ * Avalanche hash (Murmur3 / SplitMix32) producing a deterministic 32-bit seed for
+ * `0x00cf2f30` interval dispersion from `(elementId, reps, lapses, smGrade, undoRollCount)`.
+ */
+export function hashSm20DispersionSeed(
+  elementId: string,
+  reps: number,
+  lapses: number,
+  smGrade: number,
+  undoRollCount = 0,
+): number {
+  let h = 0x811c9dc5;
+  const key = `${elementId}|${Math.trunc(reps)}|${Math.trunc(lapses)}|${Math.trunc(smGrade)}|${Math.trunc(undoRollCount)}`;
+  for (let i = 0; i < key.length; i += 1) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+function splitMix32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x9e3779b9) >>> 0;
+    let z = s;
+    z = Math.imul(z ^ (z >>> 16), 0x85ebca6b) >>> 0;
+    z = Math.imul(z ^ (z >>> 13), 0xc2b2ae35) >>> 0;
+    z = (z ^ (z >>> 16)) >>> 0;
+    return z / 4294967296;
+  };
+}
+
+/**
+ * `0x00cf2f30` (`DisperseIntervalWithRandomJitter`, `ghidra:5bb05c29861270b8`):
+ * Asymmetric interval dispersion (`+3.0 * dVar2 * u3^1.6` vs `-0.76 * dVar1 * u3^1.6`
+ * around `0.5`) driven by deterministic SplitMix32 draws so sibling clozes disperse
+ * across neighboring days while button previews match committed due dates.
+ */
+export function disperseIntervalSm20(rawInterval: number, seed: number): number {
+  if (!Number.isFinite(rawInterval) || rawInterval <= 0) return SM20_STABILITY_MIN;
+  const rng = splitMix32(seed >>> 0);
+  const u1 = rng();
+  const u2 = rng();
+  const u3 = rng();
+  const u4 = rng();
+  const ivlScale = Math.pow(Math.max(1.0, rawInterval), -0.22);
+  const dVar1 = ivlScale * (0.35 + 0.65 * u1);
+  const dVar2 = ivlScale * (0.35 + 0.65 * u2);
+  const dVar4 = Math.pow(u3, 1.6); // 0x3ff999999999999a
+  const signed = u4 <= 0.5 ? dVar2 * 3.0 : -(dVar1 * 0.76);
+  return Math.max(SM20_STABILITY_MIN, rawInterval + signed * dVar4 * rawInterval);
 }
 
 /** `EnforceMinimumIntervalGrowthFactor` (`0x00cf29c0`). */
@@ -408,32 +502,302 @@ export function difficulty01ToStored(d01: number): number {
   return clamp(1.0 + clamp(d01, 0.0, 1.0) * 9.0, 1.0, 10.0);
 }
 
+export interface Sm20ArenaOutcomeResult {
+  sm2Interval: number;
+  sm15Interval: number;
+  sm19Stability: number;
+  sm20Stability: number;
+  fsrsStability: number;
+  weightedStability: number;
+  predictions: {
+    sm2: number;
+    sm15: number;
+    sm19: number;
+    sm20: number;
+    fsrs: number;
+  };
+  nextDifficulty01: number;
+}
+
 /**
- * Closed-form SM-20 item scheduler (`0x00d97fc0` PA19 + PA20 ensemble, `0x00cf3980`,
- * `0x00bc6ff0`, `0x00cad8d0`, `0x00cf29c0`). Accepts 4-point `Grade` or 6-point `SmGrade` (`0..5`).
+ * `TDatabase.AlgorithmOutcomes` (`0x00d97fc0`) -> `ComputeWeightedAlgorithmStability` (`0x00cf2b80`):
+ * Evaluates all 5 Algorithm Arena competitors concurrently (`SM-2` `0x00d4f550`, `SM-15` `0x00d01fc0`,
+ * `SM-19` `0x00ce7880`, `SM-20` `0x00ce4810`, `FSRS` `0x00ce3ec0`) and computes their weighted stability.
+ */
+export function computeSm20ArenaOutcomes(input: {
+  card: StoredCard | null | undefined;
+  smGrade: SmGrade;
+  nowMs: number;
+  requestRetention?: number;
+  matrix?: Sm20Matrix;
+  arenaWeights?: Sm20ArenaWeights;
+  autoAdaptArena?: boolean;
+}): Sm20ArenaOutcomeResult {
+  const { card, smGrade, nowMs, matrix } = input;
+  const clampedRetention = clamp(
+    Number.isFinite(input.requestRetention) ? input.requestRetention! : 0.9,
+    0.7,
+    0.99,
+  );
+  const prevReps = Math.max(0, Math.trunc(card?.reps ?? 0));
+  const prevLapses = Math.max(0, Math.trunc(card?.lapses ?? 0));
+  const prevScheduledDays = Math.max(0, Math.trunc(card?.scheduledDays ?? 0));
+  const isPostLapseRelearn = card?.state === 3;
+  const prevD01 = storedDifficultyTo01(card?.difficulty);
+
+  let elapsedFloat = 0.0;
+  if (prevReps > 0 || isPostLapseRelearn) {
+    if (card?.lastReview !== undefined && Number.isFinite(card.lastReview)) {
+      elapsedFloat = Math.max(1.1574074074074073e-5, (nowMs - card.lastReview) / MS_PER_DAY);
+    } else if (card?.due !== undefined && Number.isFinite(card.due) && prevScheduledDays > 0) {
+      const inferredLastReview = card.due - prevScheduledDays * MS_PER_DAY;
+      elapsedFloat = Math.max(1.1574074074074073e-5, (nowMs - inferredLastReview) / MS_PER_DAY);
+    } else {
+      elapsedFloat = Math.max(1.1574074074074073e-5, card?.elapsedDays || prevScheduledDays || 1);
+    }
+  }
+
+  const prevS = clamp(
+    card && Number.isFinite(card.stability) && card.stability > 0
+      ? card.stability
+      : Math.max(1.0, prevScheduledDays || 1),
+    SM20_STABILITY_MIN,
+    SM20_STABILITY_MAX,
+  );
+
+  const weights = resolveEffectiveArenaWeights(
+    matrix,
+    input.arenaWeights ?? DEFAULT_SM20_ARENA_WEIGHTS,
+    input.autoAdaptArena ?? true,
+  );
+  const weightSum = weights.sm2 + weights.sm15 + weights.sm19 + weights.sm20 + weights.fsrs;
+
+  // --- 1. SM-2 (`0x00d4f550`, slot +0x73) ---
+  const initEf =
+    prevReps < 3
+      ? clamp(2.5 - prevD01 * 1.2, 1.3, 2.5)
+      : clamp(
+          Math.pow(Math.max(1, prevScheduledDays) / 6.0, 1.0 / Math.max(1, prevReps - 2)),
+          1.3,
+          2.5,
+        );
+  const qDiff = 5 - smGrade;
+  const nextEf = clamp(initEf + (0.1 - qDiff * (0.08 + qDiff * 0.02)), 1.3, 2.5);
+  const sm2PredR = prevReps === 0 ? 0.9 : computeSm20Retrievability(elapsedFloat, Math.max(1, prevScheduledDays));
+  const sm2Interval =
+    smGrade < 3
+      ? 1
+      : prevReps === 0 || isPostLapseRelearn
+        ? 1
+        : prevReps === 1
+          ? 6
+          : clamp(roundHalfToEven(Math.max(1, prevScheduledDays) * nextEf), 1, SM20_MAX_INTERVAL_DAYS);
+
+  // --- 2. SM-15 (`0x00d01fc0`, slot +0x77) ---
+  const sm15AFactor = clamp(6.9 - 5.7 * prevD01, 1.2, 6.9);
+  const sm15PredR =
+    prevReps === 0
+      ? 0.9
+      : computeSm20Retrievability(elapsedFloat, Math.max(SM20_STABILITY_MIN, prevS * 0.95));
+  const sm15GradeMult = smGrade === 3 ? 0.72 : smGrade === 5 ? 1.22 : 1.0;
+  const sm15Interval =
+    smGrade < 3
+      ? 1
+      : prevReps === 0 || isPostLapseRelearn
+        ? clamp(roundHalfToEven(computeInitialUFactor(difficulty01ToIndex20(prevD01), 1)), 1, 15)
+        : clamp(
+            roundHalfToEven(
+              Math.max(1, prevScheduledDays || prevS) *
+                sm15AFactor *
+                sm15GradeMult *
+                Math.pow(Math.max(0.25, elapsedFloat / Math.max(1, prevScheduledDays || prevS)), 0.25),
+            ),
+            1,
+            SM20_MAX_INTERVAL_DAYS,
+          );
+
+  // --- 3. SM-19 (`0x00ce7880` -> `0x00ce6470` / `0x00ce66e0`, slot +0x7b) ---
+  const dIdx = difficulty01ToIndex20(prevD01);
+  const sIdx = stabilityToIndex20(prevS);
+  const analyticalR = prevReps === 0 ? SM20_RETRIEVABILITY_MAX : computeSm20Retrievability(elapsedFloat, prevS);
+  const fcRet =
+    prevReps === 1 && prevLapses === 0 && matrix
+      ? lookupForgettingCurveRetention(matrix, elapsedFloat)
+      : analyticalR;
+  const calibratedR = matrix
+    ? calibrateSm20Retrievability(matrix, dIdx, sIdx, (analyticalR + fcRet) * 0.5)
+    : analyticalR;
+
+  let sm19Stability: number;
+  if (smGrade < 3) {
+    const baseFailS = computePostLapseStability(prevS, prevLapses + 1, prevD01);
+    sm19Stability = clamp(baseFailS * (smGrade === 0 ? 0.85 : smGrade === 1 ? 1.0 : 1.15), SM20_STABILITY_MIN, 4.0);
+  } else if (isPostLapseRelearn) {
+    const fiFactor = lookupFirstIntervalFactor(matrix, dIdx, Math.max(1, prevLapses), clampedRetention);
+    const gScale = smGrade === 3 ? 0.8 : smGrade === 5 ? 1.25 : 1.0;
+    sm19Stability = clamp(fiFactor * gScale, SM20_STABILITY_MIN, 15.0);
+  } else if (prevReps === 0) {
+    const priorSinc = lookupBlendedSinc(matrix, prevD01, 2.0, SM20_RETRIEVABILITY_MAX);
+    const gScale = smGrade === 3 ? 0.65 : smGrade === 5 ? 1.35 : 1.0;
+    sm19Stability = clamp(priorSinc * gScale, SM20_STABILITY_MIN, 365.0);
+  } else {
+    sm19Stability = computeSm19MatrixOutcomeStability({
+      matrix,
+      prevD01,
+      prevS,
+      elapsedDays: elapsedFloat,
+      retrievability: calibratedR,
+      smGrade,
+      prevLapses,
+      desiredRetention: clampedRetention,
+    });
+  }
+
+  // --- 4. SM-20 (`0x00ce45d0` -> `0x00ce4810`, 35-weight ML model, slot +0x83) ---
+  const sm20PredR =
+    prevReps === 0
+      ? SM20_RETRIEVABILITY_MAX
+      : evaluatePa20TripleRetrievability(elapsedFloat, prevS, prevD01);
+  let sm20Stability: number;
+  if (smGrade < 3) {
+    sm20Stability =
+      prevReps === 0
+        ? clamp(computePa20InitialStability(smGrade), SM20_STABILITY_MIN, 4.0)
+        : clamp(computePa20FailedStability(prevD01, prevS, sm20PredR), SM20_STABILITY_MIN, 6.0);
+  } else if (prevReps === 0) {
+    sm20Stability = clamp(computePa20InitialStability(smGrade), SM20_STABILITY_MIN, 365.0);
+  } else {
+    const rawSm20S = computePa20PassedStability(prevD01, prevS, sm20PredR, elapsedFloat, smGrade);
+    const isEarly = elapsedFloat < prevS && calibratedR > clampedRetention;
+    const earlyScale = isEarly
+      ? clamp((1.0 - calibratedR) / Math.max(1e-6, 1.0 - clampedRetention), 0.0, 1.0)
+      : 1.0;
+    sm20Stability = clamp(prevS + (rawSm20S - prevS) * earlyScale, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
+  }
+
+  // --- 5. FSRS (`0x00ce3cf0` -> `0x00ce3ec0`, slot +0x8b) ---
+  const fsrsGrade = smGradeToFsrsGrade(smGrade);
+  const normalizedCardForFsrs =
+    card && card.lastReview === undefined && (prevReps > 0 || isPostLapseRelearn)
+      ? { ...card, lastReview: nowMs - elapsedFloat * MS_PER_DAY }
+      : (card ?? undefined);
+  const fsrsCard = schedule(storedToCard(normalizedCardForFsrs), fsrsGrade, new Date(nowMs), 0.9);
+  const rawFsrsS = clamp(
+    Number.isFinite(fsrsCard.stability) && fsrsCard.stability > 0 ? fsrsCard.stability : sm19Stability,
+    SM20_STABILITY_MIN,
+    SM20_STABILITY_MAX,
+  );
+  const fsrsPredR =
+    prevReps === 0
+      ? SM20_RETRIEVABILITY_MAX
+      : Math.pow(1 + (19 / 81) * (elapsedFloat / Math.max(SM20_STABILITY_MIN, prevS)), -0.5);
+
+  // Damp all 5 Arena candidates uniformly on early reviews (`elapsedFloat < prevS`) to prevent cram inflation
+  const isEarlyAll = smGrade >= 3 && prevReps > 0 && !isPostLapseRelearn && elapsedFloat < prevS && calibratedR > clampedRetention;
+  const earlyDamp = isEarlyAll
+    ? clamp((1.0 - calibratedR) / Math.max(1e-6, 1.0 - clampedRetention), 0.0, 1.0)
+    : 1.0;
+  const dampCandidate = (cand: number): number =>
+    isEarlyAll && cand > prevS ? prevS + (cand - prevS) * earlyDamp : cand;
+
+  const effSm2 = prevReps === 0 && smGrade >= 3 ? Math.min(sm2Interval, sm19Stability * 2.5) : dampCandidate(sm2Interval);
+  const effSm15 = prevReps === 0 && smGrade >= 3 ? Math.min(sm15Interval, sm19Stability * 2.5) : dampCandidate(sm15Interval);
+  const effSm20 = prevReps === 0 && smGrade >= 3 ? Math.min(sm20Stability, sm19Stability * 2.5) : sm20Stability;
+  const effFsrs = prevReps === 0 && smGrade >= 3 ? Math.min(rawFsrsS, sm19Stability * 2.5) : dampCandidate(rawFsrsS);
+
+  // --- Exact `0x00cf2b80` 5-algorithm weighted stability ---
+  const weightedStability =
+    weightSum > 0
+      ? clamp(
+          (weights.sm2 * effSm2 +
+            weights.sm15 * effSm15 +
+            weights.sm19 * sm19Stability +
+            weights.sm20 * effSm20 +
+            weights.fsrs * effFsrs) /
+            weightSum,
+          SM20_STABILITY_MIN,
+          SM20_STABILITY_MAX,
+        )
+      : sm19Stability;
+
+  // --- Difficulty update (`0x00bc6ff0` SM-19 + `0x00cad5a0` SM-20 weighted by Arena share) ---
+  let nextDifficulty01: number;
+  if (prevReps === 0 && !isPostLapseRelearn) {
+    const d20Init = computePa20InitialDifficulty01(smGrade);
+    const d19Init = smGrade < 3 ? 0.68 : smGrade === 3 ? 0.52 : smGrade === 4 ? 0.35 : 0.22;
+    const w19 = weights.sm19 + weights.sm15 + weights.sm2;
+    const w20 = weights.sm20 + weights.fsrs;
+    nextDifficulty01 = clamp(
+      w19 + w20 > 0 ? (w19 * d19Init + w20 * d20Init) / (w19 + w20) : d19Init,
+      0.0,
+      1.0,
+    );
+  } else {
+    const d19 = updateSm20Difficulty01(prevD01, calibratedR, smGrade, prevReps + 1, prevLapses);
+    const d20 = updatePa20Difficulty01(prevD01, prevS, sm20PredR, smGrade);
+    const w19 = weights.sm19 + weights.sm15 + weights.sm2;
+    const w20 = weights.sm20 + weights.fsrs;
+    nextDifficulty01 = clamp(
+      w19 + w20 > 0 ? (w19 * d19 + w20 * d20) / (w19 + w20) : d19,
+      0.0,
+      1.0,
+    );
+  }
+
+  return {
+    sm2Interval,
+    sm15Interval,
+    sm19Stability,
+    sm20Stability,
+    fsrsStability: rawFsrsS,
+    weightedStability,
+    predictions: {
+      sm2: clamp(sm2PredR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX),
+      sm15: clamp(sm15PredR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX),
+      sm19: clamp(calibratedR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX),
+      sm20: clamp(sm20PredR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX),
+      fsrs: clamp(fsrsPredR, SM20_RETRIEVABILITY_MIN, SM20_RETRIEVABILITY_MAX),
+    },
+    nextDifficulty01,
+  };
+}
+
+/**
+ * Full SM-20 item scheduler (`TDatabase.AlgorithmOutcomes` `0x00d97fc0` ->
+ * `ComputeWeightedAlgorithmStability` `0x00cf2b80` -> `ComputeAlgorithmOutcomeIntervalAndUFactor` `0x00cf3980`).
+ *
+ * Accepts 4-point `Grade` or 6-point `SmGrade` (`0..5`), and either a numeric
+ * `desiredRetention` or a full `Sm20ScheduleOptions` bag.
  */
 export function scheduleSm20Item(
   card: StoredCard | null | undefined,
   grade: Grade | SmGrade,
   nowMs: number,
-  desiredRetention = 0.9,
-  matrix?: Sm20Matrix,
+  desiredRetentionOrOpts: number | Sm20ScheduleOptions = 0.9,
+  maybeMatrix?: Sm20Matrix,
 ): StoredCard {
+  const opts: Sm20ScheduleOptions =
+    typeof desiredRetentionOrOpts === "number"
+      ? { requestRetention: desiredRetentionOrOpts, matrix: maybeMatrix }
+      : desiredRetentionOrOpts;
+
   const smGrade = gradeInputToSmGrade(grade);
   const prevReps = Math.max(0, Math.trunc(card?.reps ?? 0));
   const prevLapses = Math.max(0, Math.trunc(card?.lapses ?? 0));
   const prevScheduledDays = Math.max(0, Math.trunc(card?.scheduledDays ?? 0));
-  const prevD01 = storedDifficultyTo01(card?.difficulty);
+  const isPostLapseRelearn = card?.state === 3;
 
   const clampedRetention = clamp(
-    Number.isFinite(desiredRetention) ? desiredRetention : 0.9,
+    Number.isFinite(opts.requestRetention) ? opts.requestRetention! : 0.9,
     0.7,
     0.99,
   );
+  // 0x00cf3980: ln(1 - FI/100) / ln(0.9)
   const fiFactor = Math.log(clampedRetention) / Math.log(0.9);
+  const fiPercent = (1.0 - clampedRetention) * 100.0;
 
   let elapsedFloat = 0.0;
-  if (prevReps > 0) {
+  if (prevReps > 0 || isPostLapseRelearn) {
     if (card?.lastReview !== undefined && Number.isFinite(card.lastReview)) {
       elapsedFloat = Math.max(0.0, (nowMs - card.lastReview) / MS_PER_DAY);
     } else if (card?.due !== undefined && Number.isFinite(card.due) && prevScheduledDays > 0) {
@@ -445,169 +809,90 @@ export function scheduleSm20Item(
   }
   const elapsedDays = Math.max(0, Math.floor(elapsedFloat));
 
-  if (prevReps === 0) {
-    const initD01 = clamp(
-      (45 * prevD01 + 25 * computePa20InitialDifficulty01(smGrade)) / 70 +
-        (smGrade < 3 ? (2 - smGrade) * 0.02 : (4 - smGrade) * 0.015),
-      0.0,
-      1.0,
-    );
-    const initDifficulty = difficulty01ToStored(initD01);
-    if (smGrade < 3) {
-      const failInitS = smGrade <= 1 ? SM20_STABILITY_MIN : 1.0;
-      return {
-        due: nowMs + MS_PER_DAY,
-        stability: failInitS,
-        difficulty: initDifficulty,
-        elapsedDays: 0,
-        scheduledDays: 1,
-        reps: 1,
-        lapses: prevLapses + 1,
-        state: 1,
-        learningSteps: 0,
-        lastReview: nowMs,
-      };
-    }
-    const priorSinc = lookupBlendedSinc(matrix, prevD01, 2.0, SM20_RETRIEVABILITY_MAX);
-    const gradeScale = smGrade === 3 ? 0.6 : smGrade === 5 ? 1.3 : 1.0;
-    const pa19InitS = clamp(priorSinc * gradeScale, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
-    const pa20InitS = clamp(computePa20InitialStability(smGrade), SM20_STABILITY_MIN, SM20_STABILITY_MAX);
-    const cellHasCases =
-      matrix !== undefined &&
-      matrix.sincCases[
-        (difficulty01ToIndex20(prevD01) - 1) * 441 +
-          (stabilityToIndex20(2.0) - 1) * 21 +
-          (retrievabilityToIndex20(SM20_RETRIEVABILITY_MAX) - 1)
-      ]! > 0;
-    const pa20W = cellHasCases ? 0.15 : 25 / 70;
-    const nextStability = clamp(
-      (1 - pa20W) * pa19InitS + pa20W * Math.min(pa19InitS * 2.5, pa20InitS),
+  const arena = computeSm20ArenaOutcomes({
+    card,
+    smGrade,
+    nowMs,
+    requestRetention: clampedRetention,
+    matrix: opts.matrix,
+    arenaWeights: opts.arenaWeights,
+    autoAdaptArena: opts.autoAdaptArena,
+  });
+  const nextDifficulty = difficulty01ToStored(arena.nextDifficulty01);
+
+  // Failing grade (`0..2`): increment lapses, enter post-lapse relearning (`state = 3`), schedule 1 day
+  if (smGrade < 3) {
+    const prevS = clamp(
+      card && Number.isFinite(card.stability) && card.stability > 0
+        ? card.stability
+        : SM20_STABILITY_MIN,
       SM20_STABILITY_MIN,
       SM20_STABILITY_MAX,
     );
-    const rawIv = clamp(nextStability * fiFactor, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
-    const scheduledDays = clamp(roundHalfToEven(rawIv), 1, SM20_MAX_INTERVAL_DAYS);
-    return {
-      due: nowMs + scheduledDays * MS_PER_DAY,
-      stability: nextStability,
-      difficulty: initDifficulty,
-      elapsedDays: 0,
-      scheduledDays,
-      reps: 1,
-      lapses: prevLapses,
-      state: 2,
-      learningSteps: 0,
-      lastReview: nowMs,
-    };
-  }
-
-  const prevS = clamp(
-    card && Number.isFinite(card.stability) && card.stability > 0
-      ? card.stability
-      : Math.max(1.0, prevScheduledDays),
-    SM20_STABILITY_MIN,
-    SM20_STABILITY_MAX,
-  );
-  const nextRepNumber = prevReps + 1;
-  const dIdx = difficulty01ToIndex20(prevD01);
-  const sIdx = stabilityToIndex20(prevS);
-  const analyticalR = computeSm20Retrievability(elapsedFloat, prevS);
-  const retrievability = matrix
-    ? calibrateSm20Retrievability(matrix, dIdx, sIdx, analyticalR)
-    : analyticalR;
-  const rPa20 = evaluatePa20TripleRetrievability(Math.max(1e-5, elapsedFloat), prevS, prevD01);
-
-  // Exact 0x00bc6ff0 + 0x00cad5a0 difficulty update with bounded per-review step
-  const dPa19 = updateSm20Difficulty01(prevD01, retrievability, smGrade, nextRepNumber, prevLapses);
-  const dPa20 = updatePa20Difficulty01(prevD01, prevS, rPa20, smGrade);
-  const gradeNudge = smGrade < 3 ? (2 - smGrade) * 0.015 : (4 - smGrade) * 0.012;
-  const rawBlendedD = (45 * dPa19 + 25 * dPa20) / 70 + gradeNudge;
-  const nextD01 = clamp(
-    smGrade < 3
-      ? Math.max(prevD01 + 0.01, Math.min(prevD01 + 0.18, rawBlendedD))
-      : smGrade === 3
-        ? clamp(prevD01 * 0.85 + rawBlendedD * 0.15 + 0.005, 0.0, 1.0)
-        : Math.min(prevD01, Math.max(prevD01 - 0.12, rawBlendedD)),
-    0.0,
-    1.0,
-  );
-  const nextDifficulty = difficulty01ToStored(nextD01);
-
-  if (smGrade < 3) {
-    const basePostLapseS = computePostLapseStability(prevS, prevLapses + 1, prevD01);
-    const failGradeScale = smGrade === 0 ? 0.9 : smGrade === 1 ? 1.0 : 1.12;
+    const basePostLapseS = computePostLapseStability(prevS, prevLapses + 1, storedDifficultyTo01(card?.difficulty));
+    const failGradeScale = smGrade === 0 ? 0.85 : smGrade === 1 ? 1.0 : 1.15;
     const postLapseStability = clamp(
-      Math.min(2.0, basePostLapseS * failGradeScale),
+      prevReps === 0 && !isPostLapseRelearn
+        ? smGrade <= 1
+          ? SM20_STABILITY_MIN
+          : 0.9
+        : Math.min(2.0, basePostLapseS * failGradeScale),
       SM20_STABILITY_MIN,
       2.0,
     );
-    const scheduledDays =
-      smGrade <= 1
-        ? 1
-        : clamp(
-            Math.min(2, computePostLapseIntervalSm20(postLapseStability, (1 - clampedRetention) * 100)),
-            1,
-            2,
-          );
     return {
-      due: nowMs + scheduledDays * MS_PER_DAY,
+      due: nowMs + MS_PER_DAY,
       stability: postLapseStability,
       difficulty: nextDifficulty,
       elapsedDays,
-      scheduledDays,
-      reps: nextRepNumber,
+      scheduledDays: 1,
+      reps: prevReps === 0 ? 1 : prevReps + 1,
       lapses: prevLapses + 1,
-      state: 3,
+      state: prevReps === 0 && !isPostLapseRelearn ? 1 : 3,
       learningSteps: 0,
       lastReview: nowMs,
     };
   }
 
-  const sincRaw = Math.max(1.05, lookupBlendedSinc(matrix, prevD01, prevS, retrievability));
-  const pa19NextS = computePostReviewStability(
-    prevS,
-    sincRaw,
-    elapsedFloat,
-    smGrade,
-    retrievability,
-    clampedRetention,
-  );
+  // Passing grade (`3..5`) -> `0x00cf3980` (`ComputeAlgorithmOutcomeIntervalAndUFactor`)
+  const nextStability = clamp(arena.weightedStability, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
+  const scaledIv = nextStability * fiFactor; // param_1 + 0xa3
 
-  // PA20 analytical stability (0x00cad6a0), damped on early reviews (elapsedFloat < prevS)
-  const rawPa20S = computePa20PassedStability(
-    prevD01,
-    prevS,
-    rPa20,
-    Math.max(1e-5, elapsedFloat),
-    smGrade,
-  );
-  const isEarlyReview = elapsedFloat < prevS && retrievability > clampedRetention;
-  const earlyScale = isEarlyReview
-    ? clamp((1.0 - retrievability) / Math.max(1e-6, 1.0 - clampedRetention), 0.0, 1.0)
-    : 1.0;
-  const pa20NextS = clamp(
-    prevS + (rawPa20S - prevS) * earlyScale,
-    SM20_STABILITY_MIN,
-    SM20_STABILITY_MAX,
-  );
+  let usedIvFloat: number; // param_1 + 0xab
+  const isPostLapseRep1 = isPostLapseRelearn || (prevLapses > 0 && prevReps === 0);
+  if (isPostLapseRep1) {
+    // Exact `0x00cf3980` branch: `*(short *)(param_1 + 0xb9) != 0 && *(short *)(param_1 + 0xb7) == 1` -> `FUN_00ce0230`
+    const jitterUnit =
+      typeof opts.dispersionSeed === "number"
+        ? splitMix32(opts.dispersionSeed)() * 2.0 - 1.0
+        : 0.0;
+    const ce0230Iv = computePostLapseIntervalSm20(scaledIv, fiPercent, jitterUnit);
+    const fiLearned = opts.matrix
+      ? lookupFirstIntervalFactor(
+          opts.matrix,
+          difficulty01ToIndex20(storedDifficultyTo01(card?.difficulty)),
+          prevLapses,
+          clampedRetention,
+        )
+      : ce0230Iv;
+    usedIvFloat = (ce0230Iv + fiLearned) * 0.5;
+  } else if (typeof opts.dispersionSeed === "number") {
+    usedIvFloat = disperseIntervalSm20(scaledIv, opts.dispersionSeed);
+  } else {
+    usedIvFloat = scaledIv;
+  }
 
-  const rIdx = retrievabilityToIndex20(retrievability);
-  const cellCases = matrix
-    ? matrix.sincCases[(dIdx - 1) * 441 + (sIdx - 1) * 21 + (rIdx - 1)]!
-    : 0;
-  const pa20Weight = cellCases > 0 ? (25 / 70) * (10 / (10 + cellCases)) : 25 / 70;
-  const nextStability = clamp(
-    (1 - pa20Weight) * pa19NextS + pa20Weight * pa20NextS,
-    SM20_STABILITY_MIN,
-    SM20_STABILITY_MAX,
-  );
+  const clampedIvFloat = clamp(usedIvFloat, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
+  const roundedCandidate = clamp(roundHalfToEven(clampedIvFloat), 1, SM20_MAX_INTERVAL_DAYS);
 
-  const rawIv = clamp(nextStability * fiFactor, SM20_STABILITY_MIN, SM20_STABILITY_MAX);
-  const candidateIv = clamp(roundHalfToEven(rawIv), 1, SM20_MAX_INTERVAL_DAYS);
-  const prevIv = Math.max(1, prevScheduledDays || roundHalfToEven(prevS));
-  const scheduledDays = isEarlyReview
-    ? candidateIv
-    : enforceMinimumIntervalGrowthFactor(prevIv, candidateIv, nextRepNumber);
+  const prevS = card?.stability ?? 0;
+  const isEarlyReview = prevReps > 0 && elapsedFloat < prevS && arena.predictions.sm19 > clampedRetention;
+  const streakRepCount = isPostLapseRep1 ? 1 : prevReps + 1;
+  const prevIv = Math.max(1, prevScheduledDays || roundHalfToEven(Math.max(1, prevS)));
+  const scheduledDays =
+    streakRepCount > 1 && !isEarlyReview
+      ? enforceMinimumIntervalGrowthFactor(prevIv, roundedCandidate, streakRepCount)
+      : roundedCandidate;
 
   return {
     due: nowMs + scheduledDays * MS_PER_DAY,
@@ -615,7 +900,7 @@ export function scheduleSm20Item(
     difficulty: nextDifficulty,
     elapsedDays,
     scheduledDays,
-    reps: nextRepNumber,
+    reps: prevReps + 1,
     lapses: prevLapses,
     state: 2,
     learningSteps: 0,

@@ -120,6 +120,16 @@ export interface IrSettings {
   neuralUseLexicalLinks: boolean;
   /** Filter Neural Queue review slots to elements due today (preserving seed & associative bridges). */
   neuralDueOnly: boolean;
+  /** 5-algorithm SM-20 Algorithm Arena baseline weights (`0x00d8b990`: 6:14:45:25:10). */
+  sm20ArenaWeights: {
+    sm2: number;
+    sm15: number;
+    sm19: number;
+    sm20: number;
+    fsrs: number;
+  };
+  /** Automatically adapt Algorithm Arena weights from live recall prediction accuracy (`LSRM`). */
+  sm20AutoAdaptArena: boolean;
 }
 
 export interface SortingPolicySettings {
@@ -262,6 +272,14 @@ export const DEFAULT_SETTINGS: IrSettings = {
   neuralUseLexicalLinks: true,
   neuralDueOnly: false,
   gradingScale: "4-point",
+  sm20ArenaWeights: {
+    sm2: 6,
+    sm15: 14,
+    sm19: 45,
+    sm20: 25,
+    fsrs: 10,
+  },
+  sm20AutoAdaptArena: true,
 };
 
 /** Fresh copy so restoring defaults cannot mutate the constant. */

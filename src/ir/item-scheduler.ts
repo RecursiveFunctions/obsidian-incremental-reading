@@ -3,8 +3,10 @@ import { cardToStored, schedule, storedToCard, type Grade } from "../fsrs";
 import type { StoredCard } from "./model";
 import {
   gradeInputToSmGrade,
+  hashSm20DispersionSeed,
   scheduleSm20Item,
   smGradeToFsrsGrade,
+  type Sm20ArenaWeights,
   type SmGrade,
 } from "./sm20-scheduler";
 import type { Sm20Matrix } from "./sm20-matrix";
@@ -15,6 +17,10 @@ export interface ScheduleItemOptions {
   primaryScheduler?: PrimaryItemScheduler;
   requestRetention?: number;
   sm20Matrix?: Sm20Matrix;
+  elementId?: string;
+  undoRollCount?: number;
+  sm20ArenaWeights?: Sm20ArenaWeights;
+  sm20AutoAdaptArena?: boolean;
 }
 
 export interface ScheduleItemResult {
@@ -36,13 +42,24 @@ export function scheduleItem(
   const primaryScheduler = options.primaryScheduler ?? "fsrs";
   if (primaryScheduler === "sm20") {
     const storedInput = isFsrsCard(card) ? cardToStored(card) : card;
-    const stored = scheduleSm20Item(
-      storedInput,
-      grade,
-      nowMs,
-      options.requestRetention ?? 0.9,
-      options.sm20Matrix,
-    );
+    const smGrade = gradeInputToSmGrade(grade);
+    const dispersionSeed =
+      options.elementId !== undefined
+        ? hashSm20DispersionSeed(
+            options.elementId,
+            storedInput?.reps ?? 0,
+            storedInput?.lapses ?? 0,
+            smGrade,
+            options.undoRollCount ?? 0,
+          )
+        : null;
+    const stored = scheduleSm20Item(storedInput, smGrade, nowMs, {
+      requestRetention: options.requestRetention ?? 0.9,
+      matrix: options.sm20Matrix,
+      arenaWeights: options.sm20ArenaWeights,
+      autoAdaptArena: options.sm20AutoAdaptArena,
+      dispersionSeed,
+    });
     return {
       scheduler: "sm20",
       card: storedToCard(stored),

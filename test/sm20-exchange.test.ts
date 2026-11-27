@@ -191,7 +191,7 @@ test("exportSm20BinaryPackage writes ElementInfo.dat, contents.dat, priority.sub
 
   assert.equal(plan.elements.length, 2);
   assert.ok(plan.sm20Baseline !== undefined);
-  assert.equal(plan.sm20Baseline.version, 3);
+  assert.equal(plan.sm20Baseline.version, 4);
   assert.equal(plan.sm20Baseline.forgettingCurveCases?.reduce((a, b) => a + b, 0), 1);
   assert.equal(plan.concepts?.length, 1);
 });
