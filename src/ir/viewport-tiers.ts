@@ -33,6 +33,28 @@ export function resolveWidthTier(inlineWidthPx: number, coarsePointer = false): 
   return "expanded";
 }
 
+export function shouldUseCompactReviewDock(tier: IrWidthTier, isMobile: boolean): boolean {
+  return tier === "compact" || Boolean(isMobile);
+}
+
+/**
+ * True on mobile tablets, including 8-inch 800x1280 @ 240dpi (1.5x DPR ->
+ * 533x853 CSS px) Android tablets such as the TCL TAB 8 Plus where Obsidian's
+ * `Platform.isTablet` (`min >= 600`) returns false.
+ */
+export function isTabletViewport(
+  isMobile: boolean,
+  isPlatformTablet: boolean,
+  winWidth: number,
+  winHeight: number,
+): boolean {
+  if (!isMobile) return false;
+  if (isPlatformTablet) return true;
+  const shortSide = Math.min(winWidth, winHeight);
+  const longSide = Math.max(winWidth, winHeight);
+  return shortSide >= 500 && longSide >= 800;
+}
+
 export function resolveViewportCapability(input: ViewportCapabilityInput): ViewportCapability {
   const tier = resolveWidthTier(input.inlineWidthPx, input.coarsePointer);
   const touchTargets = Boolean(input.coarsePointer);
