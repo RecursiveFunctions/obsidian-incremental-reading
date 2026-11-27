@@ -419,7 +419,16 @@ export class IrTreeView extends ItemView {
     await this.render();
   }
 
+  private activeSheetBackdrop: HTMLElement | null = null;
+
+  private closeActiveSheet(): void {
+    this.activeSheetBackdrop?.remove();
+    this.activeSheetBackdrop = null;
+    this.contentEl.querySelector(".ir-adaptive-sheet-backdrop")?.remove();
+  }
+
   async onClose(): Promise<void> {
+    this.closeActiveSheet();
     this.renderToken += 1;
     this.cachedSnapshot = null;
     this.leafCapHandle?.destroy();
@@ -1079,6 +1088,10 @@ export class IrTreeView extends ItemView {
   }
 
   private showCollectionMenu(event: MouseEvent): void {
+    if (Platform.isMobile) {
+      this.showCollectionSheet(event.currentTarget as HTMLElement | null);
+      return;
+    }
     const menu = new Menu();
     menu.addItem((item) => item
       .setTitle(this.showDismissed ? "Hide dismissed" : "Show dismissed")
@@ -1136,6 +1149,57 @@ export class IrTreeView extends ItemView {
         }));
     }
     menu.showAtMouseEvent(event);
+  }
+
+  private showCollectionSheet(trigger: HTMLElement | null): void {
+    const sheet = this.openSheet("Collection actions", trigger);
+    const addAction = (label: string, run: () => void) => {
+      const btn = sheet.createEl("button", {
+        cls: "ir-sheet-option",
+        type: "button",
+        text: label,
+      });
+      btn.onclick = () => {
+        this.closeActiveSheet();
+        run();
+      };
+    };
+    addAction(this.showDismissed ? "Hide dismissed" : "Show dismissed", () => {
+      this.showDismissed = !this.showDismissed;
+      void this.render();
+    });
+    if (this.displayMode === "sources") {
+      addAction("Expand all", () => {
+        this.collapsed.clear();
+        void this.render();
+      });
+      addAction("Collapse all", () => {
+        for (const id of this.lastNodeIds) this.collapsed.add(id);
+        void this.render();
+      });
+    }
+    if (this.commitPriority) {
+      addAction("Spread priorities…", () => {
+        this.activeInlineTool = "spread";
+        void this.render();
+      });
+    }
+    if (this.commitSubsetReplace) {
+      addAction("Search & replace in subset…", () => {
+        this.activeInlineTool = "replace";
+        void this.render();
+      });
+    }
+    addAction("Concept groups…", () => {
+      this.activeInlineTool = "concepts";
+      void this.render();
+    });
+    if (this.commitExchangeImport || this.commitExchangeExport) {
+      addAction("Import / export SuperMemo (.xml, .txt)…", () => {
+        this.activeInlineTool = "exchange";
+        void this.render();
+      });
+    }
   }
 
   private showFiltersMenu(event: MouseEvent): void {
@@ -1221,8 +1285,10 @@ export class IrTreeView extends ItemView {
   }
 
   private openSheet(title: string, restoreFocus?: HTMLElement | null): HTMLElement {
-    this.contentEl.querySelector(".ir-adaptive-sheet-backdrop")?.remove();
-    const backdrop = this.contentEl.createDiv({ cls: "ir-adaptive-sheet-backdrop" });
+    this.closeActiveSheet();
+    const hostRoot = Platform.isMobile ? this.contentEl.ownerDocument.body : this.contentEl;
+    const backdrop = hostRoot.createDiv({ cls: "ir-adaptive-sheet-backdrop" });
+    this.activeSheetBackdrop = backdrop;
     const sheet = backdrop.createDiv({ cls: "ir-adaptive-sheet" });
     sheet.setAttr("role", "dialog");
     sheet.setAttr("aria-modal", "true");
@@ -1240,6 +1306,7 @@ export class IrTreeView extends ItemView {
     const close = () => {
       document.removeEventListener("keydown", onKeydown, true);
       backdrop.remove();
+      if (this.activeSheetBackdrop === backdrop) this.activeSheetBackdrop = null;
       restoreFocus?.focus();
     };
     const onKeydown = (event: KeyboardEvent) => {
@@ -1312,7 +1379,7 @@ export class IrTreeView extends ItemView {
       text: "Numeric & metric ranges…",
     });
     rangeBtn.onclick = () => {
-      this.contentEl.querySelector(".ir-adaptive-sheet-backdrop")?.remove();
+      this.closeActiveSheet();
       this.activeInlineTool = "range-filter";
       void this.render();
     };
@@ -1327,7 +1394,7 @@ export class IrTreeView extends ItemView {
       this.showDismissed = false;
       this.leechesOnly = false;
       this.advancedFilter = {};
-      this.contentEl.querySelector(".ir-adaptive-sheet-backdrop")?.remove();
+      this.closeActiveSheet();
       void this.render();
     };
   }
@@ -3113,8 +3180,18 @@ export class IrTreeView extends ItemView {
     initial: number,
   ): void {
     if (!this.commitPriorityPreview && !this.commitPriority) return;
-    if (this.contentEl.querySelector(".ir-priority-surface")) return;
-    const surface = this.contentEl.createDiv({
+    if (this.contentEl.querySelector(".ir-priority-surface") || this.activeSheetBackdrop?.querySelector(".ir-priority-surface")) return;
+    let hostParent: HTMLElement = this.contentEl;
+    if (Platform.isMobile) {
+      this.closeActiveSheet();
+      const backdrop = this.contentEl.ownerDocument.body.createDiv({ cls: "ir-adaptive-sheet-backdrop" });
+      backdrop.addEventListener("click", (evt) => {
+        if (evt.target === backdrop) this.closeActiveSheet();
+      });
+      this.activeSheetBackdrop = backdrop;
+      hostParent = backdrop;
+    }
+    const surface = hostParent.createDiv({
       cls: Platform.isMobile
         ? "ir-priority-surface ir-adaptive-sheet is-mobile"
         : "ir-priority-surface ir-adaptive-popover",
@@ -3125,7 +3202,10 @@ export class IrTreeView extends ItemView {
       surface.style.top = `${rect.bottom - parentRect.top + 6}px`;
       surface.style.left = `${Math.max(8, rect.left - parentRect.left)}px`;
     }
-    const close = () => surface.remove();
+    const close = () => {
+      surface.remove();
+      if (Platform.isMobile) this.closeActiveSheet();
+    };
     mountPriorityEditor(surface, {
       targetId: elementId,
       elements: [...this.elementsById.values()],

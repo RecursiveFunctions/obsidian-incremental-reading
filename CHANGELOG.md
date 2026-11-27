@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] — 2026-11-27
+
+### Fixed
+
+- **Cleaner review bars on Android tablets and landscape screens**: Tablets and landscape mobile panes now keep the review dock on one compact row of grade buttons plus `⋯` instead of stacking all 11 desktop action buttons, freeing up much more room to read. 8-inch Android tablets are now recognized properly as tablets in both portrait and landscape, and opening Element Info (`Info`) scrolls inside its own panel instead of pushing your grade buttons behind Obsidian's floating mobile toolbar.
+- **Mobile bottom sheets, narrow phone drawers, and touch targets**: Bottom sheets in Collection and Review (`Filters`, `Collection actions`, `Bookmarks`, and `Priority`) now open cleanly above Obsidian's bottom navigation bar and stay clear of Android's 3-button system bar so bottom options are never blocked. Fixed sideways overflow in Collection tool drawers and image occlusion toolbars on narrow phones, bumped checkboxes and quiz/drawer buttons up to comfortable finger tap sizes, and silenced the one-time SM-20 switch prompt on vaults already using SM-20.
+- **Smoother touch image occlusion**: You can now run `Image occlusion items from image` straight from any note or reading topic that has an embedded diagram without opening the raw image file first. Polygon masks now draw with finger taps, snap closed more forgivingly when you tap back on the first point, include an `Undo point` button, and stay steady without scrolling the page, flashing the image, or popping up the keyboard mid-draw.
+
 ## [0.17.0] — 2026-11-27
 
 ### Added

@@ -299,3 +299,33 @@ export function finalizeDraftPolygon(
     points: pts,
   };
 }
+
+export function resolvePolygonVertexTap(
+  draftPoints: ReadonlyArray<readonly [number, number]>,
+  point: readonly [number, number],
+  coarsePointer = false,
+): { action: "append" | "close"; nextDraft: Array<[number, number]> } {
+  const x = Math.min(1, Math.max(0, point[0]));
+  const y = Math.min(1, Math.max(0, point[1]));
+  const closeRadius = coarsePointer ? 0.06 : 0.035;
+  if (draftPoints.length >= 3) {
+    const [fx, fy] = draftPoints[0]!;
+    if (Math.hypot(x - fx, y - fy) <= closeRadius) {
+      return {
+        action: "close",
+        nextDraft: draftPoints.map(([px, py]) => [px, py]),
+      };
+    }
+  }
+  return {
+    action: "append",
+    nextDraft: [...draftPoints.map(([px, py]) => [px, py] as [number, number]), [x, y]],
+  };
+}
+
+export function undoDraftPolygonVertex(
+  draftPoints: ReadonlyArray<readonly [number, number]>,
+): Array<[number, number]> {
+  if (draftPoints.length === 0) return [];
+  return draftPoints.slice(0, -1).map(([px, py]) => [px, py]);
+}
