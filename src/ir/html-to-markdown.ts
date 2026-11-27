@@ -38,6 +38,35 @@ const NAMED_ENTITIES: Record<string, string> = {
   trade: "\u2122",
 };
 
+/**
+ * Remove Markdown image embeds whose destination is a remote URL. HTML image
+ * tags are handled by `formatImageEmbed`; plain Markdown image syntax reaches
+ * imported notes untouched otherwise and auto-loads in Obsidian's renderer.
+ * Local embeds, wikilinks, data URIs, and code examples are preserved.
+ */
+export function stripRemoteMarkdownImages(md: string): string {
+  const codeTokens: string[] = [];
+  const stash = (text: string): string => {
+    const token = `\uE000IRMDIMG${codeTokens.length}\uE001`;
+    codeTokens.push(text);
+    return token;
+  };
+  let s = md.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g, (match) => stash(match));
+  s = s.replace(
+    /!\[([^\]]*)\]\(\s*([^\s)]+)\s*(?:"[^"]*"|'[^']*')?\s*\)/g,
+    (full, alt: string, dest: string) => {
+      let target = dest.trim();
+      if (target.startsWith("<") && target.endsWith(">")) {
+        target = target.slice(1, -1);
+      }
+      if (/^data:/i.test(target)) return full;
+      if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) return alt;
+      return full;
+    },
+  );
+  return s.replace(/\uE000IRMDIMG(\d+)\uE001/g, (_, idx: string) => codeTokens[Number(idx)] ?? "");
+}
+
 export function decodeHtmlEntities(input: string): string {
   return input
     .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
@@ -290,9 +319,10 @@ export function htmlToMarkdown(
   // Restore stashed code blocks / inline code
   s = s.replace(/\uE000IRCODE(\d+)\uE001/g, (_, idx: string) => codeTokens[Number(idx)] ?? "");
 
-  return s
+  const cleaned = s
     .replace(/\r\n/g, "\n")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  return stripRemoteMarkdownImages(cleaned);
 }

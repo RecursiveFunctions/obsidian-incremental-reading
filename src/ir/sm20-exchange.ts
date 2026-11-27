@@ -22,7 +22,7 @@ import {
   type ConceptGroup,
 } from "./concepts-references";
 import { newElementId, newEventId, type DeviceId, type ElementId } from "./ids";
-import { htmlToMarkdown } from "./html-to-markdown";
+import { htmlToMarkdown, stripRemoteMarkdownImages } from "./html-to-markdown";
 import { extractTypedClozes, hasTypedCloze } from "./interactive-items";
 import {
   clampPriority,
@@ -45,8 +45,9 @@ const HTML_TAG_DETECT_RE = /<[a-z!/][^>]*>/i;
 
 function sanitizeImportedRichText(raw: string): string {
   const clean = raw.replace(/\0/g, "");
-  if (!HTML_TAG_DETECT_RE.test(clean)) return clean;
-  return htmlToMarkdown(clean);
+  return stripRemoteMarkdownImages(
+    HTML_TAG_DETECT_RE.test(clean) ? htmlToMarkdown(clean) : clean,
+  );
 }
 
 function clamp(v: number, lo: number, hi: number): number {
