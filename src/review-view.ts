@@ -30,6 +30,14 @@ import {
   PREVIEW_SM_GRADES,
 } from "./ir/grade-preview";
 import { hasOcclusion } from "./ir/occlusion";
+import {
+  diffTypedAnswer,
+  extractTypedClozes,
+  formatTypedClozeHtml,
+  hasInteractiveQuiz,
+  hasTypedCloze,
+  transformTypedClozes,
+} from "./ir/interactive-items";
 import { fuzzyLocateInBody } from "./ir/fuzzy-text";
 import type { MultiSelectController } from "./ir/multi-select-dom";
 import {
@@ -1362,10 +1370,11 @@ export class IrReviewView extends ItemView {
     return slot.element.anchor?.sourcePath ?? null;
   }
 
-  /** Cards with a hidden answer: text clozes and image occlusions. */
+  /** Cards with a hidden answer: text clozes, typed clozes, MCQ/order blocks, and image occlusions. */
   private isClozeLike(raw: string): boolean {
-    return hasCloze(raw) || hasOcclusion(raw);
+    return hasCloze(raw) || hasOcclusion(raw) || hasInteractiveQuiz(raw);
   }
+  private lastTypedAnswerBySlot = new Map<string, string>();
 
   /**
    * Ctrl-multi-select controller, injected by the host plugin. Held spans
@@ -4869,9 +4878,14 @@ export class IrReviewView extends ItemView {
     // Cloze cards still transform the body; extract highlights are painted
     // onto the rendered DOM after MarkdownRenderer (DESIGN §Q3). Splicing
     // <mark> into the markdown source is unreliable in ItemView renders.
+    const baseWithTyped = hasTypedCloze(raw)
+      ? transformTypedClozes(raw, (grp, inCodeSpan) =>
+          formatTypedClozeHtml(grp, this.revealed, inCodeSpan),
+        )
+      : raw;
     const shown =
       isCloze && !this.revealed
-        ? transformClozes(raw, ({ hint }, inCodeSpan) => {
+        ? transformClozes(baseWithTyped, ({ hint }, inCodeSpan) => {
             const hintPart = hint
               ? ` <span class="ir-cloze-hint">(${escapeClozeHtmlFragment(hint)})</span>`
               : "";
@@ -4879,22 +4893,17 @@ export class IrReviewView extends ItemView {
             return inCodeSpan ? `<code>${html}</code>` : html;
           })
         : isCloze
-          ? transformClozes(raw, ({ answer }, inCodeSpan) => {
+          ? transformClozes(baseWithTyped, ({ answer }, inCodeSpan) => {
               const html = `<mark class="ir-cloze-answer">${escapeClozeHtmlFragment(answer)}</mark>`;
               return inCodeSpan ? `<code>${html}</code>` : html;
             })
-          : raw;
+          : baseWithTyped;
     const body = parent.createEl("div", {
       cls: "ir-review-body ir-review-main-body",
     });
     // The `ir-occlusion` code-block processor reads this to decide whether
     // the tested mask is uncovered (the pane owns reveal, not the mask).
     body.toggleClass("ir-review-revealed", this.revealed);
-    // For ledger-only anchored extracts, `slot.file` is null. Falling back
-    // to the empty string strips the source path Obsidian uses to resolve
-    // contextual wikilinks (`[[sample]]`), so they render as unresolved.
-    // Use the extract's provenance — the parent source note's path — so
-    // wikilinks resolve from the right folder.
     const renderSourcePath =
       slot?.file?.path ??
       (slot ? this.resolveProvenanceSourcePath(slot) : null) ??
@@ -4906,6 +4915,63 @@ export class IrReviewView extends ItemView {
       renderSourcePath,
       this,
     );
+
+    if (slot && hasTypedCloze(raw)) {
+      const typedGroups = extractTypedClozes(raw);
+      if (typedGroups.length > 0) {
+        const expected = typedGroups[0]!.answer;
+        const spellBar = body.createDiv({ cls: "ir-spell-bar ir-telemetry-controls" });
+        if (!this.revealed) {
+          const spellIn = spellBar.createEl("input", {
+            cls: "ir-priority-input",
+            attr: {
+              type: "text",
+              placeholder: typedGroups[0]!.hint
+                ? `Type answer (${typedGroups[0]!.hint})…`
+                : "Type answer (Enter to check)…",
+              "aria-label": "Typed cloze answer",
+            },
+          });
+          spellIn.style.minWidth = "14em";
+          spellIn.value = this.lastTypedAnswerBySlot.get(slot.id) ?? "";
+          spellIn.addEventListener("input", () => {
+            this.lastTypedAnswerBySlot.set(slot.id, spellIn.value);
+          });
+          spellIn.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") {
+              ev.preventDefault();
+              ev.stopPropagation();
+              this.lastTypedAnswerBySlot.set(slot.id, spellIn.value);
+              this.revealed = true;
+              void this.renderCard();
+            }
+          });
+        } else {
+          const typedVal = this.lastTypedAnswerBySlot.get(slot.id) ?? "";
+          const evalRes = diffTypedAnswer(expected, typedVal);
+          const diffRow = spellBar.createDiv({ cls: "ir-spell-diff" });
+          diffRow.createSpan({
+            text: typedVal
+              ? `Typed "${typedVal}" (${Math.round(evalRes.accuracy * 100)}% match, suggested G${evalRes.suggestedSmGrade}): `
+              : `Expected: ${expected}`,
+          });
+          if (typedVal) {
+            for (const seg of evalRes.segments) {
+              const span = diffRow.createSpan({ text: seg.text });
+              if (seg.kind === "missing") {
+                span.style.textDecoration = "underline";
+                span.style.color = "var(--text-error)";
+              } else if (seg.kind === "extra") {
+                span.style.textDecoration = "line-through";
+                span.style.color = "var(--text-faint)";
+              } else {
+                span.style.color = "var(--text-success)";
+              }
+            }
+          }
+        }
+      }
+    }
     // Topic (or file-backed extract) as source: show every anchored extract
     // / cloze on this note so reading → extract has immediate visual feedback.
     if (!isCloze && slot?.file) {

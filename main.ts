@@ -100,6 +100,18 @@ import {
   writeReferenceToFrontmatter,
 } from "./src/ir/concepts-references";
 import {
+  gradeMcqSelection,
+  gradeOrderedSequence,
+  MCQ_LANG,
+  moveOrderItem,
+  ORDER_LANG,
+  parseMcqPayload,
+  parseOrderPayload,
+  scrambleOrderItems,
+  shuffleMcqOptions,
+  wrapTypedCloze,
+} from "./src/ir/interactive-items";
+import {
   computeSm20Retrievability,
   SM20_RETRIEVABILITY_MAX,
   SM20_STABILITY_MIN,
@@ -592,6 +604,12 @@ export default class IncrementalReadingPlugin extends Plugin {
     );
     this.registerMarkdownCodeBlockProcessor(OCCLUSION_LANG, (src, el, ctx) =>
       this.renderOcclusionBlock(src, el, ctx.sourcePath),
+    );
+    this.registerMarkdownCodeBlockProcessor(MCQ_LANG, (src, el) =>
+      this.renderMcqBlock(src, el),
+    );
+    this.registerMarkdownCodeBlockProcessor(ORDER_LANG, (src, el) =>
+      this.renderOrderBlock(src, el),
     );
     this.registerDomEvent(
       document,
@@ -1539,6 +1557,20 @@ export default class IncrementalReadingPlugin extends Plugin {
       name: "Audit & repair collection integrity",
       icon: "shield-check",
       callback: () => void this.auditAndRepairCollection(),
+    });
+
+    this.irCommand({
+      id: "wrap-typed-cloze",
+      name: "Wrap selection as typed cloze (Spell-Pad)",
+      icon: "keyboard",
+      editorCallback: (editor) => {
+        const sel = editor.getSelection();
+        if (!sel.trim()) {
+          new Notice("Incremental Reading: select answer text first.");
+          return;
+        }
+        editor.replaceSelection(wrapTypedCloze(sel.trim(), 1));
+      },
     });
 
     this.registerEvent(
@@ -9103,5 +9135,128 @@ export default class IncrementalReadingPlugin extends Plugin {
       },
     });
     this.refreshAuxiliaryViews();
+  }
+
+  private renderMcqBlock(src: string, el: HTMLElement): void {
+    const spec = parseMcqPayload(src);
+    if (!spec) {
+      el.createEl("pre", { text: "Invalid ir-mcq block." });
+      return;
+    }
+    const reviewBody = el.closest<HTMLElement>(".ir-review-main-body");
+    let revealed = reviewBody ? reviewBody.classList.contains("ir-review-revealed") : false;
+    const daySeed = Math.floor(Date.now() / 86_400_000);
+    const options = shuffleMcqOptions(spec.options, daySeed);
+    const selected = new Set<number>();
+
+    const paint = () => {
+      el.empty();
+      const box = el.createDiv({ cls: "ir-quiz-block ir-quiz-mcq" });
+      if (spec.prompt) {
+        box.createDiv({ cls: "ir-stats-section-title", text: spec.prompt });
+      }
+      const list = box.createDiv({ cls: "ir-quiz-options" });
+      options.forEach((opt, idx) => {
+        const isSel = selected.has(idx);
+        const prefix = isSel ? "[x]" : "[ ]";
+        const suffix = revealed ? (opt.correct ? " ✓" : isSel ? " ✗" : "") : "";
+        const btn = list.createEl("button", {
+          type: "button",
+          cls: `ir-review-util-btn${isSel ? " mod-cta" : ""}`,
+          text: `${idx + 1}. ${prefix} ${opt.text}${suffix}`,
+        });
+        btn.style.display = "block";
+        btn.style.width = "100%";
+        btn.style.textAlign = "left";
+        btn.style.marginBottom = "4px";
+        btn.onclick = () => {
+          if (revealed) return;
+          if (selected.has(idx)) selected.delete(idx);
+          else selected.add(idx);
+          paint();
+        };
+      });
+      if (!reviewBody) {
+        const checkBtn = box.createEl("button", {
+          type: "button",
+          text: revealed ? "Reset" : "Check answer",
+        });
+        checkBtn.onclick = () => {
+          revealed = !revealed;
+          paint();
+        };
+      } else if (revealed && selected.size > 0) {
+        const res = gradeMcqSelection(options, [...selected]);
+        box.createDiv({
+          cls: "setting-item-description",
+          text: res.correct
+            ? `Correct (suggested grade ${res.suggestedSmGrade})`
+            : `Incorrect (suggested grade ${res.suggestedSmGrade})`,
+        });
+      }
+    };
+    paint();
+  }
+
+  private renderOrderBlock(src: string, el: HTMLElement): void {
+    const spec = parseOrderPayload(src);
+    if (!spec) {
+      el.createEl("pre", { text: "Invalid ir-order block." });
+      return;
+    }
+    const reviewBody = el.closest<HTMLElement>(".ir-review-main-body");
+    let revealed = reviewBody ? reviewBody.classList.contains("ir-review-revealed") : false;
+    const daySeed = Math.floor(Date.now() / 86_400_000);
+    let currentOrder = scrambleOrderItems(spec.items, daySeed);
+
+    const paint = () => {
+      el.empty();
+      const box = el.createDiv({ cls: "ir-quiz-block ir-quiz-order" });
+      if (spec.prompt) {
+        box.createDiv({ cls: "ir-stats-section-title", text: spec.prompt });
+      }
+      const shownOrder = revealed ? spec.items : currentOrder;
+      shownOrder.forEach((itemText, idx) => {
+        const row = box.createDiv({ cls: "ir-opt-actions" });
+        row.style.marginBottom = "4px";
+        const matchMark = revealed
+          ? currentOrder[idx] === spec.items[idx]
+            ? " ✓"
+            : ` (yours: ${currentOrder[idx]})`
+          : "";
+        row.createSpan({ text: `${idx + 1}. ${itemText}${matchMark}` });
+        if (!revealed) {
+          const upBtn = row.createEl("button", { type: "button", text: "↑" });
+          upBtn.disabled = idx === 0;
+          upBtn.onclick = () => {
+            currentOrder = moveOrderItem(currentOrder, idx, idx - 1);
+            paint();
+          };
+          const downBtn = row.createEl("button", { type: "button", text: "↓" });
+          downBtn.disabled = idx === shownOrder.length - 1;
+          downBtn.onclick = () => {
+            currentOrder = moveOrderItem(currentOrder, idx, idx + 1);
+            paint();
+          };
+        }
+      });
+      if (!reviewBody) {
+        const checkBtn = box.createEl("button", {
+          type: "button",
+          text: revealed ? "Scramble again" : "Check order",
+        });
+        checkBtn.onclick = () => {
+          revealed = !revealed;
+          paint();
+        };
+      } else if (revealed) {
+        const res = gradeOrderedSequence(spec.items, currentOrder);
+        box.createDiv({
+          cls: "setting-item-description",
+          text: `${Math.round(res.accuracy * 100)}% positions matched (suggested grade ${res.suggestedSmGrade})`,
+        });
+      }
+    };
+    paint();
   }
 }
