@@ -82,6 +82,8 @@ export const INHERITED_FRONTMATTER_KEYS = [
   "cssclass",
   "source",
   "url",
+  "ir_concept",
+  "ir_ref",
 ] as const;
 
 /** Pick inheritable keys from a parent note's frontmatter. */

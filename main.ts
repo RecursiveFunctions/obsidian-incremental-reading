@@ -92,6 +92,14 @@ import {
   planSubsetSearchAndReplace,
 } from "./src/ir/sm20-collection-ops";
 import {
+  findConceptByNameOrId,
+  parseSuperMemoReferenceFooter,
+  reconcileNoteFrontmatterWithLedger,
+  resolveInheritedConceptAndReference,
+  writeConceptToFrontmatter,
+  writeReferenceToFrontmatter,
+} from "./src/ir/concepts-references";
+import {
   computeSm20Retrievability,
   SM20_RETRIEVABILITY_MAX,
   SM20_STABILITY_MIN,
@@ -1680,6 +1688,14 @@ export default class IncrementalReadingPlugin extends Plugin {
         void this.handleSourceRename(file, oldPath).then(() =>
           this.maybeOfferRelink(file),
         );
+      }),
+    );
+
+    this.registerEvent(
+      this.app.metadataCache.on("changed", (file) => {
+        if (!this.app.workspace.layoutReady) return;
+        if (file.extension !== "md") return;
+        void this.reconcileFrontmatterMetadataForFile(file);
       }),
     );
 
@@ -4557,9 +4573,54 @@ export default class IncrementalReadingPlugin extends Plugin {
   private async appendCreatedWithPlacement(event: IrEvent): Promise<void> {
     if (!this.ledger || event.kind !== "element-created") return;
     const element = event.payload.element as IrElement;
-    const state = await this.ledger.load();
+    const [state, concepts] = await Promise.all([
+      this.ledger.load(),
+      this.ledger.readConcepts(),
+    ]);
+
+    let nextRegistry = concepts;
+    let registryChanged = false;
+    if (element.notePath) {
+      const af = this.app.vault.getAbstractFileByPath(element.notePath);
+      if (af instanceof TFile) {
+        const fm = this.app.metadataCache.getFileCache(af)?.frontmatter;
+        const rec = reconcileNoteFrontmatterWithLedger(element, fm, nextRegistry, event.ts);
+        if (rec.nextRegistry !== nextRegistry) {
+          nextRegistry = rec.nextRegistry;
+          registryChanged = true;
+        }
+        if (!element.conceptId && rec.conceptId) element.conceptId = rec.conceptId;
+        if (!element.reference && rec.reference) element.reference = rec.reference;
+      }
+    }
+    if (!element.reference && element.text) {
+      const footerRef = parseSuperMemoReferenceFooter(element.text);
+      if (footerRef) element.reference = footerRef;
+    }
+    if (element.parentId) {
+      const inherited = resolveInheritedConceptAndReference(element, state.elements, nextRegistry);
+      if (!element.conceptId && inherited.conceptId) element.conceptId = inherited.conceptId;
+      if (!element.reference && inherited.reference) element.reference = inherited.reference;
+      if (element.notePath && (element.conceptId || element.reference)) {
+        const af = this.app.vault.getAbstractFileByPath(element.notePath);
+        if (af instanceof TFile && af.extension === "md") {
+          const cObj = element.conceptId ? findConceptByNameOrId(nextRegistry, element.conceptId) : undefined;
+          await quietFrontmatterWrite(async () => {
+            await this.app.fileManager.processFrontMatter(af, (fm) => {
+              if (element.conceptId) writeConceptToFrontmatter(fm, cObj?.name ?? element.conceptId);
+              if (element.reference) writeReferenceToFrontmatter(fm, element.reference);
+            });
+          }, "inherit-metadata");
+        }
+      }
+    }
+    if (registryChanged) {
+      await this.ledger.writeConcepts(nextRegistry);
+    }
+
     event.payload = {
       ...event.payload,
+      element,
       placement: buildPriorityPlacement(
         state.elements.values(),
         element.id,
@@ -9001,5 +9062,46 @@ export default class IncrementalReadingPlugin extends Plugin {
         `Incremental Reading: audited collection — ${report.issues.length} issue(s) found, ${report.repairEvents.length} auto-repaired.`,
       );
     }
+  }
+
+  private async reconcileFrontmatterMetadataForFile(file: TFile): Promise<void> {
+    if (!this.ledger) return;
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm) return;
+    if (!("ir_concept" in fm) && !("ir-concept" in fm) && !("ir_ref" in fm) && !("ir-ref" in fm)) {
+      return;
+    }
+    const [view, concepts] = await Promise.all([
+      this.ledger.loadView(),
+      this.ledger.readConcepts(),
+    ]);
+    let targetEl: IrElement | undefined;
+    for (const el of view.state.elements.values()) {
+      if (el.notePath === file.path) {
+        targetEl = el;
+        break;
+      }
+    }
+    if (!targetEl) return;
+    const now = Date.now();
+    const rec = reconcileNoteFrontmatterWithLedger(targetEl, fm, concepts, now);
+    if (!rec.changed) return;
+    if (rec.nextRegistry !== concepts) {
+      await this.ledger.writeConcepts(rec.nextRegistry);
+    }
+    const device = await this.ledger.getDeviceId();
+    await this.ledger.appendEvent({
+      id: newEventId(),
+      ts: now,
+      lamport: view.maxLamport + 1,
+      device,
+      kind: "metadata-set",
+      target: targetEl.id,
+      payload: {
+        conceptId: rec.conceptId,
+        reference: rec.reference,
+      },
+    });
+    this.refreshAuxiliaryViews();
   }
 }

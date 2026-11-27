@@ -76,5 +76,6 @@ All Phase 2 items are implemented and shipped:
 
 - **Day-planner / tasklist subsystems:** Use Obsidian tasks, calendar, or daily notes for life scheduling; IR owns the reading and review queue.
 - **Sleep / circadian tracking subsystems:** Overload is handled with 5-dimension Mercy, postpone, dismiss, and priority protection.
-- **Propagating reference registry:** Obsidian wikilinks, backlinks, and transclusion are the reference layer.
 - **Streaks or guilt mechanics:** Excluded in favor of honest 7-day load forecasts and true retention metrics.
+
+*(Note: Concept Groups and Propagating Reference Metadata are supported via bidirectional `ir_concept` / `ir_ref` YAML frontmatter and `.ir/` ledger sync — see [`SCOPE-SM20-FULL-PARITY.md`](SCOPE-SM20-FULL-PARITY.md).)*

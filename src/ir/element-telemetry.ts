@@ -5,7 +5,7 @@
  */
 
 import type { ElementId } from "./ids";
-import type { IrElement, IrEvent } from "./model";
+import type { IrElement, IrEvent, ReferenceMetadata } from "./model";
 import type { PrimaryItemScheduler } from "./item-scheduler";
 import { previewGradeDelays } from "./grade-preview";
 import { lookupBlendedSinc, type Sm20Matrix } from "./sm20-matrix";
@@ -36,6 +36,8 @@ export interface ItemElementTelemetry {
   totalActive: number;
   lastPriorityDelta: number | null;
   memoryCurve: ItemMemoryCurve | null;
+  conceptName: string | null;
+  reference: ReferenceMetadata | null;
 }
 
 export type AnchorHealthStatus =
@@ -63,6 +65,8 @@ export interface ReadingElementTelemetry {
   priorityRank: number;
   totalActive: number;
   lastPriorityDelta: number | null;
+  conceptName: string | null;
+  reference: ReferenceMetadata | null;
 }
 
 export type ElementTelemetry = ItemElementTelemetry | ReadingElementTelemetry;
@@ -80,6 +84,7 @@ export interface ComputeElementTelemetryInput {
   defaultAFactor?: number;
   anchorStatusOverride?: AnchorHealthStatus;
   recentEvents?: readonly IrEvent[];
+  conceptName?: string | null;
 }
 
 function countWords(text: string): number {
@@ -196,6 +201,8 @@ export function computeElementTelemetry(
       totalActive,
       lastPriorityDelta,
       memoryCurve: computeItemMemoryCurve(element, nowMs, input.recentEvents, requestRetention),
+      conceptName: input.conceptName ?? element.conceptId ?? null,
+      reference: element.reference ?? null,
     };
   }
 
@@ -235,5 +242,7 @@ export function computeElementTelemetry(
     priorityRank: rank,
     totalActive,
     lastPriorityDelta,
+    conceptName: input.conceptName ?? element.conceptId ?? null,
+    reference: element.reference ?? null,
   };
 }

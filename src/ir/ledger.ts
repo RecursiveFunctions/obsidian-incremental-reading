@@ -46,6 +46,11 @@ import {
   type NeuralQueueState,
 } from "./neural";
 import type { Sm20MatrixSnapshot } from "./sm20-matrix";
+import {
+  createEmptyConceptRegistry,
+  normalizeConceptRegistry,
+  type ConceptRegistryState,
+} from "./concepts-references";
 
 // Fixed paths (constants in the module)
 export const META = ".ir/meta.json";
@@ -92,6 +97,7 @@ interface LedgerPaths {
   drill: string;
   neural: string;
   sm20Matrix: string;
+  concepts: string;
 }
 
 /**
@@ -516,6 +522,7 @@ export class IrLedger {
       drill: `${base}/drill.json`,
       neural: `${base}/neural.json`,
       sm20Matrix: `${base}/sm20-matrix.json`,
+      concepts: `${base}/concepts.json`,
     };
   }
 
@@ -1347,6 +1354,22 @@ export class IrLedger {
     await this.awaitReady();
     const { sm20Matrix } = await this.paths();
     await this.fs.write(sm20Matrix, JSON.stringify(file));
+  }
+
+  async readConcepts(): Promise<ConceptRegistryState> {
+    const { concepts } = await this.paths();
+    if (!(await this.fs.exists(concepts))) return createEmptyConceptRegistry();
+    try {
+      return normalizeConceptRegistry(JSON.parse(await this.fs.read(concepts)));
+    } catch {
+      return createEmptyConceptRegistry();
+    }
+  }
+
+  async writeConcepts(state: ConceptRegistryState): Promise<void> {
+    await this.awaitReady();
+    const { concepts } = await this.paths();
+    await this.fs.write(concepts, JSON.stringify(normalizeConceptRegistry(state)));
   }
 
   async loadSessionSnapshot(): Promise<SessionSnapshot | null> {

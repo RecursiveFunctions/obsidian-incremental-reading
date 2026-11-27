@@ -41,6 +41,7 @@ const KIND_LABEL: Record<IrEventKind, string> = {
   "element-deleted": "deleted",
   "text-edited": "text edited",
   "media-resumed": "media resumed",
+  "metadata-set": "metadata updated",
 };
 
 export function actionLabel(kind: IrEventKind): string {

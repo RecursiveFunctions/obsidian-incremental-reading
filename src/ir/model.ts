@@ -163,6 +163,16 @@ export interface ReadSchedule {
   aFactor: number;
 }
 
+export interface ReferenceMetadata {
+  title?: string;
+  author?: string;
+  date?: string;
+  source?: string;
+  link?: string;
+  email?: string;
+  comment?: string;
+}
+
 export interface IrElement {
   id: ElementId;
   type: IrType;
@@ -189,6 +199,10 @@ export interface IrElement {
   card?: StoredCard;
   /** Multi-scheduler override (Section 5). Absent means the primary scheduler. */
   schedulerOverride?: string;
+  /** Optional SuperMemo Concept Group identifier (`registry/concept.dat`). */
+  conceptId?: string;
+  /** Optional propagating SuperMemo Reference metadata (`#SuperMemo Reference:`). */
+  reference?: ReferenceMetadata;
 }
 
 /** Recorded when a source note is deleted, so provenance and re-link survive. */
@@ -224,7 +238,8 @@ export type IrEventKind =
   | "source-renamed"
   | "element-deleted"
   | "text-edited"
-  | "media-resumed";
+  | "media-resumed"
+  | "metadata-set";
 
 export interface IrEvent {
   id: EventId;
@@ -244,7 +259,7 @@ const IR_EVENT_KINDS = new Set<IrEventKind>([
   "element-created", "priority-set", "dismiss-set", "graded", "grade-undone", "card-reset",
   "topic-advanced", "mercy-postponed", "mercy-undone", "anchor-repaired", "anchor-detached",
   "promoted", "demoted", "reparented", "source-tombstoned", "source-restored",
-  "source-renamed", "element-deleted", "text-edited", "media-resumed",
+  "source-renamed", "element-deleted", "text-edited", "media-resumed", "metadata-set",
 ]);
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -373,6 +388,13 @@ function validSchedule(value: unknown): boolean {
   return !!schedule && finite(schedule.due) && finite(schedule.interval) && finite(schedule.aFactor);
 }
 
+function validReference(value: unknown): value is ReferenceMetadata {
+  const ref = record(value);
+  if (!ref) return false;
+  const keys = ["title", "author", "date", "source", "link", "email", "comment"];
+  return keys.every((k) => ref[k] === undefined || typeof ref[k] === "string");
+}
+
 function validElement(value: unknown): value is IrElement {
   const element = record(value);
   return !!element && isSafeElementId(element.id) &&
@@ -387,7 +409,9 @@ function validElement(value: unknown): value is IrElement {
     (element.notePath === undefined || nonEmptyString(element.notePath)) &&
     (element.card === undefined || validCard(element.card)) &&
     (element.schedule === undefined || validSchedule(element.schedule)) &&
-    (element.schedulerOverride === undefined || nonEmptyString(element.schedulerOverride));
+    (element.schedulerOverride === undefined || nonEmptyString(element.schedulerOverride)) &&
+    (element.conceptId === undefined || nonEmptyString(element.conceptId)) &&
+    (element.reference === undefined || validReference(element.reference));
 }
 
 function validPriorityPlacement(value: unknown): value is PriorityPlacement {
@@ -464,6 +488,11 @@ export function validateIrEvent(value: unknown): string | null {
     case "text-edited": return typeof payload.text === "string" ? null : "text is required";
     case "anchor-repaired": return validAnchor(payload.anchor) ? null : "anchor is required";
     case "media-resumed": return finite(payload.resumeSec) && (payload.resumeSec as number) >= 0 ? null : "resumeSec must be >= 0";
+    case "metadata-set":
+      return (payload.conceptId === undefined || payload.conceptId === null || nonEmptyString(payload.conceptId)) &&
+        (payload.reference === undefined || payload.reference === null || validReference(payload.reference))
+        ? null
+        : "metadata-set payload is invalid";
     default: return null;
   }
 }

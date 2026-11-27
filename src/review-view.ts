@@ -237,6 +237,13 @@ import {
   type TouchSelectionSnapshot,
 } from "./ir/touch-selection";
 import { computeElementTelemetry } from "./ir/element-telemetry";
+import {
+  findConceptByNameOrId,
+  slugifyConceptId,
+  upsertConceptGroup,
+  writeConceptToFrontmatter,
+  writeReferenceToFrontmatter,
+} from "./ir/concepts-references";
 import { renderElementTelemetryDrawer } from "./ui/telemetry-drawer";
 
 export const IR_REVIEW_VIEW_TYPE = "ir-review-view";
@@ -5322,6 +5329,42 @@ export class IrReviewView extends ItemView {
             })();
           }
         : undefined,
+      onChangeMetadata: (conceptName, reference) => {
+        void (async () => {
+          let conceptId: string | null = null;
+          if (conceptName) {
+            const curReg = await this.ledger.readConcepts();
+            const existing = findConceptByNameOrId(curReg, conceptName);
+            conceptId = existing ? existing.id : slugifyConceptId(conceptName);
+            if (!existing) {
+              await this.ledger.writeConcepts(
+                upsertConceptGroup(curReg, {
+                  id: conceptId,
+                  name: conceptName,
+                  updatedAt: Date.now(),
+                }),
+              );
+            }
+          }
+          await this.emit("metadata-set", slot.id, { conceptId, reference });
+          slot.element = {
+            ...slot.element,
+            ...(conceptId ? { conceptId } : { conceptId: undefined }),
+            ...(reference ? { reference } : { reference: undefined }),
+          };
+          this.elementsById.set(slot.id, slot.element);
+          if (slot.file) {
+            await quietFrontmatterWrite(async () => {
+              await this.app.fileManager.processFrontMatter(slot.file!, (f) => {
+                writeConceptToFrontmatter(f, conceptName);
+                writeReferenceToFrontmatter(f, reference);
+              });
+            }, "metadata-set");
+          }
+          this.onChange?.();
+          await this.renderCard();
+        })();
+      },
     });
   }
 

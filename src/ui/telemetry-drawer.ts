@@ -6,6 +6,7 @@
 
 import { formatPriority } from "../ir/relative-priority";
 import type { ElementTelemetry } from "../ir/element-telemetry";
+import type { ReferenceMetadata } from "../ir/model";
 import type { IrWidthTier } from "../ir/viewport-tiers";
 
 export interface TelemetryDrawerCallbacks {
@@ -13,6 +14,7 @@ export interface TelemetryDrawerCallbacks {
   onChangePriority?: (newPriority: number) => void;
   onOpenRelativePriority?: (trigger: HTMLElement) => void;
   onChangeAFactor?: (newAFactor: number) => void;
+  onChangeMetadata?: (conceptName: string | null, reference: ReferenceMetadata | null) => void;
 }
 
 function addMetricCell(
@@ -247,6 +249,50 @@ export function renderElementTelemetryDrawer(
         callbacks.onChangeAFactor?.(Math.min(10, Math.max(1.1, n)));
       }
     });
+  }
+
+  if (callbacks.onChangeMetadata) {
+    const metaRow = drawer.createDiv({ cls: "ir-telemetry-controls" });
+    const conceptField = metaRow.createDiv({ cls: "ir-telemetry-field" });
+    conceptField.createEl("label", { cls: "ir-telemetry-label", text: "Concept group" });
+    const conceptIn = conceptField.createEl("input", {
+      cls: "ir-priority-input",
+      attr: { type: "text", placeholder: "e.g. Neurobiology" },
+    });
+    conceptIn.value = telemetry.conceptName ?? "";
+
+    const authorField = metaRow.createDiv({ cls: "ir-telemetry-field" });
+    authorField.createEl("label", { cls: "ir-telemetry-label", text: "Ref author" });
+    const authorIn = authorField.createEl("input", {
+      cls: "ir-priority-input",
+      attr: { type: "text", placeholder: "Author" },
+    });
+    authorIn.value = telemetry.reference?.author ?? "";
+
+    const sourceField = metaRow.createDiv({ cls: "ir-telemetry-field" });
+    sourceField.createEl("label", { cls: "ir-telemetry-label", text: "Ref title / source" });
+    const sourceIn = sourceField.createEl("input", {
+      cls: "ir-priority-input",
+      attr: { type: "text", placeholder: "Title or source" },
+    });
+    sourceIn.value = telemetry.reference?.title ?? telemetry.reference?.source ?? "";
+
+    const emitMeta = () => {
+      const nextConcept = conceptIn.value.trim() || null;
+      const prevRef = telemetry.reference ?? {};
+      const nextAuthor = authorIn.value.trim();
+      const nextTitle = sourceIn.value.trim();
+      const nextRef: ReferenceMetadata = {
+        ...prevRef,
+        ...(nextAuthor ? { author: nextAuthor } : { author: undefined }),
+        ...(nextTitle ? { title: nextTitle } : { title: undefined }),
+      };
+      const hasAny = Object.values(nextRef).some((v) => typeof v === "string" && v.trim().length > 0);
+      callbacks.onChangeMetadata?.(nextConcept, hasAny ? nextRef : null);
+    };
+    conceptIn.addEventListener("change", emitMeta);
+    authorIn.addEventListener("change", emitMeta);
+    sourceIn.addEventListener("change", emitMeta);
   }
 
   return drawer;

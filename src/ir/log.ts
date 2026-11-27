@@ -377,6 +377,26 @@ export function foldFrom(
         }
         break;
       }
+
+      case "metadata-set": {
+        if (element) {
+          if ("conceptId" in event.payload) {
+            if (event.payload.conceptId === null || event.payload.conceptId === undefined) {
+              delete element.conceptId;
+            } else if (typeof event.payload.conceptId === "string") {
+              element.conceptId = event.payload.conceptId;
+            }
+          }
+          if ("reference" in event.payload) {
+            if (event.payload.reference === null || event.payload.reference === undefined) {
+              delete element.reference;
+            } else if (typeof event.payload.reference === "object") {
+              element.reference = { ...(event.payload.reference as Record<string, string>) };
+            }
+          }
+        }
+        break;
+      }
     }
   }
 
