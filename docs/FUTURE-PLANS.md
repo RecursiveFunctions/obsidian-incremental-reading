@@ -4,7 +4,7 @@ Single authoritative roadmap for **Incremental Reading for Obsidian**. For full 
 
 ---
 
-## 1. Shipped Baseline (Through `v0.16.0` + SM-20 Full Parity on `main`)
+## 1. Shipped Baseline (Through `v0.17.0`)
 
 - **Core Domain & Vault Storage:** Append-only `.ir/` event ledger, block-anchored extracts (with one-key standalone note promotion), Markdown clozes with hints, typed Spell-Pad clozes (`{{c1:=...}}`), multiple-choice (`ir-mcq`), sequence ordering (`ir-order`), text-layer PDF topics and extracts, local/streamed audio & video topics and timestamped clip extracts, Ctrl multi-span extracts, PDF/image region crops with rectangle & polygon image occlusion (`ir-occlusion`), inherited Concept Groups & source References (`ir_concept`, `ir_ref`), progressive reading chop commands, and non-modal side-panel priority placement for single mark, bulk folder/file mark (`files-menu`, default / fixed / even-spaced range), and extract-with-priority.
 - **Exact SM20 Topic, Extract & Priority Mechanics:**

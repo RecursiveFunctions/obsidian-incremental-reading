@@ -206,21 +206,13 @@ Planned, in order (full details in [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md
 
 If you're interested in the architecture and full roadmap, check [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/FUTURE-PLANS.md`](docs/FUTURE-PLANS.md).
 
-## Recent changes (0.16.0 + Unreleased on `main`)
+## Recent changes (0.17.0)
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full version history.
 
-### Latest release (`0.16.0`)
-
-- **Video and audio incremental reading:** Mark local video and audio files (`mp4`, `webm`, `mp3`, `m4a`, `ogg`, `wav`) or stream notes as IR topics. Review opens a built-in player that resumes where you left off, pauses at clip boundaries, shows extracted clips on a timeline bar, and extracts timestamped clips with `Alt+X`.
-- **Keep going when you finish today's queue:** One-click button (and `Alt+Shift+A`) on the "Nothing due right now" and "Session complete" screens to pull your soonest upcoming cards into today's session, with single-step batch undo.
-- **Leech policies, interval spread chart, and CSV exports:** Early semi-leech warnings, configurable leech handling (manual, warn, auto-postpone, or auto-reset), an interval-spread chart in Stats, recall & category-difficulty CSV exports, and reliable multi-bullet PDF highlights.
-
-### On `main` (Unreleased preview)
-
-- **SuperMemo 20 Algorithm Arena, seeded dispersion & optional 0–5 grading:** Runs all five SuperMemo 20 Arena schedulers (`SM-2`, `SM-15`, `SM-19`, `SM-20`, and `FSRS`) with automatic accuracy weighting, full v4 `alg17` learning tables, sibling interval dispersion that matches button previews and re-rolls on Undo, and optional `0–5` grading (with a 2×3 Fail/Pass layout on narrow panes).
-- **Interactive quizzes, polygon occlusion, Concept Groups & source citations:** Typed Spell-Pad clozes (`{{c1:=answer}}`), multiple-choice (`ir-mcq`), sequence ordering (`ir-order`) with automatic grade highlighting (`Space` confirms), polygon + rectangle image occlusion, and inherited Concept Groups + source references (`ir_concept`, `ir_ref`).
-- **3-year workload simulator, Collection power tools & SuperMemo exchange:** Simulator tab and 20×20 `SInc` surface in Stats, numeric range filters, Spread Priorities, subset search-and-replace, collection repair, reading chop commands, and an inline preview drawer for importing/exporting SuperMemo `.xml`, Q&A `.txt`, and binary collections.
+- **SuperMemo 20 Algorithm Arena, sibling dispersion, and optional 0 to 5 grading:** Runs all five SuperMemo 20 Arena schedulers (`SM-2`, `SM-15`, `SM-19`, `SM-20`, and `FSRS`) with automatic accuracy weighting, spreads sibling cards across nearby days while matching button previews and re-rolling on Undo, upgrades existing learning tables without moving current due dates, and offers SuperMemo's `0` to `5` grading scale (with a 2x3 Fail/Pass layout on narrow panes and phones).
+- **Interactive quizzes, polygon occlusion, Concept Groups, and inherited citations:** Typed Spell-Pad clozes (`{{c1:=answer}}`), multiple-choice (`ir-mcq`), and step-ordering (`ir-order`) quizzes highlight their suggested grade on reveal so `Space` confirms it. Added multi-point polygon image occlusion, Concept Groups with folder routing and templates, inherited source references, and reading chop commands.
+- **3-year workload simulator, cleaner drawers, and SuperMemo exchange:** Simulator tab and stability-gain heatmap in Stats, live forgetting curves and collapsible detail sections in Element Info (`I`), numeric range filters, Spread Priorities, subset search-and-replace, collection repair, and an inline preview drawer for importing and exporting SuperMemo `.xml`, Q&A `.txt`, and binary collections.
 
 ## Installation
 
