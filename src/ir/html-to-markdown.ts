@@ -203,8 +203,15 @@ export function htmlToMarkdown(
   s = s.replace(/<code\b[^>]*>([\s\S]*?)<\/code>/gi, (_, inner: string) => {
     const text = decodeHtmlEntities(inner.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
     if (!text) return "";
-    const fence = text.includes("`") ? "``" : "`";
-    return stashCode(`${fence}${text}${fence}`);
+    // A code-span fence must be longer than any backtick run inside the text,
+    // or an entity-decoded run closes the span early (#135).
+    let maxRun = 0;
+    for (const run of text.match(/`+/g) ?? []) maxRun = Math.max(maxRun, run.length);
+    const fence = "`".repeat(maxRun + 1);
+    // CommonMark: content that starts or ends with a backtick needs padding so
+    // the fence runs stay distinguishable from the content.
+    const pad = /^`|`$/.test(text) ? " " : "";
+    return stashCode(`${fence}${pad}${text}${pad}${fence}`);
   });
 
   // Images and SVG <image>
