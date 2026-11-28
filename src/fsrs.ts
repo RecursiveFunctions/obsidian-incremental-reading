@@ -10,6 +10,8 @@ import {
   Card,
   Grade as FsrsGrade,
   Rating,
+  S_MAX,
+  S_MIN,
   State,
   createEmptyCard,
   fsrs,
@@ -135,6 +137,47 @@ export function writeCardToFrontmatter(
 }
 
 /**
+ * Repair hand-edited or corrupted card fields (#129) so grading can never
+ * crash on them: unknown `state` values, negative/non-finite counters, and
+ * memory states below ts-fsrs's validation floor all fall back to fresh-card
+ * defaults. A non-New card whose difficulty/stability is unrepairable
+ * degrades to a fresh New card — losing the numbers beats bricking grading.
+ * Valid cards pass through unchanged.
+ */
+export function sanitizeCard(card: Card): Card {
+  const base = newCard();
+  const fin = (v: number, fb: number): number => (Number.isFinite(v) ? v : fb);
+  const int0 = (v: number, fb: number): number =>
+    Number.isInteger(v) && v >= 0 ? v : fb;
+  const validDate = (d: Date | undefined): boolean =>
+    d instanceof Date && !Number.isNaN(d.getTime());
+  if (!validDate(card.due)) card.due = base.due;
+  if (card.last_review !== undefined && !validDate(card.last_review)) {
+    card.last_review = undefined;
+  }
+  card.stability = fin(card.stability, base.stability);
+  card.difficulty = fin(card.difficulty, base.difficulty);
+  card.elapsed_days = int0(card.elapsed_days, base.elapsed_days);
+  card.scheduled_days = fin(card.scheduled_days, base.scheduled_days);
+  card.reps = int0(card.reps, base.reps);
+  card.lapses = int0(card.lapses, base.lapses);
+  card.learning_steps = int0(card.learning_steps ?? 0, base.learning_steps);
+  if (![State.New, State.Learning, State.Review, State.Relearning].includes(card.state)) {
+    card.state = base.state;
+  }
+  if (
+    card.state !== State.New &&
+    (card.difficulty < 1 ||
+      card.difficulty > 10 ||
+      card.stability < S_MIN ||
+      card.stability > S_MAX)
+  ) {
+    return base;
+  }
+  return card;
+}
+
+/**
  * Reconstruct a `Card` from frontmatter. Missing/garbage fields fall back to
  * an empty card's defaults so a hand-edited or partially-written note can't
  * crash the scheduler.
@@ -176,7 +219,7 @@ export function readCardFromFrontmatter(
     if (!Number.isNaN(d.getTime())) card.last_review = d;
   }
 
-  return card;
+  return sanitizeCard(card);
 }
 
 export function cardToStored(card: Card): StoredCard {
@@ -215,5 +258,5 @@ export function storedToCard(s: StoredCard | null | undefined): Card {
   card.learning_steps = s.learningSteps ?? 0;
   card.last_review =
     s.lastReview !== undefined ? new Date(s.lastReview) : undefined;
-  return card;
+  return sanitizeCard(card);
 }
