@@ -46,7 +46,8 @@ import {
 import {
   computeCalibrationAndModelBenchmark,
   formatSm20RepetitionLogCsv,
-  simulateLongHorizonWorkload,
+  simulateLongHorizonWorkloadAsync,
+  type WorkloadSimulationResult,
 } from "./ir/sm20-analytics";
 import { computeSm20SincHeatmap20x20 } from "./ir/sm20-reading-tools";
 import {
@@ -117,6 +118,7 @@ export class IrStatsView extends ItemView {
 
   async onClose(): Promise<void> {
     this.fitCancelled = true;
+    this.simRenderGeneration += 1;
     this.leafCapHandle?.destroy();
     this.leafCapHandle = undefined;
     this.cachedSnapshot = null;
@@ -138,6 +140,7 @@ export class IrStatsView extends ItemView {
   }
 
   private renderToken = 0;
+  private simRenderGeneration = 0;
   private leechMinLapses = DEFAULT_LEECH_CRITERIA.minLapses;
   private leechMaxInterval = DEFAULT_LEECH_CRITERIA.maxLapseIntervalDays;
   private leechMaxPostpones = DEFAULT_LEECH_CRITERIA.maxPostpones;
@@ -1294,74 +1297,104 @@ export class IrStatsView extends ItemView {
       }
     });
 
-    const sim = simulateLongHorizonWorkload({
-      elements,
-      nowMs: now,
-      horizonDays: this.simHorizonDays,
-      dailyCapacity: this.simDailyCapacity,
-      newItemsPerDay: this.simNewItemsPerDay,
-      desiredRetention: s.desiredRetention,
-      scheduler: s.primaryScheduler === "fsrs" ? "fsrs" : "sm20",
-      sm20Matrix: this.host.getSm20Matrix?.(),
-      seed: FIT_SEED,
-    });
+    const simBody = section.createDiv({ cls: "ir-stats-sim-body" });
+    const renderSimResults = (out: HTMLElement, sim: WorkloadSimulationResult): void => {
+      const simKpis = out.createDiv({ cls: "ir-stats-kpi-grid" });
+      const addSimKpi = (label: string, value: string, sub?: string) => {
+        const card = simKpis.createDiv({ cls: "ir-stats-kpi-card" });
+        card.createDiv({ cls: "ir-stats-kpi-value", text: value });
+        card.createDiv({ cls: "ir-stats-kpi-label", text: label });
+        if (sub) card.createDiv({ cls: "ir-stats-kpi-sub", text: sub });
+      };
+      addSimKpi(
+        "Avg daily load",
+        `${sim.summary.avgDailyReviews}/d`,
+        `Peak ${sim.summary.peakDailyReviews}/d`,
+      );
+      addSimKpi("End backlog", String(sim.summary.finalBacklog), `Peak ${sim.summary.peakBacklog}`);
+      addSimKpi("Memorized", String(sim.summary.finalMemorizedCount));
+      addSimKpi("Mean retention", `${(sim.summary.meanRetention * 100).toFixed(1)}%`);
 
-    const simKpis = section.createDiv({ cls: "ir-stats-kpi-grid" });
-    const addSimKpi = (label: string, value: string, sub?: string) => {
-      const card = simKpis.createDiv({ cls: "ir-stats-kpi-card" });
-      card.createDiv({ cls: "ir-stats-kpi-value", text: value });
-      card.createDiv({ cls: "ir-stats-kpi-label", text: label });
-      if (sub) card.createDiv({ cls: "ir-stats-kpi-sub", text: sub });
+      const bucketCount = Math.min(20, sim.days.length);
+      const step = Math.max(1, Math.floor(sim.days.length / bucketCount));
+      const sampled = [];
+      for (let i = 0; i < sim.days.length; i += step) {
+        const slice = sim.days.slice(i, i + step);
+        const meanRev = slice.reduce((acc, d) => acc + d.reviewsDone, 0) / slice.length;
+        const meanBacklog = slice.reduce((acc, d) => acc + d.backlogCount, 0) / slice.length;
+        sampled.push({
+          label: `D${slice[slice.length - 1]!.day}`,
+          reviews: Math.round(meanRev),
+          backlog: Math.round(meanBacklog),
+        });
+      }
+      const maxBar = Math.max(1, ...sampled.map((b) => b.reviews + b.backlog));
+      const bars = out.createDiv({ cls: "ir-stats-bars" });
+      for (const b of sampled) {
+        const total = b.reviews + b.backlog;
+        const col = bars.createDiv({
+          cls: "ir-stats-bar-col",
+          attr: {
+            title: `${b.label}: ${b.reviews} reviewed · ${b.backlog} backlog`,
+          },
+        });
+        col.createDiv({
+          cls: "ir-stats-bar-count",
+          text: total > 0 ? String(b.reviews) : "",
+        });
+        const track = col.createDiv({ cls: "ir-stats-bar-track" });
+        const fill = track.createDiv({ cls: "ir-stats-bar-fill" });
+        const pct = Math.round((total / maxBar) * 100);
+        fill.style.height = `${total > 0 ? Math.max(8, pct) : 0}%`;
+        col.createDiv({ cls: "ir-stats-bar-label", text: b.label });
+      }
+
+      const simDetails = out.createEl("details", { cls: "ir-drawer-details" });
+      simDetails.createEl("summary", {
+        cls: "ir-drawer-summary",
+        text: "Detailed simulation metrics",
+      });
+      this.table(simDetails.createDiv({ cls: "ir-drawer-details-body" }), [
+        ["Average daily reviews", `${sim.summary.avgDailyReviews} / day`],
+        ["Peak daily reviews", String(sim.summary.peakDailyReviews)],
+        ["Peak overdue backlog", String(sim.summary.peakBacklog)],
+        ["Final overdue backlog", String(sim.summary.finalBacklog)],
+        ["Projected memorized items", String(sim.summary.finalMemorizedCount)],
+        ["Projected mean retention", `${(sim.summary.meanRetention * 100).toFixed(1)}%`],
+      ]);
     };
-    addSimKpi("Avg daily load", `${sim.summary.avgDailyReviews}/d`, `Peak ${sim.summary.peakDailyReviews}/d`);
-    addSimKpi("End backlog", String(sim.summary.finalBacklog), `Peak ${sim.summary.peakBacklog}`);
-    addSimKpi("Memorized", String(sim.summary.finalMemorizedCount));
-    addSimKpi("Mean retention", `${(sim.summary.meanRetention * 100).toFixed(1)}%`);
 
-    const bucketCount = Math.min(20, sim.days.length);
-    const step = Math.max(1, Math.floor(sim.days.length / bucketCount));
-    const sampled = [];
-    for (let i = 0; i < sim.days.length; i += step) {
-      const slice = sim.days.slice(i, i + step);
-      const meanRev = slice.reduce((acc, d) => acc + d.reviewsDone, 0) / slice.length;
-      const meanBacklog = slice.reduce((acc, d) => acc + d.backlogCount, 0) / slice.length;
-      sampled.push({
-        label: `D${slice[slice.length - 1]!.day}`,
-        reviews: Math.round(meanRev),
-        backlog: Math.round(meanBacklog),
+    // Time-sliced run (#136): long horizons must not block the UI thread.
+    const simStatus = simBody.createDiv({ cls: "ir-stats-sim-status", text: "Simulating…" });
+    const generation = ++this.simRenderGeneration;
+    void simulateLongHorizonWorkloadAsync(
+      {
+        elements,
+        nowMs: now,
+        horizonDays: this.simHorizonDays,
+        dailyCapacity: this.simDailyCapacity,
+        newItemsPerDay: this.simNewItemsPerDay,
+        desiredRetention: s.desiredRetention,
+        scheduler: s.primaryScheduler === "fsrs" ? "fsrs" : "sm20",
+        sm20Matrix: this.host.getSm20Matrix?.(),
+        seed: FIT_SEED,
+      },
+      {
+        shouldAbort: () => generation !== this.simRenderGeneration,
+        onProgress: (doneDays, horizonDays) =>
+          simStatus.setText(`Simulating… ${doneDays} / ${horizonDays} days`),
+      },
+    )
+      .then((sim) => {
+        if (!sim || generation !== this.simRenderGeneration) return;
+        simStatus.remove();
+        renderSimResults(simBody, sim);
+      })
+      .catch((err) => {
+        if (generation !== this.simRenderGeneration) return;
+        simStatus.setText("Simulation failed.");
+        console.error("ir: workload simulation failed", err);
       });
-    }
-    const maxBar = Math.max(1, ...sampled.map((b) => b.reviews + b.backlog));
-    const bars = section.createDiv({ cls: "ir-stats-bars" });
-    for (const b of sampled) {
-      const total = b.reviews + b.backlog;
-      const col = bars.createDiv({
-        cls: "ir-stats-bar-col",
-        attr: {
-          title: `${b.label}: ${b.reviews} reviewed · ${b.backlog} backlog`,
-        },
-      });
-      col.createDiv({
-        cls: "ir-stats-bar-count",
-        text: total > 0 ? String(b.reviews) : "",
-      });
-      const track = col.createDiv({ cls: "ir-stats-bar-track" });
-      const fill = track.createDiv({ cls: "ir-stats-bar-fill" });
-      const pct = Math.round((total / maxBar) * 100);
-      fill.style.height = `${total > 0 ? Math.max(8, pct) : 0}%`;
-      col.createDiv({ cls: "ir-stats-bar-label", text: b.label });
-    }
-
-    const simDetails = section.createEl("details", { cls: "ir-drawer-details" });
-    simDetails.createEl("summary", { cls: "ir-drawer-summary", text: "Detailed simulation metrics" });
-    this.table(simDetails.createDiv({ cls: "ir-drawer-details-body" }), [
-      ["Average daily reviews", `${sim.summary.avgDailyReviews} / day`],
-      ["Peak daily reviews", String(sim.summary.peakDailyReviews)],
-      ["Peak overdue backlog", String(sim.summary.peakBacklog)],
-      ["Final overdue backlog", String(sim.summary.finalBacklog)],
-      ["Projected memorized items", String(sim.summary.finalMemorizedCount)],
-      ["Projected mean retention", `${(sim.summary.meanRetention * 100).toFixed(1)}%`],
-    ]);
   }
 
   private renderCalibrationBenchmark(

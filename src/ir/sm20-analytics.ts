@@ -180,9 +180,15 @@ interface SimCardItem {
  * Simulates daily repetitions up to `dailyCapacity` in priority order (`0x00e66750`),
  * carrying unreviewed due items into backlog and introducing `newItemsPerDay`.
  */
-export function simulateLongHorizonWorkload(
-  input: WorkloadSimulatorInput,
-): WorkloadSimulationResult {
+interface WorkloadSimulator {
+  done(): boolean;
+  currentDay(): number;
+  horizon(): number;
+  stepDay(): void;
+  finish(): WorkloadSimulationResult;
+}
+
+function createWorkloadSimulator(input: WorkloadSimulatorInput): WorkloadSimulator {
   const horizon = clamp(Math.round(input.horizonDays), 1, 5475);
   const cap = Math.max(0, Math.round(input.dailyCapacity));
   const inflow = Math.max(0, Math.round(input.newItemsPerDay));
@@ -222,7 +228,10 @@ export function simulateLongHorizonWorkload(
   let retentionWeightCount = 0;
   let totalLapses = 0;
 
-  for (let day = 0; day < horizon; day += 1) {
+  let day = 0;
+
+  const stepDay = (): void => {
+    if (day >= horizon) return;
     for (let k = 0; k < inflow; k += 1) {
       pool.push({
         priority: clamp(20 + rng() * 60, 0, 100),
@@ -313,25 +322,82 @@ export function simulateLongHorizonWorkload(
       memorizedCount,
       meanRetention: Math.round(dayMeanRet * 1000) / 1000,
     });
-  }
-
-  const last = days[days.length - 1]!;
-  return {
-    days,
-    summary: {
-      avgDailyReviews: Math.round((sumReviews / horizon) * 10) / 10,
-      peakDailyReviews,
-      peakBacklog,
-      finalBacklog: last?.backlogCount ?? 0,
-      finalMemorizedCount: last?.memorizedCount ?? 0,
-      meanRetention:
-        Math.round(
-          ((retentionWeightCount > 0 ? sumRetentionWeighted / retentionWeightCount : retention) *
-            1000),
-        ) / 1000,
-      totalLapses,
-    },
+    day += 1;
   };
+
+  const finish = (): WorkloadSimulationResult => {
+    const last = days[days.length - 1]!;
+    return {
+      days,
+      summary: {
+        avgDailyReviews: Math.round((sumReviews / horizon) * 10) / 10,
+        peakDailyReviews,
+        peakBacklog,
+        finalBacklog: last?.backlogCount ?? 0,
+        finalMemorizedCount: last?.memorizedCount ?? 0,
+        meanRetention:
+          Math.round(
+            ((retentionWeightCount > 0 ? sumRetentionWeighted / retentionWeightCount : retention) *
+              1000),
+          ) / 1000,
+        totalLapses,
+      },
+    };
+  };
+
+  return {
+    done: () => day >= horizon,
+    currentDay: () => day,
+    horizon: () => horizon,
+    stepDay,
+    finish,
+  };
+}
+
+/**
+ * One full synchronous run. Fine for tests and small inputs; UI callers
+ * should prefer the time-sliced variant below (#136).
+ */
+export function simulateLongHorizonWorkload(
+  input: WorkloadSimulatorInput,
+): WorkloadSimulationResult {
+  const sim = createWorkloadSimulator(input);
+  while (!sim.done()) sim.stepDay();
+  return sim.finish();
+}
+
+export interface WorkloadSimulationAsyncOptions {
+  /** Wall-clock budget per burst of simulated days (default 12 ms). */
+  chunkMs?: number;
+  /** Checked between bursts; returning true stops the run and yields undefined. */
+  shouldAbort?: () => boolean;
+  /** Called after each burst with the number of simulated days completed. */
+  onProgress?: (completedDays: number, horizonDays: number) => void;
+}
+
+/**
+ * Time-sliced `simulateLongHorizonWorkload` (#136): simulates days in
+ * wall-clock bursts, yielding to the event loop between bursts so the UI
+ * stays responsive during long horizons. Returns undefined when
+ * `shouldAbort` cancelled the run.
+ */
+export async function simulateLongHorizonWorkloadAsync(
+  input: WorkloadSimulatorInput,
+  opts: WorkloadSimulationAsyncOptions = {},
+): Promise<WorkloadSimulationResult | undefined> {
+  const chunkMs = Math.max(1, opts.chunkMs ?? 12);
+  const sim = createWorkloadSimulator(input);
+  while (!sim.done()) {
+    if (opts.shouldAbort?.()) return undefined;
+    const startedAt = Date.now();
+    do {
+      sim.stepDay();
+    } while (!sim.done() && Date.now() - startedAt < chunkMs);
+    opts.onProgress?.(sim.currentDay(), sim.horizon());
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  if (opts.shouldAbort?.()) return undefined;
+  return sim.finish();
 }
 
 // --- 3. Per-Item Memory Status Curve (`TMemForm.PaintBox1Paint` `0x00cdc860`) ---
