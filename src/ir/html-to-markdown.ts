@@ -128,6 +128,23 @@ function convertList(
   return items.length > 0 ? `\n\n${items.join("\n")}\n\n` : "";
 }
 
+/**
+ * Replace Markdown image embeds whose URL carries a scheme (`https:`, `http:`,
+ * `data:`, …) or is protocol-relative (`//host/x.png`) with their alt text,
+ * mirroring how `formatImageEmbed` drops remote HTML `<img>` tags (#128).
+ * Vault-relative paths and `![[wikilink]]` embeds are untouched.
+ */
+export function stripRemoteMarkdownImages(md: string): string {
+  if (!md.includes("![")) return md;
+  return md.replace(
+    /!\[([^\]]*)\]\(\s*(<[^>\n]*>|[^)\s]+)(?:\s+[^)]*)?\)/gi,
+    (whole, alt: string, url: string) => {
+      const target = url.startsWith("<") ? url.slice(1, -1) : url;
+      return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(target) ? alt : whole;
+    },
+  );
+}
+
 function formatImageEmbed(
   rawSrc: string,
   alt: string,
@@ -286,6 +303,10 @@ export function htmlToMarkdown(
     .replace(/<[^>]+>/g, "");
 
   s = decodeHtmlEntities(s).replace(/</g, "&lt;");
+
+  // Markdown-syntax remote image embeds never come from the HTML itself — they
+  // come from pre-Markdown'd field values; drop them like remote HTML <img> (#128).
+  s = stripRemoteMarkdownImages(s);
 
   // Restore stashed code blocks / inline code
   s = s.replace(/\uE000IRCODE(\d+)\uE001/g, (_, idx: string) => codeTokens[Number(idx)] ?? "");

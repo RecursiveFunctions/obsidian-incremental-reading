@@ -2,7 +2,7 @@ import { newElementId, newEventId, type DeviceId, type ElementId } from "./ids";
 import { clampPriority, type IrElement, type IrEvent, type IrType, type ReadSchedule, type StoredCard } from "./model";
 import type { Bookmark } from "./bookmark";
 import { normalizeUrlForDedupe, contentFingerprint } from "./bulk-import";
-import { decodeHtmlEntities, htmlToMarkdown as sharedHtmlToMarkdown } from "./html-to-markdown";
+import { decodeHtmlEntities, htmlToMarkdown as sharedHtmlToMarkdown, stripRemoteMarkdownImages } from "./html-to-markdown";
 import { assertVaultRelativePath, isSafeVaultRelativePath } from "./source-paths";
 import {
   parseContents,
@@ -808,7 +808,7 @@ export async function planSmCollectionImport(
     const isPlainTxtBacking = Boolean(backingFileUsed && /\.txt$/i.test(backingFileUsed));
     return forceHtml || isHtmlBacking || (!isPlainTxtBacking && HTML_MARKUP_SNIFF_RE.test(rawText))
       ? await convertSmHtml(rawText, smId, backingFileUsed)
-      : rawText.trim();
+      : stripRemoteMarkdownImages(rawText).trim();
   };
 
   const stats = {
