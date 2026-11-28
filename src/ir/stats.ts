@@ -24,6 +24,34 @@ export function startOfLocalDayMs(now: number): number {
 }
 
 /**
+ * Exact local-calendar-day index of `ts` relative to the day containing
+ * `anchorDayStartMs`. Calendar arithmetic (Y → `Date.UTC` day number) is
+ * DST-safe; dividing a millisecond span by 24 h is not (#137).
+ */
+export function localDayIndexSince(ts: number, anchorDayStartMs: number): number {
+  const t = new Date(ts);
+  const a = new Date(anchorDayStartMs);
+  return Math.round(
+    (Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()) -
+      Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())) /
+      86_400_000,
+  );
+}
+
+/** Local-midnight timestamps of the `count` local days ending at `now`'s day. */
+function localDayStarts(now: number, count: number): number[] {
+  const starts = new Array<number>(count);
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  for (let i = count - 1; i >= 0; i -= 1) {
+    starts[i] = d.getTime();
+    d.setDate(d.getDate() - 1);
+    d.setHours(0, 0, 0, 0);
+  }
+  return starts;
+}
+
+/**
  * Grade counts per local day, oldest → newest, covering `days` days ending
  * at the local day of `now`. Pure CSS sparkline input.
  */
@@ -33,12 +61,10 @@ export function gradeSpark(
   days = 14,
 ): number[] {
   const counts = Array.from({ length: days }, () => 0);
-  const dayMs = 86400000;
-  const end = startOfLocalDayMs(now);
-  const start = end - (days - 1) * dayMs;
+  const start = localDayStarts(now, days)[0]!;
   for (const g of grades) {
     if (g.ts < start || g.ts > now) continue;
-    const i = Math.floor((startOfLocalDayMs(g.ts) - start) / dayMs);
+    const i = localDayIndexSince(g.ts, start);
     if (i >= 0 && i < days) counts[i] += 1;
   }
   return counts;
@@ -72,7 +98,6 @@ export function forecast(
   now: number,
   days = 7,
 ): Forecast {
-  const dayMs = 86400000;
   const today = startOfLocalDayMs(now);
   const byDay = Array.from({ length: days }, () => 0);
   let overdue = 0;
@@ -84,7 +109,7 @@ export function forecast(
       overdue += 1;
       continue;
     }
-    const i = Math.floor((startOfLocalDayMs(d) - today) / dayMs);
+    const i = localDayIndexSince(d, today);
     if (i >= 0 && i < days) byDay[i] += 1;
   }
   return {
@@ -208,11 +233,10 @@ export function activityHeatmap(
   weeks = 26,
 ): ActivityHeatmap {
   const totalDays = Math.max(1, Math.trunc(weeks) * 7);
-  const dayMs = 86_400_000;
-  const today = startOfLocalDayMs(now);
-  const start = today - (totalDays - 1) * dayMs;
-  const days: HeatmapDay[] = Array.from({ length: totalDays }, (_, i) => ({
-    dayStartMs: start + i * dayMs,
+  const starts = localDayStarts(now, totalDays);
+  const start = starts[0]!;
+  const days: HeatmapDay[] = starts.map((dayStartMs) => ({
+    dayStartMs,
     count: 0,
     grades: 0,
     reads: 0,
@@ -229,7 +253,7 @@ export function activityHeatmap(
       ev.payload.operation !== "a-factor-edit";
     if (!isGrade && !isRead) continue;
 
-    const bucketIdx = Math.floor((startOfLocalDayMs(ev.ts) - start) / dayMs);
+    const bucketIdx = localDayIndexSince(ev.ts, start);
     if (bucketIdx < 0 || bucketIdx >= totalDays) continue;
     const bucket = days[bucketIdx]!;
     bucket.count += 1;
@@ -277,9 +301,8 @@ export function rollingTrueRetention(
 ): RollingTrueRetention {
   const numDays = Math.max(1, Math.trunc(days));
   const win = Math.max(1, Math.trunc(windowDays));
-  const dayMs = 86_400_000;
-  const today = startOfLocalDayMs(now);
-  const start = today - (numDays - 1) * dayMs;
+  const starts = localDayStarts(now, numDays);
+  const start = starts[0]!;
 
   const dailyTotal = new Array<number>(numDays).fill(0);
   const dailyPassed = new Array<number>(numDays).fill(0);
@@ -311,7 +334,7 @@ export function rollingTrueRetention(
     if (isInitialRep) continue;
 
     if (ev.ts < start || ev.ts > now) continue;
-    const idx = Math.floor((startOfLocalDayMs(ev.ts) - start) / dayMs);
+    const idx = localDayIndexSince(ev.ts, start);
     if (idx < 0 || idx >= numDays) continue;
     dailyTotal[idx] += 1;
     if (grade >= 2) dailyPassed[idx] += 1;
@@ -331,7 +354,7 @@ export function rollingTrueRetention(
       rollingPassed += dailyPassed[j]!;
     }
     points.push({
-      dayStartMs: start + i * dayMs,
+      dayStartMs: starts[i]!,
       total: dailyTotal[i]!,
       passed: dailyPassed[i]!,
       retention: rollingTotal > 0 ? Math.round((rollingPassed / rollingTotal) * 1e4) / 1e4 : null,
