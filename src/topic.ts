@@ -14,6 +14,7 @@
  */
 
 import { IR_KEYS } from "./types";
+import { parseFrontmatterDateValue } from "./fsrs";
 import {
   adjustTopicAFactor,
   computeTopicAFactorFromTextLength,
@@ -173,8 +174,8 @@ export function readTopicFromFrontmatter(
 
   const due = fm[IR_KEYS.due];
   if (typeof due === "string" || due instanceof Date) {
-    const d = new Date(due);
-    if (!Number.isNaN(d.getTime())) base.dueMs = d.getTime();
+    const d = parseFrontmatterDateValue(due);
+    if (d) base.dueMs = d.getTime();
   }
 
   const iv = fm[IR_KEYS.interval];

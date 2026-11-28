@@ -178,6 +178,20 @@ export function sanitizeCard(card: Card): Card {
 }
 
 /**
+ * Decode a frontmatter date value. A bare `YYYY-MM-DD` string means a
+ * calendar day in the author's timezone, so read it as local midnight —
+ * `new Date(string)` would pick UTC midnight and shift the day for every
+ * non-UTC user (evenings west of Greenwich). Full timestamps parse as
+ * before. Returns null for garbage.
+ */
+export function parseFrontmatterDateValue(v: string | Date): Date | null {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim());
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
  * Reconstruct a `Card` from frontmatter. Missing/garbage fields fall back to
  * an empty card's defaults so a hand-edited or partially-written note can't
  * crash the scheduler.
@@ -195,8 +209,8 @@ export function readCardFromFrontmatter(
   const date = (key: string, fallback: Date): Date => {
     const v = fm[key];
     if (typeof v === "string" || v instanceof Date) {
-      const d = new Date(v);
-      if (!Number.isNaN(d.getTime())) return d;
+      const d = parseFrontmatterDateValue(v);
+      if (d) return d;
     }
     return fallback;
   };

@@ -11,6 +11,7 @@
 import type { ElementId, EventId } from "../ids";
 import { undoneEventIds, type LogState } from "../log";
 import type { IrEvent } from "../model";
+import { formatLocalDateMs } from "../stats";
 
 export interface Review {
   /** Wall-clock epoch ms of the review (event `ts`). */
@@ -199,7 +200,7 @@ export function formatDataReport(revlog: Revlog, now: number): string {
     "",
     "| | |",
     "|---|---|",
-    `| Date | ${new Date(now).toISOString().slice(0, 10)} |`,
+    `| Date | ${formatLocalDateMs(now)} |`,
     `| Usable reviews | ${report.includedReviews} |`,
     `| Items | ${report.includedCards} |`,
     `| Fit possible | ${TIER_TEXT[tier]} |`,

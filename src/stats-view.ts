@@ -29,6 +29,7 @@ import {
   computeStats,
   dueByType,
   forecast,
+  formatLocalDateMs,
   gradeBreakdown,
   gradeSpark,
   rollingTrueRetention,
@@ -375,7 +376,7 @@ export class IrStatsView extends ItemView {
       [
         "FSRS-6 parameters",
         s.fsrsParams
-          ? `optimized ${new Date(s.fsrsParams.fittedAt).toISOString().slice(0, 10)}`
+          ? `optimized ${formatLocalDateMs(s.fsrsParams.fittedAt)}`
           : "FSRS-6 defaults",
       ],
     ];
@@ -884,7 +885,7 @@ export class IrStatsView extends ItemView {
           const ratio = day.count / hm.maxCount;
           level = ratio >= 0.75 ? 4 : ratio >= 0.5 ? 3 : ratio >= 0.25 ? 2 : 1;
         }
-        const iso = new Date(day.dayStartMs).toISOString().slice(0, 10);
+        const iso = formatLocalDateMs(day.dayStartMs);
         const label = `${iso}: ${day.grades} reviews, ${day.reads} reads`;
         weekCol.createDiv({
           cls: "ir-stats-heatmap-cell",

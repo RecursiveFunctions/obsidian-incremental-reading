@@ -19,12 +19,17 @@ import {
   htmlToMarkdown,
   stripRemoteMarkdownImages,
 } from "../src/ir/html-to-markdown";
-import { parseSuperMemoQaText } from "../src/ir/sm20-exchange";
+import {
+  exportSuperMemoXmlCollection,
+  parseSuperMemoQaText,
+  parseSuperMemoXmlCollection,
+} from "../src/ir/sm20-exchange";
 import {
   readCardFromFrontmatter,
   schedule,
   storedToCard,
 } from "../src/fsrs";
+import { readTopicFromFrontmatter } from "../src/topic";
 import {
   createEmptyConceptRegistry,
   reconcileNoteFrontmatterWithLedger,
@@ -35,6 +40,7 @@ import {
 } from "../src/ir/sm20-analytics";
 import { buildRecordedNoteEvents } from "../src/ir/record-note";
 import { elementIdForPath } from "../src/ir/migrate";
+import { formatLocalDateMs } from "../src/ir/stats";
 import { IR_KEYS } from "../src/types";
 
 const NOW = 1_760_000_000_000;
@@ -358,4 +364,66 @@ test("day bucketing survives DST transitions (#137)", async () => {
   ];
   const now = new Date(2026, 2, 9, 12).getTime();
   assert.deepEqual(stats.gradeSpark(grades, now, 3), [1, 1, 1]);
+});
+
+// --- UTC vs local calendar-day labels (#137 follow-up) ---------------------
+
+test("formatLocalDateMs reports the local calendar day, not the UTC day", () => {
+  // 2026-11-28 22:00 EST is 2026-11-29T03:00Z: the UTC-day label (what the
+  // heatmap tooltip and exchange export used) is off by one evening-side day.
+  const lateEvening = new Date(2026, 10, 28, 22, 0).getTime();
+  assert.equal(formatLocalDateMs(lateEvening), "2026-11-28");
+  assert.notEqual(new Date(lateEvening).toISOString().slice(0, 10), "2026-11-28");
+  const earlyMorning = new Date(2026, 10, 28, 0, 30).getTime();
+  assert.equal(formatLocalDateMs(earlyMorning), "2026-11-28");
+});
+
+test("XML exchange exports LastRepetition as the local calendar day and re-imports it as local midnight", () => {
+  const itemId = newElementId();
+  const eveningMs = new Date(2026, 10, 28, 22, 0).getTime();
+  const item: IrElement = {
+    ...newElement({ id: itemId, type: "item", priority: 25, now: NOW }),
+    text: "Round-trip {{c1::check}}.",
+    card: {
+      due: eveningMs + 8 * 86_400_000,
+      stability: 8,
+      difficulty: 4,
+      elapsedDays: 3,
+      scheduledDays: 8,
+      reps: 2,
+      lapses: 0,
+      state: 2,
+      lastReview: eveningMs,
+    },
+  };
+
+  const xml = exportSuperMemoXmlCollection([item], [], NOW);
+  // Old code exported the UTC day (2026-11-29) for this 22:00 EST review.
+  assert.ok(xml.includes("<LastRepetition>2026-11-28</LastRepetition>"), xml.slice(0, 400));
+
+  const imported = parseSuperMemoXmlCollection(xml, NOW, newDeviceId());
+  const impItem = imported.elements.find((e) => e.type === "item")!;
+  // Old code parsed the bare date as UTC midnight — a day earlier in NY.
+  assert.equal(impItem.card?.lastReview, new Date(2026, 10, 28).getTime());
+});
+
+test("date-only frontmatter due reads as the local calendar day, not UTC midnight", () => {
+  // Hand-written `ir-due: "2026-12-01"` in New York used to land on Nov 30,
+  // 19:00 local — the item surfaced a day early and labeled wrong.
+  const card = readCardFromFrontmatter({ [IR_KEYS.due]: "2026-12-01" });
+  assert.equal(card.due.getTime(), new Date(2026, 11, 1).getTime());
+
+  const topic = readTopicFromFrontmatter(
+    { [IR_KEYS.due]: "2026-12-01" },
+    { topicFirstInterval: 1, topicAFactor: 2.0, topicMaxInterval: 36500 },
+    new Date(NOW),
+  );
+  assert.equal(topic.dueMs, new Date(2026, 11, 1).getTime());
+
+  // Full timestamps keep their exact instant.
+  const iso = "2026-12-01T09:30:00.000Z";
+  assert.equal(
+    readCardFromFrontmatter({ [IR_KEYS.due]: iso }).due.getTime(),
+    Date.parse(iso),
+  );
 });

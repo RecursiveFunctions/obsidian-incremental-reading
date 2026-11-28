@@ -32,6 +32,7 @@ import {
   type IrType,
 } from "./model";
 import { createEmptySm20Matrix, encodeSm20Alg17DatFiles, type Sm20Matrix } from "./sm20-matrix";
+import { formatLocalDateMs } from "./stats";
 import { storedDifficultyTo01 } from "./sm20-scheduler";
 
 const MS_PER_DAY = 86_400_000;
@@ -206,6 +207,18 @@ function readDirectXmlTag(xmlChunk: string, tag: string): string | null {
   return m ? xmlUnescape(m[1]!.trim()) : null;
 }
 
+/**
+ * Parse an exchange-file date field. A bare `YYYY-MM-DD` value denotes a
+ * calendar day in the author's timezone, so read it as local midnight —
+ * `Date.parse` would treat it as UTC midnight, shifting the day for every
+ * non-UTC user (#137 family). Full ISO timestamps keep `Date.parse` semantics.
+ */
+function parseExchangeDateMs(raw: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+  if (!m) return Date.parse(raw);
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+}
+
 interface ParsedXmlNode {
   headerXml: string;
   children: ParsedXmlNode[];
@@ -338,7 +351,7 @@ export function parseSuperMemoXmlCollection(
     const aFactor = Number.isFinite(aFactorRaw) && aFactorRaw >= 1.01 ? aFactorRaw : 2.0;
     const uFactorRaw = Number(readDirectXmlTag(hdr, "UFactor"));
     const lastRepStr = readDirectXmlTag(hdr, "LastRepetition");
-    const parsedLastMs = lastRepStr ? Date.parse(lastRepStr) : NaN;
+    const parsedLastMs = lastRepStr ? parseExchangeDateMs(lastRepStr) : NaN;
     const lastRevMs = Number.isFinite(parsedLastMs) ? parsedLastMs : nowMs;
     const dueMs = reps > 0 && ivl > 0 ? lastRevMs + ivl * MS_PER_DAY : nowMs + Math.max(1, ivl) * MS_PER_DAY;
 
@@ -438,7 +451,7 @@ export function exportSuperMemoXmlCollection(
     const lapses = el.type === "item" ? (el.card?.lapses ?? 0) : 0;
     const aFactor = el.type === "item" ? 1.5 : (el.schedule?.aFactor ?? 2.0);
     const lastMs = el.type === "item" ? (el.card?.lastReview ?? nowMs) : nowMs;
-    const lastDateStr = new Date(lastMs).toISOString().slice(0, 10);
+    const lastDateStr = formatLocalDateMs(lastMs);
     const cName = el.conceptId ? (conceptNameById.get(el.conceptId) ?? el.conceptId) : null;
 
     const lines = [

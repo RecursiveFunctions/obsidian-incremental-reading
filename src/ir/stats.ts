@@ -24,6 +24,19 @@ export function startOfLocalDayMs(now: number): number {
 }
 
 /**
+ * Calendar date (`YYYY-MM-DD`) of `ms` in the user's local time zone.
+ * Prefer this over `toISOString().slice(0, 10)`, which reports the UTC
+ * calendar day — off by one for any non-UTC zone (evenings west of
+ * Greenwich, early mornings east of it).
+ */
+export function formatLocalDateMs(ms: number): string {
+  const d = new Date(ms);
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/**
  * Exact local-calendar-day index of `ts` relative to the day containing
  * `anchorDayStartMs`. Calendar arithmetic (Y → `Date.UTC` day number) is
  * DST-safe; dividing a millisecond span by 24 h is not (#137).
