@@ -116,6 +116,12 @@ export interface LedgerView {
   createdTimestamps: number[];
   /** Events the checkpoint does not cover — the live shards. */
   recentEvents: IrEvent[];
+  /**
+   * Event ids covered by the fold checkpoint, mapped to their digests, when a
+   * checkpoint exists. Lets callers detect id collisions with archived
+   * history that `recentEvents` no longer carries (#133).
+   */
+  coveredEventDigests?: ReadonlyMap<string, string>;
 }
 
 const CHECKPOINT_SCHEMA = 2;
@@ -194,6 +200,7 @@ function viewFromIntermediate(
   intermediate: FoldIntermediate,
   watermark: number,
   recentEvents: IrEvent[],
+  coveredEventDigests?: ReadonlyMap<string, string>,
 ): LedgerView {
   const lastDueChange = new Map<ElementId, IrEvent["kind"]>();
   for (const [id, record] of intermediate.dueChange) lastDueChange.set(id, record.kind);
@@ -205,6 +212,7 @@ function viewFromIntermediate(
     lastDueChange,
     createdTimestamps: intermediate.createdTimestamps,
     recentEvents,
+    coveredEventDigests,
   };
 }
 
@@ -1084,7 +1092,12 @@ export class IrLedger {
     }
 
     foldFrom(checkpoint.intermediate, uncovered, { conflict: this.opts.conflict });
-    return viewFromIntermediate(checkpoint.intermediate, checkpoint.watermark, uncovered);
+    return viewFromIntermediate(
+      checkpoint.intermediate,
+      checkpoint.watermark,
+      uncovered,
+      checkpoint.covered,
+    );
   }
 
   /**
@@ -1104,9 +1117,17 @@ export class IrLedger {
     return viewFromIntermediate(intermediate, watermark, events);
   }
 
-  async loadSnapshot(): Promise<{ events: IrEvent[]; state: LogState }> {
+  async loadSnapshot(): Promise<{
+    events: IrEvent[];
+    state: LogState;
+    coveredEventDigests?: ReadonlyMap<string, string>;
+  }> {
     const view = await this.loadView();
-    return { events: view.recentEvents, state: view.state };
+    return {
+      events: view.recentEvents,
+      state: view.state,
+      coveredEventDigests: view.coveredEventDigests,
+    };
   }
 
   /** Highest lamport in the checkpoint + live shards, plus one. */

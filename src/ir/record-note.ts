@@ -6,6 +6,11 @@ import type { IrElement, IrEvent } from "./model";
 export interface BuildRecordedNoteOptions {
   liveElements?: Iterable<IrElement>;
   historicalEvents?: readonly IrEvent[];
+  /**
+   * Event-id lookup covering history the caller's `historicalEvents` no longer
+   * carries — e.g. the ledger checkpoint's covered map (#133).
+   */
+  coveredEventIds?: { has(id: string): boolean };
   allocElementId?: () => ElementId;
   allocEventId?: () => EventId;
 }
@@ -56,9 +61,9 @@ export function buildRecordedNoteEvents(
 
   const history = opts.historicalEvents ?? [];
   const idTakenInLive = liveList.some((el) => el.id === element.id);
-  const idTakenInHistory = history.some(
-    (h) => h.target === element.id || h.id === ev.id,
-  );
+  const idTakenInHistory =
+    (opts.coveredEventIds?.has(ev.id) ?? false) ||
+    history.some((h) => h.target === element.id || h.id === ev.id);
 
   let targetId = element.id;
   let eventId = ev.id;

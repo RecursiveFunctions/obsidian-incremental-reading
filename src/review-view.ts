@@ -6492,6 +6492,7 @@ export class IrReviewView extends ItemView {
         {
           liveElements: snap.state.elements.values(),
           historicalEvents: snap.events,
+          coveredEventIds: snap.coveredEventDigests,
         },
       );
       if (recorded.events.length === 0 && recorded.element) {

@@ -159,3 +159,79 @@ test("buildRecordedNoteEvents resolves ir-parent to a live element even when par
   );
   assert.equal(child.element?.parentId, r2.element!.id);
 });
+
+test("re-created note at a reused path gets fresh ids when the original event is checkpoint-covered (#133)", async () => {
+  const ledger = new IrLedger(memFs());
+  await ledger.init();
+  const device = await ledger.getDeviceId();
+  const path = "IR/Reused.md";
+
+  const snap1 = await ledger.loadSnapshot();
+  const res1 = buildRecordedNoteEvents(makeItemNote(path), NOW, {
+    liveElements: snap1.state.elements.values(),
+    historicalEvents: snap1.events,
+  });
+  const firstId = res1.element!.id;
+  const migEventId = res1.events[0]!.id;
+  for (const ev of res1.events) {
+    ev.device = device;
+    ev.lamport = await ledger.nextLamport();
+    await ledger.appendEvent(ev);
+  }
+
+  // Push enough history that a fold checkpoint becomes worth building.
+  for (let i = 0; i < 250; i += 1) {
+    await ledger.appendEvent({
+      id: newEventId(),
+      ts: NOW + 10 + i,
+      lamport: await ledger.nextLamport(),
+      device,
+      kind: "priority-set",
+      target: firstId,
+      payload: { priority: 20 + (i % 70) },
+    });
+  }
+  const cp = await ledger.ensureCheckpoint(NOW + 300);
+  assert.equal(cp.built, true, "checkpoint should build with >= 250 events");
+
+  await ledger.appendEvent({
+    id: newEventId(),
+    ts: NOW + 400,
+    lamport: await ledger.nextLamport(),
+    device,
+    kind: "element-deleted",
+    target: firstId,
+    payload: {},
+  });
+
+  const snap = await ledger.loadSnapshot();
+  assert.ok(
+    snap.coveredEventDigests?.has(migEventId),
+    "migration event must be reported as checkpoint-covered",
+  );
+  assert.ok(
+    !snap.events.some((ev) => ev.id === migEventId),
+    "covered event is archived out of the live event window",
+  );
+  assert.ok(!snap.state.elements.has(firstId));
+
+  // The deterministic id is only findable via the checkpoint's covered set;
+  // without that check the re-created note collides with archived history.
+  const res2 = buildRecordedNoteEvents(makeItemNote(path), NOW + 500, {
+    liveElements: snap.state.elements.values(),
+    historicalEvents: snap.events,
+    coveredEventIds: snap.coveredEventDigests,
+  });
+  assert.equal(res2.events.length, 1);
+  assert.notEqual(res2.element!.id, firstId);
+  assert.notEqual(res2.events[0]!.id, migEventId);
+  for (const ev of res2.events) {
+    ev.device = device;
+    ev.lamport = await ledger.nextLamport();
+    await ledger.appendEvent(ev);
+  }
+
+  const finalState = await ledger.load();
+  assert.ok(finalState.elements.has(res2.element!.id));
+  assert.equal(finalState.elements.get(res2.element!.id)?.notePath, path);
+});
