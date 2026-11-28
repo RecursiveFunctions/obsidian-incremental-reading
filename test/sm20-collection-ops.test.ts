@@ -157,7 +157,7 @@ test("auditAndRepairCollectionIntegrity (0x00d32f50, 0x00d0cdc0) detects and rep
       difficulty: 5,
       elapsedDays: 5,
       scheduledDays: 5,
-      reps: 99, // Drifted vs actual 1 graded event
+      reps: 99, // Drifted vs latest graded snapshot (42)
       lapses: 8,
       state: 2,
       lastReview: NOW - 5 * DAY_MS,
@@ -196,7 +196,7 @@ test("auditAndRepairCollectionIntegrity (0x00d32f50, 0x00d0cdc0) detects and rep
     kind: "graded",
     target: driftedItemId,
     payload: {
-      card: driftedItem.card!,
+      card: { ...driftedItem.card!, reps: 42 },
       grade: 3,
       smGrade: 4,
     },

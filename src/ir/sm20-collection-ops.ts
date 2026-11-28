@@ -477,8 +477,31 @@ export function auditAndRepairCollectionIntegrity(
   );
   const perItemStats = new Map<
     string,
-    { reps: number; lapses: number; lastTs: number | null; backwardReported: boolean }
+    {
+      reps: number;
+      lapses: number;
+      lastTs: number | null;
+      backwardReported: boolean;
+      /** True while the only seed is the (potentially final-state) created card. */
+      seededFromCreated: boolean;
+    }
   >();
+  const cardSnapshotOf = (
+    payload: Record<string, unknown>,
+  ): StoredCard | undefined => {
+    const c = payload.card as Partial<StoredCard> | undefined;
+    if (
+      !c ||
+      typeof c !== "object" ||
+      typeof c.reps !== "number" ||
+      !Number.isFinite(c.reps) ||
+      typeof c.lapses !== "number" ||
+      !Number.isFinite(c.lapses)
+    ) {
+      return undefined;
+    }
+    return c as StoredCard;
+  };
 
   for (const ev of sortedEvents) {
     if (ev.kind === "grade-undone" || undone.has(ev.id)) continue;
@@ -489,6 +512,7 @@ export function auditAndRepairCollectionIntegrity(
         lapses: resetCard?.lapses ?? 0,
         lastTs: resetCard?.lastReview ?? null,
         backwardReported: false,
+        seededFromCreated: false,
       });
       continue;
     }
@@ -500,6 +524,7 @@ export function auditAndRepairCollectionIntegrity(
           lapses: created.card.lapses,
           lastTs: created.card.lastReview ?? null,
           backwardReported: false,
+          seededFromCreated: true,
         });
       }
       continue;
@@ -510,22 +535,55 @@ export function auditAndRepairCollectionIntegrity(
         lapses: 0,
         lastTs: null,
         backwardReported: false,
+        seededFromCreated: false,
       };
-      if (cur.lastTs !== null && ev.ts < cur.lastTs && !cur.backwardReported) {
-        cur.backwardReported = true;
-        counts.historyAnomalies += 1;
-        issues.push({
-          kind: "history-backward-timestamp",
-          elementId: ev.target,
-          detail: `Backwardly timestamped repetition (${ev.ts} < ${cur.lastTs}) in lamport order.`,
-        });
+      const snapshot = cardSnapshotOf(ev.payload);
+      if (snapshot) {
+        // Fold semantics apply the payload card as the authoritative state, so
+        // imported histories carry cumulative snapshots, not per-event
+        // increments (#127). A created-card seed is pre-state the first
+        // snapshot overwrites — not a chronology baseline.
+        const snapTs =
+          typeof snapshot.lastReview === "number" && Number.isFinite(snapshot.lastReview)
+            ? snapshot.lastReview
+            : ev.ts;
+        if (
+          !cur.seededFromCreated &&
+          cur.lastTs !== null &&
+          snapTs < cur.lastTs &&
+          !cur.backwardReported
+        ) {
+          cur.backwardReported = true;
+          counts.historyAnomalies += 1;
+          issues.push({
+            kind: "history-backward-timestamp",
+            elementId: ev.target,
+            detail: `Backwardly timestamped repetition (${snapTs} < ${cur.lastTs}) in lamport order.`,
+          });
+        }
+        cur.reps = snapshot.reps;
+        cur.lapses = snapshot.lapses;
+        cur.lastTs = cur.seededFromCreated || cur.lastTs === null
+          ? snapTs
+          : Math.max(cur.lastTs, snapTs);
+      } else {
+        if (cur.lastTs !== null && ev.ts < cur.lastTs && !cur.backwardReported) {
+          cur.backwardReported = true;
+          counts.historyAnomalies += 1;
+          issues.push({
+            kind: "history-backward-timestamp",
+            elementId: ev.target,
+            detail: `Backwardly timestamped repetition (${ev.ts} < ${cur.lastTs}) in lamport order.`,
+          });
+        }
+        cur.reps += 1;
+        const smG = typeof ev.payload.smGrade === "number" ? ev.payload.smGrade : undefined;
+        const gNum = typeof ev.payload.grade === "number" ? ev.payload.grade : 3;
+        const failed = smG !== undefined ? smG < 3 : gNum <= 1;
+        if (failed) cur.lapses += 1;
+        cur.lastTs = Math.max(cur.lastTs ?? ev.ts, ev.ts);
       }
-      cur.reps += 1;
-      const smG = typeof ev.payload.smGrade === "number" ? ev.payload.smGrade : undefined;
-      const gNum = typeof ev.payload.grade === "number" ? ev.payload.grade : 3;
-      const failed = smG !== undefined ? smG < 3 : gNum <= 1;
-      if (failed) cur.lapses += 1;
-      cur.lastTs = Math.max(cur.lastTs ?? ev.ts, ev.ts);
+      cur.seededFromCreated = false;
       perItemStats.set(ev.target, cur);
     }
   }
