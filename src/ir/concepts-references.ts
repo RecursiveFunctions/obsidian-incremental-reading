@@ -286,30 +286,48 @@ export function writeConceptToFrontmatter(
   }
 }
 
-export function readReferenceFromFrontmatter(
+export interface FrontmatterReferenceRead {
+  ref: ReferenceMetadata | null;
+  /** True when the value came from an explicit `ir_ref`/`ir-ref` object. */
+  explicit: boolean;
+}
+
+export function readReferenceFromFrontmatterWithSource(
   fm: Record<string, unknown> | null | undefined,
-): ReferenceMetadata | null {
-  if (!fm) return null;
+): FrontmatterReferenceRead {
+  if (!fm) return { ref: null, explicit: false };
   const explicit = fm.ir_ref ?? fm["ir-ref"];
   if (explicit && typeof explicit === "object" && !Array.isArray(explicit)) {
     const rec = explicit as Record<string, unknown>;
-    return normalizeReference({
-      title: typeof rec.title === "string" ? rec.title : undefined,
-      author: typeof rec.author === "string" ? rec.author : undefined,
-      date: typeof rec.date === "string" || typeof rec.date === "number" ? String(rec.date) : undefined,
-      source: typeof rec.source === "string" ? rec.source : undefined,
-      link: typeof rec.link === "string" ? rec.link : undefined,
-      email: typeof rec.email === "string" ? rec.email : undefined,
-      comment: typeof rec.comment === "string" ? rec.comment : undefined,
-    });
+    return {
+      ref: normalizeReference({
+        title: typeof rec.title === "string" ? rec.title : undefined,
+        author: typeof rec.author === "string" ? rec.author : undefined,
+        date: typeof rec.date === "string" || typeof rec.date === "number" ? String(rec.date) : undefined,
+        source: typeof rec.source === "string" ? rec.source : undefined,
+        link: typeof rec.link === "string" ? rec.link : undefined,
+        email: typeof rec.email === "string" ? rec.email : undefined,
+        comment: typeof rec.comment === "string" ? rec.comment : undefined,
+      }),
+      explicit: true,
+    };
   }
   // Fallback harvest from standard Obsidian bibliography frontmatter keys
-  return normalizeReference({
-    author: typeof fm.author === "string" ? fm.author : undefined,
-    source: typeof fm.source === "string" ? fm.source : undefined,
-    link: typeof fm.url === "string" ? fm.url : undefined,
-    date: typeof fm.date === "string" || typeof fm.date === "number" ? String(fm.date) : undefined,
-  });
+  return {
+    ref: normalizeReference({
+      author: typeof fm.author === "string" ? fm.author : undefined,
+      source: typeof fm.source === "string" ? fm.source : undefined,
+      link: typeof fm.url === "string" ? fm.url : undefined,
+      date: typeof fm.date === "string" || typeof fm.date === "number" ? String(fm.date) : undefined,
+    }),
+    explicit: false,
+  };
+}
+
+export function readReferenceFromFrontmatter(
+  fm: Record<string, unknown> | null | undefined,
+): ReferenceMetadata | null {
+  return readReferenceFromFrontmatterWithSource(fm).ref;
 }
 
 export function writeReferenceToFrontmatter(
@@ -409,13 +427,21 @@ export function reconcileNoteFrontmatterWithLedger(
 
   const hasExplicitRefKey =
     Boolean(frontmatter) && ("ir_ref" in frontmatter! || "ir-ref" in frontmatter!);
-  const parsedRef = readReferenceFromFrontmatter(frontmatter);
-  const targetRef: ReferenceMetadata | null =
-    parsedRef !== null
-      ? parsedRef
-      : authRemove || hasExplicitRefKey
-        ? null
-        : normalizeReference(element.reference);
+  const { ref: parsedRef, explicit: explicitRefObject } =
+    readReferenceFromFrontmatterWithSource(frontmatter);
+  const ledgerRef = normalizeReference(element.reference);
+  let targetRef: ReferenceMetadata | null;
+  if (parsedRef !== null) {
+    if (explicitRefObject) {
+      targetRef = parsedRef;
+    } else {
+      // Generic bibliography keys (date:, author:, …) only *fill* the
+      // reference; they never wipe ledger fields the note doesn't assert (#134).
+      targetRef = normalizeReference({ ...(ledgerRef ?? {}), ...parsedRef });
+    }
+  } else {
+    targetRef = authRemove || hasExplicitRefKey ? null : ledgerRef;
+  }
 
   const conceptChanged = (element.conceptId ?? null) !== targetConceptId;
   const refChanged = !areReferencesEqual(element.reference, targetRef);
